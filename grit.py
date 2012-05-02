@@ -714,7 +714,7 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
             os.path.join( derived_output_dir, basename ) )
         cmd += "--mapped-reads-fname {0} ".format( bam_fname )
         if rev_strand:
-            cmd += "--rev-strand ".format( bam_fname )
+            cmd += "--reverse-read-strand ".format( bam_fname )
 
         
         
@@ -835,7 +835,7 @@ def extract_all_junctions( elements, pserver, output_prefix ):
                 + sample_name + ".jns.gff"
         output_fname = os.path.join( output_prefix, base_out_fname )
         
-        rev_strand_str = '--reverse-strand' if rev_strand else ""
+        rev_strand_str = '--reverse-read-strand' if rev_strand else ""
         
         call_template = "python %s {0} --fasta {1} {2} > {3} " % EXTRACT_JNS_CMD
         call = call_template.format( \
