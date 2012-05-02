@@ -1,0 +1,23 @@
+K 25
+svn:wc:ra_dav:version-url
+V 48
+/svn/grit/!svn/ver/8/trunk/elements/distal_exons
+END
+discover_tes_exons_from_polya_reads.py
+K 25
+svn:wc:ra_dav:version-url
+V 87
+/svn/grit/!svn/ver/7/trunk/elements/distal_exons/discover_tes_exons_from_polya_reads.py
+END
+distal_exons.py
+K 25
+svn:wc:ra_dav:version-url
+V 64
+/svn/grit/!svn/ver/8/trunk/elements/distal_exons/distal_exons.py
+END
+discover_tss_exons_from_cage_data.py
+K 25
+svn:wc:ra_dav:version-url
+V 85
+/svn/grit/!svn/ver/7/trunk/elements/distal_exons/discover_tss_exons_from_cage_data.py
+END

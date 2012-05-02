@@ -1,0 +1,29 @@
+K 25
+svn:wc:ra_dav:version-url
+V 41
+/svn/grit/!svn/ver/8/trunk/elements/exons
+END
+discover_exons.py
+K 25
+svn:wc:ra_dav:version-url
+V 59
+/svn/grit/!svn/ver/8/trunk/elements/exons/discover_exons.py
+END
+merge_exons.py
+K 25
+svn:wc:ra_dav:version-url
+V 56
+/svn/grit/!svn/ver/1/trunk/elements/exons/merge_exons.py
+END
+break_genes.py
+K 25
+svn:wc:ra_dav:version-url
+V 56
+/svn/grit/!svn/ver/6/trunk/elements/exons/break_genes.py
+END
+build_genelets.py
+K 25
+svn:wc:ra_dav:version-url
+V 59
+/svn/grit/!svn/ver/1/trunk/elements/exons/build_genelets.py
+END

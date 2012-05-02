@@ -1,0 +1,23 @@
+K 25
+svn:wc:ra_dav:version-url
+V 53
+/svn/grit/!svn/ver/1/trunk/file_types/fast_gtf_parser
+END
+gtf.py
+K 25
+svn:wc:ra_dav:version-url
+V 60
+/svn/grit/!svn/ver/1/trunk/file_types/fast_gtf_parser/gtf.py
+END
+setup.bash
+K 25
+svn:wc:ra_dav:version-url
+V 64
+/svn/grit/!svn/ver/1/trunk/file_types/fast_gtf_parser/setup.bash
+END
+gtf_parser.c
+K 25
+svn:wc:ra_dav:version-url
+V 66
+/svn/grit/!svn/ver/1/trunk/file_types/fast_gtf_parser/gtf_parser.c
+END

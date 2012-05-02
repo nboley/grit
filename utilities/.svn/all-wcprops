@@ -1,0 +1,89 @@
+K 25
+svn:wc:ra_dav:version-url
+V 36
+/svn/grit/!svn/ver/8/trunk/utilities
+END
+build_fl_dist.py
+K 25
+svn:wc:ra_dav:version-url
+V 53
+/svn/grit/!svn/ver/1/trunk/utilities/build_fl_dist.py
+END
+verify_uniqueness.py
+K 25
+svn:wc:ra_dav:version-url
+V 57
+/svn/grit/!svn/ver/1/trunk/utilities/verify_uniqueness.py
+END
+chr4_transcripts.gtf
+K 25
+svn:wc:ra_dav:version-url
+V 57
+/svn/grit/!svn/ver/1/trunk/utilities/chr4_transcripts.gtf
+END
+blastp.py
+K 25
+svn:wc:ra_dav:version-url
+V 46
+/svn/grit/!svn/ver/1/trunk/utilities/blastp.py
+END
+get_coords.py
+K 25
+svn:wc:ra_dav:version-url
+V 50
+/svn/grit/!svn/ver/1/trunk/utilities/get_coords.py
+END
+filter_by_cluster_list.py
+K 25
+svn:wc:ra_dav:version-url
+V 62
+/svn/grit/!svn/ver/1/trunk/utilities/filter_by_cluster_list.py
+END
+find_unique_novels.py
+K 25
+svn:wc:ra_dav:version-url
+V 58
+/svn/grit/!svn/ver/1/trunk/utilities/find_unique_novels.py
+END
+make_ucsc_files.py
+K 25
+svn:wc:ra_dav:version-url
+V 55
+/svn/grit/!svn/ver/7/trunk/utilities/make_ucsc_files.py
+END
+ORF_finder.py
+K 25
+svn:wc:ra_dav:version-url
+V 50
+/svn/grit/!svn/ver/1/trunk/utilities/ORF_finder.py
+END
+chr4_flybase.gtf
+K 25
+svn:wc:ra_dav:version-url
+V 53
+/svn/grit/!svn/ver/1/trunk/utilities/chr4_flybase.gtf
+END
+cdd_search.py
+K 25
+svn:wc:ra_dav:version-url
+V 50
+/svn/grit/!svn/ver/1/trunk/utilities/cdd_search.py
+END
+wiggle_merger.py
+K 25
+svn:wc:ra_dav:version-url
+V 53
+/svn/grit/!svn/ver/1/trunk/utilities/wiggle_merger.py
+END
+build_bam_elements_list_from_bam_fnames.py
+K 25
+svn:wc:ra_dav:version-url
+V 79
+/svn/grit/!svn/ver/8/trunk/utilities/build_bam_elements_list_from_bam_fnames.py
+END
+filter_bam_by_region.py
+K 25
+svn:wc:ra_dav:version-url
+V 60
+/svn/grit/!svn/ver/8/trunk/utilities/filter_bam_by_region.py
+END

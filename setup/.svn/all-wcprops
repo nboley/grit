@@ -1,0 +1,23 @@
+K 25
+svn:wc:ra_dav:version-url
+V 32
+/svn/grit/!svn/ver/1/trunk/setup
+END
+nonnegative_lars_scikit.patch
+K 25
+svn:wc:ra_dav:version-url
+V 62
+/svn/grit/!svn/ver/1/trunk/setup/nonnegative_lars_scikit.patch
+END
+least_angle_test.py
+K 25
+svn:wc:ra_dav:version-url
+V 52
+/svn/grit/!svn/ver/1/trunk/setup/least_angle_test.py
+END
+install_scikits.bash
+K 25
+svn:wc:ra_dav:version-url
+V 53
+/svn/grit/!svn/ver/1/trunk/setup/install_scikits.bash
+END

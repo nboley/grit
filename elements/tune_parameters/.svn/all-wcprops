@@ -1,0 +1,23 @@
+K 25
+svn:wc:ra_dav:version-url
+V 51
+/svn/grit/!svn/ver/1/trunk/elements/tune_parameters
+END
+exon_cvrg_counts.py
+K 25
+svn:wc:ra_dav:version-url
+V 71
+/svn/grit/!svn/ver/1/trunk/elements/tune_parameters/exon_cvrg_counts.py
+END
+tss_exon_selection.py
+K 25
+svn:wc:ra_dav:version-url
+V 73
+/svn/grit/!svn/ver/1/trunk/elements/tune_parameters/tss_exon_selection.py
+END
+empty_space_in_exons.py
+K 25
+svn:wc:ra_dav:version-url
+V 75
+/svn/grit/!svn/ver/1/trunk/elements/tune_parameters/empty_space_in_exons.py
+END

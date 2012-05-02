@@ -1,0 +1,47 @@
+K 25
+svn:wc:ra_dav:version-url
+V 35
+/svn/grit/!svn/ver/1/trunk/sparsify
+END
+f_matrix.py
+K 25
+svn:wc:ra_dav:version-url
+V 47
+/svn/grit/!svn/ver/1/trunk/sparsify/f_matrix.py
+END
+sparsify_transcripts.py
+K 25
+svn:wc:ra_dav:version-url
+V 59
+/svn/grit/!svn/ver/1/trunk/sparsify/sparsify_transcripts.py
+END
+transcripts.py
+K 25
+svn:wc:ra_dav:version-url
+V 50
+/svn/grit/!svn/ver/1/trunk/sparsify/transcripts.py
+END
+frag_len.py
+K 25
+svn:wc:ra_dav:version-url
+V 47
+/svn/grit/!svn/ver/1/trunk/sparsify/frag_len.py
+END
+reads.py
+K 25
+svn:wc:ra_dav:version-url
+V 44
+/svn/grit/!svn/ver/1/trunk/sparsify/reads.py
+END
+gene_models.py
+K 25
+svn:wc:ra_dav:version-url
+V 50
+/svn/grit/!svn/ver/1/trunk/sparsify/gene_models.py
+END
+high_read_depth_exons.gtf
+K 25
+svn:wc:ra_dav:version-url
+V 61
+/svn/grit/!svn/ver/1/trunk/sparsify/high_read_depth_exons.gtf
+END
