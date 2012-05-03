@@ -7,9 +7,9 @@ python filter_bam_by_region.py `ls /media/scratch/RNAseq/all_samples/ | grep -P 
 """
 
 region_chr = "2L"
-start = 4605421  
-stop = 5481770
-base_dir = "/media/scratch/chr2L_test_region_raw_data/treatments/"
+start = 11944595 
+stop = 12224194
+base_dir = "/media/scratch/prd_test_locus_raw_data/stranded_dev_timepoints/"
 
 ps = []
 for fname in sys.argv[1:]:

@@ -35,7 +35,7 @@ def read_spans_single_intron( read ):
     
     return True
 
-def get_junctions( reads_fn, fasta ):
+def get_junctions( reads_fn, fasta, reverse_strand=False ):
     """Get all of the junctions represented in a reads object
     """
     # build reads object
@@ -64,6 +64,10 @@ def get_junctions( reads_fn, fasta ):
             strand = '+'
         else:
             strand = '-'
+        
+        if reverse_strand:
+            if strand == '+': strand = '-'
+            else: strand = '+'
         
         # increment count of junction reads at this read position
         # for this intron or initialize it to 1
@@ -95,18 +99,21 @@ def parse_arguments():
     parser.add_argument( '--verbose', '-v', default=False, \
                              action='store_true', \
        help='Whether or not to print status information.' )
+    parser.add_argument( '--reverse-strand', '-r', default=False, \
+                             action='store_true', \
+       help='Whether or not to reverse the junction strand.' )
     args = parser.parse_args()
     
     global VERBOSE
     VERBOSE = args.verbose
 
-    return args.bam_fn, args.fasta
+    return args.bam_fn, args.fasta, args.reverse_strand
 
 def main():
-    reads_fn, fasta_fn = parse_arguments()
+    reads_fn, fasta_fn, reverse_strand = parse_arguments()
     
     # get junctions
-    jns, grps, cnts = get_junctions( reads_fn, fasta_fn )
+    jns, grps, cnts = get_junctions( reads_fn, fasta_fn, reverse_strand )
    # write the junctions out to file
     write_junctions( jns, sys.stdout, cnts, grps, fasta_fn )
 

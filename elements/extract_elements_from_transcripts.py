@@ -32,6 +32,9 @@ def get_elements_from_gene( gene, get_tss=True, get_jns=True, \
             if get_tes:
                 tes_exons.add( tp_region )
         else:
+            if strand != '-':
+                print >> sys.stderr, "BADBADBAD", strand
+                continue
             assert strand == '-'
             if get_tss:
                 tss_exons.add( tp_region )

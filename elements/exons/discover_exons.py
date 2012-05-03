@@ -421,6 +421,9 @@ def find_initial_boundaries_and_labels( read_cov, jns ):
     all_labels = {}
     
     for key in jns:
+        if key not in read_cov:
+            continue
+        
         read_cov_obj = ReadCoverageData( \
             read_cov.zero_intervals[key], read_cov[key] )
         

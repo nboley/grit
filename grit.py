@@ -835,7 +835,7 @@ def extract_all_junctions( elements, pserver, output_prefix ):
                 + sample_name + ".jns.gff"
         output_fname = os.path.join( output_prefix, base_out_fname )
         
-        rev_strand_str = '--reverse-read-strand' if rev_strand else ""
+        rev_strand_str = '--reverse-strand' if rev_strand else ""
         
         call_template = "python %s {0} --fasta {1} {2} > {3} " % EXTRACT_JNS_CMD
         call = call_template.format( \
@@ -1601,12 +1601,7 @@ def main():
     intersect_all_junctions( elements, pserver, base_dir + "junctions/" )
         
     build_all_cov_wiggles( elements, pserver, base_dir + "read_cov_bedgraphs" )
-    print elements
     
-    pserver.process_queue()
-    
-    return
-
     build_all_exon_files( elements, pserver, base_dir + "exons" )
     
     cluster_exons( elements, pserver, base_dir + "exons", \
