@@ -7,12 +7,16 @@ VERBOSE = False
 
 ### Set default parameters ###
 CVRG_FRACTION = 0.99
+WINDOW_LEN = 50
+MIN_CVG_FRAC = 0.50
+SMOOTHING_WINDOW_SIZE = 50
 
 from collections import defaultdict
 
 # import slide modules
 import distal_exons
-from distal_exons import find_all_distal_exons, convert_to_genomic_intervals
+from distal_exons import refine_exon_bndrys, convert_to_genomic_intervals, \
+    filter_exons_by_max_read_coverage, get_unique_internal_splice_exons
 
 sys.path.append( os.path.join(
         os.path.dirname(__file__), "..", "..", 'file_types' ) )
@@ -69,12 +73,10 @@ def parse_arguments():
     parser.add_argument(
         '--polya-read-gffs', '-r', required=True, type=file, nargs='+',
         help='GFF file which contains reads ending at a TES.')
-    
     parser.add_argument(
         '--coverage-fraction', type=float, default=CVRG_FRACTION,
         help='Fraction of TES coverage to include in the TES refined exon '
-        + 'boundaries. Default: %(default)f' )
-    
+        + 'boundaries. Default: %(default)f' )    
     parser.add_argument(
         '--out-fname', '-o',
         help='Output file will be written to default. default: stdout')
@@ -108,10 +110,41 @@ def main():
     tes_cvg = build_coverage_wig_from_polya_reads(
         polya_read_gff_fps, chrm_sizes_fp )
             
-    # actually find the tes exons, and convert them to genomic intervals
-    if VERBOSE: print >> sys.stderr, 'Finding TES exons from filtered polya coverage.'
-    tes_exons = find_all_distal_exons( clustered_exons, tes_cvg, False, CVRG_FRACTION)
+    smooth_tes_cvg = tes_cvg.get_smoothed_copy( SMOOTHING_WINDOW_SIZE )
+
+    tes_exons = {}
+    for (chrm, strand) in clustered_exons:
+        if (chrm, strand) not in tes_cvg:
+            print >> sys.stderr, \
+                "WARNING: '%s:%s' does not exist in " % ( chrm, strand ) \
+                + "the polya signal wiggle. Skipping that chr strand pair." 
+            continue
+        tes_exons[ (chrm, strand) ] = []
+        
+        exons_clusters = clustered_exons[ (chrm, strand) ]
+
+        for exons in exons_clusters:
+            unique_exons = get_unique_internal_splice_exons( \
+                exons, strand, is_tss=False )
+            
+            try:
+                filtered_exons = filter_exons_by_max_read_coverage( \
+                    exons, tes_cvg[(chrm, strand)], \
+                        WINDOW_LEN, MIN_CVG_FRAC )
+            except ValueError, inst:
+                if str( inst ) != "No signal.":
+                    raise
+                err_str = "WARNING: Region %s %s %s %s had no POLYA signal." \
+                    % (chrm, strand, exons[0][0], exons[-1][1])
+                print >> sys.stderr, err_str
+                filtered_exons = []
+            
+            refined_exons = refine_exon_bndrys( \
+                filtered_exons, tes_cvg, (chrm, strand), False, CVRG_FRACTION )
+            
+            tes_exons[ (chrm, strand) ].extend( refined_exons )
     
+    # ocver the exons to genomic intervals
     tes_exons = convert_to_genomic_intervals( tes_exons )
     
     if VERBOSE: print >> sys.stderr, 'Writing TES exons to a gff file.'    

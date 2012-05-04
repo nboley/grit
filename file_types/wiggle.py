@@ -272,13 +272,17 @@ class Wiggle( dict ):
     def get_region_w_fraction_cvrg( self, key, start, stop, fraction, 
                                     from_upstrm=True ):
         """Find the subregion with the specified fraction of coverage
+
+        Return the full region if there is zero coverage.
         """
         region = self[key][start:stop+1]
         # if we want to sum from the downstream position, then 
         # reverse the reigon. 
-        thresh = region.sum() * fraction
-        if thresh == 0:
-            ( start, stop )
+        tot_cvg = region.sum() 
+        if tot_cvg == 0:
+            return ( start, stop )
+
+        thresh = tot_cvg * fraction
         
         if not from_upstrm:
             region = region[::-1]
