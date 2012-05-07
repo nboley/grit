@@ -50,7 +50,8 @@ def find_nonoverlapping_signal( exons, read_cvg, chrm, strand ):
 
     return nonoverlapping_signal, cvg_arrays
 
-def filter_exons_by_quantiles( exons, cvg, smooth_read_cvg, threshold_frac, chrm, strand ):
+def filter_exons_by_quantiles( exons, cvg, smooth_read_cvg, threshold_frac, \
+                                   chrm, strand ):
     """The approach is as follows:
 
     1) Find promoter exons:
@@ -65,8 +66,8 @@ def filter_exons_by_quantiles( exons, cvg, smooth_read_cvg, threshold_frac, chrm
     nonoverlapping_signal, cvg_arrays = \
         find_nonoverlapping_signal( exons, smooth_read_cvg, chrm, strand )
     nonoverlapping_signal.sort()
-    # if there isno signal, then return every exon
-    if nonoverlapping_signal[-1] == 0: 
+    # if there is no signal, then return every exon
+    if nonoverlapping_signal[-1] == 0:
         raise ValueError, "No signal."
     
     thresh = threshold_frac*nonoverlapping_signal.sum()
@@ -92,8 +93,11 @@ def filter_exons_by_quantiles( exons, cvg, smooth_read_cvg, threshold_frac, chrm
     return new_exons
 
 def filter_exons_by_max_read_coverage( \
-        exons, cvg_array, window_len, min_cvg_frac ):
+        exons, cvg_array, window_len, min_cvg_frac, min_win_cvg=1 ):
     """Remove exons which contain less than MIN_SCORE_RATIO distal read coverage
+    
+    min_win_cvg is the minimum number of reads we nede to see in the maximum
+    window to use polya reads for tes determination.
     """
     def get_max_region_cvg( exon, window_len ):
         start, stop = exon
@@ -142,44 +146,67 @@ def filter_exons_by_max_read_coverage( \
     
     
     exons_w_scores, max_score = get_exon_scores( exons, window_len )
-    if max_score == 0:
+    if max_score < min_win_cvg:
         raise ValueError, "No signal."
-    
+       
     candidate_exons = get_candidate_exons( exons_w_scores, max_score )
     
     return candidate_exons
 
-def get_unique_internal_splice_exons( exons, strand, is_tss ):
-    # get index of internal and external exons
-    if (strand == '+' and is_tss) or (strand == '-' and not is_tss):
-        int_index = 1
-    else:
-        int_index = 0
-    ext_index = 0 if int_index == 1 else 1
+def get_unique_internal_splice_exons(exons, strand, is_tss, max_bndry_exp):
+    """
     
-    unique_largest_exons = {}
-    # get the largest exon at each internal splice site
-    for exon in exons:
-        int_coord = exon[int_index]
-        ext_coord = exon[ext_index]
-        if int_coord in unique_largest_exons:
-            if (ext_coord < unique_largest_exons[int_coord] \
-                    and int_index == 1) \
-                    or (ext_coord > unique_largest_exons[int_coord] \
-                            and int_index == 0):
-                unique_largest_exons[ int_coord ] = ext_coord
+    max_bndry_exp is the maximum number of bases to look for extra t*s signal. 
+    In many cases, the read coverage dies before the CAGE signal, so looking 
+    further upstream can yield better promoters. However, we  never extend 
+    a candidate exon into a pre-existing exon.  
+    """
+    # decide what the internal bounadry is for a given exon. The
+    # 'internal' boundary is the bounadary that is spliced from
+    # at a distal exon
+    int_gt_ext_bndry = \
+        (strand == '+' and is_tss) or (strand == '-' and not is_tss)
+    def get_ordered_bndries( exon ):
+        if int_gt_ext_bndry:
+            return exon[1], exon[0]
         else:
-            unique_largest_exons[ int_coord ] = ext_coord
+            return exon
+
+    # for each internal bounadry, find the external bounadary that is
+    # the farthest away
+    grpd_largest_exons = {}
+    for exon in exons:
+        internal, external = get_ordered_bndries( exon )
+        if internal not in grpd_largest_exons:
+            grpd_largest_exons[internal] = external
+        else:
+            if abs(external - internal) > \
+                    abs(grpd_largest_exons[internal] - internal):
+                grpd_largest_exons[internal] = external
     
-    # get exon tuple structure back
+    # expand the external boundaries
+    internal_bndrys = sorted( grpd_largest_exons.keys() )
     unique_exons = []
-    for int_coord, ext_coord in unique_largest_exons.iteritems():
-        unique_exons.append( (min(int_coord, ext_coord), \
-                                  max(int_coord, ext_coord) ) )
-    
-    sorted_unique_exons = sorted( unique_exons )
-    
-    return sorted_unique_exons
+    for int_coord, ext_coord in grpd_largest_exons.iteritems():
+        # find the closest internal bndry 
+        if int_gt_ext_bndry:
+            valid_int_bndries = [ x for x in internal_bndrys if x < ext_coord ]
+            if len( valid_int_bndries ) > 0:
+                new_ext_coord = max( min( valid_int_bndries ) + 2, \
+                                         ext_coord - max_bndry_exp )
+            else:
+                new_ext_coord = ext_coord - max_bndry_exp
+            unique_exons.append( ( new_ext_coord, int_coord ) )
+        else:
+            valid_int_bndries = [ x for x in internal_bndrys if x > ext_coord ]
+            if len( valid_int_bndries ) > 0:
+                new_ext_coord = min( max(valid_int_bndries) - 2, \
+                                         ext_coord + max_bndry_exp )
+            else:
+                new_ext_coord = ext_coord + max_bndry_exp
+            unique_exons.append( ( int_coord, new_ext_coord ) )
+            
+    return sorted( unique_exons )
 
 def refine_exon_bndrys( exons, all_cvrg, key, is_tss, cvrg_fraction ):
     """Refine distal exons according to distal reads coverage across each exon
@@ -197,17 +224,17 @@ def refine_exon_bndrys( exons, all_cvrg, key, is_tss, cvrg_fraction ):
     
     return refined_exons
 
-def filter_clustered_exons( exons, cage_read_cvg, smooth_cage_read_cvg,       \
+def filter_clustered_exons( exons, cage_read_cvg, smooth_cage_read_cvg, jns,   \
                             region_filter_len, min_cvg_ratio, threshold_frac, \
-                            chrm, strand ):
+                            min_win_cvg, chrm, strand ):
     try:
         filtered_exons_1 = filter_exons_by_max_read_coverage( \
             exons, cage_read_cvg[(chrm, strand)], \
-            region_filter_len, min_cvg_ratio )
-        
+            region_filter_len, min_cvg_ratio, min_win_cvg )
+
         filtered_exons_2 = filter_exons_by_quantiles( \
             exons, cage_read_cvg, smooth_cage_read_cvg,
-            threshold_frac, chrm, strand)
+            threshold_frac, chrm, strand )
         
         filtered_exons = sorted( set(filtered_exons_1).intersection(\
                 filtered_exons_2) )
@@ -215,46 +242,25 @@ def filter_clustered_exons( exons, cage_read_cvg, smooth_cage_read_cvg,       \
     except ValueError, inst:
         if str( inst ) != "No signal.":
             raise
-        err_str = "WARNING: Region %s %s %s had no CAGE signal." \
+        err_str = "WARNING: Region %s %s %s had no distal signal." \
             % (chrm, strand, exons)
-        print >> sys.stderr, err_str
-        return exons
+        if VERBOSE:
+            print >> sys.stderr, err_str
+
+        filtered_exons = []
+        if jns != None:
+            for start, stop in exons:
+                if strand == '+':
+                    if start-1 not in jns[ (chrm, strand) ]:
+                        filtered_exons.append( (start, stop) )
+                else:
+                    assert strand == '-'
+                    if stop+1 not in jns[ (chrm, strand) ]:
+                        filtered_exons.append( (start, stop) )
+        
+        return filtered_exons
     
     return filtered_exons
-
-
-def find_distal_exons( clustered_exons, all_cvrg, chrm, strand, \
-                           is_tss, cvrg_fraction ):
-    """find exons which have distal read coverage and refine their boundaries
-    """
-    all_exons = []
-    for exon_cluster_id, exons in enumerate(clustered_exons):
-        # uniquify by internal coordinate
-        unique_exons = get_unique_internal_splice_exons( \
-            exons, strand, is_tss )
-        
-        # refine external boundary using distal read signal
-        refined_exons = refine_exon_bndrys( \
-            unique_exons, all_cvrg, (chrm, strand), is_tss, cvrg_fraction )
-        
-        all_exons.extend( refined_exons )
-    
-    return all_exons
-
-def find_all_distal_exons( \
-        clustered_exons, all_cvrg, is_tss, cvrg_fraction ):
-    """wrapper for find_distal_exons
-    """
-    all_exons = {}
-    # process each chrm, strand combination separately
-    keys = sorted( set( clustered_exons ).intersection( all_cvrg ) )
-    for (chrm, strand) in keys:
-        exons = find_distal_exons(
-            clustered_exons[(chrm, strand)], all_cvrg, \
-            chrm, strand, is_tss, cvrg_fraction)
-        all_exons[(chrm, strand)] = exons
-    
-    return all_exons
 
 if __name__ == "__main__":
     print "Please use discover_tes_exons_from_polya_reads.py or " + \

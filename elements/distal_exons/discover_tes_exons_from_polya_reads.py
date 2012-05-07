@@ -11,6 +11,8 @@ WINDOW_LEN = 50
 MIN_CVG_FRAC = 0.50
 SMOOTHING_WINDOW_SIZE = 50
 
+MIN_WIN_CVG = 5
+
 from collections import defaultdict
 
 # import slide modules
@@ -23,6 +25,7 @@ sys.path.append( os.path.join(
 import wiggle
 from clustered_exons_file import parse_clustered_exons_file
 from gtf_file import parse_gff_line, iter_gff_lines
+from junctions_file import get_intron_bndry_sets
 
 def write_TESs( tes_s, out_fp, track_name="tes_exons" ):
     gff_iter = iter_gff_lines( \
@@ -74,6 +77,10 @@ def parse_arguments():
         '--polya-read-gffs', '-r', required=True, type=file, nargs='+',
         help='GFF file which contains reads ending at a TES.')
     parser.add_argument(
+        '--junctions-gff', '-j', required=False, type=file,
+        help='GFF file which contains junctions to discover TES exons ' \
+            + 'in the absense of polya data.')
+    parser.add_argument(
         '--coverage-fraction', type=float, default=CVRG_FRACTION,
         help='Fraction of TES coverage to include in the TES refined exon '
         + 'boundaries. Default: %(default)f' )    
@@ -96,11 +103,11 @@ def parse_arguments():
     CVRG_FRACTION = args.coverage_fraction
     
     return args.clustered_exons_gtf, args.chrm_sizes,\
-        args.polya_read_gffs, out_fp
+        args.polya_read_gffs, args.junctions_gff, out_fp
 
 def main():
     # parse arguments
-    clustered_exons_fp, chrm_sizes_fp, polya_read_gff_fps, out_fp, \
+    clustered_exons_fp, chrm_sizes_fp, polya_read_gff_fps, jns_fp, out_fp, \
         = parse_arguments()
     
     if VERBOSE: print >> sys.stderr, "Loading clustered exons."
@@ -109,7 +116,13 @@ def main():
     if VERBOSE: print >> sys.stderr, "Loading TES coverage wiggle."
     tes_cvg = build_coverage_wig_from_polya_reads(
         polya_read_gff_fps, chrm_sizes_fp )
-            
+    
+    if jns_fp != None:
+        upstream_bnds, downstream_bnds = get_intron_bndry_sets( jns_fp )
+        jns = downstream_bnds
+    else:
+        jns = None
+    
     smooth_tes_cvg = tes_cvg.get_smoothed_copy( SMOOTHING_WINDOW_SIZE )
 
     tes_exons = {}
@@ -122,29 +135,40 @@ def main():
         tes_exons[ (chrm, strand) ] = []
         
         exons_clusters = clustered_exons[ (chrm, strand) ]
-
+    
         for exons in exons_clusters:
             unique_exons = get_unique_internal_splice_exons( \
-                exons, strand, is_tss=False )
+                exons, strand, is_tss=False, max_bndry_exp=200 )
             
             try:
                 filtered_exons = filter_exons_by_max_read_coverage( \
                     exons, tes_cvg[(chrm, strand)], \
-                        WINDOW_LEN, MIN_CVG_FRAC )
+                        WINDOW_LEN, MIN_CVG_FRAC, MIN_WIN_CVG )
             except ValueError, inst:
                 if str( inst ) != "No signal.":
                     raise
                 err_str = "WARNING: Region %s %s %s %s had no POLYA signal." \
                     % (chrm, strand, exons[0][0], exons[-1][1])
-                print >> sys.stderr, err_str
+                if VERBOSE:
+                    print >> sys.stderr, err_str
+                
                 filtered_exons = []
+                if jns != None:
+                    for start, stop in unique_exons:
+                        if strand == '+':
+                            if stop+1 not in jns[ (chrm, strand) ]:
+                                filtered_exons.append( (start, stop) )
+                        else:
+                            assert strand == '-'
+                            if start-1 not in jns[ (chrm, strand) ]:
+                                filtered_exons.append( (start, stop) )
             
             refined_exons = refine_exon_bndrys( \
                 filtered_exons, tes_cvg, (chrm, strand), False, CVRG_FRACTION )
             
             tes_exons[ (chrm, strand) ].extend( refined_exons )
     
-    # ocver the exons to genomic intervals
+    # cover the exons to genomic intervals
     tes_exons = convert_to_genomic_intervals( tes_exons )
     
     if VERBOSE: print >> sys.stderr, 'Writing TES exons to a gff file.'    

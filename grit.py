@@ -229,6 +229,8 @@ class Elements( object ):
     def _init_db(self, new_elements):
         # turn on foreign keys
         self.conn.execute("PRAGMA foreign_keys = ON;" )
+        self.conn.execute("PRAGMA journal_mode = MEMORY;")
+        self.conn.execute("PRAGMA synchronous = OFF;")
 
         # create the commands log table
         self.conn.execute('''
@@ -1183,7 +1185,10 @@ def build_cage_tss_exons( elements, pserver, output_prefix, filter_with_rnaseq=F
             "clustered_exons_gff", exons_sample_type, exons_sample_id )
         assert len( res ) == 1
         clustered_merged_exons_fname = res[0].fname
-        
+
+        res = elements.get_elements_from_db( "filtered_jns_gff", sample_type, "*" )
+        assert len( res ) == 1
+        jns_fname = res[0].fname
         
         output_fname = os.path.join( \
             output_prefix, "discovered_cage_tss_exons.%s.gff" % sample_type)
@@ -1195,6 +1200,9 @@ def build_cage_tss_exons( elements, pserver, output_prefix, filter_with_rnaseq=F
         call += "--clustered-exons {0} ".format( clustered_merged_exons_fname )
 
         call += "--cage-read-wigs {0} ".format( " ".join(cage_cov_fnames) )
+
+        call += "--junctions-gff {0} ".format( jns_fname )
+
         # cage read nc wigs is not implemented
         #if len( cage_NC_cov_fnames ) > 0:
         #    call += "--cage-read-nc-wigs {0} ".format( " ".join(cage_NC_cov_fnames))
@@ -1260,6 +1268,10 @@ def build_polya_tes_exons( elements, pserver, \
     res = elements.get_elements_from_db( "clustered_exons_gff", "*", "*" )
     assert len( res ) == 1
     clustered_merged_exons_fname = res[0].fname
+
+    res = elements.get_elements_from_db( "filtered_jns_gff", "*", "*" )
+    assert len( res ) == 1
+    jns_fname = res[0].fname
     
     output_fname = os.path.join(output_prefix, "discovered_polya_tes_exons.gff")
     
@@ -1272,6 +1284,7 @@ def build_polya_tes_exons( elements, pserver, \
     if len( tes_reads_nc_wig_fnames ) > 0:
         call += "--polya-read-nc-wigs {0} ".format( \
             " ".join(tes_reads_nc_wig_fnames) )
+    call += "--junctions-gff {0} ".format( jns_fname )
     call += " --out-fname {0} ".format( output_fname ) 
     
     op_element_types = [ \

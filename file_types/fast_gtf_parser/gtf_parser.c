@@ -276,7 +276,7 @@ parse_gtf_data( struct gtf_line** gtf_lines, int num_lines, struct gene*** genes
     int curr_min_loc = (1 >> 30);
     
     int i;
-    for( i = 0; i < num_lines; i++ )
+    for( i = 1; i < num_lines; i++ )
     {
         struct gtf_line* line = gtf_lines[i];
         
@@ -320,6 +320,7 @@ parse_gtf_data( struct gtf_line** gtf_lines, int num_lines, struct gene*** genes
         curr_max_loc = MAX( curr_max_loc, line->stop );
         curr_trans_exons[ curr_trans_num_exons ] = line->start;
         curr_trans_exons[ curr_trans_num_exons+1 ] = line->stop;
+        
         curr_trans_num_exons += 2;
 
     }

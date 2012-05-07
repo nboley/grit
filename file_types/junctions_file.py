@@ -64,6 +64,33 @@ def write_junctions( junctions, out_fp, scores=None, groups=None, \
     
     return
 
+def get_intron_bndry_sets( jns_fp ):
+    """Get a dict of sets containing jns for each chrm, strand pair.
+    
+    The first returned value, upstream_jns, refers to the side of the
+    intron that is *nearest* the promoter. 
+    
+    The eecond returned value, downstream_jns, refers to side
+    nearest the transcript's 3' end. 
+    """
+    upstream_jns = defaultdict( set )
+    downstream_jns = defaultdict( set )
+    jns = defaultdict( set )
+    for line in jns_fp:
+        data = parse_gff_line( line )
+        if data == None: continue
+        pos = data[0]
+        if pos.strand == '+':
+            upstream_jns[ (pos.chr, pos.strand) ].add( pos.start  )
+            downstream_jns[ (pos.chr, pos.strand) ].add( pos.stop  )
+        else:
+            assert pos.strand == '-'
+            upstream_jns[ (pos.chr, pos.strand) ].add( pos.stop  )
+            downstream_jns[ (pos.chr, pos.strand) ].add( pos.start  )
+
+    return upstream_jns, downstream_jns
+
+
 class Junctions( GenomicIntervals ):
     def iter_connected_exons( self, chrm, strand, start, stop, exon_bndrys, \
                                   include_scores=False ):
@@ -114,7 +141,7 @@ class Junctions( GenomicIntervals ):
                             int(score), grp )
         
         return
-    
+        
     def freeze( self ):
         """Convert the intervals into a sorted numpy array, for faster access.
         Also order scores to maintain indices between intervals
