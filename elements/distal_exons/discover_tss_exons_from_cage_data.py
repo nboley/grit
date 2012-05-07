@@ -12,14 +12,14 @@ MIN_VERBOSE = True
 # this means threshold all bases with a score below
 # X where X is the score at which THRESHOLD_FRAC of the cage 
 # signal falls below
-THRESHOLD_FRAC = 0.70
+THRESHOLD_FRAC = 0.90
 SMOOTHING_WINDOW_SIZE = 120
 
 # this means filter exons where the ratio of the highest 50 bps of 
 # cage signal in exon to the MAX exon is < MIN_CVG_FRAC. 
 REGION_FILTER_LEN = 120
 EXON_FILTER_TYPE = 'region'
-MIN_CVG_FRAC = 0.10
+MIN_CVG_FRAC = 0.05
 
 # the fraction of CAGE reads to include in the boundary refined TSS exon
 CVRG_FRACTION = 0.99
