@@ -129,34 +129,13 @@ def build_genelets_from_exons_and_edges( overlapping_exons, edges ):
     
     return genelets.values()
 
-def filter_exons( exons, junctions ):
-    """Remove potential single exon genes
-    """
-    if len( junctions ) == 0: return []
-    
-    jn_starts = set( junctions[:,0] )
-    jn_stops = set( junctions[:,1] )
-    
-    filtered_exons = []
-    for start, stop in exons:
-        # the junctions are inclusive intron bounds, so we subtract one
-        # from exon starts to give us the intron stop, and add 1 to the 
-        # exon stop to give intron starts.
-        if stop+1 in jn_starts or start-1 in jn_stops:
-            filtered_exons.append( (start, stop) )
-    
-    filtered_exons = numpy.array( filtered_exons )
-    return filtered_exons
-
 def cluster_exons( exons, junctions ):
     """filter exons such that they must have at least one junction
     then group them by overlapping exons and connected junctions
     """
-    filtered_exons = filter_exons( exons, junctions )
-    
-    if len(filtered_exons) > 0:
+    if len(exons) > 0:
         # group overlapping exons
-        overlapping_exons = cluster_overlapping_exons( filtered_exons )
+        overlapping_exons = cluster_overlapping_exons( exons )
         
         # find the hash table of exons ( nodes ) and junctions ( edges )
         edges = build_edges_hash_table( overlapping_exons, junctions )
