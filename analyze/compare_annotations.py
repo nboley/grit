@@ -522,12 +522,12 @@ def make_class_cnts_string( class_counts, ref_fname, gtf_fname ):
     class_lines.append( "\nClass Code Counts" )    
     class_lines.append( "".ljust(25) + "=".ljust(12) + "c".ljust(12) + 
                         "j".ljust(12) + "u".ljust(12) )
-    class_lines.append( os.path.basename(ref_fname).ljust(25) + 
+    class_lines.append( "Reference".ljust(25) + 
                         str(r_class_cnts["="]).ljust(12) +
                         str(r_class_cnts["c"]).ljust(12) +
                         str(r_class_cnts["j"]).ljust(12) +
                         str(r_class_cnts["u"]).ljust(12) )
-    class_lines.append( os.path.basename(gtf_fname).ljust(25) + 
+    class_lines.append( "Novel Annotation".ljust(25) + 
                         str(t_class_cnts["="]).ljust(12) +
                         str(t_class_cnts["c"]).ljust(12) +
                         str(t_class_cnts["j"]).ljust(12) +
@@ -620,7 +620,7 @@ def parse_arguments():
         + 'map files.')
     
     parser.add_argument(
-        '--out-prefix', '-o', default='slicompare',
+        '--out-prefix', '-o', default='gritcompare',
         help='Output file prefix will be written. default: %(default)s')
     parser.add_argument(
         '--test', default=False, action='store_true',
