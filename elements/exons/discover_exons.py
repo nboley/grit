@@ -124,7 +124,15 @@ def get_possible_exon_bndrys( labels, boundaries, chrm_stop ):
                     bndrys.append( ( boundaries[start_exon], \
                                          boundaries[stop_exon+1]-1 ) )
     
-    return bndrys
+    se_bndrys = []
+    # add the single exon genes
+    for index, label in enumerate( labels[:-1] ):
+        if label != 'S':
+            continue        
+        se_bndrys.append( ( boundaries[index], \
+                            boundaries[index+1]-1 ) )
+            
+    return bndrys, se_bndrys
 
 def build_bins_stats( boundaries, labels, read_coverages ):
     def build_bin_stats( region_cvrg, start, stop):
@@ -636,7 +644,8 @@ def refine_exon_extensions( labels, bndrys, read_cov ):
 def refine_single_exon_genes( read_coverage_array, labels, bndrys ):
     for i, (label, (start, stop)) in \
             enumerate(zip(labels, zip(bndrys[:-1], bndrys[1:]))):
-        if label != 'S': continue
+        if label != 'S': 
+            continue
         
         if stop - start < MIN_SE_GENE_LEN+10:
             labels[i] = 'L'
@@ -650,8 +659,10 @@ def refine_single_exon_genes( read_coverage_array, labels, bndrys ):
         # find if a region exists with sufficient read coverage. If it doesnt
         # then continue
         if read_cov_score < MIN_SE_GENE_AVG_READCOV:
+            labels[i] = 'L'
             continue
-        
+
+        labels[i] = 'S'
         # check to make 
         # print seg_rc_array
     
@@ -691,6 +702,11 @@ def filter_exon_bndrys( exon_bndrys, jn_bndrys ):
         if start in intron_starts: continue
         if stop in intron_stops: continue
         if stop - start + 1 > MAX_EXON_SIZE: continue
+        # make sure that at least one bndry is spliced: single exon genes are 
+        # dealt with seperately
+        if (not stop+1 in intron_starts) and (not start-1 in intron_stops):
+            continue
+
         verified_bndrys.append( (start, stop) )
     
     return verified_bndrys
@@ -816,7 +832,7 @@ def main():
             read_cov_obj, bndrys[(chrm, strand)], labels[(chrm, strand)] )
         
         # get exon boundaries from assigned labels and boundaries
-        exon_bndrys = get_possible_exon_bndrys( \
+        exon_bndrys, se_exon_bndrys = get_possible_exon_bndrys( \
             new_labels, new_bndrys, read_cov_obj.chrm_stop )
         
         # filter out any exon that start with a junction start or 
@@ -827,8 +843,12 @@ def main():
         regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
                              for start, stop in filtered_exon_bndrys )
         regions.extend( regions_iter )
+
+        regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
+                             for start, stop in se_exon_bndrys )
+        regions.extend( regions_iter )
     
-    out_fp.write( "\n".join(iter_gff_lines( regions )) + "\n" )
+    out_fp.write( "\n".join(iter_gff_lines( sorted(regions) )) + "\n" )
     
     if debug_fps != None:
         for fp in [ fp for item in debug_fps.values() for fp in item ]:

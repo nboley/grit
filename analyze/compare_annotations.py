@@ -101,16 +101,20 @@ def cluster_overlapping_genes( genes_groups ):
     
     return all_clustered_transcripts
 
-def build_element_stats( ref_genes, t_genes ):
+def build_element_stats( ref_genes, t_genes, output_stats ):
     def build_exon_and_intron_sets( genes ):
         internal_exons = set()
         tss_exons = set()
         tes_exons = set()
         all_introns = set()
+        single_exon_genes = set()
         for gene_id, chrm, strand,  min_loc, max_loc, transcripts in genes:
             for tr_id, bndries in transcripts:
                 # skip single exon genes
-                if len( bndries ) <= 2: continue
+                if len( bndries ) <= 2: 
+                    assert len( bndries ) == 2
+                    single_exon_genes.add( ( bndries[0], bndries[1] ) )
+                    continue
                 
                 exons = zip( bndries[::2], bndries[1::2] )
                 for exon in exons[1:-1]:
@@ -130,12 +134,13 @@ def build_element_stats( ref_genes, t_genes ):
                     assert len( intron ) == 2
                     all_introns.add( ( chrm, strand, intron ) )
         
-        return internal_exons, tss_exons, tes_exons, all_introns
+        return internal_exons, tss_exons, tes_exons, all_introns, single_exon_genes
     
     
-    r_int_exons, r_tss_exons, r_tes_exons, r_introns = \
+    r_int_exons, r_tss_exons, r_tes_exons, r_introns, r_se_genes = \
         build_exon_and_intron_sets( ref_genes )
-    t_int_exons, t_tss_exons, t_tes_exons, t_introns = \
+
+    t_int_exons, t_tss_exons, t_tes_exons, t_introns, t_se_genes = \
         build_exon_and_intron_sets( t_genes )
     
     # get overlap for each category
@@ -148,16 +153,25 @@ def build_element_stats( ref_genes, t_genes ):
     num_r_exons = sum( map( len, (r_int_exons, r_tss_exons, r_tes_exons) ) ) 
     num_t_exons = sum( map( len, (t_int_exons, t_tss_exons, t_tes_exons) ) )
     
-    # pack counts
-    total_cnts = [ num_r_exons,      num_t_exons,
-                   len(r_int_exons), len(t_int_exons),
-                   len(r_tss_exons), len(t_tss_exons),
-                   len(r_tes_exons), len(t_tes_exons),
-                   len(r_introns),   len(t_introns) ]
-    overlap_cnts = [ int_e_overlap, tss_e_overlap,
-                     tes_e_overlap, intron_overlap ]
+    output_stats.add_recovery_stat( \
+        'Exon', num_r_exons, num_t_exons, 0 )
+
+    output_stats.add_recovery_stat( \
+        'Internal Exon', len(r_int_exons), len(t_int_exons), int_e_overlap )
+
+    output_stats.add_recovery_stat( \
+        'TSS Exon', len(r_tss_exons), len(t_tss_exons), tss_e_overlap )
+
+    output_stats.add_recovery_stat( \
+        'TES Exon', len(r_tes_exons), len(t_tes_exons), tes_e_overlap )
+
+    output_stats.add_recovery_stat( \
+        'Intron', len(r_introns), len(t_introns), intron_overlap )
+
+    output_stats.add_recovery_stat( \
+        'Single Exon Transcript', len(r_se_genes), len(t_se_genes), 0 )
     
-    return total_cnts, overlap_cnts
+    return
 
 def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
     """find and count match classes and produce map lines if requested
@@ -219,13 +233,7 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
         t_trans_tot = sum( len(i) for i in t_full_trans.itervalues() )
         
         return matched_cnt, ref_trans_tot, t_trans_tot
-    
-    def cnt_se_trans_overlap( ref_se_trans, t_se_trans ):
-        """In the futuire, we'd like to be smart about counting single exon
-        genes. For now, we just return 0 overlap. 
-        """
-        return 0, len(ref_se_trans), len(t_se_trans)
-    
+        
     def build_map_lines_and_class_counts( left_full, right_full, 
                                           right_contained, right_introns):
         map_lines = [] if build_maps else None
@@ -348,9 +356,7 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
     
     # count transcripts and overlaps
     trans_overlap_cnt, r_trans_tot, t_trans_tot = \
-        cnt_trans_overlap( r_full_trans, t_full_trans )
-    se_trans_overlap_cnt, r_se_trans_tot, t_se_trans_tot = \
-        cnt_se_trans_overlap( r_se_trans, t_se_trans )
+        cnt_trans_overlap( r_full_trans, t_full_trans )    
     
     # get map lines of class counts if requested
     if build_maps or build_maps_stats:
@@ -362,14 +368,12 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
         r_map, r_class_cnts, t_map, t_class_cnts = None, None, None, None
     
     # pack counts
-    trans_counts = ( r_trans_tot, t_trans_tot,
-                   r_se_trans_tot, t_se_trans_tot,
-                   trans_overlap_cnt, se_trans_overlap_cnt )
+    trans_counts = ( r_trans_tot, t_trans_tot, trans_overlap_cnt )
     class_counts = ( r_class_cnts, t_class_cnts )
     
     return r_map, t_map, trans_counts, class_counts
 
-def calc_trans_cnts( all_trans_cnts, build_maps_stats ):
+def calc_trans_cnts( all_trans_cnts, build_maps_stats, output_stats ):
     # initialize total transcript counts
     r_trans_tot, t_trans_tot, r_se_trans_tot, t_se_trans_tot = 0, 0, 0, 0
     trans_overlap, se_trans_overlap = 0, 0
@@ -388,25 +392,22 @@ def calc_trans_cnts( all_trans_cnts, build_maps_stats ):
     for grp_trans_cnts, grp_class_cnts in all_trans_cnts:
         r_trans_tot += grp_trans_cnts[0]
         t_trans_tot += grp_trans_cnts[1]
-        r_se_trans_tot += grp_trans_cnts[2]
-        t_se_trans_tot += grp_trans_cnts[3]
-        trans_overlap += grp_trans_cnts[4]
-        se_trans_overlap += grp_trans_cnts[5]
+        trans_overlap += grp_trans_cnts[2]
         # if suppress_maps_stats then grp_class_cnts == None
         if build_maps_stats:
             r_class_cnts = update_class_cnts( r_class_cnts, grp_class_cnts[0] )
             t_class_cnts = update_class_cnts( t_class_cnts, grp_class_cnts[1] )
+
     
-    # pack counts
-    trans_tot_cnts = ( r_trans_tot, t_trans_tot,
-                       r_se_trans_tot, t_se_trans_tot)
-    trans_overlap_cnts = ( trans_overlap, se_trans_overlap )
+    output_stats.add_recovery_stat( \
+        "Transcript", r_trans_tot, t_trans_tot, trans_overlap )
+    
     class_cnts = ( r_class_cnts, t_class_cnts )
     
-    return trans_tot_cnts, trans_overlap_cnts, class_cnts
+    return class_cnts
 
 def match_all_transcripts( clustered_transcripts, build_maps, 
-                           build_maps_stats, out_prefix ):
+                           build_maps_stats, out_prefix, output_stats ):
     # open file pointers to write the maps out to
     if build_maps:
         tmap_fp = file( out_prefix + ".tmap", "w" )
@@ -419,8 +420,7 @@ def match_all_transcripts( clustered_transcripts, build_maps,
     for (chrm, strand), inner_cts in clustered_transcripts.iteritems():
         for r_grp, t_grp in inner_cts:
             r_map, t_map, grp_trans_cnts, grp_class_cnts \
-                = match_transcripts( r_grp, t_grp, 
-                                     build_maps, build_maps_stats )
+                = match_transcripts(r_grp, t_grp, build_maps, build_maps_stats)
             
             if build_maps:
                 if r_map != None and len(r_map) > 0:
@@ -435,7 +435,44 @@ def match_all_transcripts( clustered_transcripts, build_maps,
         refmap_fp.close()
         tmap_fp.close()
     
-    return calc_trans_cnts( all_trans_cnts, build_maps_stats )
+    return calc_trans_cnts( all_trans_cnts, build_maps_stats, output_stats )
+
+class OutputStats( dict ):
+    def __init__(self, ref_fname, gtf_fname ):
+        self.ref_fname = ref_fname
+        self.gtf_fname = gtf_fname
+        self._recovery_stat_names = []
+    
+    def add_recovery_stat( self, name, ref_cnt, t_cnt, inter_cnt ):
+        assert inter_cnt <= ref_cnt and inter_cnt <= t_cnt
+        self[name] = ( ref_cnt, t_cnt, inter_cnt )
+        self._recovery_stat_names.append( name )
+        
+    def __str__( self ):
+        # format summary lines
+        lines = []
+
+        lines.append( "Reference:".ljust(18) + self.ref_fname )
+        lines.append( "Novel Annotation:".ljust(18) + self.gtf_fname )
+
+        lines.append( "".ljust(25) + "Recall".ljust(12) + "Precision".ljust(12)\
+                      + "Intersect".ljust(12) \
+                      + "Ref Cnt".ljust(12) + "Novel Cnt".ljust(12) )
+
+        
+        for stat_name in self._recovery_stat_names:
+            r_cnt, t_cnt, ov_cnt = self[ stat_name ]
+            lines.append( stat_name.ljust(25) + \
+                          ("%.3f" % (float(ov_cnt)/(r_cnt+1e-6))).ljust(12) +
+                          ("%.3f" % (float(ov_cnt)/(t_cnt+1e-6))).ljust(12) +
+                          ("%i" % ov_cnt).ljust(12) +
+                          ("%i" % r_cnt).ljust(12) +
+                          ("%i" % t_cnt).ljust(12) )
+
+       
+        return '\n'.join( lines )
+
+        pass
 
 def ratio_or_10( num, denom ):
     """if there are no counts, then return 10 to indicate this in the ouput file
@@ -485,29 +522,6 @@ def make_rcl_prc_string( rcl_and_prc_stats, ref_fname, gtf_fname ):
       tr_rcl, tr_prc, se_tr_rcl, se_tr_prc 
       ) = rcl_and_prc_stats
     
-    # format summary lines
-    lines = []
-    
-    lines.append( "Reference:".ljust(18) + ref_fname )
-    lines.append( "Novel Annotation:".ljust(18) + gtf_fname )
-    lines.append( "".ljust(25) + "Recall".ljust(12) + "Precision".ljust(12) )
-    lines.append( "Exon".ljust(25) + ("%.3f" % exon_rcl).ljust(12) +
-                  ("%.3f" % exon_prc).ljust(12) )
-    lines.append( "Internal Exon".ljust(25) + ("%.3f" % int_e_rcl).ljust(12) +
-               ("%.3f" % int_e_prc).ljust(12) )
-    lines.append( "TSS Exon".ljust(25) + ("%.3f" % tss_e_rcl).ljust(12) +
-               ("%.3f" % tss_e_prc).ljust(12) )
-    lines.append( "TES Exon".ljust(25) + ("%.3f" % tes_e_rcl).ljust(12) +
-               ("%.3f" % tes_e_prc).ljust(12) )
-    lines.append( "Intron".ljust(25) + ("%.3f" % intron_rcl).ljust(12) +
-               ("%.3f" % intron_prc).ljust(12) )
-    lines.append( "Transcript".ljust(25) + ("%.3f" % tr_rcl).ljust(12) +
-               ("%.3f" % tr_prc).ljust(12) )
-    lines.append( "Single Exon Transcript".ljust(25) \
-                   + ("%.3f" % se_tr_rcl).ljust(12) \
-                   + ("%.3f" % se_tr_prc).ljust(12) )
-    
-    return '\n'.join( lines )
 
 def make_class_cnts_string( class_counts, ref_fname, gtf_fname ):
     # if suppress_maps_stats then class_counts will be None and 
@@ -518,20 +532,18 @@ def make_class_cnts_string( class_counts, ref_fname, gtf_fname ):
     r_class_cnts, t_class_cnts = class_counts
     
     class_lines = []
+    
     # add class count here
     class_lines.append( "\nClass Code Counts" )    
-    class_lines.append( "".ljust(25) + "=".ljust(12) + "c".ljust(12) + 
-                        "j".ljust(12) + "u".ljust(12) )
-    class_lines.append( "Reference".ljust(25) + 
-                        str(r_class_cnts["="]).ljust(12) +
-                        str(r_class_cnts["c"]).ljust(12) +
-                        str(r_class_cnts["j"]).ljust(12) +
-                        str(r_class_cnts["u"]).ljust(12) )
-    class_lines.append( "Novel Annotation".ljust(25) + 
-                        str(t_class_cnts["="]).ljust(12) +
-                        str(t_class_cnts["c"]).ljust(12) +
-                        str(t_class_cnts["j"]).ljust(12) +
-                        str(t_class_cnts["u"]).ljust(12) )
+    
+    h_cts = "".join(char.ljust(12) for char in "=cju")
+    class_lines.append( "".ljust(25) + h_cts )
+    
+    r_cts = "".join(str(r_class_cnts[char]).ljust(12) for char in "=cju")
+    class_lines.append( "Reference".ljust(25) + r_cts )
+    
+    n_cts = "".join(str(t_class_cnts[char]).ljust(12) for char in "=cju")
+    class_lines.append( "Novel Annotation".ljust(25) + n_cts )
     
     return '\n'.join( class_lines )
 
@@ -542,35 +554,30 @@ def compare( ref_fname, gtf_fname, build_maps, build_maps_stats,
     # load the gtf files
     ref_genes, t_genes = gtf.load_gtfs( (ref_fname, gtf_fname), num_threads )
     
+    output_stats = OutputStats( ref_fname, gtf_fname )
+    
     # get recall and prceision stats for all types of exons and introns
-    total_cnts, overlap_cnts = build_element_stats(ref_genes, t_genes)
+    build_element_stats(ref_genes, t_genes, output_stats)
     if VERBOSE: print >> sys.stderr, "Finished building element stats"
     
     clustered_transcripts = cluster_overlapping_genes( (ref_genes, t_genes) )
     if VERBOSE:
-        n_clusters = 0
-        for key, val in clustered_transcripts.iteritems():
-            n_clusters += len( val )
+        n_clusters = sum(len(val) for val in clustered_transcripts.itervalues())
         print >> sys.stderr, \
             "Finished clustering genes into %i clusters." % n_clusters
     
     # calculate transcript overlaps and class match counts
     # also write map files if requested
-    trans_tot_cnts, trans_overlap_cnts, trans_class_cnts = \
+    trans_class_cnts = \
         match_all_transcripts( clustered_transcripts, build_maps, 
-                               build_maps_stats, out_prefix )
-    total_cnts.extend( trans_tot_cnts )
-    overlap_cnts.extend( trans_overlap_cnts )
-    
-    rcl_and_prc_stats = calc_all_rcl_and_prc( total_cnts, overlap_cnts )
-    rcl_and_prc_string = make_rcl_prc_string( 
-        rcl_and_prc_stats, ref_fname, gtf_fname )
+                               build_maps_stats, out_prefix, output_stats )
+        
     if out_prefix == None:
         # dump stats to stdout
-        print rcl_and_prc_string + '\n'
+        print output_stats + '\n'
     else:
         # prepare formated stats output
-        op = [ rcl_and_prc_string, ]
+        op = [ str(output_stats), ]
         if build_maps_stats:
             op.append( make_class_cnts_string(
                     trans_class_cnts, ref_fname, gtf_fname ) )
