@@ -422,14 +422,18 @@ class Wiggle( dict ):
     @staticmethod
     def _fp_is_bedgraph( wig_fp ):
         wig_fp.seek(0)
-        print 
         data = wig_fp.readline().split()
         if not data[0].lower() == 'track':
+            wig_fp.seek(0)
             return False
+        
         meta_data = dict( item.split("=") for item in data[1:] )
         if 'type' not in meta_data:
+            wig_fp.seek(0)
             return False
+        
         if meta_data['type'].lower() != 'bedgraph':
+            wig_fp.seek(0)
             return False
         
         wig_fp.seek(0)
