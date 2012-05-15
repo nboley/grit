@@ -346,7 +346,7 @@ class Elements( object ):
             return [ (s,t) for s,t in sample_types_and_ids \
                          if s not in '*M' and t not in '*M' ]
     
-    def remove_element( self, fname ):
+    def remove_element( self, fname, commit=True ):
         print "REMOVING", fname
         # first, find the elements that depend on this elements
         # and remove them. 
@@ -354,7 +354,7 @@ class Elements( object ):
                + "  FROM dependencies \n" \
                + " WHERE dependency_fname = '{0}';"
         for dependent_fname, in self.conn.execute( deps_q.format( fname ) ):
-            self.remove_element( dependent_fname )
+            self.remove_element( dependent_fname, commit=False )
         
         # next, remove this element from the deps table
         q = "DELETE FROM dependencies WHERE sample_fname = '{0}';".format(fname)
@@ -364,7 +364,8 @@ class Elements( object ):
         q = "DELETE FROM samples WHERE fname = '{0}';".format( fname )
         self.conn.execute( q )
         
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         
         return
     
@@ -416,8 +417,12 @@ class Elements( object ):
             # database
             if status != 'finished' \
                     or self.element_has_changed( fname ):
-                self.remove_element( fname )
-                
+                self.remove_element( fname, commit=False )
+        
+        # we set commit to false in remove_element to speed up bulk deletes,
+        # so we need to commit now.
+        self.conn.commit()
+        
         return
     
     def __init__( self, elements_fp ):

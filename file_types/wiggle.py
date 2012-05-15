@@ -444,7 +444,7 @@ class Wiggle( dict ):
         
         return dict.__getitem__( self, key )
     
-    def __init__( self, chrm_sizes_fp, fps=[], strands=[ 'infer_from_fname', ] ):
+    def __init__( self, chrm_sizes_fp, fps=[], strands=[ 'infer_from_fname', ]):
         self.chrm_sizes = ChrmSizes( chrm_sizes_fp )
         
         # initialize wiggle arrays

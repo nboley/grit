@@ -169,7 +169,7 @@ def build_element_stats( ref_genes, t_genes, output_stats ):
         'Intron', len(r_introns), len(t_introns), intron_overlap )
 
     output_stats.add_recovery_stat( \
-        'Single Exon Transcript', len(r_se_genes), len(t_se_genes), 0 )
+        'Single Exon Transcripts', len(r_se_genes), len(t_se_genes), 0 )
     
     return
 

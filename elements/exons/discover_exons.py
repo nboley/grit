@@ -92,7 +92,7 @@ def get_possible_exon_bndrys( labels, boundaries, chrm_stop ):
     # get all labels that are either 'Ee'
     exon_indices = []
     for index, label in enumerate( labels ):
-        if label in 'Ee':
+        if label in ('Exon', 'exon_extension'):
             exon_indices.append( index )
     
     if len( exon_indices ) == 0:
@@ -113,7 +113,7 @@ def get_possible_exon_bndrys( labels, boundaries, chrm_stop ):
             for stop_i, stop_exon in enumerate(exon_grp[start_i:]):
                 stop_i += start_i
                 # skip grps that contain zero 'E''s
-                if not any( labels[index] == 'E' \
+                if not any( labels[index] == 'Exon' \
                                 for index in exon_grp[start_i:stop_i+1] ):
                     continue
                 # if this is the last region goes to the end of the chrm then
@@ -212,7 +212,7 @@ def calc_partially_retained_intron_regions(
     """
     # if this region is too small make it a potentially retained intron
     if stop - start + 1 < edge_bases_to_ignore:
-        return (start,), 'e'
+        return (start,), 'exon_extension'
     
     # get an iter over the bases that are in this region. 
     # we make the intron portion the portion that contains
@@ -260,9 +260,9 @@ def calc_partially_retained_intron_regions(
         num_intron_bases += 1
     
     if is_left_retained:
-        return ( start, stop - num_intron_bases + 1), "eI"
+        return ( start, stop - num_intron_bases + 1), ("exon_extension","I")
     else:
-        return ( start, start + num_intron_bases + 1), "Ie"
+        return ( start, start + num_intron_bases + 1), ("I","exon_extension")
     
     return
 
@@ -273,14 +273,15 @@ def check_for_retained_intron( left, mid, right):
         return 'I'
     
     # if this isn't next to an exon, it can't be retained
-    if left[0] not in 'eE' and right[0] not in 'eE':
+    if left[0] not in ('exon_extension', 'Exon') \
+            and right[0] not in ('exon_extension', 'Exon'):
         return 'I'
     
     # if only the region to the right is an exon
     if left[0] == 'L':
         # hck if the signal ratios are high enough for this to be retained
         if is_right_retained( mid[1], right[1] ):
-            return 'e'
+            return 'exon_extension'
         
         return 'I'
     
@@ -288,12 +289,13 @@ def check_for_retained_intron( left, mid, right):
     if right[0] in 'L':
         # check if signal ratios are high enough for this to be retained
         if is_left_retained( left[1], mid[1] ):
-            return 'e'
+            return 'exon_extension'
         
         return 'I'
     
     # if this is an intron surrounded by exons.
-    if left[0] in 'Ee' and right[0] in 'Ee':
+    if left[0] in ('exon_extension', 'Exon') \
+            and right[0] in ('exon_extension', 'Exon'):
         # determine if this region is possibly a retained intron
         # with respect ot both left and right boundaries
         left_retained = is_left_retained( left[1], mid[1] )
@@ -303,11 +305,11 @@ def check_for_retained_intron( left, mid, right):
         # left retained, then it is retained.
         # So change to exon extension
         if mid[1].is_small and ( right_retained or left_retained ):
-            return 'e'
+            return 'exon_extension'
         # if it's right retained *and* left retained, then 
         # mark this as an exon extension
         elif right_retained and left_retained:
-            return 'e'
+            return 'exon_extension'
         # otherwise, we try and split the exon if it's either 
         # right retained or left retained but not both
         elif left_retained:
@@ -404,15 +406,15 @@ def find_initial_label( prev_bt, bt, next_bt ):
     if bt == 'after_empty':
         assert next_bt != 'empty'
         if next_bt == 'intron': 
-            return 'E'
+            return 'Exon'
         # otherwise, if the next bndry is an exon, this is an extension
         else:
-            return 'e'
+            return 'exon_extension'
     
     # If this is a proper exon i.e. this boundary is an exon_start and
     # the next boundary is an intron_start or empty region
     if bt == 'exon' and next_bt in ( 'intron', 'empty' ):
-        return 'E'
+        return 'Exon'
     
     # if this is a proper intron i.e. this boundary is an intron_start 
     # and the next boundary is an exon_start or an empty region
@@ -422,85 +424,72 @@ def find_initial_label( prev_bt, bt, next_bt ):
     # otherwise, this is a possible exon extension, but should not be an
     # exon on its own
     # print >> sys.stderr, prev_bt, bt, next_bt
-    return 'e'
+    return 'exon_extension'
 
-def find_initial_boundaries_and_labels( read_cov, jns ):
-    all_boundaries = {}
-    all_labels = {}
-    
-    for key in jns:
-        if key not in read_cov:
+def find_initial_boundaries_and_labels( read_cov_obj, jns ):
+    boundary_types = {}
+    # add junctions to boundary types
+    for start, stop in jns:
+        # move the stop so that boundaries correspond to region starts
+        # ( ie, the start is an intron starty and the stop+1 is an 
+        # exon start )
+        stop += 1
+
+        # skip junctions in empty regions
+        if read_cov_obj.is_in_empty_region( start-1 ) \
+                or read_cov_obj.is_in_empty_region( stop ):
             continue
-        
-        read_cov_obj = ReadCoverageData( \
-            read_cov.zero_intervals[key], read_cov[key] )
-        
-        boundary_types = {}
-        # add junctions to boundary types
-        for start, stop in jns[key]:
-            # move the stop so that boundaries correspond to region starts
-            # ( ie, the start is an intron starty and the stop+1 is an 
-            # exon start )
-            stop += 1
-            
-            # skip junctions in empty regions
-            if read_cov_obj.is_in_empty_region( start-1 ) \
-                    or read_cov_obj.is_in_empty_region( stop ):
-                continue
-            
-            # add the start 
-            boundary_types[ start ] = "intron"
-            boundary_types[ stop ] = "exon"
-        
-        for start, stop in read_cov_obj.iter_empty_regions():
-            boundary_types[ start ] = "empty"
-            boundary_types[ stop+1 ] = "after_empty"
-        
-        # build the full set of boundaries and label them
-        boundaries = sorted( boundary_types )
-        labels = []
-        # deal with the first label
-        if boundary_types[ boundaries[0] ] == 'empty':
-            labels.append( 'N' )
-        elif boundary_types[ boundaries[1] ] == 'empty':
-            labels.append( 'E' )
-        else:
-            labels.append( 'E' )
-        
-        for prev_bndry, bndry, next_bndry in izip( \
-                    boundaries[:-2], boundaries[1:-1], boundaries[2:] ):
-            prev_bt = boundary_types[ prev_bndry ]
-            bt = boundary_types[ bndry ]
-            next_bt = boundary_types[ next_bndry ]
-            
-            labels.append( find_initial_label( prev_bt, bt, next_bt ) )
-            # if this is an empty region start, this is always an empty region
-            pass
 
-        # deal with the last label
-        if boundary_types[ boundaries[-1] ] == 'empty':
-            labels.append( 'N' )
-        elif boundary_types[ boundaries[-2] ] == 'empty':
-            labels.append( 'E' )
-        else:
-            labels.append( 'e' )
-        
+        # add the start 
+        boundary_types[ start ] = "intron"
+        boundary_types[ stop ] = "exon"
 
-        assert len( labels )  == len( boundaries )
+    for start, stop in read_cov_obj.iter_empty_regions():
+        boundary_types[ start ] = "empty"
+        boundary_types[ stop+1 ] = "after_empty"
 
-        # shrink the empty regions
-        if EMPTY_REGION_BNDRY_SHRINK > 0:
-            for i, label in enumerate( labels[1:] ):
-                if label == 'N':
-                    boundaries[ i+1 ] = boundaries[ i+1 ] \
-                        + EMPTY_REGION_BNDRY_SHRINK
-                    boundaries[ i+2 ] = boundaries[ i+2 ] \
-                        - EMPTY_REGION_BNDRY_SHRINK
-        
-        all_labels[ key ] = labels
-        all_boundaries[ key ] = boundaries
+    # build the full set of boundaries and label them
+    boundaries = sorted( boundary_types )
+    labels = []
+    # deal with the first label
+    if boundary_types[ boundaries[0] ] == 'empty':
+        labels.append( 'N' )
+    elif boundary_types[ boundaries[1] ] == 'empty':
+        labels.append( 'Exon' )
+    else:
+        labels.append( 'Exon' )
 
-    return all_boundaries, all_labels
+    for prev_bndry, bndry, next_bndry in izip( \
+                boundaries[:-2], boundaries[1:-1], boundaries[2:] ):
+        prev_bt = boundary_types[ prev_bndry ]
+        bt = boundary_types[ bndry ]
+        next_bt = boundary_types[ next_bndry ]
+
+        labels.append( find_initial_label( prev_bt, bt, next_bt ) )
+        # if this is an empty region start, this is always an empty region
+        pass
+
+    # deal with the last label
+    if boundary_types[ boundaries[-1] ] == 'empty':
+        labels.append( 'N' )
+    elif boundary_types[ boundaries[-2] ] == 'empty':
+        labels.append( 'Exon' )
+    else:
+        labels.append( 'exon_extension' )
+
+
+    assert len( labels )  == len( boundaries )
+
+    # shrink the empty regions
+    if EMPTY_REGION_BNDRY_SHRINK > 0:
+        for i, label in enumerate( labels[1:] ):
+            if label == 'N':
+                boundaries[ i+1 ] = boundaries[ i+1 ] \
+                    + EMPTY_REGION_BNDRY_SHRINK
+                boundaries[ i+2 ] = boundaries[ i+2 ] \
+                    - EMPTY_REGION_BNDRY_SHRINK
+
+    return labels, boundaries
 
 def refine_exon_extensions( labels, bndrys, read_cov ):
     new_labels = [ labels[0], ]
@@ -509,14 +498,14 @@ def refine_exon_extensions( labels, bndrys, read_cov ):
     for i, (prev, curr, next) in \
             enumerate(izip( labels[:-2], labels[1:-1], labels[2:] )):
         # if it's not an exon extension continue
-        if curr not in 'eE': 
+        if curr not in ('exon_extension', 'Exon'): 
             new_bndrys.append( bndrys[ i+1 ] )
             new_labels.append( curr )
             continue
         
         start, stop = bndrys[ i+1 ], bndrys[ i+2 ] - 1
 
-        if curr == 'e':
+        if curr == 'exon_extension':
             # if it's very short, and is next to a low coverage region
             # then always change it to low coverage
             # print >> sys.stderr, bndrys[ i+2 ], prev, curr, \
@@ -528,29 +517,29 @@ def refine_exon_extensions( labels, bndrys, read_cov ):
                 new_labels.append( 'L' )
             else:
                 new_bndrys.append( bndrys[ i+1 ] )
-                new_labels.append( 'e' )
+                new_labels.append( 'exon_extension' )
             continue
-        elif curr == 'E':
+        elif curr == 'Exon':
             # ignore potentially sengle exon genes
             if prev == 'L' and next == 'L':
                 new_bndrys.append( bndrys[ i+1 ] )
-                new_labels.append( 'E' )
+                new_labels.append( 'Exon' )
                 continue
             
             assert not( prev == 'L' and next == 'L' )
             # if this is a short canonical exon, we don't permit a merge. 
             if stop - start + 1 < 2*BIN_BOUNDRY_SIZE + EXON_SPLIT_SIZE + 1:
                 new_bndrys.append( bndrys[ i+1 ] )
-                new_labels.append( 'E' )
+                new_labels.append( 'Exon' )
                 continue
 
             try:
-                assert prev in 'eIL'
-                assert next in 'eIL'
+                assert prev in ('exon_extension','I','L')
+                assert next in ('exon_extension','I','L')
             except:
                 print >> sys.stderr, prev, curr, next
                 new_bndrys.append( bndrys[ i+1 ] )
-                new_labels.append( 'E' )
+                new_labels.append( 'Exon' )
                 continue
             
             rca = read_cov.rca[start:(stop+1)]
@@ -566,7 +555,7 @@ def refine_exon_extensions( labels, bndrys, read_cov ):
             # in the case where we have a gene followed by a single exon 
             # gene, to find the proper split ratio we can't look at the far
             # right because this is moving into a zero region
-            if prev in 'eI' and next == 'L' \
+            if prev in ('exon_extension','I') and next == 'L' \
                     and left_cov/global_min_cov > EXON_SPLIT_RATIO \
                     and right_cov/global_min_cov <= EXON_SPLIT_RATIO:
                 # moving in from the left boundary, find the location that the 
@@ -582,7 +571,7 @@ def refine_exon_extensions( labels, bndrys, read_cov ):
                 right_cov = window_covs[ right_cov_index ] + 1
             
             # similar to above, but for an 'l' to the left
-            elif prev == 'L' and next in 'eI' \
+            elif prev == 'L' and next in ('exon_extension','I') \
                     and right_cov/global_min_cov > EXON_SPLIT_RATIO \
                     and left_cov/global_min_cov <= EXON_SPLIT_RATIO:
                 # moving in from the left boundary, find the location that the 
@@ -599,7 +588,7 @@ def refine_exon_extensions( labels, bndrys, read_cov ):
             
             if right_bndry - left_bndry < 1:
                 new_bndrys.append( bndrys[ i+1 ] )
-                new_labels.append( 'E' )
+                new_labels.append( 'Exon' )
                 continue
             
             min_index = numpy.argmin( \
@@ -628,11 +617,11 @@ def refine_exon_extensions( labels, bndrys, read_cov ):
                 #         new_intron_stop+1, stop
                 assert start < new_intron_start < new_intron_stop+1 < stop
                 new_bndrys.extend((start, new_intron_start, new_intron_stop+1))
-                new_labels.extend( 'ELE' )
+                new_labels.extend( ('Exon','L','Exon') )
             else:
                 assert next != 'N'
                 new_bndrys.append( bndrys[ i+1 ] )
-                new_labels.append( 'E' )
+                new_labels.append( 'Exon' )
             
             continue
         
@@ -776,6 +765,10 @@ def parse_arguments():
     return args.plus_wig, args.minus_wig, args.junctions, \
         args.chrm_sizes_fname, out_fp, debug_fps, args.labels_fname
 
+def find_exons( zero_intervals, read_cov_array, boundaries ):
+    pass
+
+
 
 def main():
     plus_wig_fp, minus_wig_fp, jns_fp, chrm_sizes_fp, out_fp, \
@@ -802,35 +795,21 @@ def main():
     if VERBOSE: print 'Loading junctions.'
     jns = parse_junctions_file_dont_freeze( jns_fp )
     
-    if VERBOSE: print "Building boundaries."
-    bndrys, labels = find_initial_boundaries_and_labels( read_cov, jns )
-    
     # process each chrm, strand combination separately
     out_fp.write( "track name=%s\n" % "find_exons" )
-    keys = sorted( set( bndrys ) )
+    keys = sorted( set( jns ) )
     regions = []
     
-    for chrm, strand in keys:
-        # further threshold
-        chr_len = len( read_cov[(chrm, strand)] )
-        CENTER_RATIO = 100
-        for center in xrange(chr_len-LOC_THRESH_REG_SZ/2, \
-                                 chr_len-LOC_THRESH_REG_SZ/2, \
-                                 LOC_THRESH_REG_SZ/CENTER_RATIO):
-            full = read_cov[(chrm, strand)][\
-                center-LOC_THRESH_REG_SZ/2 : center+LOC_THRESH_REG_SZ/2]
-            middle = read_cov[(chrm, strand)][
-                center-LOC_THRESH_REG_SZ/CENTER_RATIO : \
-                    center+LOC_THRESH_REG_SZ/CENTER_RATIO]
-            #middle[ middle < full.mean()*LOC_THRESH_FRAC ] = 0
-            middle[ middle <= median(full) ] = 0
-        
+    for chrm, strand in keys:        
         read_cov_obj = ReadCoverageData( \
             read_cov.zero_intervals[(chrm, strand)], read_cov[(chrm, strand)] )
-
-        new_labels, new_bndrys = label_regions( \
-            read_cov_obj, bndrys[(chrm, strand)], labels[(chrm, strand)] )
         
+        labels, bndrys = find_initial_boundaries_and_labels( \
+            read_cov_obj, jns[(chrm, strand)] )
+        
+        new_labels, new_bndrys = label_regions( \
+            read_cov_obj, bndrys, labels )
+                
         # get exon boundaries from assigned labels and boundaries
         exon_bndrys, se_exon_bndrys = get_possible_exon_bndrys( \
             new_labels, new_bndrys, read_cov_obj.chrm_stop )
@@ -839,7 +818,7 @@ def main():
         # stops at an junction stop
         filtered_exon_bndrys = filter_exon_bndrys( \
             exon_bndrys, jns[ (chrm, strand) ] )
-        
+                
         regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
                              for start, stop in filtered_exon_bndrys )
         regions.extend( regions_iter )
