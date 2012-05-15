@@ -9,6 +9,10 @@ from copy import deepcopy
 
 from chrm_sizes import ChrmSizes
 
+sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
+                                      "./fast_wiggle_parser/" ) )
+from bedgraph import iter_bedgraph_tracks
+
 VERBOSE = False
 
 GenomicInterval = namedtuple('GenomicInterval', \
@@ -393,6 +397,43 @@ class Wiggle( dict ):
                           value )
         
         return
+    def add_cvg_from_bedgraph( self, fname, strand ):
+        for chrm_name, array in iter_bedgraph_tracks( fname ):
+            # strip the leading 'chr' for UCSC compatability
+            if chrm_name.startswith( 'chr' ):
+                chrm_name = chrm_name[3:]
+
+            if chrm_name not in self.chrm_sizes:
+                print >> sys.stderr, "WARNING: '%s' does not" % chrm_name \
+                    + "exist in the chrm lens file. Skipping this contig." 
+                continue
+
+            key = ( chrm_name, strand )
+            contig_size = self.chrm_sizes[ chrm_name ]
+            if len( array ) > contig_size:
+                print >> sys.stderr, "WARNING: Values extend past the end of " \
+                + "the '%s'. Truncating the array from %i to %i." \
+                % ( chrm_name, len(array), contig_size )
+
+            self[ key ][ :len(array) ] += array
+
+        return
+
+    @staticmethod
+    def _fp_is_bedgraph( wig_fp ):
+        wig_fp.seek(0)
+        print 
+        data = wig_fp.readline().split()
+        if not data[0].lower() == 'track':
+            return False
+        meta_data = dict( item.split("=") for item in data[1:] )
+        if 'type' not in meta_data:
+            return False
+        if meta_data['type'].lower() != 'bedgraph':
+            return False
+        
+        wig_fp.seek(0)
+        return True
     
     def load_data_from_fp( self, wig_fp, strand="infer_from_fname" ):
         # if we don't know the strand, try and infer it from
@@ -402,8 +443,13 @@ class Wiggle( dict ):
         else:
             if strand not in "+-":
                 raise ValueError, "Unrecognized strand '{0}'".format( strand )
+            
+        if self._fp_is_bedgraph( wig_fp ):        
+            fname = wig_fp.name
+            self.add_cvg_from_bedgraph( fname, strand )
+        else:
+            self.add_cvg_from_wiggle( wig_fp, strand )
         
-        self.add_cvg_from_wiggle( wig_fp, strand )
         self.reset_intervals()
         
         return
@@ -458,7 +504,7 @@ class Wiggle( dict ):
         if strands != ['infer_from_fname', ]:
             if len( fps ) != len( strands ):
                 raise ValueError, "If the strand is specified, the number " \
-                    + "of strand entries needs to be equal to the number of fps."
+                   + "of strand entries needs to be equal to the number of fps."
         else:
             strands = ["infer_from_fname"]*len( fps )
         
@@ -474,7 +520,11 @@ class Wiggle( dict ):
 
 def main():
     raise NotImplementedError
+    chrm_sizes_fp = open( sys.argv[1] )
+    fps = [ open( fname ) for fname in sys.argv[2:] ]
+    wiggle = Wiggle( chrm_sizes_fp, fps )
 
-if __name__ == "__main__":
+
+if __name__ == "__main__":    
     main()
 
