@@ -765,9 +765,24 @@ def parse_arguments():
     return args.plus_wig, args.minus_wig, args.junctions, \
         args.chrm_sizes_fname, out_fp, debug_fps, args.labels_fname
 
-def find_exons( zero_intervals, read_cov_array, boundaries ):
-    pass
+def find_exons_in_contig( read_cov_obj, jns ):
+    labels, bndrys = find_initial_boundaries_and_labels( \
+        read_cov_obj, jns )
 
+    new_labels, new_bndrys = label_regions( \
+        read_cov_obj, bndrys, labels )
+
+    # get exon boundaries from assigned labels and boundaries
+    exon_bndrys, se_exon_bndrys = get_possible_exon_bndrys( \
+        new_labels, new_bndrys, read_cov_obj.chrm_stop )
+
+    # filter out any exon that start with a junction start or 
+    # stops at an junction stop
+    filtered_exon_bndrys = filter_exon_bndrys( \
+        exon_bndrys, jns )
+    
+    return filtered_exon_bndrys, se_exon_bndrys
+    
 
 
 def main():
@@ -780,12 +795,6 @@ def main():
     if VERBOSE: print 'Loading read coverage data.'
     read_cov = Wiggle( chrm_sizes_fp, \
                                 [plus_wig_fp, minus_wig_fp], ['+','-'] )
-    """
-    if VERBOSE: print 'Thresholding wiggle.'
-    # threshold based upon region averages
-    smooth_cpy = read_cov.get_smoothed_copy( 10000, normalize=False )
-    read_cov.threshold_cvrg( read_cov, smooth_cpy, 0.1 )
-    """
     
     if VERBOSE: print 'Calculating zero intervals.'
     read_cov.calc_zero_intervals( empty_region_split_size )
@@ -803,24 +812,12 @@ def main():
     for chrm, strand in keys:        
         read_cov_obj = ReadCoverageData( \
             read_cov.zero_intervals[(chrm, strand)], read_cov[(chrm, strand)] )
-        
-        labels, bndrys = find_initial_boundaries_and_labels( \
-            read_cov_obj, jns[(chrm, strand)] )
-        
-        new_labels, new_bndrys = label_regions( \
-            read_cov_obj, bndrys, labels )
-                
-        # get exon boundaries from assigned labels and boundaries
-        exon_bndrys, se_exon_bndrys = get_possible_exon_bndrys( \
-            new_labels, new_bndrys, read_cov_obj.chrm_stop )
-        
-        # filter out any exon that start with a junction start or 
-        # stops at an junction stop
-        filtered_exon_bndrys = filter_exon_bndrys( \
-            exon_bndrys, jns[ (chrm, strand) ] )
-                
+
+        exon_bndrys, se_exon_bndrys = \
+            find_exons_in_contig( read_cov_obj, jns[(chrm, strand)])
+
         regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
-                             for start, stop in filtered_exon_bndrys )
+                             for start, stop in exon_bndrys )
         regions.extend( regions_iter )
 
         regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
