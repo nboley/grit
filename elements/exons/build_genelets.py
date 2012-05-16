@@ -184,8 +184,8 @@ def parse_arguments():
     global VERBOSE
     VERBOSE = args.verbose
     
-    if args.transcripts_gtf != None and \
-            (args.junctions_gff != None or args.exons_gff != None ):
+    if args.transcripts_gtf == None and \
+            (args.junctions_gff == None or args.exons_gff == None ):
         raise ValueError, "Must include either an annotation file, " \
             + "or both an exon and jn file."
     
@@ -224,6 +224,10 @@ def main():
     
     if VERBOSE:
         print >> sys.stderr, 'Clustering exons...'
+    print exons
+    print jns
+    return
+
     all_genelets = cluster_all_exons( exons, jns )
     
     if VERBOSE:

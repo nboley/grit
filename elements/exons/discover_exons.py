@@ -4,6 +4,7 @@ import numpy
 from collections import defaultdict, namedtuple
 from itertools import izip, chain, takewhile, count
 from scipy import median
+from build_genelets import cluster_exons
 
 # since some mismapped signal spills into intron
 # this many bases are ignored when finding 
@@ -45,7 +46,7 @@ LOC_THRESH_REG_SZ = 50000
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../", 'file_types'))
 from wiggle import Wiggle
-from junctions_file import parse_junctions_file_dont_freeze
+from junctions_file import parse_junctions_file
 from gtf_file import iter_gff_lines, GenomicInterval
 
 BinStats = namedtuple('BinStats', ['is_small', 'mean', 'lmn', 'rmn'] )
@@ -765,6 +766,23 @@ def parse_arguments():
     return args.plus_wig, args.minus_wig, args.junctions, \
         args.chrm_sizes_fname, out_fp, debug_fps, args.labels_fname
 
+def find_bndry_indices( bndries, exon ):
+    start_index = bndries.searchsorted( exon[0] )
+    index = start_index
+    while index < len( bndries ) and bndries[index] < exon[1]:
+        index += 1
+
+    return start_index, index-1
+
+def build_cluster_labels_and_bndrys( cluster_indices, bndrys, labels ):
+    if len( cluster_indices ) == 0:
+        raise ValueError, "A cluster must have at least one non-zero region."
+    
+    new_bndrys = [1,]
+    new_labels = ['N', ]
+
+    pass
+    
 def find_exons_in_contig( read_cov_obj, jns ):
     labels, bndrys = find_initial_boundaries_and_labels( \
         read_cov_obj, jns )
@@ -775,12 +793,27 @@ def find_exons_in_contig( read_cov_obj, jns ):
     # get exon boundaries from assigned labels and boundaries
     exon_bndrys, se_exon_bndrys = get_possible_exon_bndrys( \
         new_labels, new_bndrys, read_cov_obj.chrm_stop )
-
+        
     # filter out any exon that start with a junction start or 
     # stops at an junction stop
     filtered_exon_bndrys = filter_exon_bndrys( \
         exon_bndrys, jns )
     
+    bndries = numpy.array( new_bndrys )
+    exons = numpy.array( filtered_exon_bndrys )
+    clusters = cluster_exons( exons, jns )
+    for cluster in clusters:
+        cluster_bndry_indices = set()
+        for exon in cluster:
+            start_index, stop_index = find_bndry_indices( bndries, exon )
+            cluster_bndry_indices.update( xrange( stop_index, stop_index+1 ) )
+        cluster_bndry_indices = sorted( cluster_bndry_indices )
+        print cluster
+        print cluster_bndry_indices
+        assert False
+    
+    assert False
+
     return filtered_exon_bndrys, se_exon_bndrys
     
 
@@ -792,17 +825,17 @@ def main():
     # TUNING PARAMS
     empty_region_split_size = EMPTY_REGION_SPLIT_SIZE
     
-    if VERBOSE: print 'Loading read coverage data.'
+    if VERBOSE: print >> sys.stderr, 'Loading read coverage data.'
     read_cov = Wiggle( chrm_sizes_fp, \
                                 [plus_wig_fp, minus_wig_fp], ['+','-'] )
     
-    if VERBOSE: print 'Calculating zero intervals.'
+    if VERBOSE: print >> sys.stderr, 'Calculating zero intervals.'
     read_cov.calc_zero_intervals( empty_region_split_size )
     plus_wig_fp.close()
     minus_wig_fp.close()
 
-    if VERBOSE: print 'Loading junctions.'
-    jns = parse_junctions_file_dont_freeze( jns_fp )
+    if VERBOSE: print >> sys.stderr,  'Loading junctions.'
+    jns = parse_junctions_file( jns_fp )
     
     # process each chrm, strand combination separately
     out_fp.write( "track name=%s\n" % "find_exons" )
