@@ -770,7 +770,7 @@ def cluster_labels_and_bndrys( labels, bndrys, jns, chrm_stop  ):
         cluster_bndry_indices = set()
         for exon in cluster:
             start_index, stop_index = find_bndry_indices( bndries_array, exon )
-            cluster_bndry_indices.update( xrange( stop_index, stop_index+1 ) )
+            cluster_bndry_indices.update( xrange( start_index, stop_index+1 ) )
 
         cluster_bndry_indices = sorted( cluster_bndry_indices )
         
@@ -798,13 +798,6 @@ def find_exons_in_contig( read_cov_obj, jns ):
             ls, bs, read_cov_obj.chrm_stop )
         filtered_exons = filter_exon_bndrys( exon_bndrys, jns )
         exons.extend( filtered_exons )
-
-    """
-    exon_bndrys = get_possible_exon_bndrys( \
-        new_labels, new_bndrys, read_cov_obj.chrm_stop )
-    filtered_exons = filter_exon_bndrys( exon_bndrys, jns )
-    exons.extend( filtered_exons )
-    """
     
     se_genes = get_possible_single_exon_genes( \
         new_labels, new_bndrys, read_cov_obj.chrm_stop )
