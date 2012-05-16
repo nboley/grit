@@ -224,10 +224,6 @@ def main():
     
     if VERBOSE:
         print >> sys.stderr, 'Clustering exons...'
-    print exons
-    print jns
-    return
-
     all_genelets = cluster_all_exons( exons, jns )
     
     if VERBOSE:

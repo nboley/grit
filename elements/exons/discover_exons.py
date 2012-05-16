@@ -46,7 +46,7 @@ LOC_THRESH_REG_SZ = 50000
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../", 'file_types'))
 from wiggle import Wiggle
-from junctions_file import parse_junctions_file
+from junctions_file import parse_junctions_file_dont_freeze
 from gtf_file import iter_gff_lines, GenomicInterval
 
 BinStats = namedtuple('BinStats', ['is_small', 'mean', 'lmn', 'rmn'] )
@@ -125,6 +125,9 @@ def get_possible_exon_bndrys( labels, boundaries, chrm_stop ):
                     bndrys.append( ( boundaries[start_exon], \
                                          boundaries[stop_exon+1]-1 ) )
     
+    return bndrys
+
+def get_possible_single_exon_genes( labels, boundaries, chrm_stop ):
     se_bndrys = []
     # add the single exon genes
     for index, label in enumerate( labels[:-1] ):
@@ -133,7 +136,7 @@ def get_possible_exon_bndrys( labels, boundaries, chrm_stop ):
         se_bndrys.append( ( boundaries[index], \
                             boundaries[index+1]-1 ) )
             
-    return bndrys, se_bndrys
+    return se_bndrys
 
 def build_bins_stats( boundaries, labels, read_coverages ):
     def build_bin_stats( region_cvrg, start, stop):
@@ -715,6 +718,100 @@ def write_gff_lines( bndrys, chrm, strand, out_fp ):
     
     return
 
+def find_bndry_indices( bndries, exon ):
+    start_index = bndries.searchsorted( exon[0] )
+    index = start_index
+    while index < len( bndries ) and bndries[index] < exon[1]:
+        index += 1
+
+    return start_index, index-1
+
+def build_cluster_labels_and_bndrys( cluster_indices, bndrys, labels ):
+    if len( cluster_indices ) == 0:
+        raise ValueError, "A cluster must have at least one non-zero region."
+    
+    new_bndrys = [1, bndrys[cluster_indices[0]]]
+    new_labels = ['L', labels[cluster_indices[0]]]
+    
+    for prev_i, next_i in izip(cluster_indices[:-1], cluster_indices[1:]):
+        # if there is a space between the labels, add them in
+        if next_i - prev_i > 1:
+            new_bndrys.append( bndrys[prev_i+1] )
+            new_labels.append( 'L' )
+        
+        new_bndrys.append( bndrys[next_i] )
+        new_labels.append( labels[next_i] )
+    
+    # finally, add the ending, empty label ( if we're not 
+    # already at the last bndry )
+    if bndrys[cluster_indices[-1]] < bndrys[-1]:
+        new_bndrys.append( bndrys[cluster_indices[-1]+1] )
+        new_labels.append( 'L' )
+    
+    return new_bndrys, new_labels
+
+def cluster_labels_and_bndrys( labels, bndrys, jns, chrm_stop  ):
+    # get exon boundaries from assigned labels and boundaries
+    exon_bndrys = get_possible_exon_bndrys( \
+        labels, bndrys, chrm_stop )
+        
+    # filter out any exon that start with a junction start or 
+    # stops at an junction stop
+    filtered_exon_bndrys = filter_exon_bndrys( \
+        exon_bndrys, jns )
+    filtered_exon_bndrys = exon_bndrys
+    
+    bndries_array = numpy.array( bndrys )
+    exons = numpy.array( filtered_exon_bndrys )
+    clusters = cluster_exons( exons, jns )
+    clustered_labels = []
+    clustered_bndrys = []
+    for cluster in clusters:
+        cluster_bndry_indices = set()
+        for exon in cluster:
+            start_index, stop_index = find_bndry_indices( bndries_array, exon )
+            cluster_bndry_indices.update( xrange( stop_index, stop_index+1 ) )
+
+        cluster_bndry_indices = sorted( cluster_bndry_indices )
+        
+        cluster_bndrys, cluster_labels = build_cluster_labels_and_bndrys( 
+            cluster_bndry_indices, bndries_array, labels )
+        
+        clustered_labels.append( cluster_labels )
+        clustered_bndrys.append( cluster_bndrys )
+    
+    return clustered_labels, clustered_bndrys
+    
+def find_exons_in_contig( read_cov_obj, jns ):
+    labels, bndrys = find_initial_boundaries_and_labels( \
+        read_cov_obj, jns )
+
+    new_labels, new_bndrys = label_regions( \
+        read_cov_obj, bndrys, labels )
+
+    exons = []
+    clustered_labels, clustered_bndrys = cluster_labels_and_bndrys( 
+        new_labels, new_bndrys, jns, read_cov_obj.chrm_stop )
+    
+    for ls, bs in izip( clustered_labels, clustered_bndrys ):
+        exon_bndrys = get_possible_exon_bndrys( \
+            ls, bs, read_cov_obj.chrm_stop )
+        filtered_exons = filter_exon_bndrys( exon_bndrys, jns )
+        exons.extend( filtered_exons )
+
+    """
+    exon_bndrys = get_possible_exon_bndrys( \
+        new_labels, new_bndrys, read_cov_obj.chrm_stop )
+    filtered_exons = filter_exon_bndrys( exon_bndrys, jns )
+    exons.extend( filtered_exons )
+    """
+    
+    se_genes = get_possible_single_exon_genes( \
+        new_labels, new_bndrys, read_cov_obj.chrm_stop )
+    exons.extend( se_genes )
+    
+    return exons
+    
 def parse_arguments():
     import argparse
 
@@ -766,89 +863,6 @@ def parse_arguments():
     return args.plus_wig, args.minus_wig, args.junctions, \
         args.chrm_sizes_fname, out_fp, debug_fps, args.labels_fname
 
-def find_bndry_indices( bndries, exon ):
-    start_index = bndries.searchsorted( exon[0] )
-    index = start_index
-    while index < len( bndries ) and bndries[index] < exon[1]:
-        index += 1
-
-    return start_index, index-1
-
-def build_cluster_labels_and_bndrys( cluster_indices, bndrys, labels ):
-    if len( cluster_indices ) == 0:
-        raise ValueError, "A cluster must have at least one non-zero region."
-    
-    new_bndrys = [1, bndrys[cluster_indices[0]]]
-    new_labels = ['L', labels[cluster_indices[0]]]
-    
-    for prev_i, next_i in izip(cluster_indices[:-1], cluster_indices[1:]):
-        # if there is a space between the labels, add them in
-        if next_i - prev_i > 1:
-            new_bndrys.append( bndrys[prev_i+1] )
-            new_labels.append( 'L' )
-        
-        new_bndrys.append( bndrys[next_i] )
-        new_labels.append( labels[next_i] )
-    
-    # finally, add the ending, empty label ( if we're not 
-    # already at the last bndry )
-    if bndrys[cluster_indices[-1]] < bndrys[-1]:
-        new_bndrys.append( bndrys[cluster_indices[-1]+1] )
-        new_labels.append( 'L' )
-    
-    return new_bndrys, new_labels
-
-def cluster_labels_and_bndrys( labels, bndrys, jns, chrm_stop  ):
-    # get exon boundaries from assigned labels and boundaries
-    exon_bndrys, se_exon_bndrys = get_possible_exon_bndrys( \
-        labels, bndrys, chrm_stop )
-        
-    # filter out any exon that start with a junction start or 
-    # stops at an junction stop
-    filtered_exon_bndrys = filter_exon_bndrys( \
-        exon_bndrys, jns )
-    
-    bndries_array = numpy.array( bndrys )
-    exons = numpy.array( filtered_exon_bndrys )
-    clusters = cluster_exons( exons, jns )
-    clustered_labels = []
-    clustered_bndrys = []
-    for cluster in clusters:
-        cluster_bndry_indices = set()
-        for exon in cluster:
-            start_index, stop_index = find_bndry_indices( bndries_array, exon )
-            cluster_bndry_indices.update( xrange( stop_index, stop_index+1 ) )
-
-        cluster_bndry_indices = sorted( cluster_bndry_indices )
-        
-        cluster_bndrys, cluster_labels = build_cluster_labels_and_bndrys( 
-            cluster_bndry_indices, bndries_array, labels )
-        
-        clustered_labels.append( cluster_labels )
-        clustered_bndrys.append( cluster_bndrys )
-    
-    return clustered_labels, clustered_bndrys
-    
-def find_exons_in_contig( read_cov_obj, jns ):
-    labels, bndrys = find_initial_boundaries_and_labels( \
-        read_cov_obj, jns )
-
-    new_labels, new_bndrys = label_regions( \
-        read_cov_obj, bndrys, labels )
-
-    clustered_labels, clustered_bndrys = cluster_labels_and_bndrys( 
-        new_labels, new_bndrys, jns, read_cov_obj.chrm_stop )
-
-    for ls, bs in izip( clustered_labels, clustered_bndrys ):
-        print ls
-        print bs
-        print
-    
-    assert False
-
-    return filtered_exon_bndrys, se_exon_bndrys
-    
-
 
 def main():
     plus_wig_fp, minus_wig_fp, jns_fp, chrm_sizes_fp, out_fp, \
@@ -867,7 +881,7 @@ def main():
     minus_wig_fp.close()
 
     if VERBOSE: print >> sys.stderr,  'Loading junctions.'
-    jns = parse_junctions_file( jns_fp )
+    jns = parse_junctions_file_dont_freeze( jns_fp )
     
     # process each chrm, strand combination separately
     out_fp.write( "track name=%s\n" % "find_exons" )
@@ -878,15 +892,10 @@ def main():
         read_cov_obj = ReadCoverageData( \
             read_cov.zero_intervals[(chrm, strand)], read_cov[(chrm, strand)] )
 
-        exon_bndrys, se_exon_bndrys = \
-            find_exons_in_contig( read_cov_obj, jns[(chrm, strand)])
-
+        exon_bndrys = find_exons_in_contig( read_cov_obj, jns[(chrm, strand)])
+        
         regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
                              for start, stop in exon_bndrys )
-        regions.extend( regions_iter )
-
-        regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
-                             for start, stop in se_exon_bndrys )
         regions.extend( regions_iter )
     
     out_fp.write( "\n".join(iter_gff_lines( sorted(regions) )) + "\n" )
