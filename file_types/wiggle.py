@@ -414,7 +414,8 @@ class Wiggle( dict ):
                 print >> sys.stderr, "WARNING: Values extend past the end of " \
                 + "the '%s'. Truncating the array from %i to %i." \
                 % ( chrm_name, len(array), contig_size )
-
+                array = array[:contig_size]
+            
             self[ key ][ :len(array) ] += array
 
         return

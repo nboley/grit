@@ -66,6 +66,13 @@ def cluster_overlapping_genes( genes_groups ):
     
     for source_id, genes in enumerate(genes_groups):
         for gene_id, chrm, strand,  min_loc, max_loc, transcripts in genes:
+            try:
+                assert min_loc >= 0
+            except:
+                print gene_id, chrm, strand,  min_loc, max_loc
+                print transcripts
+                raise
+            
             genes_mapping[ ( source_id, gene_id ) ] = transcripts
             grpd_boundaries[ (chrm, strand) ].append(
                 ( (min_loc, max_loc), (source_id, gene_id) ))
@@ -78,6 +85,7 @@ def cluster_overlapping_genes( genes_groups ):
         
         curr_grp_max_loc = -1
         for ( min_loc, max_loc ), key in boundaries:
+            assert min_loc >= 0
             if min_loc <= curr_grp_max_loc:
                 clustered_bndries[(chrm, strand)][-1].append( key )
             else:

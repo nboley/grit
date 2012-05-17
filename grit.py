@@ -35,6 +35,7 @@ USE_SAMPLE_SPECIFIC_CAGE = True and BUILD_SAMPLE_SPECIFIC_EXONS
 USE_MERGED_JNS_FOR_EXONS = False
 USE_MERGED_EXONS_FOR_TRANSCRIPTS = False
 USE_SAMPLE_SPECIFIC_CAGE = True
+USE_MERGED_CAGE_SIGNAL_FOR_EXONS = True
 
 VERBOSE = True
 STRESS_TEST_DEP_FINDER = False
@@ -990,7 +991,7 @@ def build_all_exon_files( elements, pserver, output_prefix ):
     -o exons.all_tissues.gff 
     """
     def build_find_exons_cmds( sample_type, sample_id ):
-        call_template = "python {0} {1} {2} {3} -o {4}"
+        call_template = "python {0} {1} {2} {3} --cage-wigs {4} -o {5}"
         
         # find all of the merged rnaseq coverage files
         res = elements.get_elements_from_db( \
@@ -1007,13 +1008,28 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         else:
             res = elements.get_elements_from_db( \
                 "filtered_jns_gff", sample_type , sample_id, "." )
-            
         if len( res ) < 1:
             raise ValueError, "Can't find the jns gff file " \
                               + "necessary to build exons."
         assert len( res ) == 1
         jns_fname = res[0].fname
 
+
+
+        # find the merged CAGE signal files
+        if USE_MERGED_CAGE_SIGNAL_FOR_EXONS:
+            ress = elements.get_elements_from_db( \
+                "cage_cov_wig", "*" , "*" )
+        else:
+            raise NotImplemented, "Can't use sample specific CAGE wiggles yet."
+            ress = elements.get_elements_from_db( \
+                "filtered_jns_gff", sample_type , sample_id, "." )
+        if len( ress ) != 2:
+            raise ValueError, "Can't find the cage signal files " \
+                              + "necessary to build exons."
+        assert len( ress ) == 2
+        cage_wig_fnames = [ res.fname for res in ress ]
+        
         chrm_sizes_fname = elements.chr_sizes.get_tmp_fname( with_chr = True )
 
         output_fname = os.path.join( output_prefix, \
@@ -1021,8 +1037,8 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         output_fname = output_fname.replace( ".*", "" )
 
         call = call_template.format( FIND_EXONS_CMD, " ".join(bedgraph_fnames),\
-                            jns_fname, chrm_sizes_fname,   \
-                            output_fname, )
+                            jns_fname, chrm_sizes_fname, \
+                            " ".join(cage_wig_fnames), output_fname )
 
         output_fnames = [ output_fname, ]
         output_element_types = [ElementType( \

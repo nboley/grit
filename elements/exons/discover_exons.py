@@ -43,6 +43,13 @@ MIN_SE_GENE_AVG_READCOV = 10
 # LOC_THRESH_FRAC = 0.20
 LOC_THRESH_REG_SZ = 50000
 
+### CAGE TUUNING PARAMS
+CAGE_WINDOW_LEN = 120
+CAGE_MAX_SCORE_FRAC = 0.05
+CAGE_MIN_SCORE = 20
+# this is set in main
+CAGE_TOT_FRAC = None
+
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../", 'file_types'))
 from wiggle import Wiggle
@@ -495,7 +502,116 @@ def find_initial_boundaries_and_labels( read_cov_obj, jns ):
 
     return labels, boundaries
 
-def refine_exon_extensions( labels, bndrys, read_cov ):
+def check_exon_for_gene_merge( strand, start, stop, \
+                               prev_label, next_label, \
+                               read_cov, cage_cov):
+    # check to see if this exon merges 5' and 3' ends of a gene
+    try:
+        assert prev_label in ('exon_extension','I','L')
+        assert next_label in ('exon_extension','I','L')
+    except:
+        print >> sys.stderr, prev, curr, next
+        return [ start, ], [ 'Exon', ]
+    
+    rca = read_cov.rca[start:(stop+1)]
+    rca_cumsum = rca.cumsum()
+    window_covs = rca_cumsum[EXON_SPLIT_SIZE:] \
+        - rca_cumsum[:-EXON_SPLIT_SIZE]
+    left_cov = window_covs[0]
+    left_bndry = BIN_BOUNDRY_SIZE
+    right_cov = window_covs[-1]
+    right_bndry = len(rca)-BIN_BOUNDRY_SIZE
+    global_min_cov = window_covs[BIN_BOUNDRY_SIZE:-BIN_BOUNDRY_SIZE].min() + 1
+
+    # in the case where we have a gene followed by a single exon 
+    # gene, to find the proper split ratio we can't look at the far
+    # right because this is moving into a zero region
+    if prev_label in ('exon_extension','I') and next_label == 'L' \
+            and left_cov/global_min_cov > EXON_SPLIT_RATIO \
+            and right_cov/global_min_cov <= EXON_SPLIT_RATIO:
+        # moving in from the left boundary, find the location that the 
+        # ratio of left to right coverage exceeds EXON_SPLIT_RATIO
+        cr_low = lambda x: left_cov/(window_covs[x]+1)<EXON_SPLIT_RATIO
+        first_lc_index = list(takewhile( cr_low, count(1)))[-1] + 1
+
+        # now, find the max window to the right of this index. 
+        right_cov_index = numpy.argmax(window_covs[first_lc_index:]) \
+            + first_lc_index
+        right_bndry = right_cov_index
+        #print >> sys.stderr, right_cov, window_covs[ right_cov_index ] + 1
+        right_cov = window_covs[ right_cov_index ] + 1
+
+    # similar to above, but for an 'l' to the left
+    elif prev_label == 'L' and next_label in ('exon_extension','I') \
+            and right_cov/global_min_cov > EXON_SPLIT_RATIO \
+            and left_cov/global_min_cov <= EXON_SPLIT_RATIO:
+        # moving in from the left boundary, find the location that the 
+        # ratio of left to right coverage exceeds EXON_SPLIT_RATIO
+        cr_low = lambda x: right_cov/(window_covs[x]+1)<EXON_SPLIT_RATIO
+        first_lc_index = list(takewhile( \
+                cr_low, count(len(window_covs)-1, -1)))[-1] + 1
+
+        # now, find the max window to the left of this index. 
+        left_cov_index = numpy.argmax(window_covs[:first_lc_index])
+        #print >> sys.stderr, left_cov, window_covs[ left_cov_index ] + 1
+        left_cov = window_covs[ left_cov_index ] + 1
+        left_bndry = left_cov_index
+
+    if right_bndry - left_bndry < 1:
+        return [ start, ], [ 'Exon', ]
+
+    min_index = numpy.argmin( \
+        window_covs[left_bndry:right_bndry+1] ) + left_bndry
+    # add one to guard against divide zero, and remove low read cov
+    min_cov = window_covs[ min_index ] + 1            
+
+    # if this does not look like a gene merge exon...
+    if left_cov/min_cov < EXON_SPLIT_RATIO \
+            or right_cov/min_cov < EXON_SPLIT_RATIO:
+        assert next != 'N'
+        return [ start, ], [ 'Exon', ]
+    
+    new_intron_middle =  min_index + BIN_BOUNDRY_SIZE/2
+    # find the new intron boundaries. use the 95% of signal rule...
+    left_cumsum = rca_cumsum[:new_intron_middle]
+    pos = left_cumsum.searchsorted(left_cumsum[-1]*0.999)
+    new_intron_start = start + pos
+    # new_intron_start = start + new_intron_middle - BIN_BOUNDRY_SIZE/2
+
+    right_cumsum = rca_cumsum[new_intron_middle+1:] \
+        - rca_cumsum[new_intron_middle]
+    pos = right_cumsum.searchsorted(right_cumsum[-1]*(1-0.999))
+    new_intron_stop = start + new_intron_middle + pos
+    # new_intron_stop = start + new_intron_middle + BIN_BOUNDRY_SIZE/2
+
+    # calc cage stats
+    ds_read_cov = 0
+    ds_cage_cov = 0
+    if strand == '+':
+        ds_read_cov = read_cov.rca[ new_intron_stop+1:stop+1 ].sum()
+        ds_cage_cov = cage_cov[ new_intron_stop+1:stop+1 ].sum()
+    else:
+        ds_read_cov = read_cov.rca[ start:new_intron_start ].sum()
+        ds_cage_cov = cage_cov[ start:new_intron_start ].sum()
+
+    if ds_cage_cov < CAGE_MIN_SCORE \
+            or (ds_cage_cov/ds_read_cov) < CAGE_TOT_FRAC:
+        return [ start, ], [ 'Exon', ]
+
+    #print strand, start, new_intron_start, new_intron_stop+1, stop+1
+    #print "%e" % ( cage_cov.sum()/read_cov.rca.sum()  )
+    #print "%e" % (ds_cage_cov/ds_read_cov), ds_cage_cov, ds_read_cov
+    #raw_input()
+
+    #print >> sys.stderr, left_cov, min_cov, right_cov
+    #print >> sys.stderr, start, new_intron_start, \
+    #         new_intron_stop+1, stop
+    assert start < new_intron_start < new_intron_stop+1 < stop
+    new_bndrys = (start, new_intron_start, new_intron_stop+1)
+    new_labels = ('Exon','L','Exon')
+    return new_bndrys, new_labels
+
+def refine_exon_extensions( strand, labels, bndrys, read_cov, cage_cov ):
     new_labels = [ labels[0], ]
     new_bndrys = [ bndrys[0], ]
     
@@ -522,7 +638,6 @@ def refine_exon_extensions( labels, bndrys, read_cov ):
             else:
                 new_bndrys.append( bndrys[ i+1 ] )
                 new_labels.append( 'exon_extension' )
-            continue
         elif curr == 'Exon':
             # ignore potentially sengle exon genes
             if prev == 'L' and next == 'L':
@@ -536,105 +651,18 @@ def refine_exon_extensions( labels, bndrys, read_cov ):
                 new_bndrys.append( bndrys[ i+1 ] )
                 new_labels.append( 'Exon' )
                 continue
-
-            try:
-                assert prev in ('exon_extension','I','L')
-                assert next in ('exon_extension','I','L')
-            except:
-                print >> sys.stderr, prev, curr, next
-                new_bndrys.append( bndrys[ i+1 ] )
-                new_labels.append( 'Exon' )
-                continue
             
-            rca = read_cov.rca[start:(stop+1)]
-            rca_cumsum = rca.cumsum()
-            window_covs = rca_cumsum[EXON_SPLIT_SIZE:] \
-                - rca_cumsum[:-EXON_SPLIT_SIZE]
-            left_cov = window_covs[0]
-            left_bndry = BIN_BOUNDRY_SIZE
-            right_cov = window_covs[-1]
-            right_bndry = len(rca)-BIN_BOUNDRY_SIZE
-            global_min_cov = window_covs[BIN_BOUNDRY_SIZE:-BIN_BOUNDRY_SIZE].min() + 1
-
-            # in the case where we have a gene followed by a single exon 
-            # gene, to find the proper split ratio we can't look at the far
-            # right because this is moving into a zero region
-            if prev in ('exon_extension','I') and next == 'L' \
-                    and left_cov/global_min_cov > EXON_SPLIT_RATIO \
-                    and right_cov/global_min_cov <= EXON_SPLIT_RATIO:
-                # moving in from the left boundary, find the location that the 
-                # ratio of left to right coverage exceeds EXON_SPLIT_RATIO
-                cr_low = lambda x: left_cov/(window_covs[x]+1)<EXON_SPLIT_RATIO
-                first_lc_index = list(takewhile( cr_low, count(1)))[-1] + 1
-                
-                # now, find the max window to the right of this index. 
-                right_cov_index = numpy.argmax(window_covs[first_lc_index:]) \
-                    + first_lc_index
-                right_bndry = right_cov_index
-                #print >> sys.stderr, right_cov, window_covs[ right_cov_index ] + 1
-                right_cov = window_covs[ right_cov_index ] + 1
-            
-            # similar to above, but for an 'l' to the left
-            elif prev == 'L' and next in ('exon_extension','I') \
-                    and right_cov/global_min_cov > EXON_SPLIT_RATIO \
-                    and left_cov/global_min_cov <= EXON_SPLIT_RATIO:
-                # moving in from the left boundary, find the location that the 
-                # ratio of left to right coverage exceeds EXON_SPLIT_RATIO
-                cr_low = lambda x: right_cov/(window_covs[x]+1)<EXON_SPLIT_RATIO
-                first_lc_index = list(takewhile( \
-                        cr_low, count(len(window_covs)-1, -1)))[-1] + 1
-                
-                # now, find the max window to the left of this index. 
-                left_cov_index = numpy.argmax(window_covs[:first_lc_index])
-                #print >> sys.stderr, left_cov, window_covs[ left_cov_index ] + 1
-                left_cov = window_covs[ left_cov_index ] + 1
-                left_bndry = left_cov_index
-            
-            if right_bndry - left_bndry < 1:
-                new_bndrys.append( bndrys[ i+1 ] )
-                new_labels.append( 'Exon' )
-                continue
-            
-            min_index = numpy.argmin( \
-                window_covs[left_bndry:right_bndry+1] ) + left_bndry
-            # add one to guard against divide zero, and remove low read cov
-            min_cov = window_covs[ min_index ] + 1
-            
-            # if this looks like a gene merge exon...
-            if left_cov/min_cov > EXON_SPLIT_RATIO \
-                    and right_cov/min_cov > EXON_SPLIT_RATIO:
-                new_intron_middle =  min_index + BIN_BOUNDRY_SIZE/2
-                # find the new intron boundaries. use the 95% of signal rule...
-                left_cumsum = rca_cumsum[:new_intron_middle]
-                pos = left_cumsum.searchsorted(left_cumsum[-1]*0.999)
-                new_intron_start = start + pos
-                # new_intron_start = start + new_intron_middle - BIN_BOUNDRY_SIZE/2
-                
-                right_cumsum = rca_cumsum[new_intron_middle+1:] \
-                    - rca_cumsum[new_intron_middle]
-                pos = right_cumsum.searchsorted(right_cumsum[-1]*(1-0.999))
-                new_intron_stop = start + new_intron_middle + pos
-                # new_intron_stop = start + new_intron_middle + BIN_BOUNDRY_SIZE/2
-                
-                #print >> sys.stderr, left_cov, min_cov, right_cov
-                #print >> sys.stderr, start, new_intron_start, \
-                #         new_intron_stop+1, stop
-                assert start < new_intron_start < new_intron_stop+1 < stop
-                new_bndrys.extend((start, new_intron_start, new_intron_stop+1))
-                new_labels.extend( ('Exon','L','Exon') )
-            else:
-                assert next != 'N'
-                new_bndrys.append( bndrys[ i+1 ] )
-                new_labels.append( 'Exon' )
-            
-            continue
-        
-        print >> sys.stderr, curr
-        assert False
+            # check for merege
+            split_bndrys, split_labels, = check_exon_for_gene_merge( \
+                strand, start, stop, prev, next, read_cov, cage_cov)
+            new_bndrys.extend( split_bndrys )
+            new_labels.extend( split_labels )
+        else:
+            assert False
     
     return new_labels, new_bndrys
 
-def refine_single_exon_genes( read_coverage_array, labels, bndrys ):
+def refine_single_exon_genes( read_coverage_array, cage_array, labels, bndrys ):
     for i, (label, (start, stop)) in \
             enumerate(zip(labels, zip(bndrys[:-1], bndrys[1:]))):
         if label != 'S': 
@@ -654,14 +682,25 @@ def refine_single_exon_genes( read_coverage_array, labels, bndrys ):
         if read_cov_score < MIN_SE_GENE_AVG_READCOV:
             labels[i] = 'L'
             continue
+        
+        # find the cage coverage
+        cage_cov = float(cage_array[start:stop+1].sum())
+        if cage_cov < CAGE_MIN_SCORE:
+            labels[i] = 'L'
+            continue
 
+        read_cov = seg_rc_array_cumsum[-1]
+        if cage_cov/read_cov < CAGE_TOT_FRAC:
+            labels[i] = 'L'
+            continue            
+        
         labels[i] = 'S'
         # check to make 
         # print seg_rc_array
     
     return
 
-def label_regions( read_cov, bndrys, labels ):
+def label_regions( strand, read_cov, bndrys, labels, cage_cov ):
     # calculate stats for each bin. 
     stats = build_bins_stats( bndrys, labels, read_cov )
     
@@ -676,9 +715,10 @@ def label_regions( read_cov, bndrys, labels ):
     
     # remove exon extensions that neighbor low coverage 
     # regions or exons. 
-    labels, bndrys = refine_exon_extensions( labels, bndrys, read_cov )
+    labels, bndrys = refine_exon_extensions( \
+        strand, labels, bndrys, read_cov, cage_cov )
     
-    refine_single_exon_genes( read_cov.read_coverage_array, labels, bndrys )
+    refine_single_exon_genes( read_cov.rca, cage_cov, labels, bndrys )
     #iter_connected_regions( read_cov.read_coverage_array, labels, bndrys )
 
     return labels, bndrys
@@ -782,18 +822,74 @@ def cluster_labels_and_bndrys( labels, bndrys, jns, chrm_stop  ):
     
     return clustered_labels, clustered_bndrys
     
-def find_exons_in_contig( read_cov_obj, jns ):
+def find_tss_exon_indices( cage_cov, strand, bs, ls ):    
+    def score_tss_exon( cov ):
+        # get maximal tss coverage region accoss exon
+        cumsum_cvg_array = \
+            numpy.append(0, numpy.cumsum( cov ))
+        
+        # if the region is too short, return the total for the entire region
+        # but scale so that the average is correct
+        if len( cumsum_cvg_array ) <= CAGE_WINDOW_LEN:
+            return cumsum_cvg_array[-1]*( \
+                float( CAGE_WINDOW_LEN )/len( cumsum_cvg_array ) )
+        
+        # get the coverage total for every window in the interval of length
+        # window_len
+        score = ( cumsum_cvg_array[CAGE_WINDOW_LEN:] \
+                      - cumsum_cvg_array[:-CAGE_WINDOW_LEN] ).max()
+
+        return score
+    
+    # skip the first and the last labels because these are outside of the cluster
+    assert ls[0] == 'L'
+    assert ls[-1] == 'L'
+    scores = []
+    for index, ((start, stop), label) in \
+            enumerate(izip( izip(bs[1:-1], bs[2:]), ls[1:-1] )):
+        if label == 'L': continue
+        scores.append( (index+1, score_tss_exon( cage_cov[start:stop]) ) )
+
+    max_score = max( score for i, score in scores )
+    if max_score > CAGE_MIN_SCORE:
+        return [ i for i, score in scores \
+                 if float(score)/max_score > CAGE_MAX_SCORE_FRAC ]
+    else:
+        for index, ((start, stop), label) in \
+                enumerate(izip( izip(bs[1:-1], bs[2:]), ls[1:-1] )):
+            if label == 'L': continue
+            print cage_cov[start:stop]
+        
+        return []
+
+def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
     labels, bndrys = find_initial_boundaries_and_labels( \
         read_cov_obj, jns )
-
+    
     new_labels, new_bndrys = label_regions( \
-        read_cov_obj, bndrys, labels )
-
+        strand, read_cov_obj, bndrys, labels, cage_cov )
+    
     exons = []
     clustered_labels, clustered_bndrys = cluster_labels_and_bndrys( 
         new_labels, new_bndrys, jns, read_cov_obj.chrm_stop )
     
     for ls, bs in izip( clustered_labels, clustered_bndrys ):
+        """
+        # find tss exons
+        tss_indices = find_tss_exon_indices( cage_cov, strand, bs, ls )
+        if len( tss_indices ) == 0:
+            print bs
+            print ls
+            assert False
+            
+        for tss_index in tss_indices:
+            ls[ tss_index ] = 'TSS'
+        print ls
+        continue
+        """
+        if len( ls ) == 3 and ls[1] in ( 'Exon', 'exon_extension' ):
+            continue
+        
         exon_bndrys = get_possible_exon_bndrys( \
             ls, bs, read_cov_obj.chrm_stop )
         filtered_exons = filter_exon_bndrys( exon_bndrys, jns )
@@ -818,6 +914,9 @@ def parse_arguments():
         help='GTF format file of junctions(introns).')
     parser.add_argument( 'chrm_sizes_fname', type=file, \
         help='File with chromosome names and sizes.')
+
+    parser.add_argument( '--cage-wigs', type=file, nargs='+', \
+        help='wig files with cage reads, to identify tss exons.')
     
     parser.add_argument( '--out-fname', '-o', \
         help='Output file name. (default: stdout)')
@@ -853,14 +952,17 @@ def parse_arguments():
     global VERBOSE
     VERBOSE = args.verbose
     
-    return args.plus_wig, args.minus_wig, args.junctions, \
-        args.chrm_sizes_fname, out_fp, debug_fps, args.labels_fname
+    return (args.plus_wig, args.minus_wig), args.junctions, \
+        args.chrm_sizes_fname, args.cage_wigs, \
+       out_fp, debug_fps, args.labels_fname
 
 
 def main():
-    plus_wig_fp, minus_wig_fp, jns_fp, chrm_sizes_fp, out_fp, \
-        debug_fps, labels_fp = parse_arguments()
-
+    (plus_wig_fp, minus_wig_fp), \
+        jns_fp, chrm_sizes_fp,   \
+        cage_wig_fps, \
+        out_fp, debug_fps, labels_fp = parse_arguments()
+    
     # TUNING PARAMS
     empty_region_split_size = EMPTY_REGION_SPLIT_SIZE
     
@@ -872,7 +974,17 @@ def main():
     read_cov.calc_zero_intervals( empty_region_split_size )
     plus_wig_fp.close()
     minus_wig_fp.close()
-
+    read_cov_sum = sum( array.sum() for array in read_cov.itervalues() )
+    
+    # open the cage data
+    cage_cov = Wiggle( chrm_sizes_fp, cage_wig_fps, ['+','-'] )
+    cage_sum = sum( array.sum() for array in cage_cov.itervalues() )
+    
+    global CAGE_TOT_FRAC
+    CAGE_TOT_FRAC = (float(cage_sum)/read_cov_sum)*(1e-2)
+    
+    for cage_fp in cage_wig_fps: cage_fp.close()
+    
     if VERBOSE: print >> sys.stderr,  'Loading junctions.'
     jns = parse_junctions_file_dont_freeze( jns_fp )
     
@@ -884,8 +996,11 @@ def main():
     for chrm, strand in keys:        
         read_cov_obj = ReadCoverageData( \
             read_cov.zero_intervals[(chrm, strand)], read_cov[(chrm, strand)] )
-
-        exon_bndrys = find_exons_in_contig( read_cov_obj, jns[(chrm, strand)])
+        
+        cage_cov_array = cage_cov[ (chrm, strand) ]
+        
+        exon_bndrys = find_exons_in_contig( \
+            strand, read_cov_obj, jns[(chrm, strand)], cage_cov_array)
         
         regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
                              for start, stop in exon_bndrys )

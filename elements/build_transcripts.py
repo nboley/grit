@@ -348,7 +348,7 @@ def iter_single_exon_gene_gtf_lines( exons, jns, tss_exons, tes_exons ):
             if exon[0]-1 not in jn_bndries and exon[1]+1 not in jn_bndries:
                 #if tss_bndries.is_tss_exon( exon ): # \
                 #    #    and tes_bndries.is_tes_exon( exon ):
-                se_gene_exons[ cluster_id ].append( (exon[0]-400, exon[1]+400) )
+                se_gene_exons[ cluster_id ].append( (max(1,exon[0]-400), exon[1]+400) )
             
             # test to see if this is a TSS exon
             if len( inner_exons ) == 1 and 1 == len(se_gene_exons[ cluster_id ]):
