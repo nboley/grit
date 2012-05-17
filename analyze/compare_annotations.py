@@ -157,6 +157,14 @@ def build_element_stats( ref_genes, t_genes, output_stats ):
     tes_e_overlap = float( len( r_tes_exons.intersection( t_tes_exons ) ) )
     intron_overlap = float( len( r_introns.intersection( t_introns ) ) )
     
+    se_overlap = 0
+    for r_se_gene in r_se_genes:
+        for t_se_gene in t_se_genes:
+            if t_se_gene[0] - 50 < r_se_gene[0] \
+                    and t_se_gene[1] + 50 > r_se_gene[1]:
+                se_overlap += 1.0
+                break
+    
     # get total number of exons
     num_r_exons = sum( map( len, (r_int_exons, r_tss_exons, r_tes_exons) ) ) 
     num_t_exons = sum( map( len, (t_int_exons, t_tss_exons, t_tes_exons) ) )
@@ -177,7 +185,7 @@ def build_element_stats( ref_genes, t_genes, output_stats ):
         'Intron', len(r_introns), len(t_introns), intron_overlap )
 
     output_stats.add_recovery_stat( \
-        'Single Exon Transcripts', len(r_se_genes), len(t_se_genes), 0 )
+        'Single Exon Transcripts', len(r_se_genes), len(t_se_genes), se_overlap )
     
     return
 

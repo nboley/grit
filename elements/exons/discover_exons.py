@@ -662,43 +662,35 @@ def refine_exon_extensions( strand, labels, bndrys, read_cov, cage_cov ):
     
     return new_labels, new_bndrys
 
-def refine_single_exon_genes( read_coverage_array, cage_array, labels, bndrys ):
-    for i, (label, (start, stop)) in \
-            enumerate(zip(labels, zip(bndrys[:-1], bndrys[1:]))):
-        if label != 'S': 
-            continue
-        
-        if stop - start < MIN_SE_GENE_LEN+10:
-            labels[i] = 'L'
-            continue
-        
-        seg_rc_array = read_coverage_array[ start:stop -1 ]
-        seg_rc_array_cumsum = seg_rc_array.cumsum()
-        scores = seg_rc_array_cumsum[MIN_SE_GENE_LEN:] \
-                      - seg_rc_array_cumsum[:-MIN_SE_GENE_LEN]
-        read_cov_score = scores.max()/MIN_SE_GENE_LEN
-        # find if a region exists with sufficient read coverage. If it doesnt
-        # then continue
-        if read_cov_score < MIN_SE_GENE_AVG_READCOV:
-            labels[i] = 'L'
-            continue
-        
-        # find the cage coverage
-        cage_cov = float(cage_array[start:stop+1].sum())
-        if cage_cov < CAGE_MIN_SCORE:
-            labels[i] = 'L'
-            continue
+def refine_single_exon_gene_label(start, stop, read_coverage_array, cage_array):
+    # if it's too short
+    if stop - start < MIN_SE_GENE_LEN+10:
+        return 'L'
 
-        read_cov = seg_rc_array_cumsum[-1]
-        if cage_cov/read_cov < CAGE_TOT_FRAC:
-            labels[i] = 'L'
-            continue            
-        
-        labels[i] = 'S'
-        # check to make 
-        # print seg_rc_array
+    seg_rc_array = read_coverage_array[ start:stop -1 ]
+    seg_rc_array_cumsum = seg_rc_array.cumsum()
+    scores = seg_rc_array_cumsum[MIN_SE_GENE_LEN:] \
+                  - seg_rc_array_cumsum[:-MIN_SE_GENE_LEN]
+    read_cov_score = scores.max()/MIN_SE_GENE_LEN
+    # find if a region exists with sufficient read coverage. If it doesnt
+    # then continue
+    if read_cov_score < MIN_SE_GENE_AVG_READCOV:
+        return 'L'
     
-    return
+    # find the cage coverage
+    cage_cov = cage_array[start:stop+1]
+    cage_cov_score = score_tss_exon( cage_cov  )
+    if cage_cov_score < CAGE_MIN_SCORE:
+        return 'L'
+
+    """
+    read_cov = seg_rc_array_cumsum[-1]
+    cage_cov_sum = float( cage_cov.sum() )
+    if cage_cov_sum/read_cov < CAGE_TOT_FRAC:
+        return 'L'
+    """
+    
+    return 'S'
 
 def label_regions( strand, read_cov, bndrys, labels, cage_cov ):
     # calculate stats for each bin. 
@@ -718,7 +710,7 @@ def label_regions( strand, read_cov, bndrys, labels, cage_cov ):
     labels, bndrys = refine_exon_extensions( \
         strand, labels, bndrys, read_cov, cage_cov )
     
-    refine_single_exon_genes( read_cov.rca, cage_cov, labels, bndrys )
+    #refine_single_exon_genes( read_cov.rca, cage_cov, labels, bndrys )
     #iter_connected_regions( read_cov.read_coverage_array, labels, bndrys )
 
     return labels, bndrys
@@ -766,7 +758,7 @@ def find_bndry_indices( bndries, exon ):
 
     return start_index, index-1
 
-def build_cluster_labels_and_bndrys( cluster_indices, bndrys, labels ):
+def build_cluster_labels_and_bndrys(cluster_indices, bndrys, labels, chrm_stop):
     if len( cluster_indices ) == 0:
         raise ValueError, "A cluster must have at least one non-zero region."
     
@@ -787,6 +779,12 @@ def build_cluster_labels_and_bndrys( cluster_indices, bndrys, labels ):
     if bndrys[cluster_indices[-1]] < bndrys[-1]:
         new_bndrys.append( bndrys[cluster_indices[-1]+1] )
         new_labels.append( 'L' )
+    elif bndrys[cluster_indices[-1]] < chrm_stop:
+        new_bndrys.append( chrm_stop )
+        new_labels.append( 'L' )
+    else:
+        print >> sys.stderr, "LAST BNDRY: ", \
+            bndrys[cluster_indices[-1]], chrm_stop
     
     return new_bndrys, new_labels
 
@@ -815,34 +813,39 @@ def cluster_labels_and_bndrys( labels, bndrys, jns, chrm_stop  ):
         cluster_bndry_indices = sorted( cluster_bndry_indices )
         
         cluster_bndrys, cluster_labels = build_cluster_labels_and_bndrys( 
-            cluster_bndry_indices, bndries_array, labels )
+            cluster_bndry_indices, bndries_array, labels, chrm_stop )
         
         clustered_labels.append( cluster_labels )
         clustered_bndrys.append( cluster_bndrys )
     
     return clustered_labels, clustered_bndrys
     
-def find_tss_exon_indices( cage_cov, strand, bs, ls ):    
-    def score_tss_exon( cov ):
-        # get maximal tss coverage region accoss exon
-        cumsum_cvg_array = \
-            numpy.append(0, numpy.cumsum( cov ))
-        
-        # if the region is too short, return the total for the entire region
-        # but scale so that the average is correct
-        if len( cumsum_cvg_array ) <= CAGE_WINDOW_LEN:
-            return cumsum_cvg_array[-1]*( \
-                float( CAGE_WINDOW_LEN )/len( cumsum_cvg_array ) )
-        
-        # get the coverage total for every window in the interval of length
-        # window_len
-        score = ( cumsum_cvg_array[CAGE_WINDOW_LEN:] \
-                      - cumsum_cvg_array[:-CAGE_WINDOW_LEN] ).max()
+def score_tss_exon( cov ):
+    # get maximal tss coverage region accoss exon
+    cumsum_cvg_array = \
+        numpy.append(0, numpy.cumsum( cov ))
 
-        return score
-    
+    # if the region is too short, return the total for the entire region
+    # but scale so that the average is correct
+    if len( cumsum_cvg_array ) <= CAGE_WINDOW_LEN:
+        return cumsum_cvg_array[-1]*( \
+            float( CAGE_WINDOW_LEN )/len( cumsum_cvg_array ) )
+
+    # get the coverage total for every window in the interval of length
+    # window_len
+    score = ( cumsum_cvg_array[CAGE_WINDOW_LEN:] \
+                  - cumsum_cvg_array[:-CAGE_WINDOW_LEN] ).max()
+
+    return score
+
+def find_tss_exon_indices( cage_cov, strand, bs, ls ):        
     # skip the first and the last labels because these are outside of the cluster
     assert ls[0] == 'L'
+    if ls[-1] != 'L':
+        print >> sys.stderr, ls
+        print >> sys.stderr, bs
+        return []
+    
     assert ls[-1] == 'L'
     scores = []
     for index, ((start, stop), label) in \
@@ -858,7 +861,6 @@ def find_tss_exon_indices( cage_cov, strand, bs, ls ):
         for index, ((start, stop), label) in \
                 enumerate(izip( izip(bs[1:-1], bs[2:]), ls[1:-1] )):
             if label == 'L': continue
-            print cage_cov[start:stop]
         
         return []
 
@@ -874,21 +876,28 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
         new_labels, new_bndrys, jns, read_cov_obj.chrm_stop )
     
     for ls, bs in izip( clustered_labels, clustered_bndrys ):
-        """
+        # search for single exon genes
+        if len( ls ) == 3 and ls[1] in ( 'Exon', 'exon_extension' ):
+            start, stop = bs[1], bs[2]-1
+            new_label = refine_single_exon_gene_label(\
+                start, stop, read_cov_obj.rca, cage_cov)
+            if new_label == 'S': 
+                exons.append( (start, stop) )
+            else:
+                assert new_label == 'L'
+            
+            continue
+        
         # find tss exons
         tss_indices = find_tss_exon_indices( cage_cov, strand, bs, ls )
-        if len( tss_indices ) == 0:
-            print bs
-            print ls
-            assert False
-            
-        for tss_index in tss_indices:
-            ls[ tss_index ] = 'TSS'
-        print ls
-        continue
+        # if we can't find a TSS index, continue
         """
-        if len( ls ) == 3 and ls[1] in ( 'Exon', 'exon_extension' ):
+        if len( tss_indices ) == 0:
             continue
+            
+        #for tss_index in tss_indices:
+        #    ls[ tss_index ] = 'TSS'
+        """
         
         exon_bndrys = get_possible_exon_bndrys( \
             ls, bs, read_cov_obj.chrm_stop )

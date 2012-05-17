@@ -380,11 +380,12 @@ def main():
         print >> sys.stderr, 'Outputting all gene models...'
     write_transcripts( genes, jns, log_fp, out_fp, threads )
     
-
+    """
     se_gene_gtf_lines_iter = iter_single_exon_gene_gtf_lines( \
         exons, tss_exons, tes_exons, jns )
     out_fp.write( "\n".join(se_gene_gtf_lines_iter) + "\n" )
-        
+    """
+    
     return
 
 if __name__ == "__main__":
