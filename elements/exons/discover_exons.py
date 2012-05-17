@@ -108,7 +108,7 @@ def get_possible_exon_bndrys( labels, boundaries, chrm_stop ):
     # get all labels that are either 'Ee'
     exon_indices = []
     for index, label in enumerate( labels ):
-        if label in ('TSS', 'TES', 'T*S', 'Exon', 'exon_extension'):
+        if label in ('TSS', 'TES', 'T_S', 'Exon', 'exon_extension'):
             exon_indices.append( index )
     
     if len( exon_indices ) == 0:
@@ -733,65 +733,61 @@ def find_internal_exons( exon_bndrys, intron_starts, intron_stops ):
         if (not stop+1 in intron_starts) or (not start-1 in intron_stops):
             continue
 
+        assert stop > start
         internal_exons.append( (start, stop) )
     
     return internal_exons
 
-def find_TSS_exons( labels, bndrys, intron_starts, intron_stops, strand ):
+def find_T_S_exons(labels, bndrys, intron_starts, intron_stops, strand, is_tss):
+    assert is_tss in ( False, True )
+    assert strand in '-+'
+    if is_tss: distal_type_labels = ( 'TSS', 'T_S' )
+    else: distal_type_labels = ( 'TES', 'T_S' )
     # find the TSS starts
-    tss_exons = []
-    tss_start_indices = [ i for i, label in enumerate(labels) \
-                             if label in ('TSS', 'T_S') ]
-    for start_i in tss_start_indices:
-        start = bndrys[ start_i ]
-        # check to see if this alone is a TSS exon
-        if bndrys[ start_i+1 ] in intron_starts:
-            tss_exons.append( (start, bndrys[ start_i+1 ]-1) )
-        
-        if strand == '+': 
-            index_iter = xrange( start_i+1, len(bndrys) )
-        else:
-            assert strand == '-'
-            index_iter = xrange( start_i-1, -1, -1 )
-        
-        for stop_i in index_iter:
-            label = labels[ stop_i ]
-            # if we are not moving to an exon, break
-            if label not in ('exon_extension', 'Exon'):
-                break
-            
-            if bndrys[ stop_i ] in intron_starts:
-                tss_exons.append( (start, bndrys[ stop_i+1 ]-1) )
-            
-    return tss_exons            
-
-def find_TES_exons( labels, bndrys, intron_starts, intron_stops, strand ):
-    # find the TSS starts
-    tes_exons = []
-    tes_start_indices = [ i for i, label in enumerate(labels) \
-                             if label in ('TES', 'T_S') ]
-    for tes_region_index in tes_start_indices:
-        stop = bndrys[ tes_region_index+1 ]-1
+    t_s_exons = []
+    t_s_start_indices = [ i for i, label in enumerate(labels) \
+                              if label in distal_type_labels ]
+    for t_s_region_index in t_s_start_indices:
         # check to see if this alone is a TES exon
-        if bndrys[ tes_region_index ]-1 in intron_stops:
-            tes_exons.append( (bndrys[ tes_region_index ], stop) )
-        
-        if strand == '-': 
-            index_iter = xrange( tes_region_index+1, len(bndrys) )
+        if (is_tss and strand == '+') or ( not is_tss and strand == '-' ): 
+            index_iter = xrange( t_s_region_index, len(bndrys)-1 )
         else:
-            assert strand == '+'
-            index_iter = xrange( tes_region_index-1, -1, -1 )
+            index_iter = xrange( t_s_region_index, -1, -1 )
         
         for index in index_iter:
             label = labels[ index ]
             # if we are not moving to an exon, break
-            if label not in ('exon_extension', 'Exon'):
+            if index != t_s_region_index and \
+                    label not in ('exon_extension', 'Exon'):
                 break
+                        
+            stop = max( bndrys[ index+1 ], bndrys[ t_s_region_index+1 ] )-1
+            start = min( bndrys[ index ], bndrys[ t_s_region_index ] )
             
-            if bndrys[ index ]-1 in intron_stops:
-                tes_exons.append( (bndrys[ index ]-1, stop) )
-            
-    return tes_exons
+            # print t_s_region_index, index, start, stop
+
+            # check to see if it splices somewhere. SE genes are dealt with 
+            # seperately.
+            if ((is_tss and strand == '+') or ( not is_tss and strand == '-' )) \
+                    and stop+1 in intron_starts:
+                assert start < stop
+                t_s_exons.append( (start, stop) )
+            elif ((is_tss and strand == '-') or ( not is_tss and strand == '+' ))\
+                    and start-1 in intron_stops:
+                assert start < stop
+                t_s_exons.append( (start, stop) )
+    
+    """
+    print is_tss, strand
+    print labels
+    print bndrys
+    print t_s_start_indices
+    print t_s_exons
+    print sorted( intron_stops )
+    raw_input()
+    """
+    
+    return t_s_exons
 
 def filter_exon_bndrys( exon_bndrys, jn_bndrys ):
     """Filter out exons that start at a junction start or stop
@@ -969,7 +965,8 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
 
     intron_starts = set( jn[0] for jn in jns )
     intron_stops = set( jn[1] for jn in jns )
-    
+
+    all_exons = []
     all_seg_exons = []
     all_tss_exons = []
     all_internal_exons = []
@@ -1019,10 +1016,10 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
         
         internal_exons = find_internal_exons( \
             exon_bndrys, intron_starts, intron_stops )
-        tss_exons = find_TSS_exons( \
-            ls, bs, intron_starts, intron_stops, strand )
-        tes_exons = find_TES_exons( \
-            ls, bs, intron_starts, intron_stops, strand )
+        tss_exons = find_T_S_exons( \
+            ls, bs, intron_starts, intron_stops, strand, True )
+        tes_exons = find_T_S_exons( \
+            ls, bs, intron_starts, intron_stops, strand, False )
 
         """
         print ls
@@ -1041,11 +1038,12 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
         all_tss_exons.extend( tss_exons )
         all_internal_exons.extend( internal_exons )
         all_tes_exons.extend( tes_exons )
-        
+        all_exons.extend( exon_bndrys )
+    
     #se_genes = get_possible_single_exon_genes( \
     #    new_labels, new_bndrys, read_cov_obj.chrm_stop )
     
-    return all_seg_exons, all_tss_exons, all_internal_exons, all_tes_exons
+    return all_seg_exons, all_tss_exons, all_internal_exons, all_tes_exons, all_exons
     
 def parse_arguments():
     import argparse
@@ -1077,7 +1075,7 @@ def parse_arguments():
     args = parser.parse_args()
     
     OutFPS = namedtuple( "OutFPS", [\
-            "single_exon_genes", "tss_exons", "internal_exons", "tes_exons"])
+            "single_exon_genes", "tss_exons", "internal_exons", "tes_exons", "all_exons"])
     fps = []
     for field_name in OutFPS._fields:
         fps.append(open("%s.%s.gff" % (args.out_file_prefix, field_name), "w"))
@@ -1138,6 +1136,8 @@ def main():
     # process each chrm, strand combination separately
     for out_fp, track_name in zip( out_fps, out_fps._fields ):
         out_fp.write( "track name=%s\n" % track_name )
+
+    all_regions_iters = [ [], [], [], [], [] ]
     
     keys = sorted( set( jns ) )
     for chrm, strand in keys:        
@@ -1149,10 +1149,13 @@ def main():
         disc_grpd_exons = find_exons_in_contig( \
             strand, read_cov_obj, jns[(chrm, strand)], cage_cov_array)
         
-        for ofp, exons in zip( out_fps, disc_grpd_exons ):        
+        for container, exons in zip( all_regions_iters, disc_grpd_exons ):
             regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
                                  for start, stop in exons )
-            ofp.write( "\n".join(iter_gff_lines( sorted(regions_iter) )) + "\n" )
+            container.extend( regions_iter )
+    
+    for regions_iter, ofp in zip( all_regions_iters, out_fps ):
+        ofp.write( "\n".join(iter_gff_lines( sorted(regions_iter) )) + "\n")
     
     if debug_fps != None:
         for fp in [ fp for item in debug_fps.values() for fp in item ]:
