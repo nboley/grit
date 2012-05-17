@@ -46,9 +46,17 @@ LOC_THRESH_REG_SZ = 50000
 ### CAGE TUUNING PARAMS
 CAGE_WINDOW_LEN = 120
 CAGE_MAX_SCORE_FRAC = 0.05
-CAGE_MIN_SCORE = 20
+CAGE_MIN_SCORE = 5
 # this is set in main
 CAGE_TOT_FRAC = None
+
+
+### PolyA TUNEING PARAMS
+POLYA_WINDOW_LEN = 10
+POLYA_MAX_SCORE_FRAC = 0.05
+POLYA_MIN_SCORE = 2
+# this is set in main
+POLYA_TOT_FRAC = None
 
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../", 'file_types'))
@@ -100,7 +108,7 @@ def get_possible_exon_bndrys( labels, boundaries, chrm_stop ):
     # get all labels that are either 'Ee'
     exon_indices = []
     for index, label in enumerate( labels ):
-        if label in ('Exon', 'exon_extension'):
+        if label in ('TSS', 'TES', 'T*S', 'Exon', 'exon_extension'):
             exon_indices.append( index )
     
     if len( exon_indices ) == 0:
@@ -121,7 +129,7 @@ def get_possible_exon_bndrys( labels, boundaries, chrm_stop ):
             for stop_i, stop_exon in enumerate(exon_grp[start_i:]):
                 stop_i += start_i
                 # skip grps that contain zero 'E''s
-                if not any( labels[index] == 'Exon' \
+                if not any( labels[index] in ('Exon', 'TSS', 'T_S', 'TES') \
                                 for index in exon_grp[start_i:stop_i+1] ):
                     continue
                 # if this is the last region goes to the end of the chrm then
@@ -679,7 +687,7 @@ def refine_single_exon_gene_label(start, stop, read_coverage_array, cage_array):
     
     # find the cage coverage
     cage_cov = cage_array[start:stop+1]
-    cage_cov_score = score_tss_exon( cage_cov  )
+    cage_cov_score = score_distal_exon( cage_cov, CAGE_WINDOW_LEN  )
     if cage_cov_score < CAGE_MIN_SCORE:
         return 'L'
 
@@ -714,6 +722,76 @@ def label_regions( strand, read_cov, bndrys, labels, cage_cov ):
     #iter_connected_regions( read_cov.read_coverage_array, labels, bndrys )
 
     return labels, bndrys
+
+def find_internal_exons( exon_bndrys, intron_starts, intron_stops ):
+    internal_exons = []
+    for start, stop in exon_bndrys:
+        if start in intron_starts: continue
+        if stop in intron_stops: continue
+        # make sure that both boundaries are spliced. Distal exons are dealt 
+        # with seperately.
+        if (not stop+1 in intron_starts) or (not start-1 in intron_stops):
+            continue
+
+        internal_exons.append( (start, stop) )
+    
+    return internal_exons
+
+def find_TSS_exons( labels, bndrys, intron_starts, intron_stops, strand ):
+    # find the TSS starts
+    tss_exons = []
+    tss_start_indices = [ i for i, label in enumerate(labels) \
+                             if label in ('TSS', 'T_S') ]
+    for start_i in tss_start_indices:
+        start = bndrys[ start_i ]
+        # check to see if this alone is a TSS exon
+        if bndrys[ start_i+1 ] in intron_starts:
+            tss_exons.append( (start, bndrys[ start_i+1 ]-1) )
+        
+        if strand == '+': 
+            index_iter = xrange( start_i+1, len(bndrys) )
+        else:
+            assert strand == '-'
+            index_iter = xrange( start_i-1, -1, -1 )
+        
+        for stop_i in index_iter:
+            label = labels[ stop_i ]
+            # if we are not moving to an exon, break
+            if label not in ('exon_extension', 'Exon'):
+                break
+            
+            if bndrys[ stop_i ] in intron_starts:
+                tss_exons.append( (start, bndrys[ stop_i+1 ]-1) )
+            
+    return tss_exons            
+
+def find_TES_exons( labels, bndrys, intron_starts, intron_stops, strand ):
+    # find the TSS starts
+    tes_exons = []
+    tes_start_indices = [ i for i, label in enumerate(labels) \
+                             if label in ('TES', 'T_S') ]
+    for tes_region_index in tes_start_indices:
+        stop = bndrys[ tes_region_index+1 ]-1
+        # check to see if this alone is a TES exon
+        if bndrys[ tes_region_index ]-1 in intron_stops:
+            tes_exons.append( (bndrys[ tes_region_index ], stop) )
+        
+        if strand == '-': 
+            index_iter = xrange( tes_region_index+1, len(bndrys) )
+        else:
+            assert strand == '+'
+            index_iter = xrange( tes_region_index-1, -1, -1 )
+        
+        for index in index_iter:
+            label = labels[ index ]
+            # if we are not moving to an exon, break
+            if label not in ('exon_extension', 'Exon'):
+                break
+            
+            if bndrys[ index ]-1 in intron_stops:
+                tes_exons.append( (bndrys[ index ]-1, stop) )
+            
+    return tes_exons
 
 def filter_exon_bndrys( exon_bndrys, jn_bndrys ):
     """Filter out exons that start at a junction start or stop
@@ -764,7 +842,7 @@ def build_cluster_labels_and_bndrys(cluster_indices, bndrys, labels, chrm_stop):
     
     new_bndrys = [1, bndrys[cluster_indices[0]]]
     new_labels = ['L', labels[cluster_indices[0]]]
-    
+        
     for prev_i, next_i in izip(cluster_indices[:-1], cluster_indices[1:]):
         # if there is a space between the labels, add them in
         if next_i - prev_i > 1:
@@ -788,7 +866,7 @@ def build_cluster_labels_and_bndrys(cluster_indices, bndrys, labels, chrm_stop):
     
     return new_bndrys, new_labels
 
-def cluster_labels_and_bndrys( labels, bndrys, jns, chrm_stop  ):
+def cluster_labels_and_bndrys( labels, bndrys, jns, strand, chrm_stop  ):
     # get exon boundaries from assigned labels and boundaries
     exon_bndrys = get_possible_exon_bndrys( \
         labels, bndrys, chrm_stop )
@@ -802,6 +880,7 @@ def cluster_labels_and_bndrys( labels, bndrys, jns, chrm_stop  ):
     bndries_array = numpy.array( bndrys )
     exons = numpy.array( filtered_exon_bndrys )
     clusters = cluster_exons( exons, jns )
+        
     clustered_labels = []
     clustered_bndrys = []
     for cluster in clusters:
@@ -820,25 +899,26 @@ def cluster_labels_and_bndrys( labels, bndrys, jns, chrm_stop  ):
     
     return clustered_labels, clustered_bndrys
     
-def score_tss_exon( cov ):
+def score_distal_exon( cov, window_len ):
     # get maximal tss coverage region accoss exon
     cumsum_cvg_array = \
         numpy.append(0, numpy.cumsum( cov ))
 
     # if the region is too short, return the total for the entire region
     # but scale so that the average is correct
-    if len( cumsum_cvg_array ) <= CAGE_WINDOW_LEN:
+    if len( cumsum_cvg_array ) <= window_len:
         return cumsum_cvg_array[-1]*( \
-            float( CAGE_WINDOW_LEN )/len( cumsum_cvg_array ) )
+            float( window_len )/len( cumsum_cvg_array ) )
 
     # get the coverage total for every window in the interval of length
     # window_len
-    score = ( cumsum_cvg_array[CAGE_WINDOW_LEN:] \
-                  - cumsum_cvg_array[:-CAGE_WINDOW_LEN] ).max()
+    score = ( cumsum_cvg_array[window_len:] \
+                  - cumsum_cvg_array[:-window_len] ).max()
 
     return score
 
-def find_tss_exon_indices( cage_cov, strand, bs, ls ):        
+def find_distal_exon_indices( cov, find_upstream_exons, bs, ls, \
+                                  min_score, window_len, max_score_frac ):
     # skip the first and the last labels because these are outside of the cluster
     assert ls[0] == 'L'
     if ls[-1] != 'L':
@@ -846,23 +926,36 @@ def find_tss_exon_indices( cage_cov, strand, bs, ls ):
         print >> sys.stderr, bs
         return []
     
-    assert ls[-1] == 'L'
-    scores = []
-    for index, ((start, stop), label) in \
-            enumerate(izip( izip(bs[1:-1], bs[2:]), ls[1:-1] )):
-        if label == 'L': continue
-        scores.append( (index+1, score_tss_exon( cage_cov[start:stop]) ) )
-
-    max_score = max( score for i, score in scores )
-    if max_score > CAGE_MIN_SCORE:
-        return [ i for i, score in scores \
-                 if float(score)/max_score > CAGE_MAX_SCORE_FRAC ]
-    else:
+    # if we have signal data
+    if cov != None:
+        assert ls[-1] == 'L'
+        scores = []
         for index, ((start, stop), label) in \
                 enumerate(izip( izip(bs[1:-1], bs[2:]), ls[1:-1] )):
             if label == 'L': continue
-        
-        return []
+            scores.append( (index+1, score_distal_exon( \
+                        cov[start:stop], window_len) ) )
+
+        max_score = max( score for i, score in scores )
+        if max_score > min_score:
+            return [ i for i, score in scores \
+                     if float(score)/max_score > max_score_frac ]
+    
+    # if we don't have signal data
+    indices = []
+    if True == find_upstream_exons:
+        for i, (prev, cand) in enumerate(izip(ls[:-1], ls[1:])):
+           if prev == 'L' and \
+                   cand in ( 'Exon', 'exon_extension', 'TSS', 'T_S', 'TES' ): 
+               indices.append( i +1 )
+    else:
+        assert False == find_upstream_exons
+        for i, (cand, prev) in reversed(list(enumerate(zip(ls[:-1], ls[1:])))):
+           if prev == 'L' and \
+                   cand in ( 'Exon', 'exon_extension', 'TSS', 'T_S', 'TES' ): 
+               indices.append( i )
+    
+    return indices
 
 def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
     labels, bndrys = find_initial_boundaries_and_labels( \
@@ -871,9 +964,16 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
     new_labels, new_bndrys = label_regions( \
         strand, read_cov_obj, bndrys, labels, cage_cov )
     
-    exons = []
     clustered_labels, clustered_bndrys = cluster_labels_and_bndrys( 
-        new_labels, new_bndrys, jns, read_cov_obj.chrm_stop )
+        new_labels, new_bndrys, jns, strand, read_cov_obj.chrm_stop )
+
+    intron_starts = set( jn[0] for jn in jns )
+    intron_stops = set( jn[1] for jn in jns )
+    
+    all_seg_exons = []
+    all_tss_exons = []
+    all_internal_exons = []
+    all_tes_exons = []
     
     for ls, bs in izip( clustered_labels, clustered_bndrys ):
         # search for single exon genes
@@ -882,33 +982,70 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
             new_label = refine_single_exon_gene_label(\
                 start, stop, read_cov_obj.rca, cage_cov)
             if new_label == 'S': 
-                exons.append( (start, stop) )
+                all_seg_exons.append( (start, stop) )
             else:
                 assert new_label == 'L'
             
             continue
         
         # find tss exons
-        tss_indices = find_tss_exon_indices( cage_cov, strand, bs, ls )
+        tss_indices = find_distal_exon_indices( \
+            cage_cov, (strand=='+'), bs, ls, \
+            CAGE_MIN_SCORE, CAGE_WINDOW_LEN, CAGE_MAX_SCORE_FRAC )
+        
         # if we can't find a TSS index, continue
-        """
         if len( tss_indices ) == 0:
+            print "HERE", tss_indices
+            continue
+
+        tes_indices = find_distal_exon_indices( \
+            None, (strand=='-'), bs, ls, \
+            POLYA_MIN_SCORE, POLYA_WINDOW_LEN, POLYA_MAX_SCORE_FRAC )        
+        # if we can't find a TSS index, continue
+        if len( tes_indices ) == 0:
+            print "HERE2", tes_indices
             continue
             
-        #for tss_index in tss_indices:
-        #    ls[ tss_index ] = 'TSS'
-        """
+        for tss_index in tss_indices:
+            ls[ tss_index ] = 'TSS'
+        for tes_index in tes_indices:
+            if ls[ tes_index ] == 'TSS':
+                ls[ tes_index ] = 'T_S'
+            else:
+                ls[ tes_index ] = 'TES'
         
         exon_bndrys = get_possible_exon_bndrys( \
             ls, bs, read_cov_obj.chrm_stop )
-        filtered_exons = filter_exon_bndrys( exon_bndrys, jns )
-        exons.extend( filtered_exons )
+        
+        internal_exons = find_internal_exons( \
+            exon_bndrys, intron_starts, intron_stops )
+        tss_exons = find_TSS_exons( \
+            ls, bs, intron_starts, intron_stops, strand )
+        tes_exons = find_TES_exons( \
+            ls, bs, intron_starts, intron_stops, strand )
+
+        """
+        print ls
+        print bs
+        print exon_bndrys
+        print
+        print TSS_exons
+        print internal_exons
+        print TES_exons
+        print
+        #print sorted(intron_starts)
+        #print sorted(intron_stops)
+        raw_input()
+        """
+
+        all_tss_exons.extend( tss_exons )
+        all_internal_exons.extend( internal_exons )
+        all_tes_exons.extend( tes_exons )
+        
+    #se_genes = get_possible_single_exon_genes( \
+    #    new_labels, new_bndrys, read_cov_obj.chrm_stop )
     
-    se_genes = get_possible_single_exon_genes( \
-        new_labels, new_bndrys, read_cov_obj.chrm_stop )
-    exons.extend( se_genes )
-    
-    return exons
+    return all_seg_exons, all_tss_exons, all_internal_exons, all_tes_exons
     
 def parse_arguments():
     import argparse
@@ -927,8 +1064,8 @@ def parse_arguments():
     parser.add_argument( '--cage-wigs', type=file, nargs='+', \
         help='wig files with cage reads, to identify tss exons.')
     
-    parser.add_argument( '--out-fname', '-o', \
-        help='Output file name. (default: stdout)')
+    parser.add_argument( '--out-file_prefix', '-o', default="discovered_exons",\
+        help='Output file name. (default: discovered_exons)')
     parser.add_argument( '--labels-fname', '-l', type=file,\
         help='Output file name for the region labels.')
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
@@ -939,11 +1076,12 @@ def parse_arguments():
 
     args = parser.parse_args()
     
-    if args.make_debug_beds and not args.out_fname:
-        raise ValueError, \
-            "If you want debug beds you must choose an output filename."
-    
-    out_fp = open( args.out_fname, "w" ) if args.out_fname else sys.stdout
+    OutFPS = namedtuple( "OutFPS", [\
+            "single_exon_genes", "tss_exons", "internal_exons", "tes_exons"])
+    fps = []
+    for field_name in OutFPS._fields:
+        fps.append(open("%s.%s.gff" % (args.out_file_prefix, field_name), "w"))
+    ofps = OutFPS( *fps )
     
     # open debug filepointers if we chose that
     debug_fps = None
@@ -963,14 +1101,14 @@ def parse_arguments():
     
     return (args.plus_wig, args.minus_wig), args.junctions, \
         args.chrm_sizes_fname, args.cage_wigs, \
-       out_fp, debug_fps, args.labels_fname
+       ofps, debug_fps, args.labels_fname
 
 
 def main():
     (plus_wig_fp, minus_wig_fp), \
         jns_fp, chrm_sizes_fp,   \
         cage_wig_fps, \
-        out_fp, debug_fps, labels_fp = parse_arguments()
+        out_fps, debug_fps, labels_fp = parse_arguments()
     
     # TUNING PARAMS
     empty_region_split_size = EMPTY_REGION_SPLIT_SIZE
@@ -998,24 +1136,23 @@ def main():
     jns = parse_junctions_file_dont_freeze( jns_fp )
     
     # process each chrm, strand combination separately
-    out_fp.write( "track name=%s\n" % "find_exons" )
-    keys = sorted( set( jns ) )
-    regions = []
+    for out_fp, track_name in zip( out_fps, out_fps._fields ):
+        out_fp.write( "track name=%s\n" % track_name )
     
+    keys = sorted( set( jns ) )
     for chrm, strand in keys:        
         read_cov_obj = ReadCoverageData( \
             read_cov.zero_intervals[(chrm, strand)], read_cov[(chrm, strand)] )
         
         cage_cov_array = cage_cov[ (chrm, strand) ]
         
-        exon_bndrys = find_exons_in_contig( \
+        disc_grpd_exons = find_exons_in_contig( \
             strand, read_cov_obj, jns[(chrm, strand)], cage_cov_array)
         
-        regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
-                             for start, stop in exon_bndrys )
-        regions.extend( regions_iter )
-    
-    out_fp.write( "\n".join(iter_gff_lines( sorted(regions) )) + "\n" )
+        for ofp, exons in zip( out_fps, disc_grpd_exons ):        
+            regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
+                                 for start, stop in exons )
+            ofp.write( "\n".join(iter_gff_lines( sorted(regions_iter) )) + "\n" )
     
     if debug_fps != None:
         for fp in [ fp for item in debug_fps.values() for fp in item ]:

@@ -139,8 +139,7 @@ def main():
         for exons in exons_clusters:
             unique_exons = get_unique_internal_splice_exons( \
                 exons, strand, is_tss=False, max_bndry_exp=200 )
-
-            """
+            
             try:
                 filtered_exons = filter_exons_by_max_read_coverage( \
                     exons, tes_cvg[(chrm, strand)], \
@@ -152,19 +151,18 @@ def main():
                     % (chrm, strand, exons[0][0], exons[-1][1])
                 if VERBOSE:
                     print >> sys.stderr, err_str
-            """
-            
-            filtered_exons = []
-            if jns != None:
-                for start, stop in unique_exons:
-                    if strand == '+':
-                        if stop+1 not in jns[ (chrm, strand) ]:
-                            filtered_exons.append( (start, stop) )
-                    else:
-                        assert strand == '-'
-                        if start-1 not in jns[ (chrm, strand) ]:
-                            filtered_exons.append( (start, stop) )
 
+                filtered_exons = []
+                if jns != None:
+                    for start, stop in unique_exons:
+                        if strand == '+':
+                            if stop+1 not in jns[ (chrm, strand) ]:
+                                filtered_exons.append( (start, stop) )
+                        else:
+                            assert strand == '-'
+                            if start-1 not in jns[ (chrm, strand) ]:
+                                filtered_exons.append( (start, stop) )
+            
             refined_exons = refine_exon_bndrys( \
                 filtered_exons, tes_cvg, (chrm, strand), False, CVRG_FRACTION )
             

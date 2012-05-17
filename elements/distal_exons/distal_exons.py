@@ -235,11 +235,13 @@ def filter_clustered_exons( exons, cage_read_cvg, smooth_cage_read_cvg, jns,   \
         filtered_exons_2 = filter_exons_by_quantiles( \
             exons, cage_read_cvg, smooth_cage_read_cvg,
             threshold_frac, chrm, strand )
-        
-        filtered_exons = sorted( set(filtered_exons_1).intersection(\
-                filtered_exons_2) )
+
+        filtered_exons = sorted(set(filtered_exons_1))
+        #filtered_exons = sorted( set(filtered_exons_1).intersection(\
+        #        filtered_exons_2) )
 
     except ValueError, inst:
+        return []
         if str( inst ) != "No signal.":
             raise
         err_str = "WARNING: Region %s %s %s had no distal signal." \

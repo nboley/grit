@@ -72,7 +72,7 @@ BUILD_TRANSCRIPTS_CMD = os.path.join( os.path.dirname( __file__ ),
                               "./elements/", "build_transcripts.py" )
 
 MERGE_TRANSCRIPTS_CMD = os.path.join( os.path.dirname( __file__ ), 
-                              "./analyze/", "merge_transcripts.py" )
+                              "./elements/transcripts/", "merge_transcripts.py" )
 
 TRANS_CMP_CMD = os.path.join( os.path.dirname( __file__ ), 
                               "./analyze/", "compare_annotations.py" )
