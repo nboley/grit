@@ -44,7 +44,7 @@ LOC_THRESH_REG_SZ = 50000
 
 ### CAGE TUUNING PARAMS
 CAGE_WINDOW_LEN = 120
-CAGE_MAX_SCORE_FRAC = 0.05
+CAGE_MAX_SCORE_FRAC = 0.15
 CAGE_MIN_SCORE = 5
 # this is set in main
 CAGE_TOT_FRAC = None
@@ -778,16 +778,14 @@ def find_T_S_exons(labels, bndrys, intron_starts, intron_stops, strand, is_tss):
                 assert start < stop
                 t_s_exons.append( (start, stop) )
 
-    """
     print is_tss, strand
     print labels
     print bndrys
     print t_s_start_indices
     print t_s_exons
-    print sorted( intron_starts )
-    print sorted( intron_stops )
+    #print sorted( intron_starts )
+    #print sorted( intron_stops )
     raw_input()
-    """
     
     return t_s_exons
 
@@ -1030,7 +1028,7 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
             ls, bs, intron_starts, intron_stops, strand, False )
 
         
-        """
+        
         print ls
         print bs
         print exon_bndrys
@@ -1042,7 +1040,6 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
         #print sorted(intron_starts)
         #print sorted(intron_stops)
         raw_input()
-        """
         
         all_tss_exons.extend( tss_exons )
         all_internal_exons.extend( internal_exons )
@@ -1150,7 +1147,6 @@ def main():
     
     keys = sorted( set( jns ) )
     for chrm, strand in keys:        
-        if strand == '+': continue
         read_cov_obj = ReadCoverageData( \
             read_cov.zero_intervals[(chrm, strand)], read_cov[(chrm, strand)] )
         
