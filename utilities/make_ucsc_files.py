@@ -31,15 +31,39 @@ def write_filtered_gff( ifname, plus_ofname, minus_ofname, track_name ):
 
 def copy_exons():
     # extract stranded exon versions, and copy 
-    ifname = os.path.join( "./exons/", "discovered_exons.gff" )
+    ifname = os.path.join( "./exons/", "discovered_exons.internal_exons.gff" )
     plus_ofname = os.path.join( OP_DIR_NAME, "plus_exons.gff" )
     minus_ofname = os.path.join( OP_DIR_NAME, "minus_exons.gff" )
     track_name = "disc_exons"
     write_filtered_gff( ifname, plus_ofname, minus_ofname, track_name )
+
+    ifname = os.path.join( "./exons/", "discovered_exons.all_exons.gff" )
+    plus_ofname = os.path.join( OP_DIR_NAME, "all_plus_exons.gff" )
+    minus_ofname = os.path.join( OP_DIR_NAME, "all_minus_exons.gff" )
+    track_name = "all_exons"
+    write_filtered_gff( ifname, plus_ofname, minus_ofname, track_name )
     
     # copy the clustered exons
-    shutil.copy( os.path.join("./exons/", "clustered_exons.gff"), OP_DIR_NAME )
+    # shutil.copy( os.path.join("./exons/", "clustered_exons.gff"), OP_DIR_NAME )
 
+    return
+
+def copy_tsss():
+    ifname = os.path.join( "./exons/", "discovered_exons.tss_exons.gff" )
+    plus_ofname = os.path.join( OP_DIR_NAME, "cage_exons.plus.gff" )
+    minus_ofname = os.path.join( OP_DIR_NAME, "cage_exons.minus.gff" )
+    track_name = "cage_exons"
+    write_filtered_gff( ifname, plus_ofname, minus_ofname, track_name )
+    
+    return
+
+def copy_tess():
+    ifname = os.path.join( "./exons/", "discovered_exons.tes_exons.gff" )
+    plus_ofname = os.path.join( OP_DIR_NAME, "tes_exons.plus.gff" )
+    minus_ofname = os.path.join( OP_DIR_NAME, "tes_exons.minus.gff" )
+    track_name = "tes_exons"
+    write_filtered_gff( ifname, plus_ofname, minus_ofname, track_name )
+    
     return
 
 def copy_jns():
@@ -51,23 +75,6 @@ def copy_jns():
     
     return
 
-def copy_tsss():
-    ifname = os.path.join( "./tss_exons/", "discovered_cage_tss_exons.gff" )
-    plus_ofname = os.path.join( OP_DIR_NAME, "cage_exons.plus.gff" )
-    minus_ofname = os.path.join( OP_DIR_NAME, "cage_exons.minus.gff" )
-    track_name = "cage_exons"
-    write_filtered_gff( ifname, plus_ofname, minus_ofname, track_name )
-    
-    return
-
-def copy_tess():
-    ifname = os.path.join( "./tes_exons/", "discovered_polya_tes_exons.gff" )
-    plus_ofname = os.path.join( OP_DIR_NAME, "tes_exons.plus.gff" )
-    minus_ofname = os.path.join( OP_DIR_NAME, "tes_exons.minus.gff" )
-    track_name = "tes_exons"
-    write_filtered_gff( ifname, plus_ofname, minus_ofname, track_name )
-    
-    return
 
 def main():
     os.chdir( sys.argv[1] )

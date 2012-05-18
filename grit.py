@@ -61,12 +61,6 @@ MERGE_WIGS_CMD = os.path.join( os.path.dirname( __file__ ),
                               "./utilities/", "wiggle_merger.py" )
 BUILD_GENELETS_CMD = os.path.join( os.path.dirname( __file__ ), 
                             "./elements/exons/", "build_genelets.py" )
-DISC_CAGE_TSS_CMD = os.path.join( os.path.dirname( __file__ ), 
-                              "./elements/distal_exons/", \
-                                      "discover_tss_exons_from_cage_data.py" )
-DISC_POLYA_TES_CMD = os.path.join( os.path.dirname( __file__ ), 
-                              "./elements/distal_exons/", 
-                                   "discover_tes_exons_from_polya_reads.py" )
 
 BUILD_TRANSCRIPTS_CMD = os.path.join( os.path.dirname( __file__ ), 
                               "./elements/", "build_transcripts.py" )
@@ -101,8 +95,6 @@ RnaSeqDataTypes = [ "rnaseq_bam",
                     "cage_tss_exons_gff", 
                     "exons_gff",
                     "TF_exons_gff",
-                    "clustered_exons_gff",
-                    "TF_clustered_exons_gff",
                     "polya_reads_gff",
                     "polya_tes_exons_gff",
                     "transcripts_gtf",
@@ -305,7 +297,12 @@ class Elements( object ):
                               sample_type=None, 
                               sample_id=None,
                               strand=None ):
-        assert data_type in RnaSeqDataTypes
+        try:
+            assert data_type in RnaSeqDataTypes
+        except:
+            print data_type
+            raise
+        
         q_str = """
         SELECT  data_type, sample_type, sample_id, strand, fname, status
            FROM samples
@@ -983,15 +980,17 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         pass
         
     """
-    python ../get_elements/find_exons.py 
-    ../raw_elements/all_tissues.plus.wig 
-    ../raw_elements/all_tissues.minus.wig 
-    ../raw_elements/all_tissues.merged_junctions.gff 
-    ../raw_elements/dm3.chrom.sizes 
-    -o exons.all_tissues.gff 
+    python ~/grit/elements/exons/discover_exons.py 
+      read_cov_bedgraphs/rnaseq_cov.plus.bedGraph 
+      read_cov_bedgraphs/rnaseq_cov.minus.bedGraph 
+      junctions/merged.filtered.jns.gff 
+      /media/scratch/genomes/drosophila/dm3.chrom.sizes 
+      --cage-wigs ../chr2L_test_region_raw_data/cage/cage_marginal.chr2L.plus.wig 
+                  ../chr2L_test_region_raw_data/cage/cage_marginal.chr2L.minus.wig
+      --out-file-prefix=test
     """
     def build_find_exons_cmds( sample_type, sample_id ):
-        call_template = "python {0} {1} {2} {3} --cage-wigs {4} -o {5}"
+        call_template = "python {0} {1} {2} {3} --cage-wigs {4} --out-file-prefix {5}"
         
         # find all of the merged rnaseq coverage files
         res = elements.get_elements_from_db( \
@@ -1032,20 +1031,29 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         
         chrm_sizes_fname = elements.chr_sizes.get_tmp_fname( with_chr = True )
 
-        output_fname = os.path.join( output_prefix, \
-            "discovered_exons.%s.%s.gff" % ( sample_type, sample_id ) )
-        output_fname = output_fname.replace( ".*", "" )
-
+        output_fn_prefix = os.path.join( output_prefix, \
+            "discovered_exons.%s.%s" % ( sample_type, sample_id ) )
+        output_fn_prefix = output_fn_prefix.replace( ".*", "" )
+        
         call = call_template.format( FIND_EXONS_CMD, " ".join(bedgraph_fnames),\
                             jns_fname, chrm_sizes_fname, \
-                            " ".join(cage_wig_fnames), output_fname )
+                            " ".join(cage_wig_fnames), output_fn_prefix )
 
-        output_fnames = [ output_fname, ]
-        output_element_types = [ElementType( \
-                "exons_gff", sample_type, sample_id, "." ),]
+        extensions = [ ".internal_exons.gff",    \
+                       ".tss_exons.gff",  \
+                       ".tes_exons.gff" ]
+        
+        output_fnames = [output_fn_prefix + extension for extension in extensions]
+        output_element_types = [
+              ElementType( "exons_gff", sample_type, sample_id, "." ),
+              ElementType( "cage_tss_exons_gff", sample_type, sample_id, "." ),
+              ElementType( "polya_tes_exons_gff", sample_type, sample_id, "." )\
+        ]
+        
         dependency_fnames = [ jns_fname ]
         dependency_fnames.extend( bedgraph_fnames )
-
+        dependency_fnames.extend( cage_wig_fnames )
+        
         cmd = Cmd(call, output_element_types, output_fnames, dependency_fnames)
         pserver.add_process( cmd, Resource(1), Resource(1) )
 
@@ -1093,231 +1101,9 @@ def build_all_exon_files( elements, pserver, output_prefix ):
             build_merge_exons_cmds( sample_type )    
 
         # build the merged exons
-        build_merge_exons_cmds( )    
+        # build_merge_exons_cmds( )    
 
     
-    return
-
-def cluster_exons( elements, pserver, output_prefix, \
-                       input_exon_type="exons_gff",  \
-                       input_jn_type="filtered_jns_gff" ):
-    """
-    python build_genelets.py exons_gff junctions_gff --out_fname = OUT
-    """
-    if input_exon_type == 'exons_gff':
-        assert input_jn_type == "filtered_jns_gff"
-        output_element_type = "clustered_exons_gff"
-        output_base_prefix = "clustered_exons"
-    elif input_exon_type == 'TF_exons_gff':
-        assert input_jn_type == "TF_jns_gff"
-        output_element_type = "TF_clustered_exons_gff"
-        output_base_prefix = "TF_filt_clustered_exons"
-    else:
-        assert False
-    
-    def cluster_exons( sample_type, sample_id=None ):
-        # get the merged exons
-        if sample_id == None:
-            sample_id = 'M'
-        res = elements.get_elements_from_db( \
-            input_exon_type, sample_type, sample_id )
-        assert len( res ) == 1
-        merged_exons_fname = res[0].fname
-
-        # get the merged junctions
-        jn_sample_id = '*' if sample_id == 'M' else sample_id
-        res = elements.get_elements_from_db( \
-            input_jn_type, sample_type, jn_sample_id )
-        assert len( res ) == 1
-        merged_jns_fname = res[0].fname
-
-        op_fname = os.path.join( output_prefix, \
-            "%s.%s.%s.gff" % ( output_base_prefix, sample_type, sample_id ) )
-        op_fname = op_fname.replace( ".*", "" )
-        
-        cmd_tem = "python {0} --exons {1} --junctions-gff {2} --out_fname {3}"
-        cmd_str = cmd_tem.format( \
-            BUILD_GENELETS_CMD, merged_exons_fname, merged_jns_fname, op_fname )
-
-        op_element_types = [ \
-            ElementType( output_element_type, sample_type, sample_id, "." ), ]
-        op_fnames = [ op_fname,]
-        
-        dependencies = [merged_exons_fname, merged_jns_fname]
-        cmd = Cmd( cmd_str, op_element_types, op_fnames, dependencies )
-        pserver.add_process( cmd, Resource(1) )
-
-    if BUILD_SAMPLE_SPECIFIC_EXONS:
-        sample_types_and_ids = elements.get_distinct_element_types_and_ids( \
-            [ input_exon_type, input_jn_type ], get_merged=False )    
-        
-        for sample_type, sample_id in sample_types_and_ids:
-            cluster_exons( sample_type, sample_id )    
-        
-        sample_types = set( st for st, sid in sample_types_and_ids )
-        for sample_type, sample_id in sample_types_and_ids:
-            cluster_exons( sample_type )    
-    
-    cluster_exons( '*', '*' )
-    
-    return
-
-def build_cage_tss_exons( elements, pserver, output_prefix, filter_with_rnaseq=False ):
-    """
-    python ../get_elements/get_tss_exons.py
-        [--tss_reads_wigs [TSS_READS_WIGS [TSS_READS_WIGS ...]]]
-        [--tss_reads_nc_wigs [TSS_READS_NC_WIGS [TSS_READS_NC_WIGS ...]]]
-        [--clustered_exons_gff CLUSTERED_EXONS_GFF]
-        [--chrm_sizes_fname CHRM_SIZES_FNAME]
-        [--out_fname OUT_FNAME] [--verbose
-        
-        [--transcripts_gtfs [TRANSCRIPTS_GTFS [TRANSCRIPTS_GTFS ...]]]
-        [--tss_gffs [TSS_GFFS [TSS_GFFS ...]]]
-
-    """
-    try:
-        os.makedirs( output_prefix )
-    except OSError:
-        # assume that the directory already exists, and continue
-        pass
-
-    def build_mk_cage_cmd( sample_type ):
-        # get the cage coverage wiggles
-        ress = elements.get_elements_from_db( "cage_cov_wig", "*", "*"  )
-        if len( ress ) != 2:
-            raise ValueError, "Can't build CAGE TSSs without CAGE read cov files."
-        cage_cov_fnames = [ res.fname for res in ress ]
-
-        # get the nc wigs ( the merged RNA seq data )
-        if filter_with_rnaseq:
-            ress = elements.get_elements_from_db( \
-                "rnaseq_cov_bedgraph", sample_type, "*" )
-            cage_NC_cov_fnames = [ res.fname for res in ress ]
-        else:
-            cage_NC_cov_fnames = []
-
-        # get the exons
-        if USE_MERGED_EXONS_FOR_TSS_EXONS: 
-            exons_sample_type = "*"
-        else:
-            exons_sample_type = sample_type        
-        exons_sample_id = "M" if exons_sample_type != '*' else '*'
-        
-        res = elements.get_elements_from_db( \
-            "clustered_exons_gff", exons_sample_type, exons_sample_id )
-        assert len( res ) == 1
-        clustered_merged_exons_fname = res[0].fname
-
-        res = elements.get_elements_from_db( "filtered_jns_gff", sample_type, "*" )
-        assert len( res ) == 1
-        jns_fname = res[0].fname
-        
-        output_fname = os.path.join( \
-            output_prefix, "discovered_cage_tss_exons.%s.gff" % sample_type)
-        output_fname = output_fname.replace(".*", "")
-
-        call  = "python %s " %  DISC_CAGE_TSS_CMD
-        call += "--chrm-sizes {0} ".format( \
-            elements.chr_sizes.get_tmp_fname( with_chr = False ) )
-        call += "--clustered-exons {0} ".format( clustered_merged_exons_fname )
-
-        call += "--cage-read-wigs {0} ".format( " ".join(cage_cov_fnames) )
-
-        call += "--junctions-gff {0} ".format( jns_fname )
-
-        # cage read nc wigs is not implemented
-        #if len( cage_NC_cov_fnames ) > 0:
-        #    call += "--cage-read-nc-wigs {0} ".format( " ".join(cage_NC_cov_fnames))
-        #call += "--smooth-coverage-for-quantile "
-        call += " > {0} ".format( output_fname ) 
-        
-        op_element_types = [ \
-            ElementType( "cage_tss_exons_gff", sample_type, "*", "." ), ]
-        op_fnames = [ output_fname,]
-        dependencies = [ clustered_merged_exons_fname, ]
-        dependencies.extend( cage_cov_fnames )
-        dependencies.extend( cage_NC_cov_fnames )
-        cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-        pserver.add_process( cmd, Resource(1) )
-    
-    ip_etypes = [ "clustered_exons_gff", "rnaseq_cov_bedgraph" ]
-    element_types = sorted( set( i[0] for i in  \
-            elements.get_distinct_element_types_and_ids( ip_etypes, False ) ) )
-
-    if USE_SAMPLE_SPECIFIC_CAGE:
-        for element_type in element_types:
-            build_mk_cage_cmd( element_type )
-    else:
-        build_mk_cage_cmd( "*" )
-    
-    build_mk_cage_cmd( "*" )
-    
-    return
-
-
-def build_polya_tes_exons( elements, pserver, \
-                               output_prefix, filter_with_rnaseq=False ):
-    """
-    python ~/slide/trunk/slide/distal_exons/discover_tes_exons_from_polya_reads.py 
-    --chrm-sizes /media/scratch/genomes/drosophila/dm3.chrom.sizes.nochr 
-    --clustered-exons exons/clustered_exons.gff 
-    --polya-read-gffs chr4_raw/chr4.polyas.gff 
-    --polya-read-nc-wigs /media/scratch/NEW_RNA_ELEMENTS/read_cov_wigs/rnaseq_cov.plus.bedGraph 
-                         /media/scratch/NEW_RNA_ELEMENTS/read_cov_wigs/rnaseq_cov.minus.bedGraph  
-    --verbose 
-         > test.tes_exons.gff
-    """
-    try:
-        os.makedirs( output_prefix )
-    except OSError:
-        # assume that the directory already exists, and continue
-        pass
-    
-    # get the polya reads
-    ress = elements.get_elements_from_db( "polya_reads_gff", "*", "*"  )
-    if len( ress ) == 0:
-        raise ValueError, "Can't build POLYA TESs without POLYA reads file."
-    polya_read_fnames = [ res.fname for res in ress ]
-    
-    if filter_with_rnaseq:
-        # get the nc wigs ( the merged RNA seq data )
-        ress = elements.get_elements_from_db( "rnaseq_cov_bedgraph", "*", "*" )
-        tes_reads_nc_wig_fnames = [ res.fname for res in ress ]
-    else:
-        tes_reads_nc_wig_fnames = []
-    
-    # get the merged exons
-    res = elements.get_elements_from_db( "clustered_exons_gff", "*", "*" )
-    assert len( res ) == 1
-    clustered_merged_exons_fname = res[0].fname
-
-    res = elements.get_elements_from_db( "filtered_jns_gff", "*", "*" )
-    assert len( res ) == 1
-    jns_fname = res[0].fname
-    
-    output_fname = os.path.join(output_prefix, "discovered_polya_tes_exons.gff")
-    
-    call  = "python %s " %  DISC_POLYA_TES_CMD
-    call += "--chrm-sizes {0} ".format( \
-        elements.chr_sizes.get_tmp_fname( with_chr = False ) )
-    call += "--clustered-exons {0} ".format( clustered_merged_exons_fname )
-
-    call += "--polya-read-gffs {0} ".format( " ".join(polya_read_fnames) )
-    if len( tes_reads_nc_wig_fnames ) > 0:
-        call += "--polya-read-nc-wigs {0} ".format( \
-            " ".join(tes_reads_nc_wig_fnames) )
-    call += "--junctions-gff {0} ".format( jns_fname )
-    call += " --out-fname {0} ".format( output_fname ) 
-    
-    op_element_types = [ \
-        ElementType( "polya_tes_exons_gff", "*", "*", "." ), ]
-    op_fnames = [ output_fname,]
-    dependencies = [ clustered_merged_exons_fname, ]
-    dependencies.extend( polya_read_fnames )
-    dependencies.extend( tes_reads_nc_wig_fnames )
-    cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-    pserver.add_process( cmd, Resource(1) )
-
     return
 
 def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False ):
@@ -1339,11 +1125,11 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         pass
 
     if use_TF_elements:
-        exon_input_type = 'TF_clustered_exons_gff'
+        exon_input_type = 'TF_exons_gff'
         jn_input_type = 'TF_jns_gff'
         transcript_output_type = "TF_filt_element_transcripts_gtf"
     else:
-        exon_input_type = 'clustered_exons_gff'
+        exon_input_type = 'exons_gff'
         jn_input_type = 'filtered_jns_gff'
         transcript_output_type = "transcripts_gtf"
         
@@ -1363,16 +1149,27 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         exons_fname = ress[0].fname
 
         # get tss exons
-        cage_st = sample_type if USE_SAMPLE_SPECIFIC_CAGE else "*"
-        ress = elements.get_elements_from_db("cage_tss_exons_gff", cage_st, "*" )
+        if not USE_MERGED_EXONS_FOR_TRANSCRIPTS and BUILD_SAMPLE_SPECIFIC_EXONS:
+            ress = elements.get_elements_from_db(\
+                "cage_tss_exons_gff", sample_type, sample_id)
+        else:
+            ress = elements.get_elements_from_db(\
+                "cage_tss_exons_gff", "*", "*" )
+
         assert len( ress ) == 1
         
         tss_exons_fnames = [ ress[0].fname, ]
         ress = elements.get_elements_from_db( "cdna_tss_gff" )
         tss_exons_fnames.extend( e.fname for e in ress )
-
+        
         # get tes exons
-        ress = elements.get_elements_from_db( "polya_tes_exons_gff", "*", "*"  )
+        if not USE_MERGED_EXONS_FOR_TRANSCRIPTS and BUILD_SAMPLE_SPECIFIC_EXONS:
+            ress = elements.get_elements_from_db( \
+                "polya_tes_exons_gff", sample_type, sample_id  )
+        else:
+            ress = elements.get_elements_from_db( \
+                "polya_tes_exons_gff", "*", "*"  )
+        
         assert len( ress ) == 1
         tes_exons_fnames = [ ress[0].fname, ]
         ress = elements.get_elements_from_db( "cdna_tes_gff" )
@@ -1639,13 +1436,13 @@ def main():
     
     build_all_exon_files( elements, pserver, base_dir + "exons" )
     
-    cluster_exons( elements, pserver, base_dir + "exons", \
-                       "exons_gff", "filtered_jns_gff" )
+    #cluster_exons( elements, pserver, base_dir + "exons", \
+    #                   "exons_gff", "filtered_jns_gff" )
 
-    build_polya_tes_exons( elements, pserver, base_dir + "tes_exons" )
-    build_cage_tss_exons( elements, pserver, base_dir + "tss_exons" )
-    extract_cdna_elements( \
-        elements, pserver, base_dir + "tss_exons", base_dir + "tes_exons" )
+    #build_polya_tes_exons( elements, pserver, base_dir + "tes_exons" )
+    #build_cage_tss_exons( elements, pserver, base_dir + "tss_exons" )
+    #extract_cdna_elements( \
+    #    elements, pserver, base_dir + "tss_exons", base_dir + "tes_exons" )
     
     build_transcripts( elements, pserver, base_dir + "transcripts" )
 

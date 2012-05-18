@@ -13,8 +13,6 @@ BASES_TO_IGNORE_IN_RETAIN = 15
 # region adjacent to boundaries defined by junctions and empty space over 
 # which to find collect cvrg stats for retained intron signal
 BIN_BOUNDRY_SIZE = 20
-# not implemented yet
-BIN_BOUNDRY_RATIO = 0.3
 # maximum ratio for retained intron bndry cvrg stats
 MAX_RETAIN_RATIO = 10.0
 # fraction of coverage within intron to include 
@@ -36,6 +34,7 @@ EMPTY_REGION_SPLIT_SIZE = 80
 EMPTY_REGION_BNDRY_SHRINK = 0
 
 MAX_EXON_SIZE = 50000
+MIN_EXON_LEN = 25
 
 MIN_SE_GENE_LEN = 500
 MIN_SE_GENE_AVG_READCOV = 10
@@ -53,7 +52,7 @@ CAGE_TOT_FRAC = None
 
 ### PolyA TUNEING PARAMS
 POLYA_WINDOW_LEN = 10
-POLYA_MAX_SCORE_FRAC = 0.05
+POLYA_MAX_SCORE_FRAC = 0.20
 POLYA_MIN_SCORE = 2
 # this is set in main
 POLYA_TOT_FRAC = None
@@ -239,7 +238,7 @@ def calc_partially_retained_intron_regions(
     # reads in the region. If the intron is left retained, 
     # that means that we want to start counting reads from 
     # the left: if it's right retained we want to count from
-    # the right side. This means that ( for efficeincy )
+    # the right side. This means that ( for efficiency )
     # we can start counting from the opposite side,
     # and stop when we've counted 1 - FRAC of the reads. 
 
@@ -591,7 +590,7 @@ def check_exon_for_gene_merge( strand, start, stop, \
     pos = right_cumsum.searchsorted(right_cumsum[-1]*(1-0.999))
     new_intron_stop = start + new_intron_middle + pos
     # new_intron_stop = start + new_intron_middle + BIN_BOUNDRY_SIZE/2
-
+    
     # calc cage stats
     ds_read_cov = 0
     ds_cage_cov = 0
@@ -605,7 +604,7 @@ def check_exon_for_gene_merge( strand, start, stop, \
     if ds_cage_cov < CAGE_MIN_SCORE \
             or (ds_cage_cov/ds_read_cov) < CAGE_TOT_FRAC:
         return [ start, ], [ 'Exon', ]
-
+    
     #print strand, start, new_intron_start, new_intron_stop+1, stop+1
     #print "%e" % ( cage_cov.sum()/read_cov.rca.sum()  )
     #print "%e" % (ds_cage_cov/ds_read_cov), ds_cage_cov, ds_read_cov
@@ -733,7 +732,10 @@ def find_internal_exons( exon_bndrys, intron_starts, intron_stops ):
         if (not stop+1 in intron_starts) or (not start-1 in intron_stops):
             continue
 
+        if stop == start: continue
         assert stop > start
+        if stop - start < MIN_EXON_LEN: continue
+        
         internal_exons.append( (start, stop) )
     
     return internal_exons
@@ -748,7 +750,6 @@ def find_T_S_exons(labels, bndrys, intron_starts, intron_stops, strand, is_tss):
     t_s_start_indices = [ i for i, label in enumerate(labels) \
                               if label in distal_type_labels ]
     for t_s_region_index in t_s_start_indices:
-        # check to see if this alone is a TES exon
         if (is_tss and strand == '+') or ( not is_tss and strand == '-' ): 
             index_iter = xrange( t_s_region_index, len(bndrys)-1 )
         else:
@@ -768,21 +769,22 @@ def find_T_S_exons(labels, bndrys, intron_starts, intron_stops, strand, is_tss):
 
             # check to see if it splices somewhere. SE genes are dealt with 
             # seperately.
-            if ((is_tss and strand == '+') or ( not is_tss and strand == '-' )) \
+            if ((is_tss and strand == '+') or ( not is_tss and strand == '-' ))\
                     and stop+1 in intron_starts:
                 assert start < stop
-                t_s_exons.append( (start, stop) )
-            elif ((is_tss and strand == '-') or ( not is_tss and strand == '+' ))\
+                t_s_exons.append( (start, stop) )                
+            elif ((is_tss and strand == '-') or (not is_tss and strand == '+'))\
                     and start-1 in intron_stops:
                 assert start < stop
                 t_s_exons.append( (start, stop) )
-    
+
     """
     print is_tss, strand
     print labels
     print bndrys
     print t_s_start_indices
     print t_s_exons
+    print sorted( intron_starts )
     print sorted( intron_stops )
     raw_input()
     """
@@ -913,8 +915,10 @@ def score_distal_exon( cov, window_len ):
 
     return score
 
-def find_distal_exon_indices( cov, find_upstream_exons, bs, ls, \
-                                  min_score, window_len, max_score_frac ):
+def find_distal_exon_indices( cov, find_upstream_exons,  \
+                              intron_starts, intron_stops, \
+                              bs, ls, \
+                              min_score, window_len, max_score_frac ):
     # skip the first and the last labels because these are outside of the cluster
     assert ls[0] == 'L'
     if ls[-1] != 'L':
@@ -942,13 +946,15 @@ def find_distal_exon_indices( cov, find_upstream_exons, bs, ls, \
     if True == find_upstream_exons:
         for i, (prev, cand) in enumerate(izip(ls[:-1], ls[1:])):
            if prev == 'L' and \
-                   cand in ( 'Exon', 'exon_extension', 'TSS', 'T_S', 'TES' ): 
-               indices.append( i +1 )
+                   cand in ( 'Exon', 'exon_extension', 'TSS', 'T_S', 'TES' ) \
+                   and bs[i+1]-1 not in intron_stops : 
+               indices.append( i+1 )
     else:
         assert False == find_upstream_exons
         for i, (cand, prev) in reversed(list(enumerate(zip(ls[:-1], ls[1:])))):
            if prev == 'L' and \
-                   cand in ( 'Exon', 'exon_extension', 'TSS', 'T_S', 'TES' ): 
+                   cand in ( 'Exon', 'exon_extension', 'TSS', 'T_S', 'TES' ) \
+                   and bs[i+1] not in intron_starts: 
                indices.append( i )
     
     return indices
@@ -987,20 +993,22 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
         
         # find tss exons
         tss_indices = find_distal_exon_indices( \
-            cage_cov, (strand=='+'), bs, ls, \
+            cage_cov, (strand=='+'), intron_starts, intron_stops,
+            bs, ls, \
             CAGE_MIN_SCORE, CAGE_WINDOW_LEN, CAGE_MAX_SCORE_FRAC )
         
         # if we can't find a TSS index, continue
         if len( tss_indices ) == 0:
-            print "HERE", tss_indices
+            #print "HERE", tss_indices
             continue
 
         tes_indices = find_distal_exon_indices( \
-            None, (strand=='-'), bs, ls, \
+            None, (strand=='-'), intron_starts, intron_stops, \
+            bs, ls, \
             POLYA_MIN_SCORE, POLYA_WINDOW_LEN, POLYA_MAX_SCORE_FRAC )        
         # if we can't find a TSS index, continue
         if len( tes_indices ) == 0:
-            print "HERE2", tes_indices
+            #print "HERE2", tes_indices
             continue
             
         for tss_index in tss_indices:
@@ -1021,20 +1029,21 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
         tes_exons = find_T_S_exons( \
             ls, bs, intron_starts, intron_stops, strand, False )
 
+        
         """
         print ls
         print bs
         print exon_bndrys
         print
-        print TSS_exons
+        print tss_exons
         print internal_exons
-        print TES_exons
+        print tes_exons
         print
         #print sorted(intron_starts)
         #print sorted(intron_stops)
         raw_input()
         """
-
+        
         all_tss_exons.extend( tss_exons )
         all_internal_exons.extend( internal_exons )
         all_tes_exons.extend( tes_exons )
@@ -1062,7 +1071,7 @@ def parse_arguments():
     parser.add_argument( '--cage-wigs', type=file, nargs='+', \
         help='wig files with cage reads, to identify tss exons.')
     
-    parser.add_argument( '--out-file_prefix', '-o', default="discovered_exons",\
+    parser.add_argument( '--out-file-prefix', '-o', default="discovered_exons",\
         help='Output file name. (default: discovered_exons)')
     parser.add_argument( '--labels-fname', '-l', type=file,\
         help='Output file name for the region labels.')
@@ -1141,6 +1150,7 @@ def main():
     
     keys = sorted( set( jns ) )
     for chrm, strand in keys:        
+        if strand == '+': continue
         read_cov_obj = ReadCoverageData( \
             read_cov.zero_intervals[(chrm, strand)], read_cov[(chrm, strand)] )
         
