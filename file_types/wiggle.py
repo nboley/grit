@@ -306,18 +306,22 @@ class Wiggle( dict ):
         return
     
     def apply( self, fn, args=[] ):
+        rv = {}
         args.insert( 0, None )
         for key in self:
             args[0] = self[key]
-            self[key] = fn( *args )
+            rv[key] = fn( *args )
         
-        self.reset_intervals()
         del args[:]
         
-        return
+        return rv
+    
+    def update( self, fn, args=[] ):
+        for key, val in self.apply( fn, args ).iteritems():
+            self[key] = val
     
     def smooth( self, window_len, normalize=True ):
-        self.apply( smooth, [window_len,] )
+        self.update( smooth, [window_len,] )
         
         def normalize_fn( array ):
             array_sum = array.sum()
@@ -326,7 +330,7 @@ class Wiggle( dict ):
             return array / array_sum
 
         if normalize:
-            self.apply( normalize_fn )
+            self.update( normalize_fn )
         
         self.reset_intervals()
         

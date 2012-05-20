@@ -432,7 +432,7 @@ def build_reads_objs( bam_fns, fl_dist_fn=None, fl_dist_norm=None ):
             # estimate the fragment length distribution
             # load the fl dist file
             with open( os.path.join( \
-                    base_dir, "slide", LONG_SINGLE_EXON_GENES_FNAME ) ) as lsegfp:
+                    base_dir, LONG_SINGLE_EXON_GENES_FNAME ) ) as lsegfp:
                 lse_genes = GeneBoundaries( lsegfp )
                 try:
                     fl_dists, read_group_mappings = get_fl_dists( \
@@ -563,7 +563,7 @@ def make_error_log_string( gene, reads_filename, error_inst ):
     error_fields.append( gene.name )
     error_fields.append( str( len( gene.exon_bndrys ) ) )
     error_fields.append( os.path.basename( reads_filename ) )
-    if type( error_inst ) == slide.GeneProcessingError:
+    if type( error_inst ) == GeneProcessingError:
         error_fields.append( error_inst.detail )
     else:
         error_fields.append( str( error_inst ) )
@@ -970,7 +970,7 @@ if __name__ == "__main__":
 
     # copy the fragment dist analysis pdf to the output directory
     fl_dist_exons_fname = os.path.join( \
-        sys.path[0], LONG_SINGLE_EXON_GENES_FNAME )
+        os.path.dirname( __file__ ), LONG_SINGLE_EXON_GENES_FNAME )
 
     if not( fl_dist_fn or fl_dist_norm ):
         # copy the fl dist analysis plot into the output directory

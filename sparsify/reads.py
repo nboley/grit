@@ -227,6 +227,7 @@ class BinnedReads( object ):
             read_group = self.get_read_group( r1, r2 )
             if read_group == None: continue
             if read_group_mappings != None:
+                print read_group, read_group_mappings
                 read_group = read_group_mappings[ read_group ]
             
             read_len = r1.rlen
@@ -310,8 +311,10 @@ class BinnedReads( object ):
         self.reads = reads
         self.gene = gene
                                       
-        self.nonoverlapping_exon_bndrys = numpy.array( gene.nonoverlapping_exon_boundaries )
+        self.nonoverlapping_exon_bndrys = numpy.array( \
+            gene.nonoverlapping_exon_boundaries )
         
+        read_group_mappings = None
         self.binned_reads = self.bin_reads( read_group_mappings )
         self.total_num_reads = float( sum( self.binned_reads.values() ) )
         

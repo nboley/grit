@@ -24,7 +24,7 @@ USE_AVERAGE_FOR_ONE_SIDE_RETAIN = False
 
 SPLIT_EXON_BNDRY_COV_FRAC = 0.95
 EXON_SPLIT_SIZE = 40
-EXON_SPLIT_RATIO = 10
+EXON_SPLIT_RATIO = 5
 
 # length of contiguous space to define as an empty region
 EMPTY_REGION_SPLIT_SIZE = 80
@@ -34,7 +34,7 @@ EMPTY_REGION_SPLIT_SIZE = 80
 EMPTY_REGION_BNDRY_SHRINK = 0
 
 MAX_EXON_SIZE = 50000
-MIN_EXON_LEN = 25
+MIN_EXON_LEN = 15
 
 MIN_SE_GENE_LEN = 500
 MIN_SE_GENE_AVG_READCOV = 10
@@ -46,13 +46,14 @@ LOC_THRESH_REG_SZ = 50000
 CAGE_WINDOW_LEN = 120
 CAGE_MAX_SCORE_FRAC = 0.15
 CAGE_MIN_SCORE = 5
+CAGE_SUFFICIENT_SCORE = 200
 # this is set in main
 CAGE_TOT_FRAC = None
 
 
-### PolyA TUNEING PARAMS
+### PolyA TUNING PARAMS
 POLYA_WINDOW_LEN = 10
-POLYA_MAX_SCORE_FRAC = 0.20
+POLYA_MAX_SCORE_FRAC = 0.001
 POLYA_MIN_SCORE = 2
 # this is set in main
 POLYA_TOT_FRAC = None
@@ -61,9 +62,34 @@ POLYA_TOT_FRAC = None
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../", 'file_types'))
 from wiggle import Wiggle
 from junctions_file import parse_junctions_file_dont_freeze
-from gtf_file import iter_gff_lines, GenomicInterval
+from gtf_file import parse_gff_line, iter_gff_lines, GenomicInterval
 
 BinStats = namedtuple('BinStats', ['is_small', 'mean', 'lmn', 'rmn'] )
+
+def build_coverage_wig_from_polya_reads( tes_reads_fps, chrm_sizes_fp ):
+    # build lists of the tes locations
+    def add_reads_to_locs( tes_reads_fp, locs ):
+        for line in tes_reads_fp:
+            gff_l = parse_gff_line( line )
+            # skip lines that weren't able to be parsed
+            if gff_l == None: continue
+            
+            locs[ (gff_l.region.chr, gff_l.region.strand) ].append(
+                gff_l.region.stop )
+        
+        return
+    
+    # process tes reads gff files (i.e. poly-A)
+    locs = defaultdict( list )
+    for tes_reads_fp in tes_reads_fps:
+        add_reads_to_locs( tes_reads_fp, locs )
+    
+    # load locs data into a wiggle object
+    tes_cvrg = Wiggle( chrm_sizes_fp )
+    tes_cvrg.load_data_from_positions( locs )
+        
+    return tes_cvrg
+
 
 class ReadCoverageData( object ):
     def __init__( self, zero_intervals, read_coverage_array ):
@@ -291,9 +317,9 @@ def check_for_retained_intron( left, mid, right):
         return 'I'
     
     # if this isn't next to an exon, it can't be retained
-    if left[0] not in ('exon_extension', 'Exon') \
-            and right[0] not in ('exon_extension', 'Exon'):
-        return 'I'
+    #if left[0] in ('L', ) \
+    #        and right[0] in ('L', ):
+    #    return 'I'
     
     # if only the region to the right is an exon
     if left[0] == 'L':
@@ -331,9 +357,9 @@ def check_for_retained_intron( left, mid, right):
         # otherwise, we try and split the exon if it's either 
         # right retained or left retained but not both
         elif left_retained:
-            return 'l'
+            return 'left_retained'
         elif right_retained:
-            return 'r'
+            return 'right_retained'
         else:
             return 'I'
     
@@ -394,12 +420,13 @@ def refine_one_side_retained_introns(            \
     intervals = izip( boundaries[:-1], boundaries[1:] )
     for label, (start, stop) in izip( labels, intervals ):
         # if this is not a one side retained region, ignore it
-        if label not in 'rl': 
+        if label not in ('right_retained', 'left_retained'): 
             new_labels.append( label )
             new_boundaries.append( start )
         else:
+            is_left_retained = ( label=='left_retained' )
             bs, ls = calc_partially_retained_intron_regions(
-                start, stop, read_coverages, label=='l', \
+                start, stop, read_coverages, is_left_retained, \
                 one_side_retained_intron_coverage_frac, \
                 edge_bases_to_ignore )
         
@@ -517,10 +544,11 @@ def check_exon_for_gene_merge( strand, start, stop, \
         assert prev_label in ('exon_extension','I','L')
         assert next_label in ('exon_extension','I','L')
     except:
-        print >> sys.stderr, prev, curr, next
+        #print >> sys.stderr, prev, curr, next
         return [ start, ], [ 'Exon', ]
     
     rca = read_cov.rca[start:(stop+1)]
+    
     rca_cumsum = rca.cumsum()
     window_covs = rca_cumsum[EXON_SPLIT_SIZE:] \
         - rca_cumsum[:-EXON_SPLIT_SIZE]
@@ -571,7 +599,8 @@ def check_exon_for_gene_merge( strand, start, stop, \
         window_covs[left_bndry:right_bndry+1] ) + left_bndry
     # add one to guard against divide zero, and remove low read cov
     min_cov = window_covs[ min_index ] + 1            
-
+    
+        
     # if this does not look like a gene merge exon...
     if left_cov/min_cov < EXON_SPLIT_RATIO \
             or right_cov/min_cov < EXON_SPLIT_RATIO:
@@ -604,6 +633,14 @@ def check_exon_for_gene_merge( strand, start, stop, \
     if ds_cage_cov < CAGE_MIN_SCORE \
             or (ds_cage_cov/ds_read_cov) < CAGE_TOT_FRAC:
         return [ start, ], [ 'Exon', ]
+
+    """
+    print strand, start, stop
+    print prev_label, next_label, left_cov/min_cov, right_cov/min_cov
+    print left_cov, right_cov, min_cov
+    print 
+    if start > 5070220: raw_input()
+    """
     
     #print strand, start, new_intron_start, new_intron_stop+1, stop+1
     #print "%e" % ( cage_cov.sum()/read_cov.rca.sum()  )
@@ -646,7 +683,7 @@ def refine_exon_extensions( strand, labels, bndrys, read_cov, cage_cov ):
                 new_bndrys.append( bndrys[ i+1 ] )
                 new_labels.append( 'exon_extension' )
         elif curr == 'Exon':
-            # ignore potentially sengle exon genes
+            # ignore potentially single exon genes
             if prev == 'L' and next == 'L':
                 new_bndrys.append( bndrys[ i+1 ] )
                 new_labels.append( 'Exon' )
@@ -658,12 +695,14 @@ def refine_exon_extensions( strand, labels, bndrys, read_cov, cage_cov ):
                 new_bndrys.append( bndrys[ i+1 ] )
                 new_labels.append( 'Exon' )
                 continue
-            
-            # check for merege
+
             split_bndrys, split_labels, = check_exon_for_gene_merge( \
                 strand, start, stop, prev, next, read_cov, cage_cov)
             new_bndrys.extend( split_bndrys )
             new_labels.extend( split_labels )
+
+            #new_bndrys.append( bndrys[ i+1 ] )
+            #new_labels.append( 'Exon' )
         else:
             assert False
     
@@ -771,13 +810,16 @@ def find_T_S_exons(labels, bndrys, intron_starts, intron_stops, strand, is_tss):
             # seperately.
             if ((is_tss and strand == '+') or ( not is_tss and strand == '-' ))\
                     and stop+1 in intron_starts:
+                if start >= stop: continue
                 assert start < stop
                 t_s_exons.append( (start, stop) )                
             elif ((is_tss and strand == '-') or (not is_tss and strand == '+'))\
                     and start-1 in intron_stops:
+                if start >= stop: continue
                 assert start < stop
                 t_s_exons.append( (start, stop) )
 
+    """
     print is_tss, strand
     print labels
     print bndrys
@@ -786,6 +828,7 @@ def find_T_S_exons(labels, bndrys, intron_starts, intron_stops, strand, is_tss):
     #print sorted( intron_starts )
     #print sorted( intron_stops )
     raw_input()
+    """
     
     return t_s_exons
 
@@ -936,8 +979,17 @@ def find_distal_exon_indices( cov, find_upstream_exons,  \
 
         max_score = max( score for i, score in scores )
         if max_score > min_score:
-            return [ i for i, score in scores \
-                     if float(score)/max_score > max_score_frac ]
+            rvs = set( [ i for i, score in scores \
+                           if float(score)/max_score > max_score_frac \
+                           or score >= CAGE_SUFFICIENT_SCORE] )
+            
+            # always add the first and/or last exon segment
+            if find_upstream_exons:
+                rvs.add( 1 )
+            else:
+                rvs.add( len(bs) - 2 )
+            
+            return sorted( rvs )
     
     # if we don't have signal data
     indices = []
@@ -957,7 +1009,7 @@ def find_distal_exon_indices( cov, find_upstream_exons,  \
     
     return indices
 
-def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
+def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov, polya_cov ):
     labels, bndrys = find_initial_boundaries_and_labels( \
         read_cov_obj, jns )
     
@@ -989,6 +1041,14 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
             
             continue
         
+        """
+        # check for merege
+        split_bndrys, split_labels, = check_exon_for_gene_merge( \
+            strand, start, stop, prev, next, read_cov, cage_cov)
+        new_bndrys.extend( split_bndrys )
+        new_labels.extend( split_labels )
+        """
+
         # find tss exons
         tss_indices = find_distal_exon_indices( \
             cage_cov, (strand=='+'), intron_starts, intron_stops,
@@ -1001,7 +1061,7 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
             continue
 
         tes_indices = find_distal_exon_indices( \
-            None, (strand=='-'), intron_starts, intron_stops, \
+            polya_cov, (strand=='-'), intron_starts, intron_stops, \
             bs, ls, \
             POLYA_MIN_SCORE, POLYA_WINDOW_LEN, POLYA_MAX_SCORE_FRAC )        
         # if we can't find a TSS index, continue
@@ -1028,7 +1088,7 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
             ls, bs, intron_starts, intron_stops, strand, False )
 
         
-        
+        """
         print ls
         print bs
         print exon_bndrys
@@ -1040,6 +1100,7 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
         #print sorted(intron_starts)
         #print sorted(intron_stops)
         raw_input()
+        """
         
         all_tss_exons.extend( tss_exons )
         all_internal_exons.extend( internal_exons )
@@ -1049,7 +1110,8 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov ):
     #se_genes = get_possible_single_exon_genes( \
     #    new_labels, new_bndrys, read_cov_obj.chrm_stop )
     
-    return all_seg_exons, all_tss_exons, all_internal_exons, all_tes_exons, all_exons
+    return all_seg_exons, all_tss_exons, all_internal_exons, \
+           all_tes_exons, all_exons
     
 def parse_arguments():
     import argparse
@@ -1067,6 +1129,9 @@ def parse_arguments():
 
     parser.add_argument( '--cage-wigs', type=file, nargs='+', \
         help='wig files with cage reads, to identify tss exons.')
+    parser.add_argument( '--polya-reads-gffs', type=file, nargs='+', \
+        help='files with polya reads, to identify tes exons.')
+
     
     parser.add_argument( '--out-file-prefix', '-o', default="discovered_exons",\
         help='Output file name. (default: discovered_exons)')
@@ -1081,7 +1146,8 @@ def parse_arguments():
     args = parser.parse_args()
     
     OutFPS = namedtuple( "OutFPS", [\
-            "single_exon_genes", "tss_exons", "internal_exons", "tes_exons", "all_exons"])
+            "single_exon_genes", "tss_exons", \
+            "internal_exons", "tes_exons", "all_exons"])
     fps = []
     for field_name in OutFPS._fields:
         fps.append(open("%s.%s.gff" % (args.out_file_prefix, field_name), "w"))
@@ -1104,14 +1170,14 @@ def parse_arguments():
     VERBOSE = args.verbose
     
     return (args.plus_wig, args.minus_wig), args.junctions, \
-        args.chrm_sizes_fname, args.cage_wigs, \
+        args.chrm_sizes_fname, args.cage_wigs, args.polya_reads_gffs, \
        ofps, debug_fps, args.labels_fname
 
 
 def main():
     (plus_wig_fp, minus_wig_fp), \
         jns_fp, chrm_sizes_fp,   \
-        cage_wig_fps, \
+        cage_wig_fps, tes_reads_fps, \
         out_fps, debug_fps, labels_fp = parse_arguments()
     
     # TUNING PARAMS
@@ -1129,13 +1195,20 @@ def main():
     
     # open the cage data
     cage_cov = Wiggle( chrm_sizes_fp, cage_wig_fps, ['+','-'] )
-    cage_sum = sum( array.sum() for array in cage_cov.itervalues() )
-    
+    cage_sum = sum( cage_cov.apply( lambda a: a.sum() ).values() )
     global CAGE_TOT_FRAC
-    CAGE_TOT_FRAC = (float(cage_sum)/read_cov_sum)*(1e-2)
-    
+    CAGE_TOT_FRAC = (float(cage_sum)/read_cov_sum)*(1e-2)    
     for cage_fp in cage_wig_fps: cage_fp.close()
     
+    # open the polya data
+    polya_cov = build_coverage_wig_from_polya_reads( \
+        tes_reads_fps, chrm_sizes_fp )
+    polya_sum = sum( cage_cov.apply( lambda a: a.sum() ).values() )
+    global POLYA_TOT_FRAC
+    POLYA_TOT_FRAC = (float(polya_sum)/read_cov_sum)*(1e-2)    
+    for tes_reads_fp in tes_reads_fps: tes_reads_fp.close()
+    
+
     if VERBOSE: print >> sys.stderr,  'Loading junctions.'
     jns = parse_junctions_file_dont_freeze( jns_fp )
     
@@ -1151,9 +1224,11 @@ def main():
             read_cov.zero_intervals[(chrm, strand)], read_cov[(chrm, strand)] )
         
         cage_cov_array = cage_cov[ (chrm, strand) ]
+        polya_cov_array = polya_cov[ (chrm, strand) ]
         
         disc_grpd_exons = find_exons_in_contig( \
-            strand, read_cov_obj, jns[(chrm, strand)], cage_cov_array)
+           strand, read_cov_obj, jns[(chrm, strand)], \
+           cage_cov_array, polya_cov_array)
         
         for container, exons in zip( all_regions_iters, disc_grpd_exons ):
             regions_iter = ( GenomicInterval( chrm, strand, start, stop) \

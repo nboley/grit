@@ -34,7 +34,7 @@ def copy_exons():
     ifname = os.path.join( "./exons/", "discovered_exons.internal_exons.gff" )
     plus_ofname = os.path.join( OP_DIR_NAME, "plus_exons.gff" )
     minus_ofname = os.path.join( OP_DIR_NAME, "minus_exons.gff" )
-    track_name = "disc_exons"
+    track_name = "internal_exons"
     write_filtered_gff( ifname, plus_ofname, minus_ofname, track_name )
 
     ifname = os.path.join( "./exons/", "discovered_exons.all_exons.gff" )

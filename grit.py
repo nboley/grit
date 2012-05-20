@@ -36,6 +36,7 @@ USE_MERGED_JNS_FOR_EXONS = False
 USE_MERGED_EXONS_FOR_TRANSCRIPTS = False
 USE_SAMPLE_SPECIFIC_CAGE = True
 USE_MERGED_CAGE_SIGNAL_FOR_EXONS = True
+USE_MERGED_POLYA_SIGNAL_FOR_EXONS = True
 
 VERBOSE = True
 STRESS_TEST_DEP_FINDER = False
@@ -987,10 +988,11 @@ def build_all_exon_files( elements, pserver, output_prefix ):
       /media/scratch/genomes/drosophila/dm3.chrom.sizes 
       --cage-wigs ../chr2L_test_region_raw_data/cage/cage_marginal.chr2L.plus.wig 
                   ../chr2L_test_region_raw_data/cage/cage_marginal.chr2L.minus.wig
+      --polya-reads-gffs ../chr2L_test_region_raw_data/merged_polyA.chr2L_4605421_5481770.gff
       --out-file-prefix=test
     """
     def build_find_exons_cmds( sample_type, sample_id ):
-        call_template = "python {0} {1} {2} {3} --cage-wigs {4} --out-file-prefix {5}"
+        call_template = "python {0} {1} {2} {3} --cage-wigs {4} --polya-reads-gffs {5} --out-file-prefix {6}"
         
         # find all of the merged rnaseq coverage files
         res = elements.get_elements_from_db( \
@@ -1028,6 +1030,23 @@ def build_all_exon_files( elements, pserver, output_prefix ):
                               + "necessary to build exons."
         assert len( ress ) == 2
         cage_wig_fnames = [ res.fname for res in ress ]
+
+
+
+        # find the merged CAGE signal files
+        if USE_MERGED_POLYA_SIGNAL_FOR_EXONS:
+            ress = elements.get_elements_from_db( \
+                "polya_reads_gff", "*" , "*" )
+        else:
+            raise NotImplemented, "Can't use sample specific POLYA yet."
+            ress = elements.get_elements_from_db( \
+                "polya_reads_gff", sample_type , sample_id, "." )
+        if len( ress ) != 1:
+            raise ValueError, "Can't find the polya signal files " \
+                              + "necessary to build exons."
+        assert len( ress ) == 1
+        polya_gff_fnames = [ res.fname for res in ress ]
+
         
         chrm_sizes_fname = elements.chr_sizes.get_tmp_fname( with_chr = True )
 
@@ -1037,7 +1056,9 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         
         call = call_template.format( FIND_EXONS_CMD, " ".join(bedgraph_fnames),\
                             jns_fname, chrm_sizes_fname, \
-                            " ".join(cage_wig_fnames), output_fn_prefix )
+                            " ".join(cage_wig_fnames),   \
+                            " ".join( polya_gff_fnames), \
+                            output_fn_prefix )
 
         extensions = [ ".internal_exons.gff",    \
                        ".tss_exons.gff",  \
