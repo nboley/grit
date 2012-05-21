@@ -239,10 +239,8 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
         matched_cnt = 0
         for exons, transcripts in ref_full_trans.iteritems():
             if exons in t_full_trans:
-                # add the minimum of the ref and gtf transcripts with
-                # this internal exon structure
-                matched_cnt += min( len( transcripts ), 
-                                    len( t_full_trans[exons] ) )
+                # add the number of transcripts with this internal structure
+                matched_cnt += len( transcripts )
         
         # calcualte the total numebr of transcripts for the ref and t groups.
         ref_trans_tot = sum( len(i) for i in ref_full_trans.itervalues() )
@@ -489,55 +487,6 @@ class OutputStats( dict ):
         return '\n'.join( lines )
 
         pass
-
-def ratio_or_10( num, denom ):
-    """if there are no counts, then return 10 to indicate this in the ouput file
-    """
-    if denom == 0:
-        assert num == 0
-        return 10.0
-    
-    return float( num )/denom
-
-def calc_all_rcl_and_prc( total_cnts, overlap_cnts ):
-    # unpack counts
-    ( num_r_exons, num_t_exons, num_r_int_exons, num_t_int_exons, 
-      num_r_tss_exons, num_t_tss_exons, num_r_tes_exons, num_t_tes_exons, 
-      num_r_introns, num_t_introns, r_trans_tot, t_trans_tot, 
-      r_se_trans_tot, t_se_trans_tot ) = total_cnts
-    ( int_e_overlap, tss_e_overlap, tes_e_overlap, intron_overlap, 
-      trans_overlap_cnt, se_trans_overlap_cnt ) = overlap_cnts
-    
-    # calculate recall and precision for all categories of features
-    exon_rcl = ratio_or_10(
-        (int_e_overlap + tss_e_overlap + tes_e_overlap), num_r_exons)
-    exon_prc = ratio_or_10(
-        (int_e_overlap + tss_e_overlap + tes_e_overlap), num_t_exons)
-    int_e_rcl = ratio_or_10( int_e_overlap, num_r_int_exons )
-    int_e_prc = ratio_or_10( int_e_overlap, num_t_int_exons )
-    tss_e_rcl = ratio_or_10( tss_e_overlap, num_r_tss_exons )
-    tss_e_prc = ratio_or_10( tss_e_overlap, num_t_tss_exons )
-    tes_e_rcl = ratio_or_10( tes_e_overlap, num_r_tes_exons )
-    tes_e_prc = ratio_or_10( tes_e_overlap, num_t_tes_exons )
-    intron_rcl = ratio_or_10( intron_overlap, num_r_introns )
-    intron_prc = ratio_or_10( intron_overlap, num_t_introns )
-    
-    # calculate racall and precision for transcripts
-    tr_rcl = ratio_or_10( trans_overlap_cnt, r_trans_tot )
-    tr_prc = ratio_or_10( trans_overlap_cnt, t_trans_tot )
-    se_tr_rcl = ratio_or_10( se_trans_overlap_cnt, r_se_trans_tot )
-    se_tr_prc = ratio_or_10( se_trans_overlap_cnt, t_se_trans_tot )
-    
-    return ( exon_rcl, exon_prc, int_e_rcl, int_e_prc, tss_e_rcl, tss_e_prc, 
-             tes_e_rcl, tes_e_prc, intron_rcl, intron_prc, 
-             tr_rcl, tr_prc, se_tr_rcl, se_tr_prc )
-
-def make_rcl_prc_string( rcl_and_prc_stats, ref_fname, gtf_fname ):
-    ( exon_rcl, exon_prc, int_e_rcl, int_e_prc, tss_e_rcl, tss_e_prc, 
-      tes_e_rcl, tes_e_prc, intron_rcl, intron_prc, 
-      tr_rcl, tr_prc, se_tr_rcl, se_tr_prc 
-      ) = rcl_and_prc_stats
-    
 
 def make_class_cnts_string( class_counts, ref_fname, gtf_fname ):
     # if suppress_maps_stats then class_counts will be None and 

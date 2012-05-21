@@ -1078,34 +1078,6 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         cmd = Cmd(call, output_element_types, output_fnames, dependency_fnames)
         pserver.add_process( cmd, Resource(1), Resource(1) )
 
-    def build_merge_exons_cmds( sample_type=None ):
-        # find all of the merged rnaseq coverage files
-        res = elements.get_elements_from_db( \
-            "exons_gff", sample_type )
-        exon_fnames = [ i.fname for i in res \
-                           if i.sample_id not in '*M' \
-                            and i.sample_type not in '*M']
-        
-        op_base_fname = "discovered_exons.%s.gff" % sample_type \
-            if sample_type != None else "discovered_exons_merged.gff"
-        output_fname = os.path.join( output_prefix, op_base_fname )
-        
-        call = "python %s %s > %s" % ( \
-            MERGE_EXONS_CMD, " ".join(exon_fnames), output_fname )
-
-        if sample_type == None: 
-            sample_type = 'M'
-        output_element_types = [ElementType( \
-                "exons_gff", sample_type, "M", "." ),]
-        
-        dependency_fnames = exon_fnames
-
-        cmd = Cmd( call, output_element_types, \
-                       [ output_fname, ], dependency_fnames )
-        
-        pserver.add_process( cmd, Resource(1), Resource(1) )
-    
-    
     # build the merged sample exons
     build_find_exons_cmds( "*", "*" )
     
@@ -1116,14 +1088,6 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         # buidl the build eoxn cmds
         for sample_type, sample_id in sample_types_and_ids:
             build_find_exons_cmds( sample_type, sample_id )    
-
-        # build the merge exons cmds
-        for sample_type in set( t for t, i in sample_types_and_ids ):
-            build_merge_exons_cmds( sample_type )    
-
-        # build the merged exons
-        # build_merge_exons_cmds( )    
-
     
     return
 
@@ -1155,8 +1119,6 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         transcript_output_type = "transcripts_gtf"
         
     def build_transcripts_for_sample( sample_type, sample_id ):
-        if sample_type == '*': return
-        
         # get the exons
         if not USE_MERGED_EXONS_FOR_TRANSCRIPTS and BUILD_SAMPLE_SPECIFIC_EXONS:
             ress = elements.get_elements_from_db( \
@@ -1230,12 +1192,13 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
 
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
         pserver.add_process( cmd, Resource(1), Resource(8) )
-        
         return
-    
+
     ress = elements.get_elements_from_db( jn_input_type )
     for e in ress[:]:
         build_transcripts_for_sample( e.sample_type, e.sample_id  )
+    
+    build_transcripts_for_sample( "*", "*"  )
     
     return
 
@@ -1257,8 +1220,8 @@ def merge_transcripts( elements, pserver, output_prefix, \
         else:
             assert False
         
-        if sample_type == "*": 
-            raise ValueError, "Can't merge merged transcripts."
+        #if sample_type == "*": 
+        #    raise ValueError, "Can't merge merged transcripts."
 
         sample_type_name = "merged" if sample_type == "M" else sample_type
         op_fname = os.path.join(output_prefix, \
@@ -1279,6 +1242,10 @@ def merge_transcripts( elements, pserver, output_prefix, \
     # longest to complete
     in_es = elements.get_elements_from_db( input_e_type )
     input_fnames = [ e.fname for e in in_es if e.sample_id not in "*M"]
+    # get the merged input transcripts    
+    merged_input_fname = elements.get_elements_from_db( \
+        input_e_type, "*", "*" )[0].fname
+    input_fnames.append( merged_input_fname )
     if len( input_fnames ) > 0:
         add_merge_transcripts_sample_cmd( "M", input_fnames )
     
@@ -1287,6 +1254,7 @@ def merge_transcripts( elements, pserver, output_prefix, \
     for e in elements.get_elements_from_db( input_e_type ):
         if e.sample_type != "*": sample_types.add( e.sample_type )
 
+    
     for sample_type in sample_types:
         # get the input elements filenames
         in_es = elements.get_elements_from_db( input_e_type, sample_type )
