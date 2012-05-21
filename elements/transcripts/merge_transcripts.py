@@ -6,7 +6,7 @@ from itertools import izip, repeat
 
 sys.path.append( os.path.join( os.path.dirname( __file__ ),
                                "..", "..", "file_types", "fast_gtf_parser" ) )
-from gtf import load_gtf
+from gtf import load_gtfs
 
 sys.path.append( os.path.join( os.path.dirname( __file__ ), 
                                "..", "..", "file_types" ) )
@@ -295,23 +295,6 @@ def build_unique_transcripts( transcriptomes, gtf_fnames ):
     
     return transcript_maps
 
-def load_gtfs( gtf_fnames ):
-    # parse and load all of the gtf files
-    transcriptomes = []
-    for gtf_fname in gtf_fnames:
-        try:
-            gtf_data = load_gtf( gtf_fname )
-        except IOError:
-            print >> sys.stderr, \
-                "Warning: couldn't extract any data from ", gtf_fname
-            transcriptomes.append( [] )
-            continue
-        
-        transcriptomes.append( gtf_data )
-        if VERBOSE: print >> sys.stderr, "Finished parsing", gtf_fname
-    
-    return transcriptomes
-
 def parse_arguments():
     import argparse
     desc = 'Merge transcripts.'
@@ -337,19 +320,24 @@ def parse_arguments():
     parser.add_argument(
         '--verbose', '-v', default=False, action='store_true',
         help='Whether or not to print status information.')
-    
+ 
+    parser.add_argument(
+        '--threads', '-t', type=int, default=1,
+        help='The number of threads to use.')
+   
     args = parser.parse_args()
     
     global VERBOSE
     VERBOSE = args.verbose
     
-    return args.gtfs, args.out_fname, args.sources_fname, args.cluster_by_conn
+    return args.gtfs, args.out_fname, args.sources_fname, \
+        args.cluster_by_conn, args.threads
 
 def main():
-    gtf_fnames, ofp, sources_fp, cluster_by_conn = parse_arguments()
+    gtf_fnames, ofp, sources_fp, cluster_by_conn, n_threads = parse_arguments()
     
     # load all transcripts file and store corresponding data
-    transcriptomes = load_gtfs( gtf_fnames )
+    transcriptomes = load_gtfs( gtf_fnames, n_threads )
     
     # build maps from unique transcripts to a list of sources (gtf file names)
     transcript_maps = build_unique_transcripts( transcriptomes, gtf_fnames )

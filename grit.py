@@ -1227,7 +1227,7 @@ def merge_transcripts( elements, pserver, output_prefix, \
         op_fname = os.path.join(output_prefix, \
                                     sample_type_name + suffix)
         
-        call = "python %s %s > %s" \
+        call = "python %s %s --threads={threads} > %s" \
             % ( MERGE_TRANSCRIPTS_CMD, " ".join( input_fnames ), op_fname )
         
         op_element_types = [ \
@@ -1236,7 +1236,7 @@ def merge_transcripts( elements, pserver, output_prefix, \
         dependencies = input_fnames
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-        pserver.add_process( cmd, Resource(1) )
+        pserver.add_process( cmd, Resource( min(16, len(input_fnames))) )
     
     # add the merge all command first, since it takes the 
     # longest to complete
