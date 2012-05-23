@@ -339,13 +339,11 @@ class TranscriptsFile( file ):
         
         return '\t'.join( gtf_line )
     
-    def add_transcripts( self, transcripts, gene, include_meta_data=True ):
+    def add_transcripts( self, transcripts, gene, \
+                             include_meta_data=True, ignore_zero_freq=True ):
         """write out each transcript.
         
         """
-        ## FIXME BUG XXX
-        readcnt = 1
-        
         all_transcript_lines = []
         for trans_index, (trans, md) \
             in enumerate(transcripts.iter_transcripts_and_metadata()):
@@ -361,13 +359,17 @@ class TranscriptsFile( file ):
             # need to enumerate so that transcript has sequentially numbered exons
             # not exons numbered (arbitrarily) by gene exon number
             for exon_trans_index, exon_gene_index in enumerate( trans ):
+                if ignore_zero_freq and md.freq< 1e-6:
+                    continue
+                
                 # for the merged form, we want to include meta data
                 if include_meta_data:
                     all_transcript_lines.append( \
                         self._build_exon_gtf_line( \
-                            exon_gene_index, exon_trans_index+1, transcripts.gene, \
-                                trans_id, lasso_lambda=md.lasso_lambda, freq=md.freq, \
-                                source_file=md.sourcefile, readcnt=readcnt ) )
+                            exon_gene_index, exon_trans_index+1, \
+                            transcripts.gene, trans_id, \
+                            lasso_lambda=md.lasso_lambda, freq=md.freq, \
+                            source_file=md.sourcefile ) )
                 else:
                     all_transcript_lines.append( 
                         self._build_exon_gtf_line( \
