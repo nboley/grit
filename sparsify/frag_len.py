@@ -15,7 +15,7 @@ sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
                                       "../file_types/" ))
 from gtf_file import parse_gff_line
 
-from gene_models import GeneBoundaries
+from gene_models import GeneBoundaries, GenomicInterval
 
 
 VERBOSE = False
@@ -74,11 +74,24 @@ class FlDist( object ):
     
     def __hash__( self ):
         return self._hash_value
-            
-def load_fl_dist( fname ):
-    with open( fname ) as fp:
-        fl_dist = pickle.load( fp )
-        return fl_dist
+    
+    def __repr__( self ):
+        return "<FL Dist: u=%.2f sd=%.2f>"%(self.stats[0][0], self.stats[0][1])
+    
+def load_fl_dists( fnames ):
+    all_fl_dists = {}
+    all_read_group_mappings = []
+    
+    # load all of the individual fl dists
+    for fname in fnames:
+        with open( fname ) as fp:
+            fl_dists = pickle.load( fp )
+        for key, fl_dist in fl_dists.iteritems():
+            all_fl_dists[ key ] = fl_dist
+
+    clustered_read_groups = cluster_rdgrps( all_fl_dists )
+
+    return all_fl_dists, clustered_read_groups
     
 def build_uniform_density( fl_min, fl_max ):
     length = fl_max - fl_min + 1
@@ -242,7 +255,7 @@ def analyze_fl_dists( fragments, out_filename='diagnostic_plots.pdf'):
 
 def find_fragments_in_exon( reads, exon ):
     fragment_sizes = []
-
+    
     # calculate the length of the exon
     exon_len = exon.stop - exon.start + 1
 
@@ -251,7 +264,7 @@ def find_fragments_in_exon( reads, exon ):
         # skip all secondary alignments
         if read1.is_secondary or read2.is_secondary:
             continue
-
+        
         # get read group from tags
         # put all frags w/o a read group into mean read group
         try:
@@ -265,7 +278,7 @@ def find_fragments_in_exon( reads, exon ):
             frag_len = read2.aend - read1.pos
         else:
             frag_len = read1.aend - read2.pos
-
+        
         key = ( read_group, strand, exon_len )
         fragment_sizes.append( ( key, frag_len ) )
     
@@ -341,12 +354,14 @@ def build_robust_fl_dist_with_stats( fragment_lengths ):
     
     return fl_dist
 
-def cluster_rdgrps( stats ):
+def cluster_rdgrps( fl_dists ):
     """
 
     stats is a dictioanry of readgroups, keyed by rg name, with values
     that take tuples of summary statistics.
     """
+    stats = dict( (key, fl_dist.stats) for key, fl_dist in fl_dists.iteritems())
+
     def are_diff( val1, val2, tol ):
         """We say two things are different if they're off by > 10%
         
@@ -457,37 +472,24 @@ def merge_clustered_fl_dists( clustered_read_groups, grouped_fragments ):
     
     return clustered_fl_dists
 
-def estimate_fl_dists( reads, exons, cluster_read_groups=True ):
+def estimate_fl_dists( reads, exons ):
     fragments = find_fragments( reads, exons )
     if len( fragments ) == 0:
         err_str = "There are no reads for this data file in the " \
             + "high read depth exons."
         raise ValueError, err_str
-
+    
     # distributions of individual read_groups is not currently used
     # only clustered distributions are used for downstream analysis
     fl_dists = {}
-    fl_dist_stats = {}
     grouped_fragments = group_fragments_by_readgroup( fragments )
     for read_group, fragment_lengths in grouped_fragments.iteritems():
         if len( fragment_lengths ) < MIN_FLS_FOR_FL_DIST:
             continue
         fl_dist = build_robust_fl_dist_with_stats( fragment_lengths )
         fl_dists[ read_group ] = fl_dist
-        fl_dist_stats[ read_group ] = fl_dist.stats
 
-    if cluster_read_groups:
-        # no clustering occurs with large n using chained clustering
-        # would need bootstrapping method to create valid clusters
-        # get a dict of read_groups mapping to cluster group
-        clustered_read_groups = cluster_rdgrps( fl_dist_stats )
-        # get a dict of cluster groups mapping to fl_dists of merged read_groups
-        fl_dists = merge_clustered_fl_dists( \
-            clustered_read_groups, grouped_fragments)
-    else:
-        clustered_read_groups = dict( (rg, rg) for rg in grouped_fragments.keys() )
-    
-    return fl_dists, clustered_read_groups, fragments
+    return fl_dists, fragments
 
 def parse_arguments():
     import argparse
@@ -502,6 +504,7 @@ def parse_arguments():
 
     parser.add_argument( '--analyze', '-a', action="store_true", default=False,\
         help='produce analysis graphs for fl dists' )
+    
     args = parser.parse_args()
     
     return args.gff, args.bam, args.outfname, args.analyze
@@ -532,14 +535,20 @@ def main():
 
 
     VERBOSE = True
-    fl_dists, read_group_mappings, fragments = \
-        estimate_fl_dists( reads, exons, cluster_read_groups=True )
-    
-    with open( ofname, "w" ) as ofp:
-        pickle.dump( ( fl_dists, read_group_mappings ), ofp )
+    fl_dists, fragments = estimate_fl_dists( reads, exons )
     
     if analyze:
-        analyze_fl_dists( fragments, plot_filename )
+        analyze_fl_dists( fragments, ofname + ".pdf" )
+    
+    with open( ofname, "w" ) as ofp:
+        pickle.dump( fl_dists, ofp )
+    
+    return
+
+    
+    return
+    
+    
 
 if __name__ == "__main__":
     main()

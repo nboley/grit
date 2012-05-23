@@ -15,6 +15,7 @@ import itertools
 import traceback
 import datetime
 import signal
+import Queue
 
 from math import log, sqrt, exp
 from collections import defaultdict
@@ -28,16 +29,14 @@ FREQ_FILTER = 0.01
 FREQ_FILTER_THRESH = 0.05
 
 PRINT_READ_PAIRS = False
-PAUSE_ON_ERROR = True
+PAUSE_ON_ERROR = False
 DO_PROFILE = False
 VERBOSE = False
-MINIMAL_VERBOSE = True
+MINIMAL_VERBOSE = False
 
 DEBUG = False
 DEBUG_VERBOSE = False
-PLOT = False
-PRINT_INDIVIDUAL_GTFS = True
-WRITE_TRACKING_FILES = True
+WRITE_META_DATA = False
 
 # when debugging, we sometimes want to do everything from 
 # the main thread. This builds all of the output, and then
@@ -62,14 +61,21 @@ reads.VERBOSE = VERBOSE
 import transcripts
 transcripts.VERBOSE = VERBOSE
 
-from frag_len import build_normal_density, load_fl_dist
+from frag_len import build_normal_density, load_fl_dists
 from reads import Reads, BinnedReads
 from gene_models import parse_gff_line, GeneBoundaries
 from transcripts import *
 from f_matrix import *
 
-sys.path.append( os.path.join( os.path.dirname(__file__), "../plot/" ) )
-from plot_transcript_models import GenePlot
+class ThreadSafeFile( file ):
+    def __init__( *args ):
+        file.__init__( *args )
+        self.lock = multiprocessing.Lock()
+
+    def write( self, string ):
+        self.lock.acquire()
+        file.write( self, string )
+        self.lock.release()
 
 
 def get_memory_usage( pid ):
@@ -387,7 +393,7 @@ def estimate_gene_expression( gene, candidate_transcripts, binned_reads, fl_dist
         
     return transcripts, meta_data
 
-def build_reads_objs( bam_fns, fl_dist_fn=None, fl_dist_norm=None ):
+def build_reads_objs( bam_fns, fl_dists, read_grp_mappings ):
     def some_reads_are_paired(reads):
         for cnt, read in enumerate(reads.fetch()):
             if read.is_paired:
@@ -411,15 +417,7 @@ def build_reads_objs( bam_fns, fl_dist_fn=None, fl_dist_norm=None ):
             print "Warning: SLIDE is not compatible with single end reads."
             print "Skipping: ", bam_fn
             continue
-
-        if fl_dist_norm:
-            mean, sd = fl_dist_norm
-            fl_min = max( 0, mean - (4 * sd) )
-            fl_max = mean + (4 * sd)
-            fl_dists = build_normal_density( fl_min, fl_max, mean, sd )
-        else:
-            fl_dists, read_group_mappings = load_fl_dist( fl_dist_fn )
-                
+        
         reads.fl_dists = fl_dists
         reads.read_group_mappings = read_group_mappings
         
@@ -454,87 +452,6 @@ class GeneProcessingError( Exception ):
         return self.error_string
 
 
-def write_tracking( transcripts, gene, binned_reads, tracking_fp ):
-    def calc_length( transcript, gene ):
-        return sum( gene.exon_lens[ exon ] for exon in transcript )
-    
-    def get_freq_max( transcripts ):
-        return max( transcripts.freqs )
-    
-    def add_read_coverages():
-        # find the read coverage for each connected exon
-        connected_exons_read_coverage = \
-            binned_reads.find_connected_exons_read_coverage()
-
-        # find the fraction of transcripts ( in transcript frac space )
-        # that is covered by each pseudo exon
-        non_overlapping_exons_fracs = defaultdict( int )
-        for transcript, freq in transcripts.iter_transcripts_and_freqs():
-            for non_overlapping_exon in transcript.build_nonoverlapping_transcript( gene ):
-                non_overlapping_exons_fracs[ non_overlapping_exon ] += freq
-
-        transcript_read_coverages = []
-        # finally, find the read coverage for each transcript
-        for transcript, freq in transcripts.iter_transcripts_and_freqs():
-            transcript_read_coverages.append( 0 )
-            
-            # if this transcript has frequency 0 ( ignorning rounding error ) 
-            # then it's read coverage is 0. This continue lets us avoid 
-            # 0/0 situations.
-            if freq < 1e-10: continue
-            
-            for nonover_exon in transcript.build_nonoverlapping_transcript( gene ):
-                # print connected_exons_read_coverage[ nonover_exon ], \
-                #       freq, \
-                #       non_overlapping_exons_fracs[ nonover_exon ]
-                
-                # we have to be a bit careful to avoid divide by zeros
-                if connected_exons_read_coverage[ nonover_exon ] < 1e-6:
-                    continue
-                
-                transcript_read_coverages[-1] \
-                   += connected_exons_read_coverage[ nonover_exon ] \
-                      * ( freq/non_overlapping_exons_fracs[ nonover_exon ] )
-        
-        transcripts.add_read_coverages( transcript_read_coverages )
-
-        
-    # get max of freq to determine FMI (fraction of major isoform)
-    freq_max = get_freq_max( transcripts )
-    gene_name = transcripts.gene.name
-    # add read coverages to the transcripts object
-    add_read_coverages()
-        
-    transcript_lines = []
-    for trans, md in transcripts.iter_transcripts_and_metadata():
-        # skip zero frequency transcripts ( subject to rounding 
-        # error of course )
-        if md.freq < 1e-10: continue
-        
-        trans_id = gene.name + "_" + trans.get_str_identifier()
-        FMI = int(100*md.freq/freq_max)
-        trans_len = calc_length(trans, gene)
-        # BUG - we assume that all reads are paired, and that 
-        total_num_reads = sum( binned_reads.binned_reads.values() )
-        FPKM = ( (1e10)*(md.read_coverage/2) )/( trans_len*total_num_reads )
-        
-        # transfrag_id, locus_id, reference_gene, trans_id, class_code
-        # the gene_name and trans_id must match those in the merged gtf
-        transcript_line = "\t".join( ( trans_id, gene_name, gene_name + "|" + \
-                                           trans_id, "-\t" ) )
-        
-        # qJ:gene_id|transcript_id|FMI|FPKM|conf_lo|conf_hi|cov|len
-        transcript_line += "|".join( ( "\tq1:" + gene_name, trans_id, \
-                                           str(FPKM), str( FMI ),  \
-                                           "0.000000", "0.000000", \
-                                           "%.2f" % md.read_coverage, \
-                                           str(trans_len) ) )
-
-        transcript_lines.append( transcript_line )
-
-    tracking_fp.write( "\n".join( transcript_lines ) )
-    tracking_fp.flush()
-
 def make_error_log_string( gene, reads_filename, error_inst ):
     error_fields = []
     error_fields.append( gene.name )
@@ -558,7 +475,7 @@ def make_error_log_string( gene, reads_filename, error_inst ):
     
     return error_string
 
-def process_gene_and_reads( gene, candidate_transcripts, reads, tracking_fn ):
+def process_gene_and_reads( gene, candidate_transcripts, reads, op_transcripts):
     binned_reads = BinnedReads( gene, reads, reads.read_group_mappings )
     
     fl_dists = reads.fl_dists
@@ -569,44 +486,25 @@ def process_gene_and_reads( gene, candidate_transcripts, reads, tracking_fn ):
             gene, candidate_transcripts, binned_reads, fl_dists, read_group_mappings )
     except Exception, inst:
         return make_error_log_string( gene, reads.filename, inst )
-
-    if WRITE_TRACKING_FILES:
-        with open( tracking_fn, 'w' ) as fp:
-            write_tracking( transcripts, gene, binned_reads, fp )
     
-    if PRINT_INDIVIDUAL_GTFS:
-        # write unique transcripts with lasso_lambda, freq, etc. information
-        reads_fname = ".".join( os.path.split( reads.filename )[1].split(".")[:-1] )
-        transcripts_fn = os.path.join( './', 'gtfs', gene.name + "." + \
-                                           reads_fname + '.gtf' )
-        with TranscriptsFile( transcripts_fn, 'w' ) as single_gene_transcripts_fp:
-            single_gene_transcripts_fp.add_transcripts( transcripts, gene )
-            
-    if PLOT == True:
-        print "Plotting transcript models."
-        connected_exons = list( candidate_transcripts.iter_connected_exons() )
-        plot = GenePlot( gene, connected_exons, reads )
-        plot.draw_transcripts( transcripts, min_lambda=meta_data['optimal_lambda'] )
-        fname = os.path.join( "./gene_plots/", os.path.split(reads.filename)[1] + "."  )
-        plot.save( fname )
+    op_transcripts.add_transcripts( transcripts, gene, WRITE_META_DATA )
     
-    return None # transcripts
+    return
 
 def estimate_genes_expression_worker( genes_source_input_queue, output_queue, \
-                                          output_prefix, fl_dist_fn, \
-                                          fl_dist_norm, processed_genes = []):
+                                      transcripts_ofp,                        \
+                                      fl_dists, read_group_mappings, \
+                                      processed_genes = []):
     """Estimate transcript frequencies for genes.
     
     Load genes and source bam_fns from genes_source_input_queue, 
         process them, and write them to the output_queue.
     
     We need to initialise the bam files first
-    """
-    
-    def run_queue():
+    """    
+    def process_queue():
         # load the bam files
-        reads_objs = build_reads_objs( bam_fns, fl_dist_fn, fl_dist_norm )
-        os.chdir( os.path.join( "./", output_prefix ) )
+        reads_objs = build_reads_objs( bam_fns, fl_dists, read_group_mappings )
         
         while not genes_source_input_queue.empty():
             try:
@@ -620,11 +518,11 @@ def estimate_genes_expression_worker( genes_source_input_queue, output_queue, \
             # with the fl dist ( or something )
             try:
                 reads = reads_objs[ bam_fn ]
-            except KeyError: continue
+            except KeyError: 
+                continue
 
-            tracking_fname = get_tracking_filename( bam_fn, gene.name )
             item = process_gene_and_reads( \
-                gene, candidate_transcripts, reads, tracking_fname )
+                gene, candidate_transcripts, reads, transcripts_ofp )
 
             # typically process_gene_and_reads will just return a transcripts object,
             # but it's possible for it to return a GeneProcessingError as well. 
@@ -639,7 +537,7 @@ def estimate_genes_expression_worker( genes_source_input_queue, output_queue, \
     
     signal.signal(signal.SIGUSR1, handle_error)
     
-    run_queue()
+    process_queue()
         
     return
 
@@ -661,27 +559,22 @@ def process_output_queue( output_queue, log_fp, num_sources ):
             #if isinstance( item, str ):
             log_fp.write( item + '\n' )
             log_fp.flush()
-            
+        else:
+            assert type(None) == type(item)
+        
     return num_genes_processed
 
-def estimate_genes_expression( genes, gene_transcripts, bam_fns, fl_dist_fn, \
-                               fl_dist_norm, num_threads, output_prefix ):
+def estimate_genes_expression( genes, gene_transcripts, bam_fns, \
+                               fl_dists, read_group_mappings, \
+                               num_threads, ofname ):
     """
 
     """
-    # make the output directories
-    os.mkdir( os.path.join( "./", output_prefix ) )
-    os.mkdir( os.path.join( "./", output_prefix, "./gene_plots/" ) )
-    os.mkdir( os.path.join( "./", output_prefix, "./gtfs/" ) )
-    os.mkdir( os.path.join( "./", output_prefix, "./tracking_files/" ) )
-    for bam_fn in bam_fns:
-        source = os.path.basename( bam_fn )[:-4]
-        os.mkdir( os.path.join( "./", output_prefix, "./tracking_files/", source ) )
-    
-    log_fname = os.path.join( \
-        "./", output_prefix, os.path.basename(output_prefix) + '.log' )
+    ofp = TranscriptsFile( ofname, "w" )
+
+    log_fname = ofname + ".log"
     log_fp = open( log_fname, 'w' )
-
+    
     # create queues to store input and output data
     manager = multiprocessing.Manager()
     input_queue = manager.Queue()
@@ -701,8 +594,7 @@ def estimate_genes_expression( genes, gene_transcripts, bam_fns, fl_dist_fn, \
             cnt += 1
     
     # start the gene processing
-    args = ( input_queue, output_queue, \
-             output_prefix, fl_dist_fn, fl_dist_norm )
+    args = ( input_queue, output_queue, ofp, fl_dists, read_group_mappings )
     
     if PROCESS_SEQUENTIALLY:
         for gene in genes[min_num_genes:]:
@@ -859,7 +751,7 @@ def build_objects( gtf_fp ):
         print "Built gene objects from gtf file."
     # move file position back to beginning of file to be read for creating transcripts
     gtf_fp.seek(0)
-
+    
     # create gene_transcripts dict
     gene_transcripts = build_gene_transcripts( gtf_fp, genes )
     gtf_fp.close()
@@ -871,40 +763,33 @@ def build_objects( gtf_fp ):
 def parse_arguments():
     import argparse
 
-    parser = argparse.ArgumentParser(description='Determine valid transcripts and estimate frequencies.')
+    parser = argparse.ArgumentParser(
+        description='Determine valid transcripts and estimate frequencies.')
+    parser.add_argument( 'ofname', \
+        help='Output file name')
     parser.add_argument( 'gtf', type=file, \
-                             help='GTF file processed for expression')
+        help='GTF file processed for expression')
     parser.add_argument( 'bam_fns', nargs='+', metavar='bam',\
-                             help='list of bam files to for which to produce expression')
-
-    parser.add_argument( '--fl-dist', \
-                             help='a pickled fl_dist object(default:generate fl_dist from input bam)')
+        help='list of bam files to for which to produce expression')
+    
+    parser.add_argument( '--fl-dists', nargs='+', \
+       help='a pickled fl_dist object(default:generate fl_dist from input bam)')
     parser.add_argument( '--fl-dist-norm', \
-                             help='mean and standard deviation (format "mn:sd") from which to produce a fl_dist_norm (default:generate fl_dist from input bam)')
+        help='mean and standard deviation (format "mn:sd") from which to ' \
+            +'produce a fl_dist_norm (default:generate fl_dist from input bam)')
+
     parser.add_argument( '--threads', '-t', type=int , default=1, \
-                             help='Number of threads spawn for multithreading (default=1)')
-    
-    default_output_name = "slide_" + str( datetime.datetime.now() )
-    default_output_name = default_output_name.replace( " ", "_" )
-    default_output_name = default_output_name.replace( ":", "_" )
-    # ignore fractions of seconds
-    default_output_name = default_output_name.split(".")[0]
-    
-    parser.add_argument( '--out-prefix', '-o', default=default_output_name, \
-                             help='Prefix of output files .tracking and .combined.gtf')
-    parser.add_argument( '--plot', default=False, action='store_true', \
-                             help='Whether or not to create a plot for each gene/bam combination.')
-    parser.add_argument( '--verbose', '-v', default=False, action='store_true', \
+        help='Number of threads spawn for multithreading (default=1)')
+
+    parser.add_argument( '--write-meta-data', '-m', default=False, 
+        action='store_true', help='Whether or not to write out meta data.')
+    parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
                              help='Whether or not to print status information.')
     args = parser.parse_args()
 
-    if not args.fl_dist and not arg.fl_dist_norm:
+    if not args.fl_dists and not args.fl_dist_norm:
         raise ValueError, "Must specific either --fl-dist or --fl-dist-norm."
         
-    # set the global plot argument
-    global PLOT
-    PLOT = args.plot
-    
     global VERBOSE
     VERBOSE = args.verbose
     
@@ -915,52 +800,51 @@ def parse_arguments():
             sd = int(sd)
             fl_dist_norm = (mean, sd)
         except ValueError:
-            print "WARNING: User entered mean and sd for normal fl_dist are not properly formatted.\n" + \
+            print "WARNING: User entered mean and sd for normal fl_dist " \
+                + "are not properly formatted.\n" + \
                 "\tUsing default produced from input BAM."
             fl_dist_norm = None
     else:
         fl_dist_norm = None
 
-    # we change to the output directory later, and these files need to opened in 
+    # we change to the output directory later, and these files need to opened in
     # each sub-process for thread safety, so we get the absokute path while we can.
     bam_fns = [ os.path.abspath( bam_fn ) for bam_fn in args.bam_fns ]
-    
+
+    global PROCESS_SEQUENTIALLY
     if args.threads == 1:
         PROCESS_SEQUENTIALLY = True
     
-    return args.gtf, bam_fns, args.fl_dist, fl_dist_norm, args.threads, args.out_prefix
+    global WRITE_META_DATA
+    WRITE_META_DATA = args.write_meta_data
+        
+    return args.gtf, bam_fns, args.ofname, \
+        args.fl_dists, fl_dist_norm, args.threads
 
 if __name__ == "__main__":
     # Get file objects from command line
-    gtf_fp, bam_fns, fl_dist_fn, fl_dist_norm, threads, out_prefix = parse_arguments()
-    output_directory = os.path.abspath( out_prefix )
+    gtf_fp, bam_fns, ofname, fl_dist_fns, fl_dist_norm, threads=parse_arguments()
     
     # build objects from file objects
     genes, gene_transcripts = build_objects( gtf_fp )
     
-    def foo():
-        estimate_genes_expression( genes.values(), gene_transcripts, bam_fns, \
-                                       fl_dist_fn, fl_dist_norm, threads, out_prefix )
+    if fl_dist_norm:
+        mean, sd = fl_dist_norm
+        fl_min = max( 0, mean - (4 * sd) )
+        fl_max = mean + (4 * sd)
+        fl_dists = build_normal_density( fl_min, fl_max, mean, sd )
+    else:
+        fl_dists, read_group_mappings = load_fl_dists( fl_dist_fns )
 
+
+    def foo():
+        estimate_genes_expression( \
+            genes.values(), gene_transcripts, bam_fns, \
+            fl_dists, read_group_mappings, threads, ofname )
+    
     if DO_PROFILE:
         import cProfile
         cProfile.run('foo()')
     else:
         foo()
-    
-    # make a 'cufflinks' directory: basically this should have the same
-    # output as if we ran cufflinks and then cuffcompare
-    os.chdir( output_directory )
-    os.mkdir( "cufflinks" )
-    for sub_directory in os.listdir( "./tracking_files/" ):
-        output_file = open( os.path.join( "cufflinks", "%s.tracking" % sub_directory ), "w" )
-        for filename in os.listdir( os.path.join( "./tracking_files/", sub_directory ) ):
-            with open( os.path.join( "./tracking_files/", sub_directory, filename) ) \
-                    as gene_tracking:
-                output_file.write( gene_tracking.read().strip() )
-                output_file.write( "\n" )
-        output_file.close()
-    
-    # TODO
-    # shutil.copyfile( "merged.gtf", "./cufflinks/merged.gtf" )
-    
+        

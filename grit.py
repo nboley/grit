@@ -77,6 +77,9 @@ TRANS_CMP_CMD = os.path.join( os.path.dirname( __file__ ),
 EXTRACT_ELEMENTS_CMD = os.path.join( os.path.dirname( __file__ ), 
                          "./elements/", "extract_elements_from_transcripts.py" )
 
+BUILD_FL_DIST_CMD = os.path.join( os.path.dirname( __file__ ), 
+                        "./sparsify/", "frag_len.py" )
+
 
 
 
@@ -106,6 +109,7 @@ RnaSeqDataTypes = [ "rnaseq_bam",
                     "cdna_tes_gff",
                     "cdna_tss_gff",
                     "cdna_jns_gff",
+                    "fl_dist",
                     "stats",
                     "TFE_filt_stats",
                     "annotation_gtf" ]
@@ -1286,6 +1290,127 @@ def merge_transcripts( elements, pserver, output_prefix, \
 
     return
 
+def estimate_fl_dists( elements, pserver, output_prefix ):
+    try:
+        os.makedirs( output_prefix )
+    except OSError:
+        # assume that the directory already exists, and continue
+        pass
+    
+    """
+     python ~/Desktop/grit/sparsify/frag_len.py 
+     ~/Desktop/grit_test_data/chr4_transcriptome/exons/
+           discovered_exons.AdVirginF_Ecl_1day_Heads.sample_1.tes_exons.gff 
+     /home/nboley/Desktop/grit_test_data/chr4_test_data/raw_data/bams/
+           AdVirginF_Ecl_1day_Heads.497_BS234.chr4.bam  
+     AdVirginF_Ecl_1day_Heads.sample_1.fldist 
+     --analyze
+    """
+    def build_fl_dist_cmd( sample_type, sample_id ):
+        # get the bam file for this sample_type, id combo
+        ress = elements.get_elements_from_db( \
+            "rnaseq_bam", sample_type, sample_id )
+        if len( ress ) == 0:
+            ress = elements.get_elements_from_db( \
+                "rnaseq_rev_bam", sample_type, sample_id )
+        assert len( ress ) == 1
+        bam_fname = ress[0].fname
+        
+        # get the exons file ( we always use distal exons, because reads that 
+        # fall entirely within them are necessarily full length
+        ress = elements.get_elements_from_db( \
+            "cage_tss_exons_gff", sample_type, sample_id )
+        assert len( ress ) == 1
+        exons_fname = ress[0].fname
+        
+        # get the output file name
+        op_fname = os.path.join( output_prefix, sample_type + "." \
+                                     + sample_id + ".fldist.obj" )
+        
+        cmd_str_template = "python %s {0} {1} {2} --analyze "%BUILD_FL_DIST_CMD
+        call = cmd_str_template.format( exons_fname, bam_fname, op_fname )
+        
+        op_element_types = [ \
+            ElementType( "fl_dist", sample_type, sample_id, "." ),]
+        op_fnames = [ op_fname,]
+
+        dependencies = [ bam_fname, exons_fname ]
+        
+        cmd = Cmd( call, op_element_types, op_fnames, dependencies )
+        pserver.add_process( cmd, Resource(1) )
+    
+
+    sample_types_and_ids = set()
+    sample_types_and_ids.update( elements.get_distinct_element_types_and_ids( \
+                [ "rnaseq_bam", ], False ) )
+    sample_types_and_ids.update( elements.get_distinct_element_types_and_ids( \
+                [ "rnaseq_rev_bam", ], False ) )
+
+    for sample_type, sample_id in sorted( sample_types_and_ids ):
+        build_fl_dist_cmd( sample_type, sample_id )
+    
+    return
+
+
+def estimate_fl_dists( elements, pserver, output_prefix ):
+    try:
+        os.makedirs( output_prefix )
+    except OSError:
+        # assume that the directory already exists, and continue
+        pass
+    
+    """
+    python ~/Desktop/grit/sparsify/sparsify_transcripts.py 
+        tmp.transcripts.sparse.gtf 
+        transcripts/L3_ImaginalDiscs.sample_1.transcripts.gtf 
+        ../chr4_test_data/raw_data/bams/L3_ImaginalDiscs.566_BS303.chr4.bam  
+        --fl-dist fl_dists/L3_ImaginalDiscs.sample_1.fldist.obj
+    """
+    def build_fl_dist_cmd( sample_type, sample_id ):
+        # get the bam file for this sample_type, id combo
+        ress = elements.get_elements_from_db( \
+            "rnaseq_bam", sample_type, sample_id )
+        if len( ress ) == 0:
+            ress = elements.get_elements_from_db( \
+                "rnaseq_rev_bam", sample_type, sample_id )
+        assert len( ress ) == 1
+        bam_fname = ress[0].fname
+        
+        # get the exons file ( we always use distal exons, because reads that 
+        # fall entirely within them are necessarily full length
+        ress = elements.get_elements_from_db( \
+            "cage_tss_exons_gff", sample_type, sample_id )
+        assert len( ress ) == 1
+        exons_fname = ress[0].fname
+        
+        # get the output file name
+        op_fname = os.path.join( output_prefix, sample_type + "." \
+                                     + sample_id + ".fldist.obj" )
+        
+        cmd_str_template = "python %s {0} {1} {2} --analyze "%BUILD_FL_DIST_CMD
+        call = cmd_str_template.format( exons_fname, bam_fname, op_fname )
+        
+        op_element_types = [ \
+            ElementType( "fl_dist", sample_type, sample_id, "." ),]
+        op_fnames = [ op_fname,]
+
+        dependencies = [ bam_fname, exons_fname ]
+        
+        cmd = Cmd( call, op_element_types, op_fnames, dependencies )
+        pserver.add_process( cmd, Resource(1) )
+    
+
+    sample_types_and_ids = set()
+    sample_types_and_ids.update( elements.get_distinct_element_types_and_ids( \
+                [ "rnaseq_bam", ], False ) )
+    sample_types_and_ids.update( elements.get_distinct_element_types_and_ids( \
+                [ "rnaseq_rev_bam", ], False ) )
+
+    for sample_type, sample_id in sorted( sample_types_and_ids ):
+        build_fl_dist_cmd( sample_type, sample_id )
+    
+    return
+
     
 def run_all_slide_compares(elements, pserver, output_prefix, build_maps=False):
     assert build_maps == False
@@ -1448,13 +1573,7 @@ def main():
     
     build_all_exon_files( elements, pserver, base_dir + "exons" )
     
-    #cluster_exons( elements, pserver, base_dir + "exons", \
-    #                   "exons_gff", "filtered_jns_gff" )
-
-    #build_polya_tes_exons( elements, pserver, base_dir + "tes_exons" )
-    #build_cage_tss_exons( elements, pserver, base_dir + "tss_exons" )
-    #extract_cdna_elements( \
-    #    elements, pserver, base_dir + "tss_exons", base_dir + "tes_exons" )
+    estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
     
     build_transcripts( elements, pserver, base_dir + "transcripts" )
 

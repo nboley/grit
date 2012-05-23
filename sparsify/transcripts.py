@@ -263,6 +263,7 @@ class TranscriptsFile( file ):
         self.write_lock = multiprocessing.Lock()
         self.write(\
             "track name=\"SLIDE\" description=\"SLIDE\" visibility=full\n")
+        self.flush()
     
     @staticmethod
     def _build_exon_gtf_line( exon_gene_index, exon_trans_index, \
