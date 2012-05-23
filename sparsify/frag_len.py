@@ -6,112 +6,20 @@ import operator
 import sys
 from collections import defaultdict
 import copy
+import pickle
 
 import os
 
+from reads import Reads
+sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
+                                      "../file_types/" ))
+from gtf_file import parse_gff_line
+
+from gene_models import GeneBoundaries
+
+
 VERBOSE = False
 MIN_FLS_FOR_FL_DIST = 100
-
-def get_fl_dist_base_from_fnames( reads_fname, genes_fname, cluster_read_groups=True ):
-    """Get the fl dist base filename. 
-        
-    This is used for the cached fldist and fldist analysis objects.
-    """
-    def get_hash_from_fname( fname ):
-        fsize = os.path.getsize( fname )
-        hash_key = os.path.basename(fname) + "_" + str( fsize  )
-        return hash_key
-        
-    reads_hash_key = get_hash_from_fname( reads_fname )
-    exons_hash_key = get_hash_from_fname( genes_fname )    
-    return ".fldist_" + reads_hash_key + "_" + exons_hash_key \
-        + "_%i" % cluster_read_groups
-
-    
-def find_diagnostic_plot_fname( reads_fname, genes_fname, cluster_read_groups=True ):
-    fname = get_fl_dist_base_from_fnames( reads_fname, genes_fname, cluster_read_groups )
-    return fname + ".pdf"
-
-def generate_gtf( reads, genes , out, rmsk=None ):
-    """Generate a gtf file with num_exons_to_generate single exon genes with highest read depth
-
-    The exons will not overlap a repeat region if a repeat masker 
-    bed file is provided.
-    """
-    num_exons_to_generate = 250
-    
-    exon_read_depths = []
-    for gene_mo in genes.values():
-        # skip genes with more than 1 exon or short exons
-        if len( gene_mo.exon_bndrys ) != 1:
-            continue
-        if (gene_mo.exon_bndrys[0][1] - gene_mo.exon_bndrys[0][0]) < 700:
-            continue
-        
-        # calculate the length of the exon that we are looking at
-        exon_len = gene_mo.exon_bndrys[0][1] - gene_mo.exon_bndrys[0][0]
-        
-        # iterate through read pairs to count
-        rd_pr_count = 0
-        for read1, read2 in reads.iter_paired_reads( gene_mo.boundaries ):
-            # skip all secondary alignments
-            if read1.is_secondary or read2.is_secondary:
-                continue
-            rd_pr_count += 1
-            
-        exon_read_depths.append( ( rd_pr_count/exon_len , gene_mo) )
-
-    #sort exon_read_depths by read_depth
-    def get_read_depth( obj ): return obj[0]
-    exon_read_depths.sort(key=get_read_depth)
-
-    exons2print = []
-    # use repeat masker file to remove exons in low mapability regions
-    # if repeat masker bed file is provided 
-    if rmsk != None:
-        import subprocess, shlex
-        # loop through exons sorted by read_depth
-        for exon_read_depth in exon_read_depths:
-            # write single line exon bed file for each exon to be tested
-            exon_fh = open( '.single_exon_for_high_read_depth_gtf_generator.txt' ,'w' )
-            gene_mo = exon_read_depth[1]
-            bed_line = "chr" + gene_mo.chromosome + "\t" + \
-                str(gene_mo.exon_bndrys[0][0]) + "\t" + str(gene_mo.exon_bndrys[0][1])
-            exon_fh.write( bed_line )
-            exon_fh.close()
-            # run bedtools intersect to see if exon is in repeat region
-            cmd = shlex.split('intersectBed -u -b ' + rmsk + \
-                                  ' -a .single_exon_for_high_read_depth_gtf_generator.txt')
-            P = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-            exon_in_rpt = False
-            for line in P.stdout:
-                exon_in_rpt = True
-            # if the exon does not overlap a repeat region
-            if not exon_in_rpt:
-                exons2print.append( exon_read_depth )
-            # when we have found num_exons_to_generate exons to print out break loop
-            if len( exons2print ) >= num_exons_to_generate: 
-                break
-    else:
-        exons2print = exon_read_depths[:num_exons_to_generate]
-
-    def write_gtf_line( exon ):
-        # return the following information in tab-delimited format as in a gtf file
-        # (seqname, source, feature, start, end, score, strand, frame, group)
-        line = [ exon.chromosome, 'frag_len.py_generated', 'exon', \
-                     str(exon.bp_bndry(0)[0]), str(exon.bp_bndry(0)[1]), \
-                     ".", exon.strand, '.', 'gene_id "' + exon.name + \
-                     '"; transcript_id "' + exon.name + \
-                     '"; exon_number "1"\n']
-        return '\t'.join( line )
-
-    # write out gtf lines corresponding to exons with highest read depth
-    fid = open( out , 'w' )
-    for exon in zip(*exons2print)[1]:
-        fid.write( write_gtf_line( exon ) )
-    fid.close()
-
-    return
 
 class FlDist( object ):
     """Store a fragment length dist.
@@ -167,6 +75,10 @@ class FlDist( object ):
     def __hash__( self ):
         return self._hash_value
             
+def load_fl_dist( fname ):
+    with open( fname ) as fp:
+        fl_dist = pickle.load( fp )
+        return fl_dist
     
 def build_uniform_density( fl_min, fl_max ):
     length = fl_max - fl_min + 1
@@ -182,7 +94,9 @@ def build_normal_density( fl_min, fl_max, mean, sd ):
     return FlDist( fl_min, fl_max, density_array )
 
 def build_multi_modal_density( mean_sd_freq ):
-    """This function is for creating an accurate fragment length distribution from several normal densities (i.e. simulated Illumina and 454)
+    """Create a fragment length distribution from a mixture 
+           of normal densities (i.e. simulated Illumina and 454)
+    
     Note: This function has not been tested!!!
     """
     # set fl_min and fl_max and create scipy normal densities for each
@@ -249,7 +163,7 @@ def group_fragments_by_exonlen( fragments ):
 
     return grouped_fragments
 
-def analyze_fl_dists( fragments, out_filename='diagnostic_plots'):
+def analyze_fl_dists( fragments, out_filename='diagnostic_plots.pdf'):
     """Analyze the fragment lengths. 
 
     Produce diagnostic plots and statistics for fragment length distributions 
@@ -292,6 +206,7 @@ def analyze_fl_dists( fragments, out_filename='diagnostic_plots'):
         grouped_frag_lengths_for_bxplt.append( exon_binned_frag_lengths[ \
                 (exon_binned_frag_lengths > fl_dist.fl_min) \
                     & (exon_binned_frag_lengths < fl_dist.fl_max) ] )
+    
     # plot separate box plots for each exon length with trimmed data
     plt.boxplot( grouped_frag_lengths_for_bxplt )
     plt.xlabel('Exon Length Bin (Short to Long)')
@@ -303,17 +218,21 @@ def analyze_fl_dists( fragments, out_filename='diagnostic_plots'):
     # Compare fl_dists separated by strand
     strand_grouped_frag_lengths = group_fragments_by_strand( fragments )
     strand_fl_dists = {}
-    for strand , strand_grouped_frag_lengths in strand_grouped_frag_lengths.iteritems():
-        #print strand , 'strand statistics(mean,sd,skew,se_m,se_sd,se_sk,low,up):'
-        strand_fl_dists[ strand ] = build_robust_fl_dist_with_stats( strand_grouped_frag_lengths )
+    for strand, strand_grouped_frag_lengths in \
+            strand_grouped_frag_lengths.iteritems():
+        strand_fl_dists[ strand ] = build_robust_fl_dist_with_stats( \
+            strand_grouped_frag_lengths )
+    
     # plot scatter plots on the same plot for both forward and reverse strand.
     plt.scatter( range(strand_fl_dists['+'].fl_min, strand_fl_dists['+'].fl_max+1), \
                      strand_fl_dists['+'].fl_density , s=10, c='b' )
     plt.scatter( range(strand_fl_dists['-'].fl_min, strand_fl_dists['-'].fl_max+1), \
                      strand_fl_dists['-'].fl_density , s=10, c='r' )
+    
     plt.xlabel('Fragment Size')
     plt.ylabel('Proportion of Fragments')
     plt.suptitle('Fragement Size Distribution Separated by Strand')
+    
     pp.savefig()
     plt.clf()
 
@@ -321,40 +240,44 @@ def analyze_fl_dists( fragments, out_filename='diagnostic_plots'):
 
     return
 
-def find_fragments( reads, genes ):
+def find_fragments_in_exon( reads, exon ):
     fragment_sizes = []
-    for gene_mo in genes.values():
-        # skip genes with more than 1 exon or short exons
-        if len( gene_mo.exon_bndrys ) != 1:
-            continue
-        if (gene_mo.exon_bndrys[0][1] - gene_mo.exon_bndrys[0][0]) < 700:
-            continue
-                
-        # calculate the length of the exon
-        exon_len = gene_mo.exon_bndrys[0][1] - gene_mo.exon_bndrys[0][0]
-        
-        # iterate through read pairs in exon to get fragment lengths
-        for read1, read2 in reads.iter_paired_reads( gene_mo.boundaries ):
-            # skip all secondary alignments
-            if read1.is_secondary or read2.is_secondary:
-                continue
 
-            # get read group from tags
-            # put all frags w/o a read group into mean read group
-            try:
-                read_group = [ val for key, val in read1.tags if key == 'RG' ][0]
-            except IndexError:
-                read_group = 'mean'
-                
-            strand = '-' if read1.is_reverse else '+'
-            
-            if not read1.is_reverse:
-                frag_len = read2.aend - read1.pos
-            else:
-                frag_len = read1.aend - read2.pos
+    # calculate the length of the exon
+    exon_len = exon.stop - exon.start + 1
+
+    # iterate through read pairs in exon to get fragment lengths
+    for read1, read2 in reads.iter_paired_reads( exon ):
+        # skip all secondary alignments
+        if read1.is_secondary or read2.is_secondary:
+            continue
+
+        # get read group from tags
+        # put all frags w/o a read group into mean read group
+        try:
+            read_group = [ val for key, val in read1.tags if key == 'RG' ][0]
+        except IndexError:
+            read_group = 'mean'
+
+        strand = '-' if read1.is_reverse else '+'
+
+        if not read1.is_reverse:
+            frag_len = read2.aend - read1.pos
+        else:
+            frag_len = read1.aend - read2.pos
+
+        key = ( read_group, strand, exon_len )
+        fragment_sizes.append( ( key, frag_len ) )
     
-            key = ( read_group, strand, exon_len )
-            fragment_sizes.append( ( key, frag_len ) )
+    return fragment_sizes
+
+def find_fragments( reads, exons ):
+    fragment_sizes = []
+    for exon in exons:
+        if (exon.stop - exon.start + 1) < 700:
+            continue
+        
+        fragment_sizes.extend( find_fragments_in_exon( reads, exon ) )
         
     return fragment_sizes
 
@@ -534,8 +457,8 @@ def merge_clustered_fl_dists( clustered_read_groups, grouped_fragments ):
     
     return clustered_fl_dists
 
-def estimate_fl_dists( reads, genes, cluster_read_groups=True ):
-    fragments = find_fragments( reads, genes )
+def estimate_fl_dists( reads, exons, cluster_read_groups=True ):
+    fragments = find_fragments( reads, exons )
     if len( fragments ) == 0:
         err_str = "There are no reads for this data file in the " \
             + "high read depth exons."
@@ -566,69 +489,35 @@ def estimate_fl_dists( reads, genes, cluster_read_groups=True ):
     
     return fl_dists, clustered_read_groups, fragments
 
-def get_fl_dists( reads, single_exon_genes, \
-                  cluster_read_groups=True, analyze_fl_dist=True ):
-    """Wrap estimate_fl_dists, but include a caching layer. 
-    
-    """
-    import os
-    import pickle
-    
-    if VERBOSE:
-        print "Loading FL Dists."
-        
-    reads_path = os.path.dirname( reads.filename )
-    
-    try:
-        cached_obj_fname = get_fl_dist_base_from_fnames( \
-                reads.filename, single_exon_genes.filename, cluster_read_groups ) + ".obj"
-        
-        # first, try to open the cached object in the reads directory
-        try:
-            with open( os.path.join( reads_path, cached_obj_fname ) ) as fp:
-                fl_dists, read_group_mappings = pickle.load( fp )
-        # if we can't try from the current directory
-        except IOError:            
-            with open( cached_obj_fname ) as fp:
-                fl_dists, read_group_mappings = pickle.load( fp )
-    except IOError:
-        print "Estimating FL Dists. This may take some time..."
-        fl_dists, read_group_mappings, fragments = \
-            estimate_fl_dists( reads, single_exon_genes, cluster_read_groups )
+def parse_arguments():
+    import argparse
 
-        # first, try to open a file inb the reads directory. If this fails
-        # ( ie, we dont have write proivleges or are out of space ) then 
-        # fall back to the local directory.
-        try:
-            ofp = open( os.path.join( reads_path, cached_obj_fname ), "w" )
-        except IOError:
-            ofp = open( cached_obj_fname, "w" )
-        
-        pickle.dump( ( fl_dists, read_group_mappings ), ofp )
-        ofp.close()
-        
-        if analyze_fl_dist:
-            plot_filename = get_fl_dist_base_from_fnames( \
-                reads.filename, single_exon_genes.filename ) + ".pdf"
-            # try to put the plot in the reads directory
-            try: 
-                plot_full_fname = os.path.join( reads_path, plot_filename )
-                
-                with open( plot_full_fname, "w" ) as fp: pass
-                analyze_fl_dists( fragments , plot_full_fname )
-            # if we cant open a file there, then put the plot in the local directory
-            except IOError:
-                analyze_fl_dists( fragments, plot_filename )
-        
-    return fl_dists, read_group_mappings
+    parser = argparse.ArgumentParser(description=\
+        "Estimate fragment length (fl) distributions by getting fragments " +  \
+        "from high read count single exon genes." )
+    parser.add_argument( 'gff', type=file, \
+        help='GFF file for fl dist extimation (or generation)' )
+    parser.add_argument( 'bam', help='bam file to get fl dist from')
+    parser.add_argument( 'outfname', help='output filename' )
 
-def build_objs( gtf_fp, bam_fn ):
-    import slide
-    genes = slide.GeneBoundaries( gtf_fp )
-    gtf_fp.close()
+    parser.add_argument( '--analyze', '-a', action="store_true", default=False,\
+        help='produce analysis graphs for fl dists' )
+    args = parser.parse_args()
+    
+    return args.gff, args.bam, args.outfname, args.analyze
+
+def main():
+    gff_fp, bam_fn, ofname, analyze = parse_arguments()
+    
+    exons = []
+    for line in gff_fp:
+        gff_line = parse_gff_line( line )
+        if gff_line != None: exons.append( gff_line[0] )
+    
+    gff_fp.close()
 
     # load the bam file
-    reads = slide.Reads( bam_fn , "rb" )
+    reads = Reads( bam_fn , "rb" )
     # make sure that it is indexed by trying to get a read
     try:
         reads.fetch("X", 0, 1)
@@ -640,36 +529,17 @@ def build_objs( gtf_fp, bam_fn ):
             break
         if cnt > 100:
             raise RuntimeError, "SLIDE is not compatible with single end reads"
-        
 
-    return genes, reads
-
-def parse_arguments():
-    import argparse
-
-    parser = argparse.ArgumentParser(description='Estimate fragment length (fl) distributions by getting fragments from high read count single exon genes.' )
-    parser.add_argument( 'gtf', type=file, \
-                             help='GTF file for fl dist extimation (or generation)' )
-    parser.add_argument( 'bam', help='bam file to get fl dist from')
-    parser.add_argument( '--analyze', '-a', action="store_true", default=False, \
-                          help='produce analysis graphs for fl dists' )
-    parser.add_argument( '--generate', '-g', action="store_true", default=False, \
-                          help='generate gtf file containing single exon genes with the highest depth of coverage' )
-    parser.add_argument( '--out', '-o', default='high_read_depth_exons.gtf', \
-                          help='output file for generation of gtf [default : %(default)s]' )
-    parser.add_argument( '--repeat', '-r', \
-                          help='optional file containing repeat masker bed file to remove generated genes' )
-    args = parser.parse_args()
-
-    return args.gtf, args.bam, args.analyze, args.generate, args.out, args.repeat
-
-if __name__ == "__main__":
-    gtf_fp, bam_fn, analyze, generate, out, repeat = parse_arguments()
-    genes, reads = build_objs( gtf_fp, bam_fn )
 
     VERBOSE = True
+    fl_dists, read_group_mappings, fragments = \
+        estimate_fl_dists( reads, exons, cluster_read_groups=True )
     
-    if generate:
-        generate_gtf( reads, genes, out, repeat )
-    else:
-        get_fl_dists( reads, genes, cluster_read_groups=True, analyze_fl_dist=analyze )
+    with open( ofname, "w" ) as ofp:
+        pickle.dump( ( fl_dists, read_group_mappings ), ofp )
+    
+    if analyze:
+        analyze_fl_dists( fragments, plot_filename )
+
+if __name__ == "__main__":
+    main()

@@ -19,6 +19,8 @@ import signal
 from math import log, sqrt, exp
 from collections import defaultdict
 
+from frag_len import FlDist
+
 MAX_NUM_EXONS = 100
 
 FILTER_BY_IMPROBABILITY = False
@@ -26,7 +28,7 @@ FREQ_FILTER = 0.01
 FREQ_FILTER_THRESH = 0.05
 
 PRINT_READ_PAIRS = False
-PAUSE_ON_ERROR = False
+PAUSE_ON_ERROR = True
 DO_PROFILE = False
 VERBOSE = False
 MINIMAL_VERBOSE = True
@@ -60,8 +62,7 @@ reads.VERBOSE = VERBOSE
 import transcripts
 transcripts.VERBOSE = VERBOSE
 
-from frag_len import build_normal_density, get_fl_dists, \
-    find_diagnostic_plot_fname
+from frag_len import build_normal_density, load_fl_dist
 from reads import Reads, BinnedReads
 from gene_models import parse_gff_line, GeneBoundaries
 from transcripts import *
@@ -410,39 +411,15 @@ def build_reads_objs( bam_fns, fl_dist_fn=None, fl_dist_norm=None ):
             print "Warning: SLIDE is not compatible with single end reads."
             print "Skipping: ", bam_fn
             continue
-        
-        base_dir = os.path.split( os.path.abspath( __file__ ) )[0]
-        # if the user gives a cached fl_dist object or requested fl_dist_norm
-        if fl_dist_fn or fl_dist_norm:
-            if fl_dist_fn:
-                import cPickle as pickle
-                
-                with open( os.path.join( base_dir, fl_dist_fn ), 'r' ) as fl_dist_fp:
-                    fl_dist = pickle.load( fl_dist_fp )
-            # if user has provided a mean and sd for the 
-            elif fl_dist_norm:
-                mean, sd = fl_dist_norm
-                fl_min = max( 0, mean - (4 * sd) )
-                fl_max = mean + (4 * sd)
-                fl_dist = build_normal_density( fl_min, fl_max, mean, sd )
 
-            fl_dists = { 0 : fl_dist }
-            read_group_mappings = { 'mean' : 0 }
+        if fl_dist_norm:
+            mean, sd = fl_dist_norm
+            fl_min = max( 0, mean - (4 * sd) )
+            fl_max = mean + (4 * sd)
+            fl_dists = build_normal_density( fl_min, fl_max, mean, sd )
         else:
-            # estimate the fragment length distribution
-            # load the fl dist file
-            with open( os.path.join( \
-                    base_dir, LONG_SINGLE_EXON_GENES_FNAME ) ) as lsegfp:
-                lse_genes = GeneBoundaries( lsegfp )
-                try:
-                    fl_dists, read_group_mappings = get_fl_dists( \
-                        reads, lse_genes, cluster_read_groups=True )
-                except Exception, inst:
-                    print "Error: couldn't estimate the fl dist for %s. Skipping..." % \
-                        bam_fn
-                    raise
-                    continue
-        
+            fl_dists, read_group_mappings = load_fl_dist( fl_dist_fn )
+                
         reads.fl_dists = fl_dists
         reads.read_group_mappings = read_group_mappings
         
@@ -586,7 +563,7 @@ def process_gene_and_reads( gene, candidate_transcripts, reads, tracking_fn ):
     
     fl_dists = reads.fl_dists
     read_group_mappings = reads.read_group_mappings
-
+    
     try:
         transcripts, meta_data = estimate_gene_expression( \
             gene, candidate_transcripts, binned_reads, fl_dists, read_group_mappings )
@@ -900,9 +877,9 @@ def parse_arguments():
     parser.add_argument( 'bam_fns', nargs='+', metavar='bam',\
                              help='list of bam files to for which to produce expression')
 
-    parser.add_argument( '--fl_dist', \
+    parser.add_argument( '--fl-dist', \
                              help='a pickled fl_dist object(default:generate fl_dist from input bam)')
-    parser.add_argument( '--fl_dist_norm', \
+    parser.add_argument( '--fl-dist-norm', \
                              help='mean and standard deviation (format "mn:sd") from which to produce a fl_dist_norm (default:generate fl_dist from input bam)')
     parser.add_argument( '--threads', '-t', type=int , default=1, \
                              help='Number of threads spawn for multithreading (default=1)')
@@ -913,14 +890,17 @@ def parse_arguments():
     # ignore fractions of seconds
     default_output_name = default_output_name.split(".")[0]
     
-    parser.add_argument( '--out_prefix', '-o', default=default_output_name, \
+    parser.add_argument( '--out-prefix', '-o', default=default_output_name, \
                              help='Prefix of output files .tracking and .combined.gtf')
     parser.add_argument( '--plot', default=False, action='store_true', \
                              help='Whether or not to create a plot for each gene/bam combination.')
     parser.add_argument( '--verbose', '-v', default=False, action='store_true', \
                              help='Whether or not to print status information.')
     args = parser.parse_args()
-    
+
+    if not args.fl_dist and not arg.fl_dist_norm:
+        raise ValueError, "Must specific either --fl-dist or --fl-dist-norm."
+        
     # set the global plot argument
     global PLOT
     PLOT = args.plot
@@ -967,34 +947,6 @@ if __name__ == "__main__":
         cProfile.run('foo()')
     else:
         foo()
-
-    # copy the fragment dist analysis pdf to the output directory
-    fl_dist_exons_fname = os.path.join( \
-        os.path.dirname( __file__ ), LONG_SINGLE_EXON_GENES_FNAME )
-
-    if not( fl_dist_fn or fl_dist_norm ):
-        # copy the fl dist analysis plot into the output directory
-        for bam_fn in bam_fns:
-            fl_plot_fname = find_diagnostic_plot_fname( \
-                bam_fn, fl_dist_exons_fname )
-            
-            fl_plot_source_fname = os.path.join( \
-                os.path.abspath( os.path.dirname( bam_fn ) ), \
-                    fl_plot_fname )
-
-            fl_plot_dest_fname = os.path.join( \
-                output_directory, "fl_dist_plots", fl_plot_fname[1:] )
-            
-            # ignore the make directory if it already exists
-            try: os.mkdir( os.path.join( output_directory, "fl_dist_plots" ) )
-            except OSError: pass
-
-            try:
-                shutil.copyfile( fl_plot_source_fname, fl_plot_dest_fname )
-            except IOError:
-                print "WARNING: Could not copy '%s' into the output directory" \
-                    % fl_plot_source_fname
-    
     
     # make a 'cufflinks' directory: basically this should have the same
     # output as if we ran cufflinks and then cuffcompare

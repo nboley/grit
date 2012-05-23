@@ -29,6 +29,8 @@ import itertools
 MAX_NUM_CKSUM_BLOCKS = 10
 USE_TF_ELEMENTS = False
 
+USE_MERGED_INPUT=False
+
 USE_MERGED_EXONS_FOR_TSS_EXONS = False
 BUILD_SAMPLE_SPECIFIC_EXONS = True
 USE_SAMPLE_SPECIFIC_CAGE = True and BUILD_SAMPLE_SPECIFIC_EXONS
@@ -605,7 +607,15 @@ class ProcessServer( object ):
             
             if len( self.running_commands ) == 0 \
                     and len( self.pending_commands ) > 0:
-                print self.elements
+                print self.running_commands
+                for entry in self.pending_commands:
+                    print "="*80
+                    print entry[0]
+                    for dep in entry[0].dependencies:
+                        print "\t", dep
+                    
+                    print 
+                
                 raise Exception, "There are pending commands but no running " \
                     + "commands. This probably indicates a dependency problem."
             
@@ -625,11 +635,18 @@ class ProcessServer( object ):
         self.running_commands = []
         
         # store the available thread resources
+        self.max_available_resources = available_resources
         self.available_resources = available_resources
         
-    def add_process( self, cmd, min_resources, max_resources=None ):
+    def add_process( self, cmd, min_resources, max_resources=None ):        
         if max_resources == None:
             max_resources = min_resources
+        
+        assert min_resources <= max_resources
+        if max_resources > self.max_available_resources:
+            error_str = "Can't run '%i' threads on a server with '%i' threads."
+            raise ValueError, error_str % ( \
+                max_resources, self.max_available_resources )
         
         # check to see if we already have these elements. If we do, then
         # don't add them. 
@@ -1183,7 +1200,7 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         call +=  " --threads={threads}"
         
         op_element_types = [ \
-            ElementType( transcript_output_type, sample_type, sample_id, "." ), ]
+            ElementType( transcript_output_type, sample_type, sample_id, "." ),]
         op_fnames = [ op_fname,]
 
         dependencies = [ exons_fname, jns_fname ]
@@ -1191,7 +1208,8 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         dependencies.extend( tes_exons_fnames )
 
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-        pserver.add_process( cmd, Resource(1), Resource(8) )
+        max_res = min(Resource(8), Resource(pserver.max_available_resources))
+        pserver.add_process( cmd, Resource(1), max_res )
         return
 
     ress = elements.get_elements_from_db( jn_input_type )
@@ -1236,16 +1254,21 @@ def merge_transcripts( elements, pserver, output_prefix, \
         dependencies = input_fnames
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-        pserver.add_process( cmd, Resource( min(16, len(input_fnames))) )
+        res = min(pserver.max_available_resources, 16, len(input_fnames) )
+        pserver.add_process( cmd, Resource( res ) )
     
     # add the merge all command first, since it takes the 
     # longest to complete
     in_es = elements.get_elements_from_db( input_e_type )
     input_fnames = [ e.fname for e in in_es if e.sample_id not in "*M"]
+
     # get the merged input transcripts    
-    merged_input_fname = elements.get_elements_from_db( \
-        input_e_type, "*", "*" )[0].fname
-    input_fnames.append( merged_input_fname )
+    if USE_MERGED_INPUT:
+        merged_input_fname = elements.get_elements_from_db( \
+            input_e_type, "*", "*" )[0].fname
+        input_fnames.append( merged_input_fname )
+
+
     if len( input_fnames ) > 0:
         add_merge_transcripts_sample_cmd( "M", input_fnames )
     
