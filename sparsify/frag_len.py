@@ -89,8 +89,9 @@ def load_fl_dists( fnames ):
         for key, fl_dist in fl_dists.iteritems():
             all_fl_dists[ key ] = fl_dist
 
-    clustered_read_groups = cluster_rdgrps( all_fl_dists )
-
+    # clustered_read_groups = cluster_rdgrps( all_fl_dists )
+    clustered_read_groups = dict( (k,k) for k in all_fl_dists )
+    
     return all_fl_dists, clustered_read_groups
     
 def build_uniform_density( fl_min, fl_max ):
@@ -297,8 +298,8 @@ def find_fragments( reads, exons ):
 def build_robust_fl_dist_with_stats( fragment_lengths ):
     """Trim outliers from a numpy array of fragment lengths.
 
-    First, we estimate the mean and sd on the trimmed data. Then we use the initial
-    estimate to truncate at +/- NUM_SDS SD's
+    First, we estimate the mean and sd on the trimmed data. Then we use the 
+    initial estimate to truncate at +/- NUM_SDS SD's
     
     Calculate statistics for use in read_group distribution clustering
     """

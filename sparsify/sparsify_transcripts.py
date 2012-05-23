@@ -362,16 +362,17 @@ def estimate_gene_expression( gene, candidate_transcripts, binned_reads, fl_dist
     if VERBOSE:
         print "==================NEW GENE %s ====================" % gene.name
     
-    # Make sure that we get at least one transcript, 1 exon and that we have valid bins.
+    # Make sure that we get at least one transcript, 1 exon and that we 
+    # have valid bins.
     assert len( candidate_transcripts ) > 0
     assert len( gene.exon_bndrys ) > 0
     if len( binned_reads.binned_reads.keys() ) == 0:
-        raise GeneProcessingError( gene, binned_reads.reads, "Zero valid bins." )
+        raise GeneProcessingError( gene, binned_reads.reads, "Zero valid bins.")
 
     ### Estimate transcript freqs
     # build the f matrix
-    f_mats = build_f_matrix( candidate_transcripts, binned_reads, gene, fl_dists )
-        
+    f_mats = build_f_matrix(candidate_transcripts, binned_reads, gene, fl_dists)
+    
     transcripts, meta_data = perform_optimization( \
         f_mats, gene, binned_reads, candidate_transcripts )
     
