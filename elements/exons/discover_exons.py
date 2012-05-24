@@ -5,6 +5,7 @@ from collections import defaultdict, namedtuple
 from itertools import izip, chain, takewhile, count
 from scipy import median
 from build_genelets import cluster_exons
+from math import log
 
 # since some mismapped signal spills into intron
 # this many bases are ignored when finding 
@@ -44,7 +45,7 @@ LOC_THRESH_REG_SZ = 50000
 
 ### CAGE TUUNING PARAMS
 CAGE_WINDOW_LEN = 120
-CAGE_MAX_SCORE_FRAC = 0.15
+CAGE_MAX_SCORE_FRAC = 0.10
 CAGE_MIN_SCORE = 5
 CAGE_SUFFICIENT_SCORE = 200
 # this is set in main
@@ -58,6 +59,7 @@ POLYA_MIN_SCORE = 2
 # this is set in main
 POLYA_TOT_FRAC = None
 
+NORMALIZE_BY_RNASEQ_COV = True
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../", 'file_types'))
 from wiggle import Wiggle
@@ -963,7 +965,7 @@ def cluster_labels_and_bndrys( labels, bndrys, jns, strand, chrm_stop  ):
     
     return clustered_labels, clustered_bndrys
     
-def score_distal_exon( cov, window_len ):
+def score_distal_exon( cov, window_len, read_cov=None ):
     # get maximal tss coverage region accoss exon
     cumsum_cvg_array = \
         numpy.append(0, numpy.cumsum( cov ))
@@ -976,15 +978,27 @@ def score_distal_exon( cov, window_len ):
 
     # get the coverage total for every window in the interval of length
     # window_len
-    score = ( cumsum_cvg_array[window_len:] \
-                  - cumsum_cvg_array[:-window_len] ).max()
-
+    scores = cumsum_cvg_array[window_len:] - cumsum_cvg_array[:-window_len]
+    max_index = scores.argmax() + window_len
+    score = scores[ max_index - window_len ]
+    
+    if NORMALIZE_BY_RNASEQ_COV and read_cov != None:
+        #print read_cov
+        #print max_index, max_index+window_len
+        #print read_cov[max_index:(max_index+window_len)]
+        #raw_input()
+        #print score, read_cov[max_index:(max_index+window_len)].sum()+1, \
+        #    score/(log(read_cov[max_index:(max_index+window_len)].sum()+1)+1)
+        score /= (log(read_cov[max_index:(max_index+window_len)].sum()+1)+1)
+    
     return score
 
 def find_distal_exon_indices( cov, find_upstream_exons,  \
                               intron_starts, intron_stops, \
                               bs, ls, \
-                              min_score, window_len, max_score_frac ):
+                              rna_seq_cov, \
+                              min_score, window_len, 
+                              max_score_frac ):
     # skip the first and the last labels because these are outside of the cluster
     assert ls[0] == 'L'
     if ls[-1] != 'L':
@@ -999,14 +1013,19 @@ def find_distal_exon_indices( cov, find_upstream_exons,  \
         for index, ((start, stop), label) in \
                 enumerate(izip( izip(bs[1:-1], bs[2:]), ls[1:-1] )):
             if label == 'L': continue
+            if rna_seq_cov != None:
+                reg_rnaseq_cov = rna_seq_cov[start:stop+1]
+            else:
+                reg_rnaseq_cov = None
+            
             scores.append( (index+1, score_distal_exon( \
-                        cov[start:stop], window_len) ) )
+                        cov[start:stop], window_len, reg_rnaseq_cov) ) )
 
         max_score = max( score for i, score in scores )
         if max_score > min_score:
             rvs = set( [ i for i, score in scores \
-                           if float(score)/max_score > max_score_frac \
-                           or score >= CAGE_SUFFICIENT_SCORE] )
+                           if float(score)/max_score > max_score_frac ] )
+            #               or score >= CAGE_SUFFICIENT_SCORE] )
             
             # always add the first and/or last exon segment
             """
@@ -1078,7 +1097,7 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov, polya_cov ):
         # find tss exons
         tss_indices = find_distal_exon_indices( \
             cage_cov, (strand=='+'), intron_starts, intron_stops,
-            bs, ls, \
+            bs, ls, read_cov_obj.rca, \
             CAGE_MIN_SCORE, CAGE_WINDOW_LEN, CAGE_MAX_SCORE_FRAC )
         
         # if we can't find a TSS index, continue
@@ -1088,7 +1107,7 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov, polya_cov ):
 
         tes_indices = find_distal_exon_indices( \
             polya_cov, (strand=='-'), intron_starts, intron_stops, \
-            bs, ls, \
+            bs, ls, None, \
             POLYA_MIN_SCORE, POLYA_WINDOW_LEN, POLYA_MAX_SCORE_FRAC )        
         # if we can't find a TSS index, continue
         if len( tes_indices ) == 0:
