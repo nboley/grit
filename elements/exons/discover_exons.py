@@ -819,6 +819,29 @@ def find_T_S_exons(cov, labels, bndrys, intron_starts, intron_stops, \
                 if start >= stop: continue
                 assert start < stop
                 t_s_exons.append( (start, stop) )
+    
+    # refine the eoxn bndrys
+    refined_exons = []
+    for exon in t_s_exons:
+        exon_cvg = cov[exon[0]:exon[1]+1]
+        total = exon_cvg.sum()
+        if is_tss and strand == '+' or not is_tss and strand == '-':
+            curr_tot = 0
+            for i, val in enumerate( exon_cvg ):
+                curr_tot += val
+                if curr_tot > .05*total:
+                    break
+            refined_exons.append( (i+exon[0], exon[1]) )
+        else:
+            curr_tot = 0
+            for i, val in enumerate( exon_cvg ):
+                curr_tot += val
+                if curr_tot > .95*total:
+                    break
+            refined_exons.append( (exon[0], exon[0]+i) )
+        
+        if refined_exons[-1][1] - refined_exons[-1][0] == 0:
+            del refined_exons[-1]
 
     """
     print is_tss, strand
@@ -826,33 +849,12 @@ def find_T_S_exons(cov, labels, bndrys, intron_starts, intron_stops, \
     print bndrys
     print t_s_start_indices
     print t_s_exons
+    print refined_exons
     #print sorted( intron_starts )
     #print sorted( intron_stops )
     raw_input()
     """
 
-    # refine the eoxn bndrys
-    refined_exons = []
-    for exon in t_s_exons:
-        total = cov[exon[0]:exon[1]+1].sum()
-        if is_tss and strand == '+' or not is_tss and strand == '-':
-            curr_tot = 0
-            for i, val in enumerate( cov[exon[0]:exon[1]+1] ):
-                curr_tot += val
-                if curr_tot > .99*total:
-                    break
-            refined_exons.append( (i+exon[0], exon[1]) )
-        else:
-            curr_tot = 0
-            for i, val in enumerate( cov[exon[0]:exon[1]+1:-1] ):
-                curr_tot += val
-                if curr_tot > .95*total:
-                    break
-            refined_exons.append( (exon[0], exon[1]-i) )
-        
-        if refined_exons[-1][1] - refined_exons[-1][0] < 20:
-            refined_exons[-1] = exon
-    
     return refined_exons
 
 def filter_exon_bndrys( exon_bndrys, jn_bndrys ):
@@ -1007,11 +1009,12 @@ def find_distal_exon_indices( cov, find_upstream_exons,  \
                            or score >= CAGE_SUFFICIENT_SCORE] )
             
             # always add the first and/or last exon segment
+            """
             if find_upstream_exons:
                 rvs.add( 1 )
             else:
                 rvs.add( len(bs) - 2 )
-            
+            """
             return sorted( rvs )
     
     # if we don't have signal data
@@ -1217,7 +1220,7 @@ def main():
     read_cov_sum = sum( array.sum() for array in read_cov.itervalues() )
     
     # open the cage data
-    cage_cov = Wiggle( chrm_sizes_fp, cage_wig_fps, ['+','-'] )
+    cage_cov = Wiggle( chrm_sizes_fp, cage_wig_fps )
     cage_sum = sum( cage_cov.apply( lambda a: a.sum() ).values() )
     global CAGE_TOT_FRAC
     CAGE_TOT_FRAC = (float(cage_sum)/read_cov_sum)*(1e-2)    

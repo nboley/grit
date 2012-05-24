@@ -1100,6 +1100,7 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         dependency_fnames.extend( bedgraph_fnames )
         dependency_fnames.extend( cage_wig_fnames )
         
+        print call
         cmd = Cmd(call, output_element_types, output_fnames, dependency_fnames)
         pserver.add_process( cmd, Resource(1), Resource(1) )
 
