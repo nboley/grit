@@ -80,6 +80,9 @@ EXTRACT_ELEMENTS_CMD = os.path.join( os.path.dirname( __file__ ),
 BUILD_FL_DIST_CMD = os.path.join( os.path.dirname( __file__ ), 
                         "./sparsify/", "frag_len.py" )
 
+SPARSIFY_TRANSCRIPTS_CMD = os.path.join( os.path.dirname( __file__ ), 
+                        "./sparsify/", "sparsify_transcripts.py" )
+
 
 
 
@@ -104,6 +107,7 @@ RnaSeqDataTypes = [ "rnaseq_bam",
                     "polya_reads_gff",
                     "polya_tes_exons_gff",
                     "transcripts_gtf",
+                    "sparse_transcripts_gtf",
                     "TF_filt_element_transcripts_gtf",
                     "cdna_gtf",
                     "cdna_tes_gff",
@@ -1352,7 +1356,7 @@ def estimate_fl_dists( elements, pserver, output_prefix ):
     return
 
 
-def estimate_fl_dists( elements, pserver, output_prefix ):
+def sparsify_transcripts( elements, pserver, output_prefix ):
     try:
         os.makedirs( output_prefix )
     except OSError:
@@ -1361,43 +1365,48 @@ def estimate_fl_dists( elements, pserver, output_prefix ):
     
     """
     python ~/Desktop/grit/sparsify/sparsify_transcripts.py 
-        tmp.transcripts.sparse.gtf 
-        transcripts/L3_ImaginalDiscs.sample_1.transcripts.gtf 
-        ../chr4_test_data/raw_data/bams/L3_ImaginalDiscs.566_BS303.chr4.bam  
-        --fl-dist fl_dists/L3_ImaginalDiscs.sample_1.fldist.obj
+    tmp.transcripts.sparse.gtf                            # ofname
+    transcripts/merged_input.merged_input.transcripts.gtf #candidate transcripts
+    ../chr4_test_data/raw_data/bams/L3_ImaginalDiscs.56*.bam 
+    --fl-dists fl_dists/*.obj 
+    --threads=3 
+    -m
     """
-    def build_fl_dist_cmd( sample_type, sample_id ):
-        # get the bam file for this sample_type, id combo
-        ress = elements.get_elements_from_db( \
-            "rnaseq_bam", sample_type, sample_id )
-        if len( ress ) == 0:
-            ress = elements.get_elements_from_db( \
-                "rnaseq_rev_bam", sample_type, sample_id )
-        assert len( ress ) == 1
-        bam_fname = ress[0].fname
-        
-        # get the exons file ( we always use distal exons, because reads that 
-        # fall entirely within them are necessarily full length
-        ress = elements.get_elements_from_db( \
-            "cage_tss_exons_gff", sample_type, sample_id )
-        assert len( ress ) == 1
-        exons_fname = ress[0].fname
-        
-        # get the output file name
-        op_fname = os.path.join( output_prefix, sample_type + "." \
-                                     + sample_id + ".fldist.obj" )
-        
-        cmd_str_template = "python %s {0} {1} {2} --analyze "%BUILD_FL_DIST_CMD
-        call = cmd_str_template.format( exons_fname, bam_fname, op_fname )
-        
-        op_element_types = [ \
-            ElementType( "fl_dist", sample_type, sample_id, "." ),]
-        op_fnames = [ op_fname,]
+    
+    # get all of the bam files
+    ress = elements.get_elements_from_db( "rnaseq_bam" )
+    bam_fnames = [ res.fname for res in ress ]
+    print bam_fnames
 
-        dependencies = [ bam_fname, exons_fname ]
-        
-        cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-        pserver.add_process( cmd, Resource(1) )
+    ress = elements.get_elements_from_db( "fl_dist" )
+    fldist_fnames = [ res.fname for res in ress ]
+    print fldist_fnames
+
+    ress = elements.get_elements_from_db( "transcripts_gtf", "M", "M" )
+    assert( len(ress) == 1 )
+    merged_transcript_fname = ress[0].fname
+    
+    op_fname = os.path.join( output_prefix, "merged.sparse.transcripts.gtf" )
+
+    cmd_str_template  = "python %s %s %s %s --fl-dists %s -m "   \
+        % ( SPARSIFY_TRANSCRIPTS_CMD,                            \
+            op_fname, merged_transcript_fname,                    \
+            " ".join(bam_fnames), " ".join( fldist_fnames)  )
+    cmd_str_template += "--threads={threads}"
+    
+    print cmd_str_template
+    assert False
+    
+    call = cmd_str_template.format( exons_fname, bam_fname, op_fname )
+
+    op_element_types = [ \
+        ElementType( "fl_dist", sample_type, sample_id, "." ),]
+    op_fnames = [ op_fname,]
+
+    dependencies = [ bam_fname, exons_fname ]
+
+    cmd = Cmd( call, op_element_types, op_fnames, dependencies )
+    pserver.add_process( cmd, Resource(1) )
     
 
     sample_types_and_ids = set()
@@ -1576,17 +1585,10 @@ def main():
     estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
     
     build_transcripts( elements, pserver, base_dir + "transcripts" )
-
-    if USE_TF_ELEMENTS:
-        cluster_exons( elements, pserver, base_dir + "exons", \
-                       "TF_exons_gff", "TF_jns_gff" )
-
-        extract_transcript_filtered_elements( \
-            elements, pserver, base_dir + "exons", base_dir + "junctions" )
-
-        build_transcripts( elements, pserver, base_dir + "transcripts", True )
-
+    
     merge_transcripts( elements, pserver, base_dir + "transcripts" )
+
+    sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
 
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
 
