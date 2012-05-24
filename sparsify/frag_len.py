@@ -476,6 +476,8 @@ def merge_clustered_fl_dists( clustered_read_groups, grouped_fragments ):
 def estimate_fl_dists( reads, exons ):
     fragments = find_fragments( reads, exons )
     if len( fragments ) == 0:
+        return build_uniform_density(150, 240), []
+        build_normal_density
         err_str = "There are no reads for this data file in the " \
             + "high read depth exons."
         raise ValueError, err_str

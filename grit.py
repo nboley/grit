@@ -1331,7 +1331,7 @@ def estimate_fl_dists( elements, pserver, output_prefix ):
         op_fname = os.path.join( output_prefix, sample_type + "." \
                                      + sample_id + ".fldist.obj" )
         
-        cmd_str_template = "python %s {0} {1} {2} --analyze "%BUILD_FL_DIST_CMD
+        cmd_str_template = "python %s {0} {1} {2} " % BUILD_FL_DIST_CMD
         call = cmd_str_template.format( exons_fname, bam_fname, op_fname )
         
         op_element_types = [ \
@@ -1376,12 +1376,10 @@ def sparsify_transcripts( elements, pserver, output_prefix ):
     # get all of the bam files
     ress = elements.get_elements_from_db( "rnaseq_bam" )
     bam_fnames = [ res.fname for res in ress ]
-    print bam_fnames
-
+    
     ress = elements.get_elements_from_db( "fl_dist" )
     fldist_fnames = [ res.fname for res in ress ]
-    print fldist_fnames
-
+    
     ress = elements.get_elements_from_db( "transcripts_gtf", "M", "M" )
     assert( len(ress) == 1 )
     merged_transcript_fname = ress[0].fname
@@ -1393,31 +1391,19 @@ def sparsify_transcripts( elements, pserver, output_prefix ):
             op_fname, merged_transcript_fname,                    \
             " ".join(bam_fnames), " ".join( fldist_fnames)  )
     cmd_str_template += "--threads={threads}"
+    call = cmd_str_template
     
-    print cmd_str_template
-    assert False
-    
-    call = cmd_str_template.format( exons_fname, bam_fname, op_fname )
-
     op_element_types = [ \
-        ElementType( "fl_dist", sample_type, sample_id, "." ),]
+        ElementType( "sparse_transcripts_gtf", "M", "M", "." ),]
     op_fnames = [ op_fname,]
-
-    dependencies = [ bam_fname, exons_fname ]
+    
+    dependencies = [ merged_transcript_fname, ]
+    dependencies.extend( bam_fnames )
+    dependencies.extend( fldist_fnames )
 
     cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-    pserver.add_process( cmd, Resource(1) )
-    
-
-    sample_types_and_ids = set()
-    sample_types_and_ids.update( elements.get_distinct_element_types_and_ids( \
-                [ "rnaseq_bam", ], False ) )
-    sample_types_and_ids.update( elements.get_distinct_element_types_and_ids( \
-                [ "rnaseq_rev_bam", ], False ) )
-
-    for sample_type, sample_id in sorted( sample_types_and_ids ):
-        build_fl_dist_cmd( sample_type, sample_id )
-    
+    pserver.add_process( cmd, Resource(60)) # pserver.max_available_resources) )
+        
     return
 
     
