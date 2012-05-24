@@ -779,7 +779,8 @@ def find_internal_exons( exon_bndrys, intron_starts, intron_stops ):
     
     return internal_exons
 
-def find_T_S_exons(labels, bndrys, intron_starts, intron_stops, strand, is_tss):
+def find_T_S_exons(cov, labels, bndrys, intron_starts, intron_stops, \
+                       strand, is_tss):
     assert is_tss in ( False, True )
     assert strand in '-+'
     if is_tss: distal_type_labels = ( 'TSS', 'T_S' )
@@ -829,8 +830,30 @@ def find_T_S_exons(labels, bndrys, intron_starts, intron_stops, strand, is_tss):
     #print sorted( intron_stops )
     raw_input()
     """
+
+    # refine the eoxn bndrys
+    refined_exons = []
+    for exon in t_s_exons:
+        total = cov[exon[0]:exon[1]+1].sum()
+        if is_tss and strand == '+' or not is_tss and strand == '-':
+            curr_tot = 0
+            for i, val in enumerate( cov[exon[0]:exon[1]+1] ):
+                curr_tot += val
+                if curr_tot > .99*total:
+                    break
+            refined_exons.append( (i+exon[0], exon[1]) )
+        else:
+            curr_tot = 0
+            for i, val in enumerate( cov[exon[0]:exon[1]+1:-1] ):
+                curr_tot += val
+                if curr_tot > .95*total:
+                    break
+            refined_exons.append( (exon[0], exon[1]-i) )
+        
+        if refined_exons[-1][1] - refined_exons[-1][0] < 20:
+            refined_exons[-1] = exon
     
-    return t_s_exons
+    return refined_exons
 
 def filter_exon_bndrys( exon_bndrys, jn_bndrys ):
     """Filter out exons that start at a junction start or stop
@@ -1083,9 +1106,9 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov, polya_cov ):
         internal_exons = find_internal_exons( \
             exon_bndrys, intron_starts, intron_stops )
         tss_exons = find_T_S_exons( \
-            ls, bs, intron_starts, intron_stops, strand, True )
+            cage_cov, ls, bs, intron_starts, intron_stops, strand, True )
         tes_exons = find_T_S_exons( \
-            ls, bs, intron_starts, intron_stops, strand, False )
+            polya_cov, ls, bs, intron_starts, intron_stops, strand, False )
 
         
         """

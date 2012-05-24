@@ -1402,7 +1402,7 @@ def sparsify_transcripts( elements, pserver, output_prefix ):
     dependencies.extend( fldist_fnames )
 
     cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-    pserver.add_process( cmd, Resource(60)) # pserver.max_available_resources) )
+    pserver.add_process( cmd,  Resource(pserver.max_available_resources) )
         
     return
 
@@ -1568,13 +1568,13 @@ def main():
     
     build_all_exon_files( elements, pserver, base_dir + "exons" )
     
-    estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
+    # estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
     
     build_transcripts( elements, pserver, base_dir + "transcripts" )
     
     merge_transcripts( elements, pserver, base_dir + "transcripts" )
 
-    sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
+    # sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
 
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
 
