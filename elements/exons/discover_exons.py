@@ -15,7 +15,7 @@ BASES_TO_IGNORE_IN_RETAIN = 15
 # which to find collect cvrg stats for retained intron signal
 BIN_BOUNDRY_SIZE = 20
 # maximum ratio for retained intron bndry cvrg stats
-MAX_RETAIN_RATIO = 10.0
+MAX_RETAIN_RATIO = 5.0
 # fraction of coverage within intron to include 
 # in exon extention in a left/right retained intron
 ONE_SIDE_EXTENTION_FRACTION = 0.95
@@ -25,7 +25,7 @@ USE_AVERAGE_FOR_ONE_SIDE_RETAIN = False
 
 SPLIT_EXON_BNDRY_COV_FRAC = 0.95
 EXON_SPLIT_SIZE = 40
-EXON_SPLIT_RATIO = 5
+EXON_SPLIT_RATIO = 10
 
 # length of contiguous space to define as an empty region
 EMPTY_REGION_SPLIT_SIZE = 80
@@ -60,6 +60,9 @@ POLYA_MIN_SCORE = 2
 POLYA_TOT_FRAC = None
 
 NORMALIZE_BY_RNASEQ_COV = True
+FILTER_GENE_SPLITS_BY_POLYA = False
+
+DISTAL_EXON_EXPANSION = 200
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../", 'file_types'))
 from wiggle import Wiggle
@@ -540,7 +543,7 @@ def find_initial_boundaries_and_labels( read_cov_obj, jns ):
 
 def check_exon_for_gene_merge( strand, start, stop, \
                                prev_label, next_label, \
-                               read_cov, cage_cov):
+                               read_cov, cage_cov, polya_cov=None):
     # check to see if this exon merges 5' and 3' ends of a gene
     try:
         assert prev_label in ('exon_extension','I','L')
@@ -626,16 +629,31 @@ def check_exon_for_gene_merge( strand, start, stop, \
     ds_read_cov = 0
     ds_cage_cov = 0
     if strand == '+':
-        ds_read_cov = read_cov.rca[ new_intron_stop+1:stop+1 ].sum()
+        ds_read_cov = read_cov.rca[ new_intron_stop+1:stop+1 ].sum()+1
         ds_cage_cov = cage_cov[ new_intron_stop+1:stop+1 ].sum()
     else:
-        ds_read_cov = read_cov.rca[ start:new_intron_start ].sum()
+        ds_read_cov = read_cov.rca[ start:new_intron_start ].sum()+1
         ds_cage_cov = cage_cov[ start:new_intron_start ].sum()
+
+
+    #if strand == '-' and start > 4845200:
+    #    print strand, start, stop, ds_cage_cov, ds_read_cov, \
+    #        ds_cage_cov/ds_read_cov, CAGE_TOT_FRAC
+    #    raw_input()
 
     if ds_cage_cov < CAGE_MIN_SCORE \
             or (ds_cage_cov/ds_read_cov) < CAGE_TOT_FRAC:
         return [ start, ], [ 'Exon', ]
 
+    if FILTER_GENE_SPLITS_BY_POLYA and polya_cov != None:
+        if strand == '+':
+            ds_polya_cov = polya_cov[ start:new_intron_start ].sum()
+        else:
+            ds_polya_cov = polya_cov[ new_intron_stop+1:stop+1 ].sum()
+
+        if ds_polya_cov < 1: #POLYA_MIN_SCORE:
+            return [ start, ], [ 'Exon', ]
+    
     """
     print strand, start, stop
     print prev_label, next_label, left_cov/min_cov, right_cov/min_cov
@@ -657,7 +675,8 @@ def check_exon_for_gene_merge( strand, start, stop, \
     new_labels = ('Exon','L','Exon')
     return new_bndrys, new_labels
 
-def refine_exon_extensions( strand, labels, bndrys, read_cov, cage_cov ):
+def refine_exon_extensions( \
+        strand, labels, bndrys, read_cov, cage_cov, polya_cov ):
     new_labels = [ labels[0], ]
     new_bndrys = [ bndrys[0], ]
     
@@ -699,7 +718,7 @@ def refine_exon_extensions( strand, labels, bndrys, read_cov, cage_cov ):
                 continue
 
             split_bndrys, split_labels, = check_exon_for_gene_merge( \
-                strand, start, stop, prev, next, read_cov, cage_cov)
+                strand, start, stop, prev, next, read_cov, cage_cov, polya_cov)
             new_bndrys.extend( split_bndrys )
             new_labels.extend( split_labels )
 
@@ -727,7 +746,7 @@ def refine_single_exon_gene_label(start, stop, read_coverage_array, cage_array):
     
     # find the cage coverage
     cage_cov = cage_array[start:stop+1]
-    cage_cov_score = score_distal_exon( cage_cov, CAGE_WINDOW_LEN  )
+    cage_cov_score = score_distal_exon( cage_cov, CAGE_WINDOW_LEN )
     if cage_cov_score < CAGE_MIN_SCORE:
         return 'L'
 
@@ -740,7 +759,7 @@ def refine_single_exon_gene_label(start, stop, read_coverage_array, cage_array):
     
     return 'S'
 
-def label_regions( strand, read_cov, bndrys, labels, cage_cov ):
+def label_regions( strand, read_cov, bndrys, labels, cage_cov, polya_cov ):
     # calculate stats for each bin. 
     stats = build_bins_stats( bndrys, labels, read_cov )
     
@@ -756,7 +775,7 @@ def label_regions( strand, read_cov, bndrys, labels, cage_cov ):
     # remove exon extensions that neighbor low coverage 
     # regions or exons. 
     labels, bndrys = refine_exon_extensions( \
-        strand, labels, bndrys, read_cov, cage_cov )
+        strand, labels, bndrys, read_cov, cage_cov, polya_cov )
     
     #refine_single_exon_genes( read_cov.rca, cage_cov, labels, bndrys )
     #iter_connected_regions( read_cov.read_coverage_array, labels, bndrys )
@@ -1018,8 +1037,10 @@ def find_distal_exon_indices( cov, find_upstream_exons,  \
             else:
                 reg_rnaseq_cov = None
             
-            scores.append( (index+1, score_distal_exon( \
-                        cov[start:stop], window_len, reg_rnaseq_cov) ) )
+            score = score_distal_exon( \
+                cov[max(0,start-DISTAL_EXON_EXPANSION):stop], \
+                    window_len, reg_rnaseq_cov)
+            scores.append( (index+1, score ) )
 
         max_score = max( score for i, score in scores )
         if max_score > min_score:
@@ -1059,7 +1080,7 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov, polya_cov ):
         read_cov_obj, jns )
     
     new_labels, new_bndrys = label_regions( \
-        strand, read_cov_obj, bndrys, labels, cage_cov )
+        strand, read_cov_obj, bndrys, labels, cage_cov, polya_cov )
     
     clustered_labels, clustered_bndrys = cluster_labels_and_bndrys( 
         new_labels, new_bndrys, jns, strand, read_cov_obj.chrm_stop )
@@ -1242,7 +1263,7 @@ def main():
     cage_cov = Wiggle( chrm_sizes_fp, cage_wig_fps )
     cage_sum = sum( cage_cov.apply( lambda a: a.sum() ).values() )
     global CAGE_TOT_FRAC
-    CAGE_TOT_FRAC = (float(cage_sum)/read_cov_sum)*(1e-2)    
+    CAGE_TOT_FRAC = (float(cage_sum)/read_cov_sum)*(1e-3)    
     for cage_fp in cage_wig_fps: cage_fp.close()
     
     # open the polya data
@@ -1250,7 +1271,7 @@ def main():
         tes_reads_fps, chrm_sizes_fp )
     polya_sum = sum( cage_cov.apply( lambda a: a.sum() ).values() )
     global POLYA_TOT_FRAC
-    POLYA_TOT_FRAC = (float(polya_sum)/read_cov_sum)*(1e-2)    
+    POLYA_TOT_FRAC = (float(polya_sum)/read_cov_sum)*(1e-3)
     for tes_reads_fp in tes_reads_fps: tes_reads_fp.close()
     
 

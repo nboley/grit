@@ -241,6 +241,8 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
             if exons in t_full_trans:
                 # add the number of transcripts with this internal structure
                 matched_cnt += len( transcripts )
+                #matched_cnt += min( len( transcripts ), \
+                #                    len( t_full_trans[exons] ) )
         
         # calcualte the total numebr of transcripts for the ref and t groups.
         ref_trans_tot = sum( len(i) for i in ref_full_trans.itervalues() )
