@@ -31,11 +31,14 @@ def get_jn_type( chrm, upstrm_intron_pos, dnstrm_intron_pos, fasta, jn_strand ):
         return 'canonical'
     return 'canonical_wrong_strand'
 
-def build_jn_line( region, group_id, count=0, fasta_obj=None ):        
+def build_jn_line( region, group_id, count=0, fasta_obj=None, intron_type=None):
     group_id_str = 'group_id "{0}";'.format( str(group_id) )
-    if fasta_obj != None:
+    
+    if intron_type == None and fasta_obj != None:
         intron_type = get_jn_type( region.chr, region.start, region.stop, \
                                        fasta_obj, region.strand )
+    
+    if intron_type != None:
         group_id_str += ' type "{0}";'.format( intron_type )
     
     jn_line = create_gff_line( region, group_id_str, score=count )

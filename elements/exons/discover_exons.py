@@ -22,6 +22,7 @@ ONE_SIDE_EXTENTION_FRACTION = 0.95
 # stop the intron when the average ( rather than the 
 # total ) falls below some threshold
 USE_AVERAGE_FOR_ONE_SIDE_RETAIN = False
+USE_PARTIALLY_RETAINED_INTRONS = False
 
 SPLIT_EXON_BNDRY_COV_FRAC = 0.95
 EXON_SPLIT_SIZE = 40
@@ -329,7 +330,7 @@ def check_for_retained_intron( left, mid, right):
     # if only the region to the right is an exon
     if left[0] == 'L':
         # hck if the signal ratios are high enough for this to be retained
-        if is_right_retained( mid[1], right[1] ):
+        if USE_PARTIALLY_RETAINED_INTRONS and is_right_retained( mid[1], right[1] ):
             return 'exon_extension'
         
         return 'I'
@@ -337,7 +338,7 @@ def check_for_retained_intron( left, mid, right):
     # if only the region to the left is an exon
     if right[0] in 'L':
         # check if signal ratios are high enough for this to be retained
-        if is_left_retained( left[1], mid[1] ):
+        if USE_PARTIALLY_RETAINED_INTRONS and is_left_retained( left[1], mid[1] ):
             return 'exon_extension'
         
         return 'I'
@@ -361,9 +362,9 @@ def check_for_retained_intron( left, mid, right):
             return 'exon_extension'
         # otherwise, we try and split the exon if it's either 
         # right retained or left retained but not both
-        elif left_retained:
+        elif USE_PARTIALLY_RETAINED_INTRONS and left_retained:
             return 'left_retained'
-        elif right_retained:
+        elif USE_PARTIALLY_RETAINED_INTRONS and right_retained:
             return 'right_retained'
         else:
             return 'I'
@@ -1017,7 +1018,7 @@ def find_distal_exon_indices( cov, find_upstream_exons,  \
                               bs, ls, \
                               rna_seq_cov, \
                               min_score, window_len, 
-                              max_score_frac ):
+                              max_score_frac, require_signal=False ):
     # skip the first and the last labels because these are outside of the cluster
     assert ls[0] == 'L'
     if ls[-1] != 'L':
@@ -1058,6 +1059,9 @@ def find_distal_exon_indices( cov, find_upstream_exons,  \
             return sorted( rvs )
     
     # if we don't have signal data
+    if require_signal:
+        return []
+    
     indices = []
     if True == find_upstream_exons:
         for i, (prev, cand) in enumerate(izip(ls[:-1], ls[1:])):
@@ -1119,7 +1123,8 @@ def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov, polya_cov ):
         tss_indices = find_distal_exon_indices( \
             cage_cov, (strand=='+'), intron_starts, intron_stops,
             bs, ls, read_cov_obj.rca, \
-            CAGE_MIN_SCORE, CAGE_WINDOW_LEN, CAGE_MAX_SCORE_FRAC )
+            CAGE_MIN_SCORE, CAGE_WINDOW_LEN, CAGE_MAX_SCORE_FRAC, \
+            require_signal = True)
         
         # if we can't find a TSS index, continue
         if len( tss_indices ) == 0:
