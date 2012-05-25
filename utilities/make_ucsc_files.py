@@ -29,6 +29,16 @@ def write_filtered_gff( ifname, plus_ofname, minus_ofname, track_name ):
     
     return
 
+def copy_transcripts():
+    ifname = os.path.join( "./transcripts/", "merged_input.merged_input.transcripts.gtf" )
+    plus_ofname = os.path.join( OP_DIR_NAME, "transcripts.merged_input.plus.gff" )
+    minus_ofname = os.path.join( OP_DIR_NAME, "transcripts.merged_input.minus.gff" )
+    track_name = "transcripts_merged_input"
+    write_filtered_gff( ifname, plus_ofname, minus_ofname, track_name )
+    
+    return
+
+
 def copy_exons():
     # extract stranded exon versions, and copy 
     ifname = os.path.join( "./exons/", "discovered_exons.internal_exons.gff" )
@@ -88,6 +98,7 @@ def main():
     copy_jns()
     copy_tsss()
     copy_tess()
+    copy_transcripts()
 
 if __name__ == "__main__":
     main()
