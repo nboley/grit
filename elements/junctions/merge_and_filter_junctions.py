@@ -1,5 +1,6 @@
 import sys
 import os
+import numpy
 
 from collections import defaultdict
 from pysam import Fastafile
@@ -12,22 +13,47 @@ sys.path.append( os.path.join( os.path.dirname(__file__), "../../", "file_types"
 from junctions_file import parse_junctions_file, build_jn_line
 
 def merge_jns( gff_fnames ):
-    all_jns = defaultdict( lambda: defaultdict(int) )
-    for gff_fname in gff_fnames:
+    all_jns = defaultdict( lambda: defaultdict( lambda: defaultdict(int) ) )
+    for sample_id, gff_fname in enumerate(gff_fnames):
         with open( gff_fname ) as gff_fp:
             jns = parse_junctions_file(gff_fp)
             if VERBOSE:
                 print >> sys.stderr, "Finished parsing", gff_fp.name
             for jn, cnt, grp in jns.iter_jns_and_cnts_and_grps():
-                all_jns[ jn ][ grp ] += cnt
+                all_jns[jn][sample_id][grp] += cnt
     
     return all_jns
 
 def iter_filtered_jns( junctions, is_valid=lambda x: True ):
     for jn, grp_data in junctions.iteritems():
         if is_valid( jn, grp_data ):
-            yield jn, sum( grp_data.values() )
+            yield jn, sum( sum(entry.values()) for entry in grp_data.values() )
     return
+
+def is_valid_jn_factory( min_entropy_score, \
+                         min_num_success_samples, \
+                         maximum_intron_size ):
+    def calc_entopy_score( cnts ):
+        cnts = numpy.array( cnts, dtype=float )
+        pi_s = cnts/cnts.sum()
+        return -(pi_s*numpy.log2(pi_s)).sum()
+    
+    def f( intron, grp_data ):
+        num_pass_thresh = 0
+        for key, val in grp_data.iteritems():
+            if calc_entopy_score( val.values()) >= min_entropy_score:
+                num_pass_thresh += 1
+        
+        if num_pass_thresh < min_num_success_samples:
+            return False
+        
+        intron_size = intron[3] - intron[2] + 1
+        if intron_size > maximum_intron_size:
+            return False
+        
+        return True
+    return f
+
 
 def parse_arguments():
     import argparse
@@ -57,17 +83,6 @@ def parse_arguments():
     return args.jns_fns, args.fasta, args.filter, \
                              args.min_num_overlap_bases, args.maximum_intron_size
 
-def is_valid_jn_factory( min_num_overlap_bases, maximum_intron_size ):
-    def f( intron, grp_data ):
-        if len( grp_data ) < min_num_overlap_bases:
-            return False
-        
-        intron_size = intron[3] - intron[2] + 1
-        if intron_size > maximum_intron_size:
-            return False
-        
-        return True
-    return f
 
 def main():
     jns_fns, fasta_fn, do_filter, min_num_overlap_bases, maximum_intron_size \
@@ -77,7 +92,7 @@ def main():
     jns = merge_jns( jns_fns )
     
     if do_filter==True:
-        is_valid_jn = is_valid_jn_factory( min_num_overlap_bases, maximum_intron_size )
+        is_valid_jn = is_valid_jn_factory( 2.0, 2, maximum_intron_size )
     else:
         is_valid_jn = ( lambda intron, grp_data: True )
     
