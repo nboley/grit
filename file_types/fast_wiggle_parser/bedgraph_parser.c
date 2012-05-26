@@ -6,7 +6,7 @@
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
-#define INITIAL_ARRAY_SIZE 1000000
+#define INITIAL_ARRAY_SIZE 0
 
 #define MAX_CONTIG_NAME_LEN 255
 
@@ -61,9 +61,8 @@ add_new_contig( struct contigs_t* contigs, char* name )
     new_contig->name = calloc( sizeof(char), (strlen(name)+1) );
     strncpy( new_contig->name, name, strlen(name) );
     
-    new_contig->size = INITIAL_ARRAY_SIZE;
-    
-    new_contig->values = calloc( sizeof(double), INITIAL_ARRAY_SIZE );
+    new_contig->size = 0;
+    new_contig->values = NULL;
     
     return contigs->size-1;
 }
