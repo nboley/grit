@@ -18,6 +18,7 @@ from build_genelets import build_edges_hash_table, \
     build_genelets_from_exons_and_edges, cluster_all_exons
 
 VERBOSE = True
+MERGE_DISTAL_ENDS = False
 
 def build_gtf_lines( chrm, strand, gene_name, trans_name, exon_bndries ):
     feature="exon"
@@ -269,29 +270,47 @@ def cluster_transcripts( transcript_maps, cluster_by_conn ):
 def build_unique_transcripts( transcriptomes, gtf_fnames ):
     # build the sets of transcripts
     tmp_transcript_maps = defaultdict( lambda: defaultdict( list ) )
+    single_exon_sources = defaultdict( list )
+    
     for source, transcriptome in izip( gtf_fnames, transcriptomes ):
         for cluster_id, chrm, strand, start, stop, transcripts in transcriptome:
             for trans_id, exons in transcripts:
+                assert len( exons ) % 2 == 0
                 # skip single  exon transcripts and transcripts that 
                 # have an odd number of boundaries
-                if len( exons ) <= 2: continue
-                if len( exons ) % 2 != 0: continue
-                
-                tmp_transcript_maps[ ( chrm, strand ) ][ \
-                    tuple( exons[1:-1] ) ].append( \
-                    (exons[0], exons[-1], source) )
+                if len( exons ) == 2: 
+                    single_exon_sources[ exons ].append( source )
+                else:
+                    tmp_transcript_maps[ ( chrm, strand ) ][ \
+                        tuple( exons[1:-1] ) ].append( \
+                        (exons[0], exons[-1], source) )
     
     # get the longest external coordinate for each internal structure
-    transcript_maps = defaultdict( dict )
+    transcript_maps = defaultdict( lambda: defaultdict( list ) )
     for key, transcripts in tmp_transcript_maps.iteritems():
         for internal_exons, ends_and_sources in transcripts.iteritems():
-            start_coord = min( zip( *ends_and_sources )[0] )
-            stop_coord = max( zip( *ends_and_sources )[1] )
-            exons = tuple(
-                [start_coord,] + list( internal_exons ) + [stop_coord,])
-            # uniquify the list of sources
-            transcript_maps[ key ][ exons ] = \
-                list(set(zip( *ends_and_sources )[2]))
+            if MERGE_DISTAL_ENDS:
+                start_coord = min( zip( *ends_and_sources )[0] )
+                stop_coord = max( zip( *ends_and_sources )[1] )
+                exons = tuple(
+                    [start_coord,] + list( internal_exons ) + [stop_coord,])
+                # uniquify the list of sources
+                transcript_maps[ key ][ exons ] = \
+                    list(set(zip( *ends_and_sources )[2]))
+            else:
+                for start, stop, source in ends_and_sources:
+                    exons = tuple(
+                        [start,] + list( internal_exons ) + [stop,])
+                    transcript_maps[ key ][ exons ].append( source )
+                # BUG
+                transcript_maps[key][exons] = set(transcript_maps[key][exons])
+                try:
+                    assert len( transcript_maps[ key ][ exons ] ) == \
+                        len( set( transcript_maps[ key ][ exons ] ) )
+                except:
+                    print exons
+                    print transcript_maps[ key ][ exons ]
+                    raise
     
     return transcript_maps
 
