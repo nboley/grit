@@ -158,7 +158,11 @@ class Wiggle( dict ):
     def _infer_strand_from_fname( fname ):
         if fname.find( "plus" ) >= 0:
             return '+'
+        elif fname.find( "+" ) >= 0:
+            return '+'
         elif fname.find( "minus" ) >= 0:
+            return '-'
+        elif fname.find( "-" ) >= 0:
             return '-'
         else:
             raise ValueError, "Couldn't infer strand from filename '%s'" % fname

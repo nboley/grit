@@ -37,6 +37,7 @@ EMPTY_REGION_BNDRY_SHRINK = 0
 
 MAX_EXON_SIZE = 50000
 MIN_EXON_LEN = 15
+MIN_EXON_AVG_READCOV = 10
 
 MIN_SE_GENE_LEN = 500
 MIN_SE_GENE_AVG_READCOV = 10
@@ -690,7 +691,7 @@ def refine_exon_extensions( \
             continue
         
         start, stop = bndrys[ i+1 ], bndrys[ i+2 ] - 1
-
+        
         if curr == 'exon_extension':
             # if it's very short, and is next to a low coverage region
             # then always change it to low coverage
@@ -1303,7 +1304,8 @@ def main():
         
         for container, exons in zip( all_regions_iters, disc_grpd_exons ):
             regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
-                                 for start, stop in exons )
+                                 for start, stop in exons                \
+                                 if stop - start < MAX_EXON_SIZE )
             container.extend( regions_iter )
     
     for regions_iter, ofp in zip( all_regions_iters, out_fps ):
