@@ -284,14 +284,16 @@ def write_transcripts( genes, jns, log_fp, out_fp, threads ):
     
     return
 
-def build_objs( exons_fps, tss_exons_fps, tes_exons_fps, junctions_fps ):
+def build_objs( exons_fps, tss_exons_fps, tes_exons_fps, junctions_fps ):    
+    jns = parse_junctions_files( junctions_fps )
+    print jns
+    assert False
+    
     exons = parse_exons_files( exons_fps )
     
     tss_exons = parse_exons_files( tss_exons_fps )
     
     tes_exons = parse_exons_files( tes_exons_fps )
-    
-    jns = parse_junctions_files( junctions_fps )
     
     return exons, tss_exons, tes_exons, jns
 
