@@ -1,4 +1,5 @@
 MAX_NUM_TRANSCRIPTS = 50000
+MIN_INTRON_CNT_FRAC = 0.1
 VERBOSE = False
 MIN_VERBOSE = False
 
@@ -19,7 +20,9 @@ import transcripts as transcripts_module
 
 sys.path.append( os.path.join(os.path.dirname(__file__), "../file_types") )
 from exons_file import parse_exons_files
-from junctions_file import parse_junctions_files
+from junctions_file import parse_junctions_files, Junctions
+
+from itertools import product, izip
 
 from collections import defaultdict
 import multiprocessing
@@ -179,6 +182,34 @@ def build_transcripts_gtf_lines( gene_name, chrm, strand, exons, junctions, log_
     exons = sorted( all_exons )
     tss_exons = get_indices( exons, tss_exons )
     tes_exons = get_indices( exons, tes_exons )
+    
+    # filter introns by scores
+    junctions_dict = dict( (tuple(jn), score) for jn, score
+                           in izip( junctions[(chrm, strand)].tolist(), 
+                                    junctions._scores[(chrm, strand)] ) )
+    intron_stops = [ start-1 for start, stop in exons ]
+    intron_starts = [ stop+1 for start, stop in exons ]
+    filtered_introns = [ (start, stop) for start, stop in 
+                         product( intron_starts, intron_stops )
+                         if start <= stop and (start,stop) in junctions_dict ]
+    
+    filtered_introns = dict((jn, junctions_dict[jn]) for jn in filtered_introns)
+    max_score = float( max( filtered_introns.values() ) )
+    if max_score < 1: 
+        log_line = write_log(gene_name, len(exons), 0, "There were no junction reads." )
+        log_fp.write( log_line + "\n" )
+        return []
+    
+    assert max_score > 0
+    filtered_jns = Junctions()
+    for jn in filtered_introns:
+        cnt = junctions_dict[jn]
+        if cnt/max_score < MIN_INTRON_CNT_FRAC: 
+            continue
+        
+        filtered_jns.add( chrm, strand, jn[0], jn[1], score=cnt )
+        
+    filtered_jns.freeze()
     
     transcripts = find_transcripts( \
         chrm, strand, junctions, tss_exons, tes_exons, exons )
