@@ -2,7 +2,7 @@ import sys, os
 import copy
 import numpy
 from collections import defaultdict, namedtuple
-from itertools import izip, chain, takewhile, count
+from itertools import izip, chain, takewhile, count, product
 from scipy import median
 from build_genelets import cluster_exons
 from math import log
@@ -53,7 +53,6 @@ CAGE_SUFFICIENT_SCORE = 200
 # this is set in main
 CAGE_TOT_FRAC = None
 
-
 ### PolyA TUNING PARAMS
 POLYA_WINDOW_LEN = 10
 POLYA_MAX_SCORE_FRAC = 0.001
@@ -65,6 +64,8 @@ NORMALIZE_BY_RNASEQ_COV = True
 FILTER_GENE_SPLITS_BY_POLYA = False
 
 DISTAL_EXON_EXPANSION = 200
+
+MIN_INTRON_CVG_FRAC = 0.10
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../", 'file_types'))
 from wiggle import Wiggle
@@ -953,21 +954,32 @@ def build_cluster_labels_and_bndrys(cluster_indices, bndrys, labels, chrm_stop):
     
     return new_bndrys, new_labels
 
-def cluster_labels_and_bndrys( labels, bndrys, jns, strand, chrm_stop  ):
+def cluster_labels_and_bndrys( labels, bndrys, jns_w_cnts, strand, chrm_stop ):
     # get exon boundaries from assigned labels and boundaries
     exon_bndrys = get_possible_exon_bndrys( \
         labels, bndrys, chrm_stop )
-        
+    print jns_w_cnts
+    jns_wo_cnts = [ jn for jn, cnt in jns_w_cnts ]
+    jns_dict = dict( jns_w_cnts )
+    
     # filter out any exon that start with a junction start or 
     # stops at an junction stop
     filtered_exon_bndrys = filter_exon_bndrys( \
-        exon_bndrys, jns )
+        exon_bndrys, jns_wo_cnts )
     filtered_exon_bndrys = exon_bndrys
     
     bndries_array = numpy.array( bndrys )
     exons = numpy.array( filtered_exon_bndrys )
-    clusters = cluster_exons( exons, jns )
-        
+    clusters = cluster_exons( exons, jns_wo_cnts )
+    
+    # create a mapping from jn acceptors ( exon starts-1 ) and their cnts
+    acceptor_jns_map = defaultdict( list )
+    # create a mapping from jn donors ( exon stops+1 ) and their cnts
+    donor_jns_map = defaultdict( list )
+    for ( intron_start, intron_stop ), cnt in jns_w_cnts:
+        acceptor_jns_map[ intron_stop ].append( cnt )
+        donor_jns_map[ intron_start ].append( cnt )
+    
     clustered_labels = []
     clustered_bndrys = []
     for cluster in clusters:
@@ -980,6 +992,37 @@ def cluster_labels_and_bndrys( labels, bndrys, jns, strand, chrm_stop  ):
         
         cluster_bndrys, cluster_labels = build_cluster_labels_and_bndrys( 
             cluster_bndry_indices, bndries_array, labels, chrm_stop )
+        
+        """
+        # BUG - this does fancy intron filtering. For now, we do this in build 
+        # trasncripts.
+        
+        # build a list of possible introns
+        intron_starts = []
+        intron_stops = []
+        for bndry, label in izip(  cluster_bndrys[1:-1], cluster_labels[1:-1] ):
+            intron_starts.append( bndry )
+            intron_stops.append( bndry-1 )
+        
+        introns = [ (start, stop) for start, stop 
+                    in product( intron_starts, intron_stops )
+                    if start <= stop and ( start, stop ) in jns_dict ]
+        
+        introns_w_cnts = dict( (jn, jns_dict[jn]) for jn in introns )
+        max_intron_val = float( max( chain(introns_w_cnts.values(), [1,]) ) )
+        filtered_introns_w_cnts = \
+            dict( (jn, cnt) for jn, cnt in introns_w_cnts.iteritems()
+                  if cnt/max_intron_val >= MIN_INTRON_CVG_FRAC )
+        
+        if len( filtered_introns_w_cnts ) < len( introns_w_cnts ):
+            print strand
+            print introns_w_cnts
+            print filtered_introns_w_cnts
+            print cluster_bndrys
+            print cluster_labels
+            print
+            raw_input()
+        """
         
         clustered_labels.append( cluster_labels )
         clustered_bndrys.append( cluster_bndrys )
@@ -1080,19 +1123,21 @@ def find_distal_exon_indices( cov, find_upstream_exons,  \
     
     return indices
 
-def find_exons_in_contig( strand, read_cov_obj, jns, cage_cov, polya_cov ):
+def find_exons_in_contig( strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov ):
+    jns_w_cnts = [ jn for jn, score in jns_w_cnts ]
+
     labels, bndrys = find_initial_boundaries_and_labels( \
-        read_cov_obj, jns )
+        read_cov_obj, jns_w_cnts )
     
     new_labels, new_bndrys = label_regions( \
         strand, read_cov_obj, bndrys, labels, cage_cov, polya_cov )
     
     clustered_labels, clustered_bndrys = cluster_labels_and_bndrys( 
-        new_labels, new_bndrys, jns, strand, read_cov_obj.chrm_stop )
-
-    intron_starts = set( jn[0] for jn in jns )
-    intron_stops = set( jn[1] for jn in jns )
-
+        new_labels, new_bndrys, jns_w_cnts, strand, read_cov_obj.chrm_stop )
+    
+    intron_starts = set( jn[0] for jn, score in jns_w_cnts )
+    intron_stops = set( jn[1] for jn, score in jns_w_cnts )
+    
     all_exons = []
     all_seg_exons = []
     all_tss_exons = []
@@ -1298,8 +1343,12 @@ def main():
         cage_cov_array = cage_cov[ (chrm, strand) ]
         polya_cov_array = polya_cov[ (chrm, strand) ]
         
+        introns = jns[(chrm, strand)]
+        scores = jns._scores[(chrm, strand)]
+        jns_and_scores = zip( introns, scores )
+        
         disc_grpd_exons = find_exons_in_contig( \
-           strand, read_cov_obj, jns[(chrm, strand)], \
+           strand, read_cov_obj, jns_and_scores, \
            cage_cov_array, polya_cov_array)
         
         for container, exons in zip( all_regions_iters, disc_grpd_exons ):
