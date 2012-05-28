@@ -50,8 +50,7 @@ def main():
     
     jns, cnts = zip( *sorted(grped_jns.iteritems()) )
     
-    
-    write_junctions( jns, sys.stdout, cnts )
+    write_junctions( jns, sys.stdout, scores=cnts )
     
     return
 

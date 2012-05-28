@@ -194,7 +194,8 @@ def build_transcripts_gtf_lines( gene_name, chrm, strand, exons, junctions, log_
                          if start <= stop and (start,stop) in junctions_dict ]
     
     filtered_introns = dict((jn, junctions_dict[jn]) for jn in filtered_introns)
-    max_score = float( max( filtered_introns.values() ) )
+    max_score = float( max( filtered_introns.values() ) ) \
+        if len( filtered_introns ) > 0 else 0
     if max_score < 1: 
         log_line = write_log(gene_name, len(exons), 0, "There were no junction reads." )
         log_fp.write( log_line + "\n" )
@@ -212,7 +213,7 @@ def build_transcripts_gtf_lines( gene_name, chrm, strand, exons, junctions, log_
     filtered_jns.freeze()
     
     transcripts = find_transcripts( \
-        chrm, strand, junctions, tss_exons, tes_exons, exons )
+        chrm, strand, filtered_jns, tss_exons, tes_exons, exons )
     
     # if too many or no transcripts were produced
     if isinstance( transcripts, str ):

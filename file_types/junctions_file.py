@@ -32,7 +32,8 @@ def get_jn_type( chrm, upstrm_intron_pos, dnstrm_intron_pos, fasta, jn_strand ):
     return 'canonical_wrong_strand'
 
 def build_jn_line( region, group_id, count=0, fasta_obj=None, intron_type=None):
-    group_id_str = 'group_id "{0}";'.format( str(group_id) )
+    group_id_str = str( group_id ) #'group_id "{0}";'.format( str(group_id) )
+    
     
     if intron_type == None and fasta_obj != None:
         intron_type = get_jn_type( region.chr, region.start, region.stop, \
@@ -44,8 +45,9 @@ def build_jn_line( region, group_id, count=0, fasta_obj=None, intron_type=None):
     jn_line = create_gff_line( region, group_id_str, score=count )
     return jn_line
 
-def write_junctions( junctions, out_fp, scores=None, groups=None, \
-                         fasta_fn=None, track_name="discovered_jns" ):
+def write_junctions( junctions, out_fp, scores=None, groups=None, 
+                     fasta_fn=None, first_contig_len=None,
+                     track_name="discovered_jns" ):
     """Output junctions with more than MIN_NONOVERLAPPING_READS in gff 
        format if apply_filter
     
@@ -62,7 +64,7 @@ def write_junctions( junctions, out_fp, scores=None, groups=None, \
     
     out_fp.write( "track name={0}\n".format(track_name) )
     for region, count, grp in jns_iter:
-        jn_line = build_jn_line( region, count, grp, fasta_obj )
+        jn_line = build_jn_line( region, grp, count, fasta_obj )
         out_fp.write( jn_line + '\n' )
     
     return
