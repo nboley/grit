@@ -93,6 +93,7 @@ CHRM_LENS_DATA_TYPE = "chrm_sizes"
 GENOME_DATA_TYPE = "genome"
 RnaSeqDataTypes = [ "rnaseq_bam",
                     "rnaseq_rev_bam",
+                    "rnaseq_unstranded_bam",
                     "rnaseq_cov_bedgraph",
                     "filtered_jns_gff",
                     "TF_jns_gff",
@@ -853,7 +854,7 @@ def extract_all_junctions( elements, pserver, output_prefix ):
         # assume that the directory already exists, and continue
         pass
     
-    def build_extract_junctions_cmd( bam_element, rev_strand=False ):
+    def build_extract_junctions_cmd( bam_element, stranded, rev_strand ):
         bam_fn = bam_element.fname
         
         if bam_element.sample_id == "*" and bam_element.sample_type == "*":
@@ -866,12 +867,13 @@ def extract_all_junctions( elements, pserver, output_prefix ):
         output_fname = os.path.join( output_prefix, base_out_fname )
         
         rev_strand_str = '--reverse-strand' if rev_strand else ""
+        stranded_str = '--stranded' if stranded else ""
         
-        call_template = "python %s {0} --stranded --fasta {1} {2} > {3} " \
+        call_template = "python %s {0} --fasta {1} {2} {3} > {4} " \
             % EXTRACT_JNS_CMD
         
         call = call_template.format( \
-            bam_fn, elements.genome_fname, rev_strand_str, output_fname ) 
+            bam_fn, elements.genome_fname, rev_strand_str, stranded_str, output_fname ) 
         
         dependency_fnames = [ bam_fn, ]
         output_fnames = [ output_fname, ]
@@ -886,12 +888,17 @@ def extract_all_junctions( elements, pserver, output_prefix ):
     # build all of the raw junctions
     res = elements.get_elements_from_db( "rnaseq_bam" )
     for e in res:
-        cmd = build_extract_junctions_cmd( e, rev_strand = False )
+        cmd = build_extract_junctions_cmd(e, stranded=True, rev_strand = False)
         pserver.add_process( cmd, Resource(1) )
 
     res = elements.get_elements_from_db( "rnaseq_rev_bam" )
     for e in res:
-        cmd = build_extract_junctions_cmd( e, rev_strand = True )
+        cmd = build_extract_junctions_cmd(e, stranded=True, rev_strand = True)
+        pserver.add_process( cmd, Resource(1) )
+
+    res = elements.get_elements_from_db( "rnaseq_unstranded_bam" )
+    for e in res:
+        cmd = build_extract_junctions_cmd(e, stranded=False, rev_strand = False)
         pserver.add_process( cmd, Resource(1) )
     
     return
@@ -1563,7 +1570,7 @@ def main():
     merge_sample_type_junctions( elements, pserver, base_dir + "junctions/" )
     build_high_quality_junctions( elements, pserver, base_dir + "junctions/" )
     intersect_all_junctions( elements, pserver, base_dir + "junctions/" )
-        
+    
     build_all_cov_wiggles( elements, pserver, base_dir + "read_cov_bedgraphs" )
     
     build_all_exon_files( elements, pserver, base_dir + "exons" )
