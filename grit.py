@@ -32,13 +32,17 @@ USE_TF_ELEMENTS = False
 USE_MERGED_INPUT=False
 
 USE_MERGED_EXONS_FOR_TSS_EXONS = False
+
+
+
 BUILD_SAMPLE_SPECIFIC_EXONS = True
 USE_SAMPLE_SPECIFIC_CAGE = True and BUILD_SAMPLE_SPECIFIC_EXONS
+USE_MERGED_RNASEQ_FOR_EXONS = True
 USE_MERGED_JNS_FOR_EXONS = False
-USE_MERGED_EXONS_FOR_TRANSCRIPTS = False
-USE_SAMPLE_SPECIFIC_CAGE = True
 USE_MERGED_CAGE_SIGNAL_FOR_EXONS = True
-USE_MERGED_POLYA_SIGNAL_FOR_EXONS = True
+USE_MERGED_POLYA_SIGNAL_FOR_EXONS = False
+
+USE_MERGED_EXONS_FOR_TRANSCRIPTS = False
 
 VERBOSE = True
 STRESS_TEST_DEP_FINDER = False
@@ -1034,7 +1038,7 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         if len( bedgraph_fnames ) != 2:
             raise ValueError, "Can't find the rnaseq coverage files " \
                               + "necessary to build exons from."
-
+        
         # find the merged, filtered jns file
         if USE_MERGED_JNS_FOR_EXONS:
             res = elements.get_elements_from_db( \
@@ -1047,39 +1051,37 @@ def build_all_exon_files( elements, pserver, output_prefix ):
                               + "necessary to build exons."
         assert len( res ) == 1
         jns_fname = res[0].fname
-
-
-
+        
         # find the merged CAGE signal files
         if USE_MERGED_CAGE_SIGNAL_FOR_EXONS:
             ress = elements.get_elements_from_db( \
                 "cage_cov_wig", "*" , "*" )
         else:
-            raise NotImplemented, "Can't use sample specific CAGE wiggles yet."
             ress = elements.get_elements_from_db( \
-                "filtered_jns_gff", sample_type , sample_id, "." )
+                "cage_cov_wig", sample_type , "*" )
         if len( ress ) != 2:
             raise ValueError, "Can't find the cage signal files " \
                               + "necessary to build exons."
         assert len( ress ) == 2
         cage_wig_fnames = [ res.fname for res in ress ]
-
-
-
-        # find the merged CAGE signal files
+        
+        # find the merged POLYA signal files
         if USE_MERGED_POLYA_SIGNAL_FOR_EXONS:
             ress = elements.get_elements_from_db( \
                 "polya_reads_gff", "*" , "*" )
         else:
-            raise NotImplemented, "Can't use sample specific POLYA yet."
             ress = elements.get_elements_from_db( \
-                "polya_reads_gff", sample_type , sample_id, "." )
+                "polya_reads_gff", sample_type )
+        
         if len( ress ) != 1:
-            raise ValueError, "Can't find the polya signal files " \
-                              + "necessary to build exons."
+            ress = elements.get_elements_from_db( \
+                "polya_reads_gff", "*" , "*" )
+            if len( ress ) != 1:
+                raise ValueError, "Can't find the polya signal files " \
+                    + "necessary to build exons."
+        
         assert len( ress ) == 1
         polya_gff_fnames = [ res.fname for res in ress ]
-
         
         chrm_sizes_fname = elements.chr_sizes.get_tmp_fname( with_chr = True )
 
@@ -1116,11 +1118,14 @@ def build_all_exon_files( elements, pserver, output_prefix ):
     
     if BUILD_SAMPLE_SPECIFIC_EXONS:
         sample_types_and_ids = elements.get_distinct_element_types_and_ids( \
-            [ "filtered_jns_gff", "rnaseq_cov_bedgraph" ], get_merged=False )
+            [ "filtered_jns_gff", "rnaseq_cov_bedgraph" ], get_merged=True )
         
         # buidl the build eoxn cmds
         for sample_type, sample_id in sample_types_and_ids:
-            build_find_exons_cmds( sample_type, sample_id )    
+            if USE_MERGED_RNASEQ_FOR_EXONS and sample_id == '*':
+                build_find_exons_cmds( sample_type, sample_id )
+            elif sample_id != '*':
+                build_find_exons_cmds( sample_type, sample_id )
     
     return
 
@@ -1582,9 +1587,6 @@ def main():
     
     build_all_exon_files( elements, pserver, base_dir + "exons" )
 
-    pserver.process_queue()    
-    return
-
     # estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
     
     build_transcripts( elements, pserver, base_dir + "transcripts" )
@@ -1598,6 +1600,8 @@ def main():
     pserver.process_queue()    
     return
 
+    pserver.process_queue()    
+    return
 
 main()
 
