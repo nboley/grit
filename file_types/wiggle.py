@@ -174,8 +174,14 @@ class Wiggle( dict ):
                            filter_region=None ):
         if filter_region != None:
             assert isinstance( filter_region, GenomicInterval )
+            if filter_region.strand == '+':
+                minus_out = None
+            if filter_region.strand == '-':
+                plus_out = None
         
         def open_ofp( out ):
+            if out == None: return None
+            
             if isinstance( out, str ):
                 return open( out, "w" )
             elif hasattr( plus_out, "write" ):
@@ -184,17 +190,19 @@ class Wiggle( dict ):
                 raise TypeError, "Write wiggles takes either a filename, " \
                     + "or a stream with a write method."
 
-        # opent he output file pointers, if necessary
+        # open the output file pointers, if necessary
         plus_out_fp = open_ofp( plus_out )
         minus_out_fp = open_ofp( minus_out )
         
         if track_name_prefix != None:
             # make sure the track name is valid
             track_name_prefix = track_name_prefix.replace( ".", "_" )
-            plus_out_fp.write( "track type=bedGraph name={0}_plus\n".format( \
-                    track_name_prefix ) )
-            minus_out_fp.write( "track type=bedGraph name={0}_minus\n".format( \
-                    track_name_prefix ) )
+            if plus_out != None:
+                plus_out_fp.write( "track type=bedGraph name={0}_plus\n".format( \
+                        track_name_prefix ) )
+            if minus_out != None:
+                minus_out_fp.write( "track type=bedGraph name={0}_minus\n".format( \
+                        track_name_prefix ) )
         
         if self.intervals == None:
             self.calc_all_intervals()
@@ -202,7 +210,9 @@ class Wiggle( dict ):
         for key in self.iterkeys():
             chrm, strand = key
             if filter_region != None:
-                if filter_region.chr != chrm:
+                # we check both the tail and chr to compare properly
+                # between chr4 and 4 ( or 'chr2L' and '2L' )
+                if filter_region.chr != chrm and filter_region.chr[3:] != chrm:
                     continue
                 if filter_region.strand not in ( strand, '.' ):
                     continue
@@ -553,7 +563,8 @@ def main():
     chrm_sizes_fp = open( sys.argv[1] )
     fps = [ open( fname ) for fname in sys.argv[2:] ]
     wiggle = Wiggle( chrm_sizes_fp, fps )
-
+    wiggle.calc_all_intervals()
+    print wiggle.write_wiggles( "tmp.plus.gff", "tmp.minus.gff" )
 
 if __name__ == "__main__":    
     main()

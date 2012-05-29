@@ -115,7 +115,8 @@ RnaSeqDataTypes = [ "rnaseq_bam",
                     "fl_dist",
                     "stats",
                     "TFE_filt_stats",
-                    "annotation_gtf" ]
+                    "annotation_gtf",
+                    "transcript_sources" ]
 
 Element = namedtuple( "Element", ["data_type", "sample_type", \
                                   "sample_id", "strand", "fname", "status"] )
@@ -1247,6 +1248,7 @@ def merge_transcripts( elements, pserver, output_prefix, \
                 sample_type, input_fnames, \
                 op_e_type="transcripts_gtf" ):
         if op_e_type == "TF_filt_element_transcripts_gtf":
+            assert False
             suffix = ".TFfilt_transcripts.gtf"
         elif op_e_type == 'transcripts_gtf':
             suffix = ".transcripts.gtf"
@@ -1259,13 +1261,18 @@ def merge_transcripts( elements, pserver, output_prefix, \
         sample_type_name = "merged" if sample_type == "M" else sample_type
         op_fname = os.path.join(output_prefix, \
                                     sample_type_name + suffix)
+
+        sources_fname = os.path.join(output_prefix, \
+                                    sample_type_name + ".sources")
         
-        call = "python %s %s --threads={threads} > %s" \
-            % ( MERGE_TRANSCRIPTS_CMD, " ".join( input_fnames ), op_fname )
+        call = "python %s %s --sources-fname %s --threads={threads} > %s" \
+            % ( MERGE_TRANSCRIPTS_CMD, " ".join( input_fnames ), \
+                    sources_fname, op_fname )
         
         op_element_types = [ \
-            ElementType( op_e_type, sample_type, "M", "." ), ]
-        op_fnames = [ op_fname,]
+            ElementType( op_e_type, sample_type, "M", "." ),
+            ElementType( "transcript_sources", sample_type, "M", "." ) ]
+        op_fnames = [ op_fname, sources_fname ]
         dependencies = input_fnames
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
@@ -1570,14 +1577,14 @@ def main():
     merge_sample_type_junctions( elements, pserver, base_dir + "junctions/" )
     build_high_quality_junctions( elements, pserver, base_dir + "junctions/" )
     intersect_all_junctions( elements, pserver, base_dir + "junctions/" )
-
-    pserver.process_queue()    
-    return
     
     build_all_cov_wiggles( elements, pserver, base_dir + "read_cov_bedgraphs" )
     
     build_all_exon_files( elements, pserver, base_dir + "exons" )
-    
+
+    pserver.process_queue()    
+    return
+
     # estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
     
     build_transcripts( elements, pserver, base_dir + "transcripts" )

@@ -117,7 +117,7 @@ def main():
     jns = merge_jns( jns_fns )
     
     if do_filter==True:
-        is_valid_jn = is_valid_jn_factory( 1.2, 2, maximum_intron_size )
+        is_valid_jn = is_valid_jn_factory( 1.5, 2, maximum_intron_size )
     else:
         is_valid_jn = ( lambda intron, grp_data: True )
     

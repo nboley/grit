@@ -11,11 +11,10 @@ start = 4605421
 stop = 5481770
 base_dir = "/media/scratch/chr2L_test_region_raw_data/unstranded_timepoints/"
 
-def build_extract_bam_cmd( sample_type, sample_id, old_fname ):
-    #new_fname = os.path.join( base_dir, ".".join(\
-    #        os.path.basename(fname).split(".")[:-1]) \
-    #        + ".%s_%i_%i.bam" % (  region_chr, start, stop ) )
-    new_fname = "%s_%s.bam" % ( sample_type, sample_id )
+def build_extract_bam_cmd( fname ):
+    new_fname = os.path.join( base_dir, ".".join(\
+            os.path.basename(fname).split(".")[:-1]) \
+            + ".%s_%i_%i.bam" % (  region_chr, start, stop ) )
     cmd1 = "samtools view -bh " + old_fname + " " \
          +  "%s:%i-%i" % (region_chr, start, stop) +  " > " + new_fname
     cmd2 = "samtools index " + new_fname
@@ -24,7 +23,7 @@ def build_extract_bam_cmd( sample_type, sample_id, old_fname ):
 
 ps = []
 for fname in sys.argv[1:]:
-    cmd = b
+    cmd = build_extract_bam_cmd( fname )
     ps.append( subprocess.Popen( cmd, shell=True ) )
 
 for p in ps:
