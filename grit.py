@@ -867,7 +867,9 @@ def extract_all_junctions( elements, pserver, output_prefix ):
         
         rev_strand_str = '--reverse-strand' if rev_strand else ""
         
-        call_template = "python %s {0} --fasta {1} {2} > {3} " % EXTRACT_JNS_CMD
+        call_template = "python %s {0} --stranded --fasta {1} {2} > {3} " \
+            % EXTRACT_JNS_CMD
+        
         call = call_template.format( \
             bam_fn, elements.genome_fname, rev_strand_str, output_fname ) 
         

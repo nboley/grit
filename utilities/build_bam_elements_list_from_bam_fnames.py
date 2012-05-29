@@ -12,9 +12,9 @@ for fname in sys.argv[1:]:
     sample_type = ".".join(base_name.split(".")[:-3])
     samples[ sample_type ].append( os.path.abspath( fname ) )
 
-pad_len = len( "-                               " )
+pad_len = len( "-                   " )
 
 for sample_type, fnames in samples.iteritems():
     for i, fname in enumerate( fnames ):
-        line = "\t".join( ( "rnaseq_bam", sample_type.ljust( pad_len ), "sample_%i" % (i+1), ".", fname  ) )
+        line = "\t".join( ( "rnaseq_unstranded_bam", sample_type.ljust( pad_len ), "sample_%i" % (i+1), ".", fname  ) )
         print line

@@ -11,7 +11,7 @@ from collections import defaultdict
 CONSENSUS_PLUS = 'GTAG'
 CONSENSUS_MINUS = 'CTAC'
 
-def get_jn_type( chrm, upstrm_intron_pos, dnstrm_intron_pos, fasta, jn_strand ):
+def get_jn_type( chrm, upstrm_intron_pos, dnstrm_intron_pos, fasta, jn_strand="UNKNOWN" ):
     # get first 2 bases from 5' and 3' ends of intron to determine 
     # splice junction strand by comparing to consensus seqs
     # subtract one from start since fasta is 0-based closed-open
@@ -25,12 +25,23 @@ def get_jn_type( chrm, upstrm_intron_pos, dnstrm_intron_pos, fasta, jn_strand ):
     elif intron_seq.upper() == CONSENSUS_MINUS:
         canonical_strand = '-'
     else:
-        return 'non-canonical'
+        if jn_strand == "UNKNOWN":
+            return 'non-canonical', '.'
+        else:
+            return 'non-canonical'
     
-    if jn_strand == canonical_strand:
-        return 'canonical'
-    return 'canonical_wrong_strand'
-
+    # if we don't know what the strand should be, then use the canonical seq
+    # to infer the strand of the jn
+    if jn_strand == "UNKNOWN":
+        return 'canonical', canonical_strand
+    # otherwise, if we know the jn's strand
+    else:
+        if jn_strand == canonical_strand:
+            return 'canonical'
+        return 'canonical_wrong_strand'
+    
+    assert False
+    
 def build_jn_line( region, group_id, count=0, fasta_obj=None, intron_type=None):
     group_id_str = str( group_id ) #'group_id "{0}";'.format( str(group_id) )
     
