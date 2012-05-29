@@ -878,7 +878,7 @@ def find_T_S_exons(cov, labels, bndrys, intron_starts, intron_stops, \
     #print sorted( intron_stops )
     raw_input()
     """
-
+    
     return refined_exons
 
 def filter_exon_bndrys( exon_bndrys, jn_bndrys ):
@@ -954,13 +954,43 @@ def build_cluster_labels_and_bndrys(cluster_indices, bndrys, labels, chrm_stop):
     
     return new_bndrys, new_labels
 
-def cluster_labels_and_bndrys( labels, bndrys, jns_w_cnts, strand, chrm_stop ):
+def find_min_cnt_jns( bndrys, labels, jns_dict ):
+    # build a list of possible introns
+    intron_starts = []
+    intron_stops = []
+    for bndry, label in izip(  bndrys[1:-1], labels[1:-1] ):
+        intron_starts.append( bndry )
+        intron_stops.append( bndry-1 )
+
+    introns = [ (start, stop) for start, stop 
+                in product( intron_starts, intron_stops )
+                if start <= stop and ( start, stop ) in jns_dict ]
+
+    cnts_w_introns = dict( (jns_dict[jn], jn) for jn in introns )
+    if len( cnts_w_introns ) == 0:
+        return None
+
+    max_intron_val = max( cnts_w_introns )
+    # min_intron_val = min( cnts_w_introns )
+
+    jns_to_remove = []
+    for val, jn in cnts_w_introns.iteritems():
+        if float(val)/max_intron_val < MIN_INTRON_CVG_FRAC:
+            jns_to_remove.append( jn )
+    
+    if len( jns_to_remove ) > 0:
+        return jns_to_remove
+    else:
+        return None
+    
+    assert False
+
+def build_genelets( labels, bndrys, jns_dict, chrm_stop ):
     # get exon boundaries from assigned labels and boundaries
     exon_bndrys = get_possible_exon_bndrys( \
         labels, bndrys, chrm_stop )
-    print jns_w_cnts
-    jns_wo_cnts = [ jn for jn, cnt in jns_w_cnts ]
-    jns_dict = dict( jns_w_cnts )
+    
+    jns_wo_cnts = jns_dict.keys()
     
     # filter out any exon that start with a junction start or 
     # stops at an junction stop
@@ -971,15 +1001,7 @@ def cluster_labels_and_bndrys( labels, bndrys, jns_w_cnts, strand, chrm_stop ):
     bndries_array = numpy.array( bndrys )
     exons = numpy.array( filtered_exon_bndrys )
     clusters = cluster_exons( exons, jns_wo_cnts )
-    
-    # create a mapping from jn acceptors ( exon starts-1 ) and their cnts
-    acceptor_jns_map = defaultdict( list )
-    # create a mapping from jn donors ( exon stops+1 ) and their cnts
-    donor_jns_map = defaultdict( list )
-    for ( intron_start, intron_stop ), cnt in jns_w_cnts:
-        acceptor_jns_map[ intron_stop ].append( cnt )
-        donor_jns_map[ intron_start ].append( cnt )
-    
+        
     clustered_labels = []
     clustered_bndrys = []
     for cluster in clusters:
@@ -993,41 +1015,45 @@ def cluster_labels_and_bndrys( labels, bndrys, jns_w_cnts, strand, chrm_stop ):
         cluster_bndrys, cluster_labels = build_cluster_labels_and_bndrys( 
             cluster_bndry_indices, bndries_array, labels, chrm_stop )
         
-        """
-        # BUG - this does fancy intron filtering. For now, we do this in build 
-        # trasncripts.
-        
-        # build a list of possible introns
-        intron_starts = []
-        intron_stops = []
-        for bndry, label in izip(  cluster_bndrys[1:-1], cluster_labels[1:-1] ):
-            intron_starts.append( bndry )
-            intron_stops.append( bndry-1 )
-        
-        introns = [ (start, stop) for start, stop 
-                    in product( intron_starts, intron_stops )
-                    if start <= stop and ( start, stop ) in jns_dict ]
-        
-        introns_w_cnts = dict( (jn, jns_dict[jn]) for jn in introns )
-        max_intron_val = float( max( chain(introns_w_cnts.values(), [1,]) ) )
-        filtered_introns_w_cnts = \
-            dict( (jn, cnt) for jn, cnt in introns_w_cnts.iteritems()
-                  if cnt/max_intron_val >= MIN_INTRON_CVG_FRAC )
-        
-        if len( filtered_introns_w_cnts ) < len( introns_w_cnts ):
-            print strand
-            print introns_w_cnts
-            print filtered_introns_w_cnts
-            print cluster_bndrys
-            print cluster_labels
-            print
-            raw_input()
-        """
-        
         clustered_labels.append( cluster_labels )
         clustered_bndrys.append( cluster_bndrys )
     
     return clustered_labels, clustered_bndrys
+
+def cluster_labels_and_bndrys( labels, bndrys, jns_w_cnts, chrm_stop ):
+    jns_dict = dict( jns_w_cnts )
+    
+    grpd_clusters = [ ( labels, bndrys), ]
+    final_cl_labels, final_cl_bndrys = [], []
+    while len( grpd_clusters ) > 0:
+        labels, bndrys = grpd_clusters.pop()
+                
+        clustered_labels, clustered_bndrys = build_genelets( \
+            labels, bndrys, jns_dict, chrm_stop )
+        
+        # if we didn't re cluster these, then we are done
+        assert len( clustered_labels ) == len( clustered_bndrys )
+        if len( clustered_labels ) == 1: 
+            """
+            jns_to_remove = find_min_cnt_jns( \
+                clustered_bndrys[0], clustered_labels[0], jns_dict )
+            if jns_to_remove != None:
+                for jn in jns_to_remove:
+                    del jns_dict[ jn ]
+                
+                grpd_clusters.append((clustered_labels[0], clustered_bndrys[0]))
+            else:
+                assert clustered_labels[0][0] == 'L' \
+                    and clustered_labels[0][-1] == 'L'
+            """
+            
+            final_cl_labels.append( clustered_labels[0] )
+            final_cl_bndrys.append( clustered_bndrys[0] )
+        else:
+            grpd_clusters.extend( zip(*(clustered_labels, clustered_bndrys)) )
+    
+    return final_cl_labels, final_cl_bndrys
+    
     
 def score_distal_exon( cov, window_len, read_cov=None ):
     # get maximal tss coverage region accoss exon
@@ -1124,16 +1150,16 @@ def find_distal_exon_indices( cov, find_upstream_exons,  \
     return indices
 
 def find_exons_in_contig( strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov ):
-    jns_w_cnts = [ jn for jn, score in jns_w_cnts ]
+    jns_wo_cnts = [ jn for jn, score in jns_w_cnts ]
 
     labels, bndrys = find_initial_boundaries_and_labels( \
-        read_cov_obj, jns_w_cnts )
+        read_cov_obj, jns_wo_cnts )
     
     new_labels, new_bndrys = label_regions( \
         strand, read_cov_obj, bndrys, labels, cage_cov, polya_cov )
     
     clustered_labels, clustered_bndrys = cluster_labels_and_bndrys( 
-        new_labels, new_bndrys, jns_w_cnts, strand, read_cov_obj.chrm_stop )
+        new_labels, new_bndrys, jns_w_cnts, read_cov_obj.chrm_stop )
     
     intron_starts = set( jn[0] for jn, score in jns_w_cnts )
     intron_stops = set( jn[1] for jn, score in jns_w_cnts )
@@ -1368,3 +1394,44 @@ def main():
         
 if __name__ == "__main__":
     main()
+
+
+"""
+    # create a mapping from jn acceptors ( exon starts-1 ) and their cnts
+    acceptor_jns_map = defaultdict( list )
+    # create a mapping from jn donors ( exon stops+1 ) and their cnts
+    donor_jns_map = defaultdict( list )
+    for ( intron_start, intron_stop ), cnt in jns_w_cnts:
+        acceptor_jns_map[ intron_stop ].append( cnt )
+        donor_jns_map[ intron_start ].append( cnt )
+
+        # if we are removing introns
+        if len( filtered_introns_w_cnts ) < len( introns_w_cnts ):
+            # remove these entries from the donor and acceptor lists
+            for jn, cnt in introns_w_cnts.iteritems():
+                if jn in filtered_introns_w_cnts: continue
+                acceptor_jns_map[ jn[1] ].remove( cnt )
+                donor_jns_map[ jn[0] ].remove( cnt )
+        
+            acceptor_bndries_to_remove = \
+                set( bndry+1 for bndry, cnts in acceptor_jns_map.iteritems() \
+                     if len( cnts ) == 0 )
+            donor_bndries_to_remove = \
+                set( bndry for bndry, cnts in donor_jns_map.iteritems()  \
+                     if len( cnts ) == 0 )
+            
+            # rules for removing boundaries
+            # for acceptors:
+            #     JUST: change current label to 'L'
+            #     1) if the prev or next label is an L
+            #         -) change the current label to 'L'
+            #         -) remove the current boundary and label
+            #     2) if the next label is an exon or exon extension
+            #         -) cahnge the current label to an 'L'
+            
+            print strand
+            print acceptor_bndries_to_remove
+            print donor_bndries_to_remove
+            print zip( cluster_bndrys, cluster_labels )
+            raw_input()
+"""

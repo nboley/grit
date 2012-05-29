@@ -62,9 +62,7 @@ MERGE_EXONS_CMD = os.path.join( os.path.dirname( __file__ ),
 
 MERGE_WIGS_CMD = os.path.join( os.path.dirname( __file__ ), 
                               "./utilities/", "wiggle_merger.py" )
-BUILD_GENELETS_CMD = os.path.join( os.path.dirname( __file__ ), 
-                            "./elements/exons/", "build_genelets.py" )
-
+ 
 BUILD_TRANSCRIPTS_CMD = os.path.join( os.path.dirname( __file__ ), 
                               "./elements/", "build_transcripts.py" )
 
@@ -1214,7 +1212,7 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         dependencies = [ exons_fname, jns_fname ]
         dependencies.extend( tss_exons_fnames )
         dependencies.extend( tes_exons_fnames )
-
+        
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
         max_res = min(Resource(8), Resource(pserver.max_available_resources))
         pserver.add_process( cmd, Resource(1), max_res )

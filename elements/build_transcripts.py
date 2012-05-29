@@ -1,5 +1,5 @@
 MAX_NUM_TRANSCRIPTS = 50000
-MIN_INTRON_CNT_FRAC = 0.1
+MIN_INTRON_CNT_FRAC = 0.01
 VERBOSE = False
 MIN_VERBOSE = False
 
@@ -286,8 +286,6 @@ def write_transcripts( genes, jns, log_fp, out_fp, threads ):
 
 def build_objs( exons_fps, tss_exons_fps, tes_exons_fps, junctions_fps ):    
     jns = parse_junctions_files( junctions_fps )
-    print jns
-    assert False
     
     exons = parse_exons_files( exons_fps )
     
