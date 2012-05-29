@@ -5,7 +5,7 @@ import os
 import sys
 
 sys.path.append( os.path.join(os.path.dirname(__file__), "..", "file_types") )
-from wiggle import Wiggle
+from wiggle import Wiggle, GenomicInterval
 
 VERBOSE = False
 
@@ -24,16 +24,28 @@ def parse_arguments():
                              help='The output track names will be PREFIX_plus and PREFIX_minus.')
     parser.add_argument( '--verbose', '-v', default=False, action='store_true', \
                              help='Whether or not to print status information.')
+    parser.add_argument( '--filter-region', '-f', \
+                             help='A filter region of the form chr:start-stop.')
     args = parser.parse_args()
     
     # set flag args
     global VERBOSE
     VERBOSE = args.verbose
     
-    return args.wigs, args.out_fname_prefix, args.chrm_sizes, args.track_name_prefix
+    if args.filter_region != None:
+        chrm, locs = args.filter_region.strip().split(":")
+        start, stop = locs.split("-")
+        chrm, start, stop = chrm.strip(), int(start), int(stop)
+        filter_region = GenomicInterval( chrm, '.', start, stop )
+    else:
+        filter_region = None
+    
+    return args.wigs, args.out_fname_prefix, args.chrm_sizes, \
+        args.track_name_prefix, filter_region
 
 def main():
-    wiggles, out_fname_prefix, chrm_sizes_fp, track_name_prefix = parse_arguments()
+    wiggles, out_fname_prefix, chrm_sizes_fp, track_name_prefix, filter_region \
+        = parse_arguments()
     
     merged_wiggle = Wiggle( chrm_sizes_fp )
 
@@ -49,7 +61,8 @@ def main():
     merged_wiggle.write_wiggles( ofn_template.format(strand='plus'),  \
                                  ofn_template.format(strand='minus'), \
                                  ignore_zeros=True, \
-                                 track_name_prefix=track_name_prefix )
+                                 track_name_prefix=track_name_prefix, \
+                                 filter_region = filter_region )
     
 if __name__ == '__main__':
     main()

@@ -170,7 +170,11 @@ class Wiggle( dict ):
         return
     
     def write_wiggles( self, plus_out, minus_out, \
-                           ignore_zeros=True, track_name_prefix=None ):
+                           ignore_zeros=True, track_name_prefix=None, \
+                           filter_region=None ):
+        if filter_region != None:
+            assert isinstance( filter_region, GenomicInterval )
+        
         def open_ofp( out ):
             if isinstance( out, str ):
                 return open( out, "w" )
@@ -197,10 +201,23 @@ class Wiggle( dict ):
         
         for key in self.iterkeys():
             chrm, strand = key
+            if filter_region != None:
+                if filter_region.chr != chrm:
+                    continue
+                if filter_region.strand not in ( strand, '.' ):
+                    continue
+            
             fp = plus_out_fp if strand == '+' else minus_out_fp
             for start, stop, val in self.intervals[key]:
                 if ignore_zeros and val == 0:
                     continue
+                if filter_region != None:
+                    # TODO - use a bisect for this
+                    if stop < filter_region.start:
+                        continue
+                    if start > filter_region.stop:
+                        break
+                
                 # subtract one from start to make 0-based closed-open (bed format)
                 fp.write( '\t'.join( \
                         ('chr' + chrm, str(int(start-1)), str(int(stop)), \

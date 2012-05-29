@@ -1570,6 +1570,9 @@ def main():
     merge_sample_type_junctions( elements, pserver, base_dir + "junctions/" )
     build_high_quality_junctions( elements, pserver, base_dir + "junctions/" )
     intersect_all_junctions( elements, pserver, base_dir + "junctions/" )
+
+    pserver.process_queue()    
+    return
     
     build_all_cov_wiggles( elements, pserver, base_dir + "read_cov_bedgraphs" )
     
@@ -1585,8 +1588,7 @@ def main():
 
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
 
-    pserver.process_queue()
-    
+    pserver.process_queue()    
     return
 
 
