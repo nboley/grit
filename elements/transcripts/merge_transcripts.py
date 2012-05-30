@@ -279,7 +279,7 @@ def build_unique_transcripts( transcriptomes, gtf_fnames ):
                 # skip single  exon transcripts and transcripts that 
                 # have an odd number of boundaries
                 if len( exons ) == 2: 
-                    single_exon_sources[ exons ].append( source )
+                    single_exon_sources[ tuple(exons) ].append( source )
                 else:
                     tmp_transcript_maps[ ( chrm, strand ) ][ \
                         tuple( exons[1:-1] ) ].append( \

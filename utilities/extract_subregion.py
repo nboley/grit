@@ -9,18 +9,22 @@ python filter_bam_by_region.py `ls /media/scratch/RNAseq/all_samples/ | grep -P 
 region_chr = "2L"
 start = 4605421
 stop = 5481770
-base_dir = "/media/scratch/NEW_TEST_REGION/DATA/"
+base_dir = "/media/scratch/final_transcriptome_v2/test_region/"
 EXTRACT_WIG_CMD = os.path.join( os.path.dirname( __file__ ), "extract_region_from_wiggle.py" )
 global_region_str = "%s_%i_%i" % ( region_chr, start, stop )
 
-def build_extract_bam_cmd( sample_type, sample_id, fname ):
+def build_extract_bam_cmd( sample_type, sample_id, fname, datatype=None ):
     #new_fname = os.path.join( base_dir, ".".join(\
     #        os.path.basename(fname).split(".")[:-1]) \
     #        + ".%s_%i_%i.bam" % (  region_chr, start, stop ) )
+    if datatype == 'total_stranded_beta_bam':
+        tmp_chr_name = "chr" + region_chr
+    else:
+        tmp_chr_name = region_chr
     new_fname = os.path.join(base_dir, "%s_%s_%s.bam" % ( 
             sample_type, sample_id, global_region_str ))
     cmd1 = "samtools view -bh " + fname + " " \
-         +  "%s:%i-%i" % (region_chr, start, stop) +  " > " + new_fname
+         +  "%s:%i-%i" % (tmp_chr_name, start, stop) +  " > " + new_fname
     cmd2 = "samtools index " + new_fname
     cmd = cmd1 + " && " + cmd2
     return cmd, new_fname
@@ -65,13 +69,17 @@ def get_cmds_from_input_file( fp ):
     chrm_sizes_fname = None
     new_lines = []
     cmds = []
-    for line in fp:
+    for line_num, line in enumerate(fp):
         # skip commented out lines
         if line.startswith( "#" ):
             new_lines.append( line.strip() )
             continue
         
-        datatype, sample_type, sample_id, strand, fname = line.split()
+        try:
+            datatype, sample_type, sample_id, strand, fname = line.split()
+        except:
+            print line_num, line
+            raise
         # deal with the chrm sizes specially
         if datatype == 'chrm_sizes':
             new_lines.append( line.strip() )
@@ -86,7 +94,7 @@ def get_cmds_from_input_file( fp ):
             cmd, op_fname = None, None
             if filetype == 'bam':
                 cmd, op_fname = build_extract_bam_cmd(
-                    sample_type, sample_id, fname)
+                    sample_type, sample_id, fname, datatype)
             elif filetype == 'wig':
                 cmd, op_fname = build_extract_wig_cmd(
                     sample_type, sample_id, strand, fname, chrm_sizes_fname)

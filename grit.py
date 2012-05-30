@@ -29,20 +29,19 @@ import itertools
 MAX_NUM_CKSUM_BLOCKS = 10
 USE_TF_ELEMENTS = False
 
-USE_MERGED_INPUT=False
-
-USE_MERGED_EXONS_FOR_TSS_EXONS = False
-
-
-
 BUILD_SAMPLE_SPECIFIC_EXONS = True
 USE_SAMPLE_SPECIFIC_CAGE = True and BUILD_SAMPLE_SPECIFIC_EXONS
 USE_MERGED_RNASEQ_FOR_EXONS = True
+
 USE_MERGED_JNS_FOR_EXONS = False
-USE_MERGED_CAGE_SIGNAL_FOR_EXONS = True
+USE_MERGED_CAGE_SIGNAL_FOR_EXONS = False
 USE_MERGED_POLYA_SIGNAL_FOR_EXONS = False
 
 USE_MERGED_EXONS_FOR_TRANSCRIPTS = False
+
+# whether or not to include the merged_input transripts
+# in the final merged file
+USE_MERGED_INPUT=True
 
 VERBOSE = True
 STRESS_TEST_DEP_FINDER = False
@@ -95,10 +94,11 @@ from chrm_sizes import ChrmSizes
 BaseDataTypes = [  "RNASeq", "CAGE", "PolyASeq", "Annotation"]
 CHRM_LENS_DATA_TYPE = "chrm_sizes"
 GENOME_DATA_TYPE = "genome"
-RnaSeqDataTypes = [ "rnaseq_bam",
-                    "rnaseq_rev_bam",
-                    "rnaseq_unstranded_bam",
+RnaSeqDataTypes = [ "rnaseq_polyaplus_bam",
+                    "rnaseq_polyaplus_rev_bam",
+                    "rnaseq_polyaplus_unstranded_bam",
                     "rnaseq_cov_bedgraph",
+                    "rnaseq_total_bam",
                     "filtered_jns_gff",
                     "TF_jns_gff",
                     "jns_gff", 
@@ -789,9 +789,9 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
 
     # first get all of the read bams
     cov_wig_fnames = defaultdict( list )
-    res = elements.get_elements_from_db( "rnaseq_bam" )
+    res = elements.get_elements_from_db( "rnaseq_polyaplus_bam" )
     build_build_read_cov_cmds( res, cov_wig_fnames, rev_strand=False )
-    res = elements.get_elements_from_db( "rnaseq_rev_bam" )
+    res = elements.get_elements_from_db( "rnaseq_polyaplus_rev_bam" )
     build_build_read_cov_cmds( res, cov_wig_fnames, rev_strand=True )
     
     # add the wiggle merger process
@@ -891,19 +891,24 @@ def extract_all_junctions( elements, pserver, output_prefix ):
         
         
     # build all of the raw junctions
-    res = elements.get_elements_from_db( "rnaseq_bam" )
+    res = elements.get_elements_from_db( "rnaseq_polyaplus_bam" )
     for e in res:
         cmd = build_extract_junctions_cmd(e, stranded=True, rev_strand = False)
         pserver.add_process( cmd, Resource(1) )
 
-    res = elements.get_elements_from_db( "rnaseq_rev_bam" )
+    res = elements.get_elements_from_db( "rnaseq_polyaplus_rev_bam" )
     for e in res:
         cmd = build_extract_junctions_cmd(e, stranded=True, rev_strand = True)
         pserver.add_process( cmd, Resource(1) )
 
-    res = elements.get_elements_from_db( "rnaseq_unstranded_bam" )
+    res = elements.get_elements_from_db( "rnaseq_polyaplus_unstranded_bam" )
     for e in res:
         cmd = build_extract_junctions_cmd(e, stranded=False, rev_strand = False)
+        pserver.add_process( cmd, Resource(1) )
+
+    res = elements.get_elements_from_db( "rnaseq_total_bam" )
+    for e in res:
+        cmd = build_extract_junctions_cmd(e, stranded=True, rev_strand=True)
         pserver.add_process( cmd, Resource(1) )
     
     return
@@ -937,13 +942,15 @@ def build_high_quality_junctions( elements, pserver, output_prefix ):
 
 def merge_sample_type_junctions( elements, pserver, output_prefix ):
     def merge_junctions( sample_type ):
-        res = elements.get_elements_from_db( "jns_gff", sample_type )
+        res = elements.get_elements_from_db( "filtered_jns_gff", sample_type )
         raw_jn_fnames = []
         for e in res:
+            # skip the merged forms
+            if e.sample_id == '*': continue
             raw_jn_fnames.append( e.fname )
 
         merged_output_fname = os.path.join( \
-            output_prefix, "%s.jns.gff" % sample_type )
+            output_prefix, "%s.filtered.jns.gff" % sample_type )
         
         # get all of the raw junctions fnames, and merge them
         call_template = "python %s --fasta {0} {1} > {2} " \
@@ -961,7 +968,7 @@ def merge_sample_type_junctions( elements, pserver, output_prefix ):
         pserver.add_process( cmd, Resource(1) )
     
     e_types = elements.get_distinct_element_types_and_ids( \
-        "jns_gff", get_merged=False )
+        "filtered_jns_gff", get_merged=False )
 
     distinct_sample_types = sorted(set( _[0] for _ in e_types ))
     for sample_type in distinct_sample_types:
@@ -1005,7 +1012,7 @@ def intersect_all_junctions( elements, pserver, output_prefix ):
     for e in res:
         cmd = build_filter_junctions_cmd( e, merged_filtered_jn_fn )
         pserver.add_process( cmd, Resource(1) )
-
+    
     return
 
 
@@ -1045,7 +1052,7 @@ def build_all_exon_files( elements, pserver, output_prefix ):
                 "filtered_jns_gff", "*" , "*", "." )
         else:
             res = elements.get_elements_from_db( \
-                "filtered_jns_gff", sample_type , sample_id, "." )
+                "filtered_jns_gff", sample_type , "*", "." )
         if len( res ) < 1:
             raise ValueError, "Can't find the jns gff file " \
                               + "necessary to build exons."
@@ -1124,8 +1131,9 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         for sample_type, sample_id in sample_types_and_ids:
             if USE_MERGED_RNASEQ_FOR_EXONS and sample_id == '*':
                 build_find_exons_cmds( sample_type, sample_id )
-            elif sample_id != '*':
+            elif not USE_MERGED_RNASEQ_FOR_EXONS and sample_id != '*':
                 build_find_exons_cmds( sample_type, sample_id )
+    
     
     return
 
@@ -1164,11 +1172,11 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         else:
             ress = elements.get_elements_from_db( \
                 exon_input_type, "*", "*"  )
-            
+        
         if len( ress ) < 1: return
         assert len( ress ) == 1
         exons_fname = ress[0].fname
-
+        
         # get tss exons
         if not USE_MERGED_EXONS_FOR_TRANSCRIPTS and BUILD_SAMPLE_SPECIFIC_EXONS:
             ress = elements.get_elements_from_db(\
@@ -1233,8 +1241,13 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         pserver.add_process( cmd, Resource(1), max_res )
         return
 
-    ress = elements.get_elements_from_db( jn_input_type )
+    ress = elements.get_elements_from_db( exon_input_type )
     for e in ress[:]:
+        if USE_MERGED_RNASEQ_FOR_EXONS and e.sample_id != '*': 
+            continue
+        elif not USE_MERGED_RNASEQ_FOR_EXONS and e.sample_id == '*':
+            continue
+        
         build_transcripts_for_sample( e.sample_type, e.sample_id  )
     
     build_transcripts_for_sample( "*", "*"  )
@@ -1263,7 +1276,7 @@ def merge_transcripts( elements, pserver, output_prefix, \
         #if sample_type == "*": 
         #    raise ValueError, "Can't merge merged transcripts."
 
-        sample_type_name = "merged" if sample_type == "M" else sample_type
+        sample_type_name = "merged" if sample_type == "*" else sample_type
         op_fname = os.path.join(output_prefix, \
                                     sample_type_name + suffix)
 
@@ -1287,8 +1300,16 @@ def merge_transcripts( elements, pserver, output_prefix, \
     # add the merge all command first, since it takes the 
     # longest to complete
     in_es = elements.get_elements_from_db( input_e_type )
-    input_fnames = [ e.fname for e in in_es if e.sample_id not in "*M"]
+    input_fnames = [ e.fname for e in in_es 
+                     if e.sample_id in "*" and e.sample_type != '*']
+    if USE_MERGED_INPUT:
+        merged_input_fname = elements.get_elements_from_db( \
+            input_e_type, "*", "*" )[0].fname
+        input_fnames.append( merged_input_fname )
+    
+    add_merge_transcripts_sample_cmd( "*", input_fnames )
 
+    """
     # get the merged input transcripts    
     if USE_MERGED_INPUT:
         merged_input_fname = elements.get_elements_from_db( \
@@ -1310,7 +1331,8 @@ def merge_transcripts( elements, pserver, output_prefix, \
         in_es = elements.get_elements_from_db( input_e_type, sample_type )
         input_fnames = [ e.fname for e in in_es ]
         add_merge_transcripts_sample_cmd( sample_type, input_fnames )
-
+    """
+    
     return
 
 def estimate_fl_dists( elements, pserver, output_prefix ):
@@ -1332,10 +1354,10 @@ def estimate_fl_dists( elements, pserver, output_prefix ):
     def build_fl_dist_cmd( sample_type, sample_id ):
         # get the bam file for this sample_type, id combo
         ress = elements.get_elements_from_db( \
-            "rnaseq_bam", sample_type, sample_id )
+            "rnaseq_polyaplus_bam", sample_type, sample_id )
         if len( ress ) == 0:
             ress = elements.get_elements_from_db( \
-                "rnaseq_rev_bam", sample_type, sample_id )
+                "rnaseq_polyaplus_rev_bam", sample_type, sample_id )
         assert len( ress ) == 1
         bam_fname = ress[0].fname
         
@@ -1365,9 +1387,9 @@ def estimate_fl_dists( elements, pserver, output_prefix ):
 
     sample_types_and_ids = set()
     sample_types_and_ids.update( elements.get_distinct_element_types_and_ids( \
-                [ "rnaseq_bam", ], False ) )
+                [ "rnaseq_polyaplus_bam", ], False ) )
     sample_types_and_ids.update( elements.get_distinct_element_types_and_ids( \
-                [ "rnaseq_rev_bam", ], False ) )
+                [ "rnaseq_polyaplus_rev_bam", ], False ) )
 
     for sample_type, sample_id in sorted( sample_types_and_ids ):
         build_fl_dist_cmd( sample_type, sample_id )
@@ -1393,7 +1415,7 @@ def sparsify_transcripts( elements, pserver, output_prefix ):
     """
     
     # get all of the bam files
-    ress = elements.get_elements_from_db( "rnaseq_bam" )
+    ress = elements.get_elements_from_db( "rnaseq_polyaplus_bam" )
     bam_fnames = [ res.fname for res in ress ]
     
     ress = elements.get_elements_from_db( "fl_dist" )
@@ -1579,14 +1601,14 @@ def main():
     pserver = ProcessServer( elements, Resource( num_threads )  )
     
     extract_all_junctions( elements, pserver, base_dir + "junctions/" )
-    merge_sample_type_junctions( elements, pserver, base_dir + "junctions/" )
     build_high_quality_junctions( elements, pserver, base_dir + "junctions/" )
     intersect_all_junctions( elements, pserver, base_dir + "junctions/" )
+    merge_sample_type_junctions( elements, pserver, base_dir + "junctions/" )
     
     build_all_cov_wiggles( elements, pserver, base_dir + "read_cov_bedgraphs" )
     
     build_all_exon_files( elements, pserver, base_dir + "exons" )
-
+    
     # estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
     
     build_transcripts( elements, pserver, base_dir + "transcripts" )
@@ -1597,8 +1619,6 @@ def main():
 
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
 
-    pserver.process_queue()    
-    return
 
     pserver.process_queue()    
     return

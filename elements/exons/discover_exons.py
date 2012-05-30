@@ -673,7 +673,11 @@ def check_exon_for_gene_merge( strand, start, stop, \
     #print >> sys.stderr, left_cov, min_cov, right_cov
     #print >> sys.stderr, start, new_intron_start, \
     #         new_intron_stop+1, stop
-    assert start < new_intron_start < new_intron_stop+1 < stop
+    try:
+        assert start < new_intron_start < new_intron_stop+1 < stop
+    except:
+        print start, new_intron_start, new_intron_stop+1, stop
+        raise
     new_bndrys = (start, new_intron_start, new_intron_stop+1)
     new_labels = ('Exon','L','Exon')
     return new_bndrys, new_labels
@@ -853,14 +857,14 @@ def find_T_S_exons(cov, labels, bndrys, intron_starts, intron_stops, \
             curr_tot = 0
             for i, val in enumerate( exon_cvg ):
                 curr_tot += val
-                if curr_tot > .05*total:
+                if curr_tot > .01*total:
                     break
             refined_exons.append( (i+exon[0], exon[1]) )
         else:
             curr_tot = 0
             for i, val in enumerate( exon_cvg ):
                 curr_tot += val
-                if curr_tot > .95*total:
+                if curr_tot > .99*total:
                     break
             refined_exons.append( (exon[0], exon[0]+i) )
         
@@ -1009,7 +1013,7 @@ def build_genelets( labels, bndrys, jns_dict, chrm_stop ):
         for exon in cluster:
             start_index, stop_index = find_bndry_indices( bndries_array, exon )
             cluster_bndry_indices.update( xrange( start_index, stop_index+1 ) )
-
+        
         cluster_bndry_indices = sorted( cluster_bndry_indices )
         
         cluster_bndrys, cluster_labels = build_cluster_labels_and_bndrys( 
@@ -1116,8 +1120,9 @@ def find_distal_exon_indices( cov, find_upstream_exons,  \
         max_score = max( score for i, score in scores )
         if max_score > min_score:
             rvs = set( [ i for i, score in scores \
-                           if float(score)/max_score > max_score_frac ] )
-            #               or score >= CAGE_SUFFICIENT_SCORE] )
+                           if float(score)/max_score > max_score_frac
+                           or ( float(score)/max_score > (max_score_frac/10.0)
+                                and score >= CAGE_SUFFICIENT_SCORE ) ] )
             
             # always add the first and/or last exon segment
             """
@@ -1149,7 +1154,7 @@ def find_distal_exon_indices( cov, find_upstream_exons,  \
     
     return indices
 
-def find_exons_in_contig( strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov ):
+def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
     jns_wo_cnts = [ jn for jn, score in jns_w_cnts ]
 
     labels, bndrys = find_initial_boundaries_and_labels( \
@@ -1196,7 +1201,7 @@ def find_exons_in_contig( strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov 
             cage_cov, (strand=='+'), intron_starts, intron_stops,
             bs, ls, read_cov_obj.rca, \
             CAGE_MIN_SCORE, CAGE_WINDOW_LEN, CAGE_MAX_SCORE_FRAC, \
-            require_signal = True)
+            require_signal = False)
         
         # if we can't find a TSS index, continue
         if len( tss_indices ) == 0:
