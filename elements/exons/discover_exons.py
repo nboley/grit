@@ -334,7 +334,8 @@ def check_for_retained_intron( left, mid, right):
     # if only the region to the right is an exon
     if left[0] == 'L':
         # hck if the signal ratios are high enough for this to be retained
-        if USE_PARTIALLY_RETAINED_INTRONS and is_right_retained( mid[1], right[1] ):
+        if USE_PARTIALLY_RETAINED_INTRONS and \
+                is_right_retained( mid[1], right[1] ):
             return 'exon_extension'
         
         return 'I'
@@ -342,7 +343,8 @@ def check_for_retained_intron( left, mid, right):
     # if only the region to the left is an exon
     if right[0] in 'L':
         # check if signal ratios are high enough for this to be retained
-        if USE_PARTIALLY_RETAINED_INTRONS and is_left_retained( left[1], mid[1] ):
+        if USE_PARTIALLY_RETAINED_INTRONS and \
+                is_left_retained( left[1], mid[1] ):
             return 'exon_extension'
         
         return 'I'
@@ -812,92 +814,6 @@ def find_internal_exons( exon_bndrys, intron_starts, intron_stops ):
     
     return internal_exons
 
-def find_T_S_exons(cov, labels, bndrys, intron_starts, intron_stops, \
-                       strand, is_tss):
-    assert is_tss in ( False, True )
-    assert strand in '-+'
-    if is_tss: distal_type_labels = ( 'TSS', 'T_S' )
-    else: distal_type_labels = ( 'TES', 'T_S' )
-    # find the TSS starts
-    t_s_exons = []
-    t_s_start_indices = [ i for i, label in enumerate(labels) \
-                              if label in distal_type_labels ]
-    for t_s_region_index in t_s_start_indices:
-        if (is_tss and strand == '+') or ( not is_tss and strand == '-' ): 
-            index_iter = xrange( t_s_region_index, len(bndrys)-1 )
-        else:
-            index_iter = xrange( t_s_region_index, -1, -1 )
-        
-        for index in index_iter:
-            label = labels[ index ]
-            # if we are not moving to an exon, break
-            """
-            if index != t_s_region_index \
-                    and label not in ('exon_extension', 'Exon') \
-                    and label not in ( 'TES', 'T_S', 'TES' ):
-                break
-            """
-            if label == 'L': break
-            #if index != t_s_region_index \
-            #        and label not in ('exon_extension', 'Exon', 'TES', 'T_S', 'TES' ):
-            #    break
-            
-            stop = max( bndrys[ index+1 ], bndrys[ t_s_region_index+1 ] )-1
-            start = min( bndrys[ index ], bndrys[ t_s_region_index ] )
-            
-            # print t_s_region_index, index, start, stop, label
-
-            # check to see if it splices somewhere. SE genes are dealt with 
-            # seperately.
-            if ((is_tss and strand == '+') or ( not is_tss and strand == '-' ))\
-                    and stop+1 in intron_starts:
-                if start >= stop: continue
-                assert start < stop
-                t_s_exons.append( (start, stop) )                
-            elif ((is_tss and strand == '-') or (not is_tss and strand == '+'))\
-                    and start-1 in intron_stops:
-                if start >= stop: continue
-                assert start < stop
-                t_s_exons.append( (start, stop) )
-    
-
-    # refine the eoxn bndrys
-    refined_exons = []
-    for exon in t_s_exons:
-        exon_cvg = cov[exon[0]:exon[1]+1]
-        total = exon_cvg.sum()
-        if is_tss and strand == '+' or not is_tss and strand == '-':
-            curr_tot = 0
-            for i, val in enumerate( exon_cvg ):
-                curr_tot += val
-                if curr_tot > .01*total:
-                    break
-            refined_exons.append( (i+exon[0], exon[1]) )
-        else:
-            curr_tot = 0
-            for i, val in enumerate( exon_cvg ):
-                curr_tot += val
-                if curr_tot > .99*total:
-                    break
-            refined_exons.append( (exon[0], exon[0]+i) )
-        
-        if refined_exons[-1][1] - refined_exons[-1][0] == 0:
-            del refined_exons[-1]
-
-    """
-    print is_tss, strand
-    print labels
-    print bndrys
-    print t_s_start_indices
-    print t_s_exons
-    print refined_exons
-    #print sorted( intron_starts )
-    #print sorted( intron_stops )
-    raw_input()
-    """
-    
-    return refined_exons
-
 def filter_exon_bndrys( exon_bndrys, jn_bndrys ):
     """Filter out exons that start at a junction start or stop
     """
@@ -1100,7 +1016,7 @@ def score_distal_exon( cov, window_len, read_cov=None ):
     
     return score
 
-def find_peaks( cov, window_len=40, min_score=20, max_score_frac=0.10 ):
+def find_peaks( cov, window_len, min_score, max_score_frac ):
     cumsum_cvg_array = \
         numpy.append(0, numpy.cumsum( cov ))
     scores = cumsum_cvg_array[window_len:] - cumsum_cvg_array[:-window_len]
@@ -1112,12 +1028,33 @@ def find_peaks( cov, window_len=40, min_score=20, max_score_frac=0.10 ):
                 return True
         return False
     
+    # merge the peaks
+    def grow_peak( start, stop, grow_size=max(3, window_len/4), min_grow_ratio=0.5 ):
+        while True:
+            curr_signal = cov[start:stop+1].sum()
+            downstream_sig = cov[max(0, start-grow_size):start].sum()
+            upstream_sig = cov[stop+1:stop+1+grow_size].sum()
+
+            exp_factor = float(grow_size)/window_len
+
+            # if neither passes the threshold, then return the current peak
+            if float(max( upstream_sig, downstream_sig ))*exp_factor \
+                    < min_grow_ratio: return (start, stop)
+            
+            # otherwise, we know one does
+            if upstream_sig > downstream_sig:
+                stop += grow_size
+            else:
+                start = max(0, start - grow_size )
+            
+    
     peaks = []
     peak_scores = []
     
     for index in reversed(indices):
         if not overlaps_prev_peak( index ):
             score = scores[ index ]
+            new_peak = grow_peak( index, index + window_len )
             # if we are below the minimum score, then we are done
             if score < min_score:
                 return peaks
@@ -1127,10 +1064,10 @@ def find_peaks( cov, window_len=40, min_score=20, max_score_frac=0.10 ):
                 if float(score)/peak_scores[0] < max_score_frac:
                     return peaks
                         
-            peaks.append( (index, index + window_len) ) 
+            peaks.append( new_peak ) 
             peak_scores.append( score )
     
-    print >> sys.stderr, "EXHAUSTED EVERY REGION?!?!?!"
+    print >> sys.stderr, "EXHAUSTED EVERY REGION?!?!?!", scores
     return peaks
 
 def find_distal_exons_from_signal( cov, find_upstream_exons,  
@@ -1139,15 +1076,17 @@ def find_distal_exons_from_signal( cov, find_upstream_exons,
                                    rna_seq_cov, 
                                    min_score, window_len, 
                                    max_score_frac ):
-    #print find_upstream_exons, "%i-%i" % (bs[1], bs[-1] )
-    #print ls
-    #print bs
-
     # find peaks purely from signal within a region
-    region_start = max(0, bs[1] - DISTAL_EXON_EXPANSION)
-    region_stop = min( bs[-2] + DISTAL_EXON_EXPANSION, bs[-1] )
+    if find_upstream_exons:
+        region_start = max(0, bs[1] - DISTAL_EXON_EXPANSION)
+        region_stop = bs[-1]-1
+    else:
+        region_start = bs[1]
+        region_stop = bs[-1] - 1 + DISTAL_EXON_EXPANSION
+        
+    
     region_cov = cov[ region_start:region_stop ]
-
+    
     # TODO - zero out regions clearly not within this peak
 
     # find all of the distal exon peaks
@@ -1158,12 +1097,12 @@ def find_distal_exons_from_signal( cov, find_upstream_exons,
         return []
 
     
-    # merge the peaks
+    MERGE_DIST = max( 3, window_len/4 )            
+    
     peaks.sort()
-    MERGE_DIST = 10
     new_peaks = [ list(peaks[0]), ]
     for start, stop in peaks[1:]:
-        assert start > new_peaks[-1][1]
+        # assert start > new_peaks[-1][1]
         if start - new_peaks[-1][1] < MERGE_DIST:
             new_peaks[-1][1] = stop
         else:
@@ -1176,10 +1115,22 @@ def find_distal_exons_from_signal( cov, find_upstream_exons,
     bndry_indices = []
     distal_exons = []
     if find_upstream_exons:
-        for start, stop in peaks:
+        for peak_i, (start, stop) in enumerate(peaks):
+            # find the first non-overlapping boundary
             for bndry_i, bndry in enumerate(bs):
+                # if a peak overlaps a boundary:
+                if bndry > start and bndry < stop:
+                    # if we havn't already called a peak here, add this
+                    if all( end != bndry-1 for s, end in distal_exons ):
+                        distal_exons.append( (start, bndry-1) )
+                
                 if bndry > stop: break
+            
             for i in xrange(bndry_i, len(bs)):
+                # if we are overlapping the next peak, break
+                if peak_i+1 < len(peaks) and bs[i]-1 > peaks[peak_i+1][0]:
+                    break
+
                 if bs[i]-1+1 in intron_starts:
                     distal_exons.append( (start, bs[i]-1) )
                 #print "(%i-%i) %i %i" % ( start, bs[i]-1, bndry, i )
@@ -1187,15 +1138,29 @@ def find_distal_exons_from_signal( cov, find_upstream_exons,
                 if ls[i] == 'L': break
 
     else:
-        for start, stop in peaks:
-            for bndry_i, bndry in reversed(list(enumerate(bs))):
+        for peak_i, (start, stop) in reversed(list(enumerate(peaks))):
+            # find the next bndry 
+            for bndry_i, bndry in reversed(list(enumerate(bs[:-1]))):
+                # if a peak overlaps a boundary:
+                if bndry < stop and bndry >= start:
+                    pass
+                    # if we havn't already called a peak here, add this
+                    if all( inner_s != bndry 
+                            for inner_s, inner_e in distal_exons):
+                        distal_exons.append( (bndry, stop) )
+                
                 if bndry <= start: break
+            
             for i in xrange(bndry_i, 0, -1 ):
+                # if we are overlapping the next peak, break
+                if peak_i > 0 and bs[i] <= peaks[peak_i-1][1]:
+                    break
+
                 if bs[i]-1 in intron_stops:
                     distal_exons.append( (bs[i], stop)  ) 
                 #print "(%i-%i) %i %i" % ( bs[i], stop, bndry, bndry_i )
                 if ls[i-1] == 'L': break
-
+    
     return distal_exons
 
 def find_distal_exons_without_signal( 
