@@ -7,6 +7,7 @@ import multiprocessing
 import Queue
 import time
 import numpy
+import re
 
 from collections import defaultdict, namedtuple
 from bx.intervals.intersection import Intersecter, Interval
@@ -70,7 +71,7 @@ OUTPUT_PROTEINS = False
 VERBOSE = False
 MIN_VERBOSE = True
 
-DO_PROFILE = False
+DO_PROFILE = True
 
 # add parent(slide) directory to sys.path and import SLIDE mods
 sys.path.append( os.path.join( os.path.dirname(__file__), "..", "sparsify" ) )
@@ -461,25 +462,37 @@ def convert_to_genomic( orfs, gene, trans ):
 def find_all( sequence, codon ):
     """ Returns a list of positions within sequence that are the start of codon
     """
-    start = 0
-    codon_poss = []
-    
-    while True:
-        pos = sequence.find( codon, start )
-        # if the codon is not found again in the sequence
-        if pos == -1:
-            break
-        
-        # add the position of the codon to the list
-        codon_poss.append( pos )
-        start = pos + 1
-    
-    return codon_poss
+    return [ x.start() for x in re.finditer( codon, sequence ) ]
 
 def find_orfs( sequence ):
     """ Finds all valid open reading frames in the string 'sequence', and
     returns them as tuple of start and stop coordinates
-    """
+    """    
+    def grp_by_frame( locs ):
+        locs_by_frame = { 0: [], 1:[], 2:[] }
+        for loc in locs:
+            locs_by_frame[ loc%3 ].append( loc )
+        for frame in locs_by_frame.keys():
+            locs_by_frame[ frame ].reverse()
+        return locs_by_frame
+
+    def find_orfs_in_frame( starts, stops ):
+        prev_stop = -1
+        while len( starts ) > 0 and len( stops ) > 0:
+            start = starts.pop()
+            if start < prev_stop: continue
+            stop = stops.pop()
+            while stop < start and len( stops ) > 0:
+                stop = stops.pop()
+            if start > stop:
+                assert len( stops ) == 0
+                break
+            if (stop - start) >= (MIN_AAS_PER_ORF * 3):
+                yield ( start, stop-1 )
+            prev_stop = stop
+
+        return
+
     # find all start and stop codon positions along sequence
     starts = find_all( sequence, 'ATG' )
     stop_amber = find_all( sequence, 'TAG' )
@@ -488,26 +501,17 @@ def find_orfs( sequence ):
     stops = stop_amber + stop_ochre + stop_umber
     stops.sort()
     
-    orfs = []
-    # only store the set of orfs with the furthest upstream start
-    # all other orfs containing a particular stop will be contained in the 
-    # larger orf, since starts are investigated in order
-    used_stops = set()
+    orfs = []    
+    # group the starts and stops by their frame
     
-    for start in starts:
-        for stop in stops:
-            # valid start and stop codon in frame
-            if start < stop and (start - stop) % 3 == 0:
-                # do not add orf if it has been added already from a prev start
-                if stop in used_stops:
-                    break
-                used_stops.add( stop )
-                if (stop - start) >= (MIN_AAS_PER_ORF * 3):
-                    # region does not include the stop codon
-                    orfs.append( tuple( (start, stop-1) ) )
-                # break out of the inner for loop
-                # when we hit the first valid stop codon
-                break
+    starts_by_frame = grp_by_frame( starts )
+    stops_by_frame = grp_by_frame( stops )
+    
+    
+    for frame in (0, 1, 2):
+        starts = starts_by_frame[ frame ]
+        stops = stops_by_frame[ frame ]
+        orfs.extend( find_orfs_in_frame(starts, stops) )
     
     return orfs
 
@@ -748,7 +752,12 @@ def find_all_orfs( genes, all_trans, fasta_fn, known_orfs_data,
         
         input_queue.put( ( gene, transcripts ) )
     
+    find_gene_orfs_worker( input_queue, output_queue, fasta_fn, protein_fp, known_orfs_data )
+    sys.exit( 0 )
+    return
+    
     args = ( input_queue, output_queue, fasta_fn, protein_fp, known_orfs_data )
+
     # spawn threads to estimate genes expression
     processes = []
     for thread_id in xrange( threads ):
@@ -839,8 +848,9 @@ def parse_known_orfs( gtf_fp ):
         if gtfl == None or gtfl.feature != 'CDS': continue
         # get the transcript name if it is provided as this is likely the common
         # name. The common name may not be unique though so also store trans_id
-        trans_name = gtfl.meta_data[ 'transcript_name' ] if \
-            'transcript_name' in gtfl.meta_data else gtfl.trans_id
+        trans_name = gtfl.trans_id
+        #trans_name = gtfl.meta_data[ 'transcript_name' ] if \
+        #    'transcript_name' in gtfl.meta_data else gtfl.trans_id
         trans_name = get_name_from_field( trans_name )
         # store just the boundary positions here
         # assume that all input orf CDS regions are valid

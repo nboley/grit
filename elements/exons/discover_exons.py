@@ -619,6 +619,8 @@ def check_exon_for_gene_merge( strand, start, stop, \
     # find the new intron boundaries. use the 95% of signal rule...
     left_cumsum = rca_cumsum[:new_intron_middle]
     pos = left_cumsum.searchsorted(left_cumsum[-1]*0.999)
+    pos = max( pos, 5 )
+
     new_intron_start = start + pos
     # new_intron_start = start + new_intron_middle - BIN_BOUNDRY_SIZE/2
 
@@ -626,6 +628,7 @@ def check_exon_for_gene_merge( strand, start, stop, \
         - rca_cumsum[new_intron_middle]
     pos = right_cumsum.searchsorted(right_cumsum[-1]*(1-0.999))
     new_intron_stop = start + new_intron_middle + pos
+    new_intron_stop = min ( new_intron_stop, stop-5 )
     # new_intron_stop = start + new_intron_middle + BIN_BOUNDRY_SIZE/2
     
     # calc cage stats

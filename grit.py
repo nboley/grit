@@ -1067,8 +1067,11 @@ def build_all_exon_files( elements, pserver, output_prefix ):
             ress = elements.get_elements_from_db( \
                 "cage_cov_wig", sample_type , "*" )
         if len( ress ) != 2:
-            raise ValueError, "Can't find the cage signal files " \
-                              + "necessary to build exons."
+            ress = elements.get_elements_from_db( \
+                "cage_cov_wig", "*" , "*" )
+            
+            #raise ValueError, "Can't find the cage signal files " \
+            #                  + "necessary to build exons."
         assert len( ress ) == 2
         cage_wig_fnames = [ res.fname for res in ress ]
         
