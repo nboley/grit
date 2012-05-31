@@ -19,6 +19,9 @@ from build_genelets import build_edges_hash_table, \
 
 VERBOSE = True
 MERGE_DISTAL_ENDS = False
+SINGLE_LINKAGE_CLUSTER = True
+LINKAGE_CLUSTER_GAP = 50
+LINKAGE_CLUSTER_MAX_DIFF = 200
 
 def build_gtf_lines( chrm, strand, gene_name, trans_name, exon_bndries ):
     feature="exon"
@@ -267,6 +270,51 @@ def cluster_transcripts( transcript_maps, cluster_by_conn ):
     
     return clustered_trans
 
+def cluster_ends( ends_and_sources ):
+    def create_cluster_map( coords, map_to_index ):
+        coords = sorted( coords )
+        
+        coord_map = {}
+        coord_range = [coords[0], coords[0]]
+        cluster_coords = set()
+        
+        for coord in coords:
+            if coord < coord_range[0] - LINKAGE_CLUSTER_GAP or \
+                    coord > coord_range[1] + LINKAGE_CLUSTER_GAP:    
+                for i_coord in cluster_coords:
+                    coord_map[i_coord] = coord_range[ map_to_index ]
+                
+                coord_range = [coord, coord]
+                cluster_coords = set( (coord,) )
+            else:
+                coord_range[0] = min( coord_range[0], coord )
+                coord_range[1] = max( coord_range[1], coord )
+                cluster_coords.add( coord )
+        
+        for i_coord in cluster_coords:
+            coord_map[i_coord] = coord_range[ map_to_index ]
+        
+        return coord_map
+    
+    starts_map = create_cluster_map( zip( *ends_and_sources )[0], 0 )
+    stops_map = create_cluster_map( zip( *ends_and_sources )[1], 1 )
+    
+    clustered_ends_and_sources = []
+    clusters_map = defaultdict( set )
+    for start, stop, source in ends_and_sources:
+        if start > starts_map[start] + LINKAGE_CLUSTER_MAX_DIFF or \
+                stop < stops_map[stop] - LINKAGE_CLUSTER_MAX_DIFF:
+            # should really add these to a new list and recluster 
+            # to avoid wierd regions near long linkage chains
+            clustered_ends_and_sources.append( (start, stop, source) )
+        else:
+            clusters_map[ (starts_map[start], stops_map[stop] ) ].add( source )
+    
+    for (start, stop), sources in clusters_map.iteritems():
+        clustered_ends_and_sources.append( (start, stop, sources) )
+    
+    return clustered_ends_and_sources
+
 def build_unique_transcripts( transcriptomes, gtf_fnames ):
     # build the sets of transcripts
     tmp_transcript_maps = defaultdict( lambda: defaultdict( list ) )
@@ -278,7 +326,7 @@ def build_unique_transcripts( transcriptomes, gtf_fnames ):
                 assert len( exons ) % 2 == 0
                 # skip single  exon transcripts and transcripts that 
                 # have an odd number of boundaries
-                if len( exons ) == 2: 
+                if len( exons ) == 2:
                     single_exon_sources[ tuple(exons) ].append( source )
                 else:
                     tmp_transcript_maps[ ( chrm, strand ) ][ \
@@ -297,6 +345,13 @@ def build_unique_transcripts( transcriptomes, gtf_fnames ):
                 # uniquify the list of sources
                 transcript_maps[ key ][ exons ] = \
                     list(set(zip( *ends_and_sources )[2]))
+            elif SINGLE_LINKAGE_CLUSTER:
+                clustered_ends_and_sources = cluster_ends( ends_and_sources )
+                for start, stop, sources in clustered_ends_and_sources:
+                    exons = tuple(
+                        [start,] + list( internal_exons ) + [stop,])
+                    
+                    transcript_maps[key][exons] = sources
             else:
                 for start, stop, source in ends_and_sources:
                     exons = tuple(

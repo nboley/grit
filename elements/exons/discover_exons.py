@@ -1201,7 +1201,7 @@ def find_distal_exons_without_signal(
         
         curr_tot = 0
         for i, val in base_iter:
-            if float(val+1)/max_val < 0.01:
+            if max_val > 0 and float(val+1)/max_val < 0.01:
                 break
             curr_tot += val
             if curr_tot > .99*total:
