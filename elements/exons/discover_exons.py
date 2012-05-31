@@ -22,11 +22,11 @@ ONE_SIDE_EXTENTION_FRACTION = 0.95
 # stop the intron when the average ( rather than the 
 # total ) falls below some threshold
 USE_AVERAGE_FOR_ONE_SIDE_RETAIN = False
-USE_PARTIALLY_RETAINED_INTRONS = False
+USE_PARTIALLY_RETAINED_INTRONS = True
 
 SPLIT_EXON_BNDRY_COV_FRAC = 0.95
 EXON_SPLIT_SIZE = 40
-EXON_SPLIT_RATIO = 10
+EXON_SPLIT_RATIO = 6
 
 # length of contiguous space to define as an empty region
 EMPTY_REGION_SPLIT_SIZE = 80
@@ -48,8 +48,7 @@ LOC_THRESH_REG_SZ = 50000
 ### CAGE TUUNING PARAMS
 CAGE_WINDOW_LEN = 40
 CAGE_MAX_SCORE_FRAC = 0.10
-CAGE_MIN_SCORE = 5
-CAGE_SUFFICIENT_SCORE = 200
+CAGE_MIN_SCORE = 200
 # this is set in main
 CAGE_TOT_FRAC = None
 
@@ -65,7 +64,7 @@ POLYA_TOT_FRAC = None
 NORMALIZE_BY_RNASEQ_COV = True
 FILTER_GENE_SPLITS_BY_POLYA = False
 
-DISTAL_EXON_EXPANSION = 200
+DISTAL_EXON_EXPANSION = 500
 
 MIN_INTRON_CVG_FRAC = 0.10
 
@@ -622,7 +621,7 @@ def check_exon_for_gene_merge( strand, start, stop, \
     new_intron_middle =  min_index + BIN_BOUNDRY_SIZE/2
     # find the new intron boundaries. use the 95% of signal rule...
     left_cumsum = rca_cumsum[:new_intron_middle]
-    pos = left_cumsum.searchsorted(left_cumsum[-1]*0.999)
+    pos = left_cumsum.searchsorted(left_cumsum[-1]*0.99)
     pos = max( pos, 5 )
 
     new_intron_start = start + pos
@@ -630,7 +629,7 @@ def check_exon_for_gene_merge( strand, start, stop, \
 
     right_cumsum = rca_cumsum[new_intron_middle+1:] \
         - rca_cumsum[new_intron_middle]
-    pos = right_cumsum.searchsorted(right_cumsum[-1]*(1-0.999))
+    pos = right_cumsum.searchsorted(right_cumsum[-1]*(1-0.99))
     new_intron_stop = start + new_intron_middle + pos
     new_intron_stop = min ( new_intron_stop, stop-5 )
     # new_intron_stop = start + new_intron_middle + BIN_BOUNDRY_SIZE/2
@@ -1097,8 +1096,7 @@ def find_distal_exons_from_signal( cov, find_upstream_exons,
         return []
 
     
-    MERGE_DIST = max( 3, window_len/4 )            
-    
+    MERGE_DIST = max( 3, window_len/2 )
     peaks.sort()
     new_peaks = [ list(peaks[0]), ]
     for start, stop in peaks[1:]:
@@ -1195,18 +1193,23 @@ def find_distal_exons_without_signal(
         exon_cvg = cov[exon[0]:exon[1]+1]
         total = exon_cvg.sum()
         if find_upstream_exons:
-            curr_tot = 0
-            for i, val in enumerate( exon_cvg ):
-                curr_tot += val
-                if curr_tot > .01*total:
-                    break
-            refined_exons.append( (i+exon[0], exon[1]) )
+            max_val = exon_cvg[-20:].mean()
+            base_iter = enumerate(reversed(exon_cvg))
         else:
-            curr_tot = 0
-            for i, val in enumerate( exon_cvg ):
-                curr_tot += val
-                if curr_tot > .99*total:
-                    break
+            max_val = exon_cvg[0:20].mean()
+            base_iter = enumerate(exon_cvg)
+        
+        curr_tot = 0
+        for i, val in base_iter:
+            if float(val+1)/max_val < 0.01:
+                break
+            curr_tot += val
+            if curr_tot > .99*total:
+                break
+        
+        if find_upstream_exons:
+            refined_exons.append( (exon[1]-i, exon[1]) )
+        else:
             refined_exons.append( (exon[0], exon[0]+i) )
         
         if refined_exons[-1][1] - refined_exons[-1][0] == 0:
@@ -1300,7 +1303,7 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
             continue
 
         tes_exons = find_distal_exons( \
-            polya_cov, (strand=='-'), intron_starts, intron_stops, \
+            None, (strand=='-'), intron_starts, intron_stops, \
             bs, ls, read_cov_obj.rca, \
             POLYA_MIN_SCORE, POLYA_WINDOW_LEN, POLYA_MAX_SCORE_FRAC )
         
