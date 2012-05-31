@@ -84,6 +84,8 @@ BUILD_FL_DIST_CMD = os.path.join( os.path.dirname( __file__ ),
 SPARSIFY_TRANSCRIPTS_CMD = os.path.join( os.path.dirname( __file__ ), 
                         "./sparsify/", "sparsify_transcripts.py" )
 
+FIND_ORFS_CMD = os.path.join( os.path.dirname( __file__ ), \
+                                  "./proteomics/", "ORF_finder.py" )
 
 
 
@@ -100,26 +102,23 @@ RnaSeqDataTypes = [ "rnaseq_polyaplus_bam",
                     "rnaseq_cov_bedgraph",
                     "rnaseq_total_bam",
                     "filtered_jns_gff",
-                    "TF_jns_gff",
                     "jns_gff", 
                     "cage_fastq", 
                     "cage_cov_wig", 
                     "cage_tss_exons_gff", 
                     "exons_gff",
-                    "TF_exons_gff",
                     "polya_reads_gff",
                     "polya_tes_exons_gff",
                     "transcripts_gtf",
                     "sparse_transcripts_gtf",
-                    "TF_filt_element_transcripts_gtf",
                     "cdna_gtf",
                     "cdna_tes_gff",
                     "cdna_tss_gff",
                     "cdna_jns_gff",
                     "fl_dist",
                     "stats",
-                    "TFE_filt_stats",
                     "annotation_gtf",
+                    "CDS_annotation_gtf",
                     "transcript_sources" ]
 
 Element = namedtuple( "Element", ["data_type", "sample_type", \
@@ -1502,15 +1501,72 @@ def run_all_slide_compares(elements, pserver, output_prefix, build_maps=False):
     for transcript_element in transcript_elements:
         for ann_fname in ann_fnames:
             run_slide_compare( transcript_element, ann_fname )
+    
+    return
 
-    # run for transcript element filtered transcroipts
-    transcript_elements = elements.get_elements_from_db( \
-        "TF_filt_element_transcripts_gtf" )
-    for transcript_element in transcript_elements:
-        for ann_fname in ann_fnames:
-            run_slide_compare( transcript_element, ann_fname, "TFE_filt_stats" )
+def call_orfs( elements, pserver, output_prefix ):
+    try:
+        os.makedirs( output_prefix )
+    except OSError:
+        # assume that the directory already exists, and continue
+        pass
+    
+    """
+    time python ~/grit/proteomics/ORF_finder.py \
+        ./transcripts/merged_input.merged_input.transcripts.gtf  \
+        /media/scratch/genomes/drosophila/BDGP_5/all_fa/fly.fa \
+        --annotation /media/scratch/genomes/drosophila/dmel-all-r5.45.cds.gtf \
+        --threads=50 \
+        --out_prefix tmp \
+
+    OUTPUTS:
+    tmp.annotated.gtf
+
+    time python split_orf_results_by_sample.py tmp.annotated.gtf merged.sources out_suffix
+    merged_source.out_suffix
+
+    INPUTS: 
+    # maybe change to accept all, and then filter AS and KI classes
+    time python ~/grit/proteomics/filter_frame_shifts.py 
+        tmp.AS_class.gtf 
+        /media/scratch/genomes/drosophila/dmel-all-r5.45.cds.gtf 
+        junctions/merged.filtered.jns.gff 
+        tmp.KI_class.gtf 
+        --out-prefix TMP.filtered
+
+
+    python ~/grit/proteomics/filter_by_proteomics.py 
+        TMP.filtered.all_filtered.gtf 
+        --cDNA-gtf /media/scratch/RNAseq/cdnas.gtf 
+        --annotation /media/scratch/genomes/drosophila/flybase_mRNA.r5_32.gtf 
+        -o TMP.merged.filtered
+    
+    """
+    # get the merged transcripts from the database
+    res = elements.get_elements_from_db( "transcripts_gtf", "*", "*" )
+    assert len( res ) == 1
+    merged_trans_fname = res[0].fname
 
     
+    # get the fasta file from the DB
+    fasta_fn = elements.genome_fname
+    
+    # get the CODING annotation file 
+    res = elements.get_elements_from_db( "CDS_annotation_gtf" )
+    assert len( res ) == 1
+    coding_ann_fname = res[0].fname
+    
+    out_prefix = "CDStrans." + merged_trans_fname[:-4]
+    
+    call = "python %s {0} {1} --annotation {2} --out-prefix {3}" \
+        % FIND_ORFS_CMD
+    call.format( merged_trans_fname, fasta_fn, coding_ann_fname, out_prefix )
+    call += " --threads {threads}"
+    
+    op_fnames = [ out_prefix + ".%s.gtf" % suff for suff in \
+                      ("KI_class", "AS_class") ]
+
+    print call
     return
 
 
@@ -1552,46 +1608,7 @@ def extract_cdna_elements( elements, pserver, tss_op_prefix, tes_op_prefix ):
     
     return
 
-def extract_transcript_filtered_elements( \
-        elements, pserver, exons_op_prefix, jns_op_prefix ):
-    def build_extract_TF_filtered_cmd( input_element ):
-        input_fname = input_element.fname
-        
-        sample_type_name = get_sample_type_name( input_element.sample_type )
-        sample_id_name = get_sample_id_name( input_element.sample_id )
-        op_fname_prefix = "%s.%s" % (sample_type_name, sample_id_name )
 
-        exons_op_fname = os.path.join( \
-            exons_op_prefix, "trans_filt." + op_fname_prefix + ".gff" )
-        jns_op_fname = os.path.join( \
-            jns_op_prefix, "trans_filt." + op_fname_prefix + ".gff" )
-
-        call = "python %s --exon-fname {0} --jn-fname {1} {2}" \
-            % EXTRACT_ELEMENTS_CMD
-        call = call.format( exons_op_fname, jns_op_fname, input_fname )
-
-        op_element_types = [ \
-            ElementType( "TF_exons_gff", input_element.sample_type, \
-                         input_element.sample_id, "." ),
-            ElementType( "TF_jns_gff", input_element.sample_type, \
-                         input_element.sample_id, "." ) 
-            ]
-        
-        op_fnames = [ exons_op_fname, jns_op_fname ]
-        
-        dependencies = [ input_fname, ]
-        
-        cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-        pserver.add_process( cmd, Resource(1) )
-        
-        return exons_op_fname, jns_op_fname
-        
-    
-    # get all of the cdna elements
-    for e in elements.get_elements_from_db( "transcripts_gtf" ):
-        build_extract_TF_filtered_cmd( e )
-    
-    return
 
 def main():
     elements_fname = sys.argv[1]
@@ -1620,6 +1637,8 @@ def main():
 
     # sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
 
+    call_orfs( elements, pserver, base_dir + "transcripts" )
+    
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
 
 

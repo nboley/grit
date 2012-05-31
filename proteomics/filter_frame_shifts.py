@@ -321,16 +321,13 @@ def parse_arguments():
             'shift the frame of the known ORF.' )
     parser.add_argument(
         'orfs_gtf', type=file,
-        help='GTF file, Alternative Splice class, with CDS and UTR regions.' )
+        help='GTF file with CDS and UTR regions.' )
     parser.add_argument(
         'annotation', type=file,
         help='GTF file of annotated orfs assocaited with genes and transcripts.')
     parser.add_argument(
         'junctions', type=file,
         help='Gff file of junctions with scores.')
-    parser.add_argument(
-        'ki_orfs_gtf',
-        help='GTF file, Known Isoform class, with CDS and UTR regions.' )    
     
     parser.add_argument( 
         '--filter-utrs', default=False, action='store_true',
@@ -373,7 +370,11 @@ def parse_arguments():
     return args.orfs_gtf, args.annotation, args.junctions, args.ki_orfs_gtf, out_prefix
 
 def main():
-    disc_orfs_fp, ann_fp, jns_fp, ki_fname, out_prefix = parse_arguments()
+    disc_orfs_fn, ann_fp, jns_fp, out_prefix = parse_arguments()
+    # function to create KI and AS class files with grep or get lines...
+    # disc_orfs_fp should be the AS class 
+    # ki_fname should be ki class file name 
+    
     disc_orfs, disc_orf_lines, known_introns, all_jns, \
         as_orfs_fp, shifted_orfs_fp = \
         build_objects( disc_orfs_fp, ann_fp, jns_fp, out_prefix )

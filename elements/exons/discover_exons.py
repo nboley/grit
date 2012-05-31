@@ -46,17 +46,19 @@ MIN_SE_GENE_AVG_READCOV = 10
 LOC_THRESH_REG_SZ = 50000
 
 ### CAGE TUUNING PARAMS
-CAGE_WINDOW_LEN = 120
+CAGE_WINDOW_LEN = 40
 CAGE_MAX_SCORE_FRAC = 0.10
 CAGE_MIN_SCORE = 5
 CAGE_SUFFICIENT_SCORE = 200
 # this is set in main
 CAGE_TOT_FRAC = None
 
+MAX_NUM_PEAKS =20
+
 ### PolyA TUNING PARAMS
-POLYA_WINDOW_LEN = 10
-POLYA_MAX_SCORE_FRAC = 0.001
-POLYA_MIN_SCORE = 2
+POLYA_WINDOW_LEN = 5
+POLYA_MAX_SCORE_FRAC = 0.20
+POLYA_MIN_SCORE = 20
 # this is set in main
 POLYA_TOT_FRAC = None
 
@@ -829,14 +831,21 @@ def find_T_S_exons(cov, labels, bndrys, intron_starts, intron_stops, \
         for index in index_iter:
             label = labels[ index ]
             # if we are not moving to an exon, break
-            if index != t_s_region_index and \
-                    label not in ('exon_extension', 'Exon'):
+            """
+            if index != t_s_region_index \
+                    and label not in ('exon_extension', 'Exon') \
+                    and label not in ( 'TES', 'T_S', 'TES' ):
                 break
-                        
+            """
+            if label == 'L': break
+            #if index != t_s_region_index \
+            #        and label not in ('exon_extension', 'Exon', 'TES', 'T_S', 'TES' ):
+            #    break
+            
             stop = max( bndrys[ index+1 ], bndrys[ t_s_region_index+1 ] )-1
             start = min( bndrys[ index ], bndrys[ t_s_region_index ] )
             
-            # print t_s_region_index, index, start, stop
+            # print t_s_region_index, index, start, stop, label
 
             # check to see if it splices somewhere. SE genes are dealt with 
             # seperately.
@@ -851,6 +860,7 @@ def find_T_S_exons(cov, labels, bndrys, intron_starts, intron_stops, \
                 assert start < stop
                 t_s_exons.append( (start, stop) )
     
+
     # refine the eoxn bndrys
     refined_exons = []
     for exon in t_s_exons:
@@ -1090,12 +1100,161 @@ def score_distal_exon( cov, window_len, read_cov=None ):
     
     return score
 
-def find_distal_exon_indices( cov, find_upstream_exons,  \
-                              intron_starts, intron_stops, \
-                              bs, ls, \
-                              rna_seq_cov, \
-                              min_score, window_len, 
-                              max_score_frac, require_signal=False ):
+def find_peaks( cov, window_len=40, min_score=20, max_score_frac=0.10 ):
+    cumsum_cvg_array = \
+        numpy.append(0, numpy.cumsum( cov ))
+    scores = cumsum_cvg_array[window_len:] - cumsum_cvg_array[:-window_len]
+    indices = numpy.argsort( scores )
+    
+    def overlaps_prev_peak( new_loc ):
+        for start, stop in peaks:
+            if not( new_loc > stop or new_loc + window_len < start ):
+                return True
+        return False
+    
+    peaks = []
+    peak_scores = []
+    
+    for index in reversed(indices):
+        if not overlaps_prev_peak( index ):
+            score = scores[ index ]
+            # if we are below the minimum score, then we are done
+            if score < min_score:
+                return peaks
+
+            # if we have observed peaks, 
+            if len( peak_scores ) > 0:
+                if float(score)/peak_scores[0] < max_score_frac:
+                    return peaks
+                        
+            peaks.append( (index, index + window_len) ) 
+            peak_scores.append( score )
+    
+    print >> sys.stderr, "EXHAUSTED EVERY REGION?!?!?!"
+    return peaks
+
+def find_distal_exons_from_signal( cov, find_upstream_exons,  
+                                   intron_starts, intron_stops, 
+                                   bs, ls, 
+                                   rna_seq_cov, 
+                                   min_score, window_len, 
+                                   max_score_frac ):
+    #print find_upstream_exons, "%i-%i" % (bs[1], bs[-1] )
+    #print ls
+    #print bs
+
+    # find peaks purely from signal within a region
+    region_start = max(0, bs[1] - DISTAL_EXON_EXPANSION)
+    region_stop = min( bs[-2] + DISTAL_EXON_EXPANSION, bs[-1] )
+    region_cov = cov[ region_start:region_stop ]
+
+    # TODO - zero out regions clearly not within this peak
+
+    # find all of the distal exon peaks
+    peaks = [ ( start+region_start, stop+region_start  )
+              for start, stop in 
+              find_peaks(region_cov, window_len, min_score, max_score_frac)]
+    if len( peaks ) == 0:
+        return []
+
+    
+    # merge the peaks
+    peaks.sort()
+    MERGE_DIST = 10
+    new_peaks = [ list(peaks[0]), ]
+    for start, stop in peaks[1:]:
+        assert start > new_peaks[-1][1]
+        if start - new_peaks[-1][1] < MERGE_DIST:
+            new_peaks[-1][1] = stop
+        else:
+            new_peaks.append( [start, stop] )
+
+    peaks = new_peaks
+    
+    # find the nearest boundary that the *end* of the peak region doesn't 
+    # cover, where end depends on the direction
+    bndry_indices = []
+    distal_exons = []
+    if find_upstream_exons:
+        for start, stop in peaks:
+            for bndry_i, bndry in enumerate(bs):
+                if bndry > stop: break
+            for i in xrange(bndry_i, len(bs)):
+                if bs[i]-1+1 in intron_starts:
+                    distal_exons.append( (start, bs[i]-1) )
+                #print "(%i-%i) %i %i" % ( start, bs[i]-1, bndry, i )
+                # if the next region is a L, then break
+                if ls[i] == 'L': break
+
+    else:
+        for start, stop in peaks:
+            for bndry_i, bndry in reversed(list(enumerate(bs))):
+                if bndry <= start: break
+            for i in xrange(bndry_i, 0, -1 ):
+                if bs[i]-1 in intron_stops:
+                    distal_exons.append( (bs[i], stop)  ) 
+                #print "(%i-%i) %i %i" % ( bs[i], stop, bndry, bndry_i )
+                if ls[i-1] == 'L': break
+
+    return distal_exons
+
+def find_distal_exons_without_signal( 
+        find_upstream_exons, intron_starts, intron_stops, bs, ls, cov ):
+    # first, find the candidate indices
+    candidate_exons = []
+
+    if find_upstream_exons:
+        assert ls[0] == 'L'
+        for i in xrange( 1, len(ls)-1 ):
+            prev = ls[i-1]
+            cand = ls[i]
+            if prev == 'L' and  cand != 'L' \
+                    and bs[i]-1 not in intron_stops:
+               for j in xrange( i, len(ls)-1 ):
+                   if ls[j] == 'L': break
+                   candidate_exons.append( (bs[i], bs[j+1]-1) )
+    else:
+        assert ls[-1] == 'L'
+        for i in xrange( len(ls)-2, 1, -1 ):
+            prev = ls[i+1]
+            cand = ls[i]
+            if prev == 'L' and  cand != 'L' \
+                    and bs[i+1] not in intron_starts:
+               for j in xrange( i, 1, -1 ):
+                   if ls[j] == 'L': break
+                   candidate_exons.append( (bs[j], bs[i+1]-1) )
+
+    # refine the eoxn bndrys
+    refined_exons = []
+    for exon in candidate_exons:
+        exon_cvg = cov[exon[0]:exon[1]+1]
+        total = exon_cvg.sum()
+        if find_upstream_exons:
+            curr_tot = 0
+            for i, val in enumerate( exon_cvg ):
+                curr_tot += val
+                if curr_tot > .01*total:
+                    break
+            refined_exons.append( (i+exon[0], exon[1]) )
+        else:
+            curr_tot = 0
+            for i, val in enumerate( exon_cvg ):
+                curr_tot += val
+                if curr_tot > .99*total:
+                    break
+            refined_exons.append( (exon[0], exon[0]+i) )
+        
+        if refined_exons[-1][1] - refined_exons[-1][0] == 0:
+            del refined_exons[-1]
+    
+    return refined_exons
+
+def find_distal_exons( cov, find_upstream_exons,  
+                       intron_starts, intron_stops, 
+                       bs, ls, 
+                       rna_seq_cov, 
+                       min_score, window_len, 
+                       max_score_frac, require_signal=False ):
     # skip the first and the last labels because these are outside of the cluster
     assert ls[0] == 'L'
     if ls[-1] != 'L':
@@ -1105,57 +1264,21 @@ def find_distal_exon_indices( cov, find_upstream_exons,  \
     
     # if we have signal data
     if cov != None:
-        assert ls[-1] == 'L'
-        scores = []
-        for index, ((start, stop), label) in \
-                enumerate(izip( izip(bs[1:-1], bs[2:]), ls[1:-1] )):
-            if label == 'L': continue
-            if rna_seq_cov != None:
-                reg_rnaseq_cov = rna_seq_cov[start:stop+1]
-            else:
-                reg_rnaseq_cov = None
-            
-            score = score_distal_exon( \
-                cov[max(0,start-DISTAL_EXON_EXPANSION):stop], \
-                    window_len, reg_rnaseq_cov)
-            scores.append( (index+1, score ) )
-
-        max_score = max( score for i, score in scores )
-        if max_score > min_score:
-            rvs = set( [ i for i, score in scores \
-                           if float(score)/max_score > max_score_frac
-                           or ( float(score)/max_score > (max_score_frac/10.0)
-                                and score >= CAGE_SUFFICIENT_SCORE ) ] )
-            
-            # always add the first and/or last exon segment
-            """
-            if find_upstream_exons:
-                rvs.add( 1 )
-            else:
-                rvs.add( len(bs) - 2 )
-            """
-            return sorted( rvs )
-    
+        distal_exons = find_distal_exons_from_signal( 
+            cov, find_upstream_exons, intron_starts, intron_stops,
+            bs, ls, rna_seq_cov, min_score, window_len, max_score_frac )
+        
+        if len( distal_exons ) > 0: 
+            return distal_exons
+        
     # if we don't have signal data
     if require_signal:
         return []
     
-    indices = []
-    if True == find_upstream_exons:
-        for i, (prev, cand) in enumerate(izip(ls[:-1], ls[1:])):
-           if prev == 'L' and \
-                   cand in ( 'Exon', 'exon_extension', 'TSS', 'T_S', 'TES' ) \
-                   and bs[i+1]-1 not in intron_stops : 
-               indices.append( i+1 )
-    else:
-        assert False == find_upstream_exons
-        for i, (cand, prev) in reversed(list(enumerate(zip(ls[:-1], ls[1:])))):
-           if prev == 'L' and \
-                   cand in ( 'Exon', 'exon_extension', 'TSS', 'T_S', 'TES' ) \
-                   and bs[i+1] not in intron_starts: 
-               indices.append( i )
-    
-    return indices
+    distal_exons = find_distal_exons_without_signal( 
+        find_upstream_exons, intron_starts, intron_stops, bs, ls, rna_seq_cov )
+        
+    return distal_exons
 
 def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
     jns_wo_cnts = [ jn for jn, score in jns_w_cnts ]
@@ -1200,45 +1323,33 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
         """
 
         # find tss exons
-        tss_indices = find_distal_exon_indices( \
+        tss_exons = find_distal_exons( \
             cage_cov, (strand=='+'), intron_starts, intron_stops,
             bs, ls, read_cov_obj.rca, \
             CAGE_MIN_SCORE, CAGE_WINDOW_LEN, CAGE_MAX_SCORE_FRAC, \
-            require_signal = False)
+            require_signal = True)
         
         # if we can't find a TSS index, continue
-        if len( tss_indices ) == 0:
+        if len( tss_exons ) == 0:
             #print "HERE", tss_indices
             continue
 
-        tes_indices = find_distal_exon_indices( \
+        tes_exons = find_distal_exons( \
             polya_cov, (strand=='-'), intron_starts, intron_stops, \
-            bs, ls, None, \
-            POLYA_MIN_SCORE, POLYA_WINDOW_LEN, POLYA_MAX_SCORE_FRAC )        
+            bs, ls, read_cov_obj.rca, \
+            POLYA_MIN_SCORE, POLYA_WINDOW_LEN, POLYA_MAX_SCORE_FRAC )
+        
         # if we can't find a TSS index, continue
-        if len( tes_indices ) == 0:
+        if len( tes_exons ) == 0:
             #print "HERE2", tes_indices
             continue
             
-        for tss_index in tss_indices:
-            ls[ tss_index ] = 'TSS'
-        for tes_index in tes_indices:
-            if ls[ tes_index ] == 'TSS':
-                ls[ tes_index ] = 'T_S'
-            else:
-                ls[ tes_index ] = 'TES'
-        
         exon_bndrys = get_possible_exon_bndrys( \
-            ls, bs, read_cov_obj.chrm_stop )
-        
+            ls, bs, read_cov_obj.chrm_stop )        
         internal_exons = find_internal_exons( \
             exon_bndrys, intron_starts, intron_stops )
-        tss_exons = find_T_S_exons( \
-            cage_cov, ls, bs, intron_starts, intron_stops, strand, True )
-        tes_exons = find_T_S_exons( \
-            polya_cov, ls, bs, intron_starts, intron_stops, strand, False )
 
-        
+
         """
         print ls
         print bs
