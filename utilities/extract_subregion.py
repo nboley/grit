@@ -6,10 +6,10 @@ example command:
 python filter_bam_by_region.py `ls /media/scratch/RNAseq/all_samples/ | grep -P '^Ad|^L3_|^WPP_'`
 """
 
-region_chr = "4"
-start = 100 
-stop = 1351557
-base_dir = "/media/scratch/final_transcriptome_v2/chr4_test_region/"
+region_chr = "2R"
+start = 12907545
+stop = 17907545
+base_dir = "/media/scratch/final_transcriptome_v2/merge_test_region/"
 EXTRACT_WIG_CMD = os.path.join( os.path.dirname( __file__ ), "extract_region_from_wiggle.py" )
 global_region_str = "%s_%i_%i" % ( region_chr, start, stop )
 

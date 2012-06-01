@@ -1301,6 +1301,42 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
         if len( tss_exons ) == 0:
             #print "HERE", tss_indices
             continue
+        
+        """
+        cov = read_cov_obj.rca
+        # check for a gene merge inthe TSS exons
+        for start, stop in tss_exons:
+            # find the bndry that this tss exon corresponds to
+            if strand == '+':
+                bndry_i = min( i for i, bndry in enumerate(bs) 
+                               if bndry-1 == stop )
+                if bs[bndry_i-1]-1 not in intron_stops:
+                    continue
+                
+                assert bs[bndry_i]-1 == stop
+                
+                pre_tss_score = cov[ max(1,start-20):start  ].mean()
+                other_score = cov[ bs[bndry_i-1]:bs[bndry_i-1]+20 ].mean()
+                if other_score/(pre_tss_score+1.0) > 4.0:
+                    #print pre_tss_score, other_score, bs[bndry_i-1], stop
+                    #print bs
+                    #print ls
+                    bs.insert( bndry_i, start )
+                    ls.insert( bndry_i, 'E' )
+                    bs.insert( bndry_i, start-10 )
+                    ls.insert( bndry_i, 'L' )
+                    #print
+                    #print bs
+                    #print ls
+                    #raw_input()
+        """
+        
+        exon_bndrys = get_possible_exon_bndrys( \
+            ls, bs, read_cov_obj.chrm_stop )        
+        
+        internal_exons = find_internal_exons( \
+            exon_bndrys, intron_starts, intron_stops )
+
 
         tes_exons = find_distal_exons( \
             None, (strand=='-'), intron_starts, intron_stops, \
@@ -1312,11 +1348,21 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
             #print "HERE2", tes_indices
             continue
             
-        exon_bndrys = get_possible_exon_bndrys( \
-            ls, bs, read_cov_obj.chrm_stop )        
-        internal_exons = find_internal_exons( \
-            exon_bndrys, intron_starts, intron_stops )
+        
+        """
+        tss_starts = dict( (start, stop) for start, stop in tss_exons )
+        tss_stops = dict( (stop, start) for start, stop in tss_exons )
+        
+        new_internal_exons = []
+        for start, stop in internal_exons:
+            if strand == '+' and stop in tss_stops and tss_stops[stop] > start:
+                continue
+            if strand == '-' and start in tss_starts and tss_starts[start] < stop:
+                continue
+            new_internal_exons.append( (start, stop) )
 
+        internal_exons = new_internal_exons\
+        """
 
         """
         print ls
