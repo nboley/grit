@@ -962,7 +962,7 @@ def main():
     
     write_orfs_gtf( all_orfs, non_coding_genes, out_prefix )
     
-    write_class_specific_orfs( out_prefix )
+    #write_class_specific_orfs( out_prefix )
     
     return
 

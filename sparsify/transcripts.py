@@ -262,8 +262,8 @@ class TranscriptsFile( file ):
         file.__init__( *args )
         self.write_lock = multiprocessing.Lock()
         self.write(\
-            "track name=\"SLIDE\" description=\"SLIDE\" visibility=full\n")
-        self.flush()
+            "track name='GRIT Transcripts' description='GRIT Transcripts' " +\
+                "visibility=full\n")
     
     @staticmethod
     def _build_exon_gtf_line( exon_gene_index, exon_trans_index, \
@@ -304,7 +304,7 @@ class TranscriptsFile( file ):
         else:
             gtf_line.append( gene.chromosome )
         
-        gtf_line.append( "slide" )
+        gtf_line.append( "grit" )
         gtf_line.append( feature_type )
         if region != None:
             start, stop = region
@@ -317,6 +317,8 @@ class TranscriptsFile( file ):
         gtf_line.append( gene.strand )
         gtf_line.append( str(frame) )
         
+        if orf_id != None:
+            transcript_id += "_" + str(orf_id)
         meta_info_pat = \
             'gene_id "{0:s}"; transcript_id "{1:s}"; exon_number "{2:d}"'
         meta_info = meta_info_pat.format( \
@@ -329,8 +331,8 @@ class TranscriptsFile( file ):
             meta_info += '; source "{0:s}"'.format( source_file )
         if readcnt != None:
             meta_info += '; readcnt "{0:d}"'.format( readcnt )
-        if orf_id != None:
-            meta_info += '; orf_id "{0:d}"'.format( orf_id )
+        #if orf_id != None:
+        #    meta_info += '; orf_id "{0:d}"'.format( orf_id )
         if orf_classes != None:
             orf_classes = '|'.join( ( ':'.join( map( str, item) ) for \
                                           item in orf_classes if item != None ))
@@ -339,11 +341,13 @@ class TranscriptsFile( file ):
         
         return '\t'.join( gtf_line )
     
-    def add_transcripts( self, transcripts, gene, \
-                             include_meta_data=True, ignore_zero_freq=True ):
+    def add_transcripts( self, transcripts, gene, include_meta_data=True ):
         """write out each transcript.
         
         """
+        ## FIXME BUG XXX
+        readcnt = 1
+        
         all_transcript_lines = []
         for trans_index, (trans, md) \
             in enumerate(transcripts.iter_transcripts_and_metadata()):
@@ -359,17 +363,13 @@ class TranscriptsFile( file ):
             # need to enumerate so that transcript has sequentially numbered exons
             # not exons numbered (arbitrarily) by gene exon number
             for exon_trans_index, exon_gene_index in enumerate( trans ):
-                if ignore_zero_freq and md.freq< 1e-6:
-                    continue
-                
                 # for the merged form, we want to include meta data
                 if include_meta_data:
                     all_transcript_lines.append( \
                         self._build_exon_gtf_line( \
-                            exon_gene_index, exon_trans_index+1, \
-                            transcripts.gene, trans_id, \
-                            lasso_lambda=md.lasso_lambda, freq=md.freq, \
-                            source_file=md.sourcefile ) )
+                            exon_gene_index, exon_trans_index+1, transcripts.gene, \
+                                trans_id, lasso_lambda=md.lasso_lambda, freq=md.freq, \
+                                source_file=md.sourcefile, readcnt=readcnt ) )
                 else:
                     all_transcript_lines.append( 
                         self._build_exon_gtf_line( \
@@ -430,15 +430,15 @@ class TranscriptsFile( file ):
         
         # get exon boundaries from transcript and gene objects
         exon_bndrys = \
-            [ (trans_index+1, gene.bp_bndry( exon_index )) for \
-                  trans_index, exon_index in enumerate(trans) ]
+            [ (trans_index+1, gene.bp_bndry( exon_index )) for
+              trans_index, exon_index in enumerate(trans) ]
         
         def add_cds_regions( orf_start, orf_stop, orf_index ):
-            cds_regions = [ \
-                (index, (max( exon_start, orf_start ), \
-                             min( exon_stop, orf_stop ))) for \
-                    index, (exon_start, exon_stop) in exon_bndrys \
-                    if exon_stop >= orf_start and exon_start <= orf_stop ]
+            cds_regions = \
+                [ (index, (max( exon_start, orf_start ),
+                           min( exon_stop, orf_stop ))) for
+                  index, (exon_start, exon_stop) in exon_bndrys
+                  if exon_stop >= orf_start and exon_start <= orf_stop ]
             
             # if strand is reverse iterate through cds regions in 
             # reverse in order to calculate frame correctly
@@ -448,9 +448,9 @@ class TranscriptsFile( file ):
             # first frame is always 0
             frame = 0
             for exon_trans_index, region in cds_regions:
-                trans_orf_regions.append( \
-                    ( region, None, exon_trans_index, gene, trans.name,'CDS', \
-                          frame, orf_ids[orf_index], [orf_classes[orf_index],] ))
+                trans_orf_regions.append(
+                    ( region, None, exon_trans_index, gene, trans.name,'CDS',
+                      frame, orf_ids[orf_index], [orf_classes[orf_index],] ))
                 
                 # calculate the frame of the next cds region
                 frame = ((( -(( region[1]-region[0]+1 )%3 ))%3 ) + frame )%3
@@ -537,10 +537,9 @@ class TranscriptsFile( file ):
         
         return trans_orf_regions
     
-    def add_transcripts_with_orfs( self, all_orfs, print_non_orfs=True, \
-                                       print_orf_exons=True, \
-                                       print_codons=True, \
-                                       print_UTRs=False ):
+    def add_transcripts_with_orfs( 
+        self, all_orfs, print_non_orfs=True, print_orf_exons=True, 
+        print_codons=True, print_UTRs=False ):
         """Write regions associated with orfs within genes and trans
         regions include: exon, CDS, 5UTR, 3UTR, start_codon and stop_codon
         Note CDS regions will always be printed all other regions have switches
