@@ -1,6 +1,7 @@
 import sys, os
 from itertools import izip, combinations
 from collections import defaultdict
+import re
 
 sys.path.append( os.path.join( os.path.dirname( __file__), 
                                "../file_types/fast_gtf_parser/" ) )
@@ -12,21 +13,21 @@ from gtf_file import create_gtf_line, GenomicInterval
 # bijective hexavijezimal
 
 def get_introns_by_gene_name( genes ):
-    intron_to_gene_name = {}
-    trans_to_ref_name = {}
-    for ( gene_name, chr, strand, start, stop, transcripts ) in genes:
+    intron_to_gene_name = defaultdict(dict)
+    trans_to_ref_name = defaultdict(dict)
+    for ( gene_name, chrm, strand, start, stop, transcripts ) in genes:
         for trans in transcripts:
-            trans_to_ref_name[ tuple(trans[1][1:-1]) ] = trans[0]
-            for intron in izip( trans[1][1:-2:2], trans[1][2:-1:2] ):
-                intron_to_gene_name[ intron ] = gene_name
+            trans_to_ref_name[ ( chrm, strand )][ tuple(trans[1][1:-1]) ] = trans[0]
+            for bndry in trans[1][1:-1]:
+                intron_to_gene_name[ ( chrm, strand )][ bndry ] = gene_name
     
     return intron_to_gene_name, trans_to_ref_name
 
 def find_associated_genes( trans, intron_to_gene_name ):
     genes = set()
-    for intron in izip( trans[1][1:-2:2], trans[1][2:-1:2] ):
-        if intron in intron_to_gene_name:
-            genes.add( intron_to_gene_name[ intron ] )
+    for bndry in trans[1][1:-1]:
+        if bndry in intron_to_gene_name:
+            genes.add( intron_to_gene_name[ bndry ] )
     return tuple(sorted(genes))
 
 def get_good_gene_merges( fname ):
@@ -94,7 +95,11 @@ def is_blacklisted( region, bl_regions ):
     return False
 
 def main( ann_fname, ref_fname, good_gene_merges_fname, bl_regions_fname ):
-    NOVEL_CNTR = 1
+    ann_ofp = open( "filtered.renamed.transcripts.gtf", "w" )
+
+    novel_gene_names_set = set()
+    NOVEL_GENE_CNTR = 0
+    NOVEL_TRANS_CNTR = defaultdict( HexavijezimalCntr )
     # even if the transcript match is identical, we may have alternate 5' and 3'
     # ends which means multiple 'identical' transcripts. So keep a counter. If 
     # the counter is at 0 *for that ref trans id*, keep the ref name. Otherwise,
@@ -109,7 +114,10 @@ def main( ann_fname, ref_fname, good_gene_merges_fname, bl_regions_fname ):
     novel_genes, ref_genes =  load_gtfs( ( ann_fname, ref_fname ), 2 )
     bl_regions = get_blacklist_regions( bl_regions_fname, ref_genes )
     intron_to_gene_name, trans_to_ref_name = get_introns_by_gene_name(ref_genes)
-
+    
+    # keep track of the genes that we've seen exactly
+    observed_reference_genes = set()
+    
     trans_id_to_names = {}
     for ( gene_name, chrm, strand, start, stop, transcripts ) in novel_genes:
         # check to see if this overlaps a black list region
@@ -117,21 +125,33 @@ def main( ann_fname, ref_fname, good_gene_merges_fname, bl_regions_fname ):
             continue
 
         for trans in transcripts:
-            assoc_genes = find_associated_genes(trans, intron_to_gene_name)
+            assoc_genes = find_associated_genes(trans, intron_to_gene_name[(chrm, strand)])
             # if this is a completely novel transcript
             if len( assoc_genes ) == 0:
-                trans_id_to_names[trans[0]] = ( 
-                    gene_name, "NB%s" % str(NOVEL_CNTR).zfill( 8 ) )
-                NOVEL_CNTR += 1
+                if gene_name not in novel_gene_names_set:
+                    NOVEL_GENE_CNTR += 1
+                    novel_gene_names_set.add( gene_name )
+                
+                new_gene_name = "mgn%s" % str(NOVEL_GENE_CNTR).zfill( 5 )
+                if new_gene_name not in NOVEL_TRANS_CNTR:
+                    NOVEL_TRANS_CNTR[ new_gene_name ].increment()
+                NOVEL_TRANS_CNTR[ new_gene_name ].increment()
+                
+                new_trans_name = new_gene_name + '.' + str( NOVEL_TRANS_CNTR[ new_gene_name ] )
+                trans_id_to_names[trans[0]] = ( new_gene_name, new_trans_name )
             # if there is only 1 corresponding ref gene
             elif len( assoc_genes ) == 1:
                 # check to see if this is an exact match
-                if tuple(trans[1][1:-1]) in trans_to_ref_name:
-                    i_trans_name = trans_to_ref_name[tuple(trans[1][1:-1])]
+                if tuple(trans[1][1:-1]) in trans_to_ref_name[(chrm, strand)]:
+                    i_trans_name = trans_to_ref_name[(chrm, strand)][tuple(trans[1][1:-1])]
+                    
+                    observed_reference_genes.add( i_trans_name )
+                    
                     if IDENT_CNTR[ i_trans_name ].value > 0:
                         new_i_trans_name = i_trans_name + ".%s" \
                             % (IDENT_CNTR[ i_trans_name ])
                     else:
+                        IDENT_CNTR[ i_trans_name ].increment()
                         new_i_trans_name = i_trans_name
                     
                     IDENT_CNTR[ i_trans_name ].increment()
@@ -140,6 +160,8 @@ def main( ann_fname, ref_fname, good_gene_merges_fname, bl_regions_fname ):
                         assoc_genes[0], new_i_trans_name )
                 # if it's not, it must be a partial match
                 else:
+                    if assoc_genes[0] not in ALTERNATE_SPLICE_CNTR:
+                        ALTERNATE_SPLICE_CNTR[ assoc_genes[0] ].increment()
                     ALTERNATE_SPLICE_CNTR[ assoc_genes[0] ].increment()
                     i_trans_name = "%s.%s" % ( 
                         assoc_genes[0], ALTERNATE_SPLICE_CNTR[ assoc_genes[0] ])
@@ -159,9 +181,30 @@ def main( ann_fname, ref_fname, good_gene_merges_fname, bl_regions_fname ):
             new_gene_name, new_trans_name = trans_id_to_names[ trans[0] ]
             for start, stop in zip( trans[1][0::2], trans[1][1::2] ):
                 region = GenomicInterval( chrm, strand, start, stop )
-                print create_gtf_line( region, new_gene_name, new_trans_name,
-                                       {}, feature='exon', source='grit' )
-            
+                ann_ofp.write( create_gtf_line( \
+                        region, new_gene_name, new_trans_name, {}, \
+                        feature='exon', source='grit' ) + "\n" )
+                                                
+    ann_ofp.close()
+    
+    unobserved_trans_ids = set()
+    for item in trans_to_ref_name.values():
+        unobserved_trans_ids.update( item.values() )
+    
+    fb_ofp = open( "unobserved_reference.gtf", "w" )
+    with open( ref_fname ) as fp:
+        for line in fp:
+            trans_id = re.findall("transcript_id \"(.*?)\"", line)
+            if len( trans_id ) != 1:
+                print >> sys.stderr, line
+                continue
+            else:
+                trans_id = trans_id[0]
+            if trans_id in unobserved_trans_ids:
+                fb_ofp.write( line )
+    fb_ofp.close()
+    
+    return
 
 if __name__ == "__main__":
     main( sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] )
