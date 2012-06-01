@@ -71,7 +71,7 @@ OUTPUT_PROTEINS = False
 VERBOSE = False
 MIN_VERBOSE = True
 
-DO_PROFILE = True
+DO_PROFILE = False
 
 # add parent(slide) directory to sys.path and import SLIDE mods
 sys.path.append( os.path.join( os.path.dirname(__file__), "..", "sparsify" ) )
@@ -752,9 +752,9 @@ def find_all_orfs( genes, all_trans, fasta_fn, known_orfs_data,
         
         input_queue.put( ( gene, transcripts ) )
     
-    find_gene_orfs_worker( input_queue, output_queue, fasta_fn, protein_fp, known_orfs_data )
-    sys.exit( 0 )
-    return
+    #find_gene_orfs_worker( input_queue, output_queue, fasta_fn, protein_fp, known_orfs_data )
+    #sys.exit( 0 )
+    #return
     
     args = ( input_queue, output_queue, fasta_fn, protein_fp, known_orfs_data )
 

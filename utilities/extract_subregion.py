@@ -6,10 +6,10 @@ example command:
 python filter_bam_by_region.py `ls /media/scratch/RNAseq/all_samples/ | grep -P '^Ad|^L3_|^WPP_'`
 """
 
-region_chr = "2L"
-start = 4605421
-stop = 5481770
-base_dir = "/media/scratch/final_transcriptome_v2/test_region/"
+region_chr = "4"
+start = 100 
+stop = 1351557
+base_dir = "/media/scratch/final_transcriptome_v2/chr4_test_region/"
 EXTRACT_WIG_CMD = os.path.join( os.path.dirname( __file__ ), "extract_region_from_wiggle.py" )
 global_region_str = "%s_%i_%i" % ( region_chr, start, stop )
 
@@ -17,7 +17,7 @@ def build_extract_bam_cmd( sample_type, sample_id, fname, datatype=None ):
     #new_fname = os.path.join( base_dir, ".".join(\
     #        os.path.basename(fname).split(".")[:-1]) \
     #        + ".%s_%i_%i.bam" % (  region_chr, start, stop ) )
-    if datatype == 'total_stranded_beta_bam':
+    if datatype == 'rnaseq_total_bam':
         tmp_chr_name = "chr" + region_chr
     else:
         tmp_chr_name = region_chr
