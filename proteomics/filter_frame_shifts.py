@@ -8,6 +8,11 @@ HIGH_CDS_JN_RATIO_THRESH = 0.3
 ACCEPT_ALL_UTRS = True
 UTR_JN_RATIO_THRESH = 0.1
 
+AS_CLASS_SUFFIX = '.AS_class.gtf'
+FILTERED_AS_CLASS_SUFFIX = '.AS_class.filtered.gtf'
+KI_CLASS_SUFFIX = '.KI_class.gtf'
+ALL_FILTERED_SUFFIX = '.all_filtered.gtf'
+
 import re
 import numpy
 
@@ -20,24 +25,29 @@ from gtf_file import parse_gtf_line
 sys.path.append( os.path.join( os.path.dirname(__file__), "..", "file_types" ) )
 from junctions_file import parse_junctions_file
 
-def write_all_filtered_orfs( out_prefix, ki_fname ):
-    out_fname = out_prefix + '.all_filtered.gtf'
-    as_filtered_fname = out_prefix + '.alternative_spliced_orfs.gtf'
+def write_all_filtered_orfs( out_prefix ):
+    out_fn = out_prefix + ALL_FILTERED_SUFFIX
+    ki_fn = out_prefix + KI_CLASS_SUFFIX
+    as_filtered_fn = out_prefix + FILTERED_AS_CLASS_SUFFIX
     
     # get only exact protein matches and same start stop class
-    cat_cmd = "cat {0} {1} > {2}".format( as_filtered_fname, ki_fname, out_fname )
+    cat_cmd = "cat {0} {1} > {2}".format( as_filtered_fn, ki_fn, out_fn )
     os.system( cat_cmd )
     
     return
 
-def write_novel_orfs( as_orfs, as_orfs_fp, disc_orf_lines ):
+def write_filtered_as_orfs( as_orfs, filtered_as_fp, disc_orf_lines ):
     for key in as_orfs:
-        as_orfs_fp.write( disc_orf_lines[key] )
+        filtered_as_fp.write( disc_orf_lines[key] )
+    filtered_as_fp.close()
+    
     return
 
 def write_shifted_orfs( shifted_orfs, shifted_orfs_fp, disc_orf_lines ):
     for key in shifted_orfs:
         shifted_orfs_fp.write( disc_orf_lines[key] )
+    shifted_orfs_fp.close()
+    
     return
 
 def is_valid_mut( disc_intron, known_intron, jn_ratio_thresh, jns ):
@@ -289,24 +299,38 @@ def parse_discovered_orfs( orfs_fp ):
     
     return disc_orfs, disc_orf_lines
 
-def build_objects( orfs_fp, ann_fp, jns_fp, out_prefix ):
-    as_orfs_fp = open( out_prefix + '.alternative_spliced_orfs.gtf', 'w' )
-    shifted_orfs_fp = open( out_prefix + '.shifted_orfs.gtf', 'w' )
+def create_orf_class_files( orfs_fn, out_prefix ):
+    as_class_fn = out_prefix + AS_CLASS_SUFFIX
+    ki_class_fn = out_prefix + KI_CLASS_SUFFIX
+    get_class_cmd = 'grep {0}: {1} > {2}'
+    
+    # get AS class file
+    os.system( get_class_cmd.format( 'AS', orfs_fn, as_class_fn ) )
+    # get KI class file
+    os.system( get_class_cmd.format( 'KI', orfs_fn, ki_class_fn ) )
+    
+    return as_class_fn, ki_class_fn
+
+def build_objects( orfs_fn, ann_fp, jns_fp, out_prefix ):
+    if VERBOSE: print >> sys.stderr, 'creating class files.'
+    as_class_fn, ki_class_fn = create_orf_class_files( orfs_fn, out_prefix )
+    as_class_fp = open( as_class_fn )
+    
+    filtered_as_fp = open( out_prefix + FILTERED_AS_CLASS_SUFFIX, 'w' )
     
     if VERBOSE: print >> sys.stderr, 'parsing junctions'
     all_jns = parse_jns( jns_fp )
     jns_fp.close()
     
     if VERBOSE: print >> sys.stderr, 'parsing discovered orfs'
-    disc_orfs, disc_orf_lines = parse_discovered_orfs( orfs_fp )
-    orfs_fp.close()
+    disc_orfs, disc_orf_lines = parse_discovered_orfs( as_class_fp )
+    as_class_fp.close()
     
     if VERBOSE: print >> sys.stderr, 'parsing known orfs'
     known_introns = parse_known_orfs( ann_fp )
     ann_fp.close()
     
-    return disc_orfs, disc_orf_lines, known_introns, all_jns, \
-        as_orfs_fp, shifted_orfs_fp
+    return disc_orfs, disc_orf_lines, known_introns, all_jns, filtered_as_fp
 
 def parse_arguments():
     global LOW_CDS_JN_RATIO_THRESH
@@ -320,7 +344,7 @@ def parse_arguments():
         description = 'Find discovered alternatively splice ORFs that do not ' + \
             'shift the frame of the known ORF.' )
     parser.add_argument(
-        'orfs_gtf', type=file,
+        'orfs_gtf',
         help='GTF file with CDS and UTR regions.' )
     parser.add_argument(
         'annotation', type=file,
@@ -361,33 +385,29 @@ def parse_arguments():
     
     # create default if no prefix provided or if same as gtf filename
     out_prefix = args.out_prefix if args.out_prefix != None else \
-        os.path.basename( args.orfs_gtf.name )
+        os.path.basename( os.path.basename( args.orfs_gtf ) )
     
     # set flag args
     global VERBOSE
     VERBOSE = args.verbose
     
-    return args.orfs_gtf, args.annotation, args.junctions, args.ki_orfs_gtf, out_prefix
+    return args.orfs_gtf, args.annotation, args.junctions, out_prefix
 
 def main():
     disc_orfs_fn, ann_fp, jns_fp, out_prefix = parse_arguments()
-    # function to create KI and AS class files with grep or get lines...
-    # disc_orfs_fp should be the AS class 
-    # ki_fname should be ki class file name 
     
-    disc_orfs, disc_orf_lines, known_introns, all_jns, \
-        as_orfs_fp, shifted_orfs_fp = \
-        build_objects( disc_orfs_fp, ann_fp, jns_fp, out_prefix )
+    disc_orfs, disc_orf_lines, known_introns, all_jns, filtered_as_fp = \
+        build_objects( disc_orfs_fn, ann_fp, jns_fp, out_prefix )
     
     if VERBOSE: print >> sys.stderr, 'filtering orfs with shifted frames'
     as_orfs, shifted_orfs = filter_shifted_trans( 
         disc_orfs, known_introns, all_jns )
     
     if VERBOSE: print >> sys.stderr, 'writing out filtered transcripts'
-    write_novel_orfs( as_orfs, as_orfs_fp, disc_orf_lines )
-    write_shifted_orfs( shifted_orfs, shifted_orfs_fp, disc_orf_lines )
+    write_filtered_as_orfs( as_orfs, filtered_as_fp, disc_orf_lines )
+    #write_shifted_orfs( shifted_orfs, shifted_orfs_fp, disc_orf_lines )
     
-    write_all_filtered_orfs( out_prefix, ki_fname )
+    write_all_filtered_orfs( out_prefix )
     
     return
 

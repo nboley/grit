@@ -69,7 +69,7 @@ PRINT_UTRS = True
 AAS_PER_FASTA_LINE = 80
 OUTPUT_PROTEINS = False
 VERBOSE = False
-MIN_VERBOSE = True
+MIN_VERBOSE = False
 
 DO_PROFILE = False
 
@@ -962,7 +962,7 @@ def main():
     
     write_orfs_gtf( all_orfs, non_coding_genes, out_prefix )
     
-    write_class_specific_orfs( out_prefix )
+    #write_class_specific_orfs( out_prefix )
     
     return
 
