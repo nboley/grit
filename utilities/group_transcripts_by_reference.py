@@ -116,7 +116,7 @@ def main( ann_fname, ref_fname, good_gene_merges_fname, bl_regions_fname ):
     intron_to_gene_name, trans_to_ref_name = get_introns_by_gene_name(ref_genes)
     
     # keep track of the genes that we've seen exactly
-    observed_reference_genes = set()
+    observed_reference_trans = set()
     
     trans_id_to_names = {}
     for ( gene_name, chrm, strand, start, stop, transcripts ) in novel_genes:
@@ -145,7 +145,7 @@ def main( ann_fname, ref_fname, good_gene_merges_fname, bl_regions_fname ):
                 if tuple(trans[1][1:-1]) in trans_to_ref_name[(chrm, strand)]:
                     i_trans_name = trans_to_ref_name[(chrm, strand)][tuple(trans[1][1:-1])]
                     
-                    observed_reference_genes.add( i_trans_name )
+                    observed_reference_trans.add( i_trans_name )
                     
                     if IDENT_CNTR[ i_trans_name ].value > 0:
                         new_i_trans_name = i_trans_name + ".%s" \
@@ -189,7 +189,8 @@ def main( ann_fname, ref_fname, good_gene_merges_fname, bl_regions_fname ):
     
     unobserved_trans_ids = set()
     for item in trans_to_ref_name.values():
-        unobserved_trans_ids.update( item.values() )
+        unobserved_trans_ids.update( 
+            set( item.values() ).difference( observed_reference_trans ) )
     
     fb_ofp = open( "unobserved_reference.gtf", "w" )
     with open( ref_fname ) as fp:
