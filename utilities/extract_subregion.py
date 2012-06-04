@@ -9,8 +9,9 @@ python filter_bam_by_region.py `ls /media/scratch/RNAseq/all_samples/ | grep -P 
 region_chr = "2R"
 start = 12907545
 stop = 17907545
-base_dir = "/media/scratch/final_transcriptome_v2/merge_test_region/"
+base_dir = "/media/scratch/final_transcriptome_v2/merge_test_region/DATA/"
 EXTRACT_WIG_CMD = os.path.join( os.path.dirname( __file__ ), "extract_region_from_wiggle.py" )
+EXTRACT_GFF_CMD = os.path.join( os.path.dirname( __file__ ), "extract_region_from_gff.py" )
 global_region_str = "%s_%i_%i" % ( region_chr, start, stop )
 
 def build_extract_bam_cmd( sample_type, sample_id, fname, datatype=None ):
@@ -52,6 +53,20 @@ def build_extract_wig_cmd( sample_type, sample_id, strand, fname, chrm_sizes_fna
         region_str, fname, chrm_sizes_fname, new_fname_prefix )
     
     new_fname = new_fname_prefix + ".%s.wig" % strand
+    return call, new_fname
+
+def build_extract_g_f_cmd( fname ):
+    #new_fname = os.path.join( base_dir, ".".join(\
+    #        os.path.basename(fname).split(".")[:-1]) \
+    #        + ".%s_%i_%i.bam" % (  region_chr, start, stop ) )
+    new_fname = os.path.join(base_dir, os.path.basename(fname)
+                             + global_region_str + fname.split(".")[-1] )
+
+    region_str = "%s:%s:%i-%i" % ( region_chr, '.', start, stop )
+    
+    cmd_template  = "python %s {0} {1} > {2}" % EXTRACT_GFF_CMD
+    call = cmd_template.format( region_str, fname, new_fname )
+    
     return call, new_fname
 
 def get_filetype_from_datatype( datatype ):
@@ -98,12 +113,8 @@ def get_cmds_from_input_file( fp ):
             elif filetype == 'wig':
                 cmd, op_fname = build_extract_wig_cmd(
                     sample_type, sample_id, strand, fname, chrm_sizes_fname)
-            elif filetype == 'gff':
-                new_lines.append( line.strip() )
-                continue
-                pass
-                #cmd, op_fname = build_extract_gff_cmd(
-                #    sample_type, sample_id, fname)
+            elif filetype in ('gff', 'gtf'):
+                cmd, op_fname = build_extract_g_f_cmd( fname )
             else:
                 print line
                 assert False
@@ -128,5 +139,4 @@ def get_cmds_from_input_file( fp ):
 
 if __name__ == "__main__":
     with open( sys.argv[1] ) as fp:
-        get_cmds_from_input_file( fp )
-    
+        get_cmds_from_input_file( fp )    
