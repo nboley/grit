@@ -36,62 +36,66 @@ def read_spans_single_intron( read ):
 def iter_junctions( reads_fn, fasta_fn, stranded, reverse_strand ):
     """Get all of the junctions represented in a reads object
     """
+    def find_junctions_in_chrm( chrm, all_junctions, unique_junctions ):
+        # store how many times we have observed each read
+        query_name_cnts = defaultdict( int )
+        jn_reads = []
+        for read in reads.fetch(chrm):
+            # increment the number of times we've seen this read
+            query_name_cnts[ read.qname ] += 1
+            if read_spans_single_intron( read ):
+                jn_reads.append( read )
+
+        for read in jn_reads:
+            # obtain chrm from read pysam object
+            chrm = clean_chr_name( reads.getrname( read.tid ) )
+
+            # add one to left_intron since bam files are 0-based
+            upstrm_intron_pos = read.pos + read.cigar[0][1] + 1
+            dnstrm_intron_pos = upstrm_intron_pos + read.cigar[1][1] - 1
+
+            # if the protocol is stranded, get the strand from the read mapping 
+            # directions
+            if stranded:
+                if (read.is_read1 and not read.is_reverse) \
+                        or (read.is_read2 and read.is_reverse):
+                    strand = '+'
+                else:
+                    strand = '-'
+
+                # if the protocol strand is reversed, then reverse the strand
+                if reverse_strand:
+                    if strand == '+': 
+                        strand = '-'
+                    else: 
+                        strand = '+'
+            else:
+                jn_type, strand = get_jn_type( \
+                    chrm, upstrm_intron_pos, dnstrm_intron_pos, fasta_obj )
+                if jn_type == 'non-canonical': 
+                    continue
+
+            # increment count of junction reads at this read position
+            # for this intron or initialize it to 1
+            jn_type = ( chrm, strand, upstrm_intron_pos, \
+                            dnstrm_intron_pos, read.cigar[0][1] )
+
+            all_junctions[ jn_type ] += 1
+
+            if query_name_cnts[ read.qname ] == 2:
+                unique_junctions[ jn_type ] += 1
+    
     # build reads object
     reads = Samfile( reads_fn, "rb" )
     fasta_obj = None if fasta_fn == None else Fastafile( fasta_fn )
     
-    # store how many times we have observed each read
-    query_name_cnts = defaultdict( int )
-    jn_reads = []
-    for read in reads.fetch():
-        # increment the number of times we've seen this read
-        query_name_cnts[ read.qname ] += 1
-        if read_spans_single_intron( read ):
-            jn_reads.append( read )
-
     # store the number of reads across the junction for each relative 
     # read position
     all_junctions = defaultdict(int)
     unique_junctions = defaultdict(int)
     
-    for read in jn_reads:
-        # obtain chrm from read pysam object
-        chrm = clean_chr_name( reads.getrname( read.tid ) )
-        
-        # add one to left_intron since bam files are 0-based
-        upstrm_intron_pos = read.pos + read.cigar[0][1] + 1
-        dnstrm_intron_pos = upstrm_intron_pos + read.cigar[1][1] - 1
-
-        # if the protocol is stranded, get the strand from the read mapping 
-        # directions
-        if stranded:
-            if (read.is_read1 and not read.is_reverse) \
-                    or (read.is_read2 and read.is_reverse):
-                strand = '+'
-            else:
-                strand = '-'
-            
-            # if the protocol strand is reversed, then reverse the strand
-            if reverse_strand:
-                if strand == '+': 
-                    strand = '-'
-                else: 
-                    strand = '+'
-        else:
-            jn_type, strand = get_jn_type( \
-                chrm, upstrm_intron_pos, dnstrm_intron_pos, fasta_obj )
-            if jn_type == 'non-canonical': 
-                continue
-        
-        # increment count of junction reads at this read position
-        # for this intron or initialize it to 1
-        jn_type = ( chrm, strand, upstrm_intron_pos, \
-                        dnstrm_intron_pos, read.cigar[0][1] )
-        
-        all_junctions[ jn_type ] += 1
-        
-        if query_name_cnts[ read.qname ] == 2:
-            unique_junctions[ jn_type ] += 1
+    for ref in reads.references:
+        find_junctions_in_chrm( ref, all_junctions, unique_junctions )
     
     jns = []
     read_offsets = []
