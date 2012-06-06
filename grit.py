@@ -925,17 +925,17 @@ def build_high_quality_junctions( elements, pserver, output_prefix ):
     merged_output_fname = os.path.join(output_prefix, "merged.filtered.jns.gff")
     
     # get all of the raw junctions fnames, and merge them
-    call_template = "python %s --filter --fasta {0} {1} > {2} " \
-        % MERGE_AND_FILTER_JNS_CMD
-    call = call_template.format( \
-        elements.genome_fname, " ".join( raw_jn_fnames ), merged_output_fname ) 
-    
+    call = "python %s --filter --threads {threads} --fasta %s %s > %s"\
+        % ( MERGE_AND_FILTER_JNS_CMD, elements.genome_fname, 
+            " ".join( raw_jn_fnames ), merged_output_fname  )
+
     dependency_fnames = raw_jn_fnames
     output_fnames = [ merged_output_fname, ]    
     output_element_types = [ ElementType("filtered_jns_gff", "*", "*", "."), ]
     
     cmd = Cmd( call, output_element_types, output_fnames, dependency_fnames )
-    pserver.add_process( cmd, Resource(1) )
+    pserver.add_process( cmd, Resource(pserver.max_available_resources/2), 
+                              Resource( pserver.max_available_resources)  )
        
     return
 

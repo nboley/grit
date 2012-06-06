@@ -55,17 +55,17 @@ class Junction( _JnNamedTuple ):
     valid_jn_types = set(( "infer", "canonical", 
                            "canonical_wrong_strand", "non_canonical" ))
     
-    def __new__( self, region, 
-                  jn_type=None, cnt=None, uniq_cnt=None,
-                  source_read_offset=None, source_id=None ):
+    def __new__( self, region,
+                 jn_type=None, cnt=None, uniq_cnt=None,
+                 source_read_offset=None, source_id=None ):
         # do type checking
-        if not isinstance( region, GenomicInterval ):
-            raise ValueError, "regions must be of type GenomicInterval"
+        #if not isinstance( region, GenomicInterval ):
+        #    raise ValueError, "regions must be of type GenomicInterval"
         if region.strand not in ("+", "-" ):
             raise ValueError, "Unrecognized strand '%s'" % strand
         if jn_type != None and jn_type not in self.valid_jn_types:
             raise ValueError, "Unrecognized jn type '%s'" % jn_type
-
+        
         if cnt != None: cnt = int( cnt )
         if uniq_cnt != None: uniq_cnt = int( uniq_cnt )
         
@@ -101,7 +101,7 @@ class Junction( _JnNamedTuple ):
         
         return create_gff_line( self.region, group_id_str, score=count )
 
-def parse_jn_line( line ):
+def parse_jn_line( line, return_tuple=False ):
     data = parse_gff_line( line )
     if data == None: return
     
@@ -113,10 +113,10 @@ def parse_jn_line( line ):
     uniq_cnt = re.findall('uniq_cnt "(\d+)";',data.group)
     uniq_cnt = None if len(uniq_cnt) == 0 else int(uniq_cnt[0])
     
-    return Junction( data.region, cnt=data.score, 
+    return Junction( region, cnt=data.score,
                      source_read_offset=src_rd_offset, uniq_cnt=uniq_cnt )
 
-def parse_jn_gff( input_file ):
+def parse_jn_gff( input_file, send_tuples=False ):
     if isinstance( input_file, str ):
         fp = open( input_file )
     else:
@@ -126,8 +126,12 @@ def parse_jn_gff( input_file ):
     jns = []    
     for line in fp:
         jn = parse_jn_line( line )
-        if jn == None: continue
-        else: jns.append( jn )
+        if jn == None: 
+            continue
+        elif send_tuples:
+            jns.append([ tuple(jn[0]), jn[1], jn[2], jn[3], jn[4], jn[5] ])
+        else:
+            jns.append( jn )
     
     if isinstance( input_file, str ):
         fp.close()
@@ -145,10 +149,10 @@ def parse_jn_gffs( gff_fnames, num_threads=1 ):
     else:
         from multiprocessing import Process, Queue, Lock, Manager
         from Queue import Empty
-        import cPickle
+        import marshal as cPickle
         
-        #manager = Manager()
-        #output_jns = manager.dict()
+        manager = Manager()
+        output_jns = manager.dict()
         
         gff_fname_queue = Queue()
         for i, fname in enumerate(gff_fnames):
@@ -161,10 +165,8 @@ def parse_jn_gffs( gff_fnames, num_threads=1 ):
                 if VERBOSE:
                     print >> sys.stderr, "Parsing '%s'" % fname
                 
-                jns = parse_jn_gff( fname )
-                fp = open( "tmp%i.obj" % index, "w" )
-                cPickle.dump(jns, fp, cPickle.HIGHEST_PROTOCOL)
-                fp.close()
+                jns = parse_jn_gff( fname, send_tuples=True )
+                output_jns[index] = cPickle.dumps(jns) #, cPickle.HIGHEST_PROTOCOL)
                 
                 if VERBOSE:
                     print >> sys.stderr, "Finished parsing '%s'" % fname
@@ -181,26 +183,27 @@ def parse_jn_gffs( gff_fnames, num_threads=1 ):
         for p in ps:
             p.join()
         
-        if VERBOSE: print >> sys.stderr, "Unpickling jns."
         rv = []
         for index in xrange( len( gff_fnames ) ):
             if VERBOSE: 
                 print >> sys.stderr, "Unpickling '%s'." % gff_fnames[index]
-            fp = open( "tmp%i.obj" % index )
-            rv.append( cPickle.load( fp ) )
-            fp.close()
-            
+            rv.append( [] )
+            for data in cPickle.loads( output_jns[index] ):
+                data[0] = tuple.__new__( GenomicInterval,  data[0] )
+                rv[-1].append( tuple.__new__( Junction, data ) )
+        
         return rv
     
 
-################################################################################################
+################################################################################
 #
 #
 #  TODO: REMOVE EVERYTHING BELOW HERE
 #
 #
 
-def build_jn_line( region, group_id, count=0, uniq_cnt=None, fasta_obj=None, intron_type=None):
+def build_jn_line( region, group_id, count=0, 
+                   uniq_cnt=None, fasta_obj=None, intron_type=None):
     group_id_str = str( group_id ) #'group_id "{0}";'.format( str(group_id) )
     
     
