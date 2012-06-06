@@ -15,12 +15,14 @@ VERBOSE = False
 CONSENSUS_PLUS = 'GTAG'
 CONSENSUS_MINUS = 'CTAC'
 
-def get_jn_type( chrm, upstrm_intron_pos, dnstrm_intron_pos, fasta, jn_strand="UNKNOWN" ):
+def get_jn_type( chrm, upstrm_intron_pos, dnstrm_intron_pos, 
+                 fasta, jn_strand="UNKNOWN" ):
     # get first 2 bases from 5' and 3' ends of intron to determine 
     # splice junction strand by comparing to consensus seqs
     # subtract one from start since fasta is 0-based closed-open
-    intron_seq = fasta.fetch( 'chr'+chrm , upstrm_intron_pos - 1, upstrm_intron_pos + 1) + \
-        fasta.fetch( 'chr'+chrm , dnstrm_intron_pos - 2 , dnstrm_intron_pos )
+    intron_seq = \
+        fasta.fetch( 'chr'+chrm , upstrm_intron_pos-1, upstrm_intron_pos+1) + \
+        fasta.fetch( 'chr'+chrm , dnstrm_intron_pos-2, dnstrm_intron_pos )
     
     # if junction matchs consensus set strand
     # else return non-canonical
@@ -49,7 +51,7 @@ def get_jn_type( chrm, upstrm_intron_pos, dnstrm_intron_pos, fasta, jn_strand="U
 _junction_named_tuple_slots = [
     "region", "type", "cnt", "uniq_cnt", "source_read_offset", "source_id" ]
     
-_JnNamedTuple = namedtuple( "_JnNamedTuple", _junction_named_tuple_slots )
+_JnNamedTuple = namedtuple( "Junction", _junction_named_tuple_slots )
                  
 class Junction( _JnNamedTuple ):
     valid_jn_types = set(( "infer", "canonical", 
