@@ -7,12 +7,10 @@ import sys
 
 from pysam import Samfile, Fastafile
 from collections import defaultdict
-from operator import itemgetter
 
 sys.path.append( os.path.join( os.path.dirname(__file__), \
                                    "..", "..", "file_types" ) )
-from junctions_file import write_junctions, get_jn_type
-from genomic_intervals import GenomicInterval
+from junctions_file import Junction, GenomicInterval, get_jn_type
 
 sys.path.append( os.path.join( os.path.dirname(__file__), ".." ) )
 from build_read_coverage_bedgraph import clean_chr_name
@@ -35,18 +33,20 @@ def read_spans_single_intron( read ):
     
     return True
 
-def get_junctions( reads_fn, fasta_fn, stranded, reverse_strand ):
+def iter_junctions( reads_fn, fasta_fn, stranded, reverse_strand ):
     """Get all of the junctions represented in a reads object
     """
     # build reads object
     reads = Samfile( reads_fn, "rb" )
     fasta_obj = None if fasta_fn == None else Fastafile( fasta_fn )
     
+    reads_db = {}
+    
     # store the number of reads across the junction for each relative 
     # read position
-    junctions = defaultdict(int)
+    all_junctions = defaultdict(int)
     
-    for read in reads.fetch():
+    for read in reads.fetch():        
         # This could be changed to incorporate more complex reads 
         # indicating an intron such as including reads with clipped, 
         # inserted, or deleted regions or spanning multiple introns
@@ -85,18 +85,35 @@ def get_junctions( reads_fn, fasta_fn, stranded, reverse_strand ):
         # for this intron or initialize it to 1
         jn_type = ( chrm, strand, upstrm_intron_pos, \
                         dnstrm_intron_pos, read.cigar[0][1] )
-        junctions[ jn_type ] += 1
+        
+        if read.qname in reads_db:
+            reads_db[ read.qname ] = "DUP"
+        else:
+            reads_db[ read.qname ] = jn_type
+        
+        all_junctions[ jn_type ] += 1
 
-    jns = []
-    grps = []
-    cnts = []
-    for (chrm, strand, start, stop, grp ), cnt \
-            in sorted(junctions.iteritems()):
-        jns.append( GenomicInterval( chrm, strand, start, stop ) )
-        grps.append( grp )
-        cnts.append( cnt )
+    # store the number of reads across the junction for each relative 
+    # read position
+    unique_junctions = defaultdict(int)
+    for val in reads_db.itervalues():
+        if val == 'DUP': continue
+        unique_junctions[ val ] += 1
     
-    return jns, grps, cnts
+    jns = []
+    read_offsets = []
+    cnts = []
+    uniq_cnts = []
+    for (chrm, strand, start, stop, read_offset ), cnt \
+            in sorted(all_junctions.iteritems()):
+
+        uniq_cnt = unique_junctions[ (chrm, strand, start, stop, read_offset ) ]
+        jn = Junction( GenomicInterval(chrm, strand, start, stop), 
+                       source_read_offset=read_offset, 
+                       cnt=cnt, uniq_cnt=uniq_cnt )
+        yield jn
+        
+    return
 
 
 def parse_arguments():
@@ -132,9 +149,8 @@ def main():
     reads_fn, fasta_fn, stranded, reverse_strand = parse_arguments()
     
     # get junctions
-    jns, grps, cnts=get_junctions(reads_fn, fasta_fn, stranded, reverse_strand)
-   # write the junctions out to file
-    write_junctions( jns, sys.stdout, cnts, grps, fasta_fn )
+    for jn in iter_junctions(reads_fn, fasta_fn, stranded, reverse_strand):
+        print jn.build_gff_line()
 
 if __name__ == "__main__":
     main()

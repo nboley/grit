@@ -74,7 +74,8 @@ def get_filetype_from_datatype( datatype ):
         return 'bam'
     elif datatype.lower().endswith( "wig" ):
         return "wig"
-    elif datatype.lower().endswith( "gff" ):
+    elif datatype.lower().endswith( "gff" ) \
+            or datatype.lower().endswith( "gtf" ):
         return "gff"
     else:
         return "UNKNOWN"

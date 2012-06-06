@@ -1,12 +1,16 @@
+import sys
 import numpy
 
 from itertools import product, izip
+import re
 
 from genomic_intervals import GenomicIntervals, GenomicInterval
 from gtf_file import parse_gff_line, create_gff_line
 from pysam import Fastafile
 import itertools
-from collections import defaultdict
+from collections import defaultdict, namedtuple
+
+VERBOSE = False
 
 CONSENSUS_PLUS = 'GTAG'
 CONSENSUS_MINUS = 'CTAC'
@@ -41,8 +45,162 @@ def get_jn_type( chrm, upstrm_intron_pos, dnstrm_intron_pos, fasta, jn_strand="U
         return 'canonical_wrong_strand'
     
     assert False
+
+_junction_named_tuple_slots = [
+    "region", "type", "cnt", "uniq_cnt", "source_read_offset", "source_id" ]
     
-def build_jn_line( region, group_id, count=0, fasta_obj=None, intron_type=None):
+_JnNamedTuple = namedtuple( "_JnNamedTuple", _junction_named_tuple_slots )
+                 
+class Junction( _JnNamedTuple ):
+    valid_jn_types = set(( "infer", "canonical", 
+                           "canonical_wrong_strand", "non_canonical" ))
+    
+    def __new__( self, region, 
+                  jn_type=None, cnt=None, uniq_cnt=None,
+                  source_read_offset=None, source_id=None ):
+        # do type checking
+        if not isinstance( region, GenomicInterval ):
+            raise ValueError, "regions must be of type GenomicInterval"
+        if region.strand not in ("+", "-" ):
+            raise ValueError, "Unrecognized strand '%s'" % strand
+        if jn_type != None and jn_type not in self.valid_jn_types:
+            raise ValueError, "Unrecognized jn type '%s'" % jn_type
+
+        if cnt != None: cnt = int( cnt )
+        if uniq_cnt != None: uniq_cnt = int( uniq_cnt )
+        
+        return _JnNamedTuple.__new__( 
+            Junction, region,
+            jn_type, cnt, uniq_cnt, source_read_offset, source_id )
+    
+    chrm = property( lambda self: self.region.chr )
+    strand = property( lambda self: self.region.strand )
+    start = property( lambda self: self.region.start )
+    stop = property( lambda self: self.region.stop )
+
+    def build_gff_line( self, group_id=None, fasta_obj=None ):
+        if self.type == None and fasta_obj != None:
+            intron_type = get_jn_type( 
+                self.chr, self.start, self.stop, fasta_obj, self.strand )
+        else:
+            intron_type = self.type
+        
+        group_id_str = str(group_id) if group_id != None else ""
+
+        if self.source_read_offset != None:
+            group_id_str += ' source_read_offset "{0}";'.format( 
+                self.source_read_offset )
+        
+        if self.uniq_cnt != None:
+            group_id_str += ' uniq_cnt "{0}";'.format( self.uniq_cnt )
+        
+        if intron_type != None:
+            group_id_str += ' type "{0}";'.format( intron_type )
+        
+        count = self.cnt if self.cnt != None else 0
+        
+        return create_gff_line( self.region, group_id_str, score=count )
+
+def parse_jn_line( line ):
+    data = parse_gff_line( line )
+    if data == None: return
+    
+    region = data[0]
+    
+    src_rd_offset = re.findall('source_read_offset "(\d+)";',data.group)
+    src_rd_offset = None if len(src_rd_offset) == 0 else int(src_rd_offset[0])
+
+    uniq_cnt = re.findall('uniq_cnt "(\d+)";',data.group)
+    uniq_cnt = None if len(uniq_cnt) == 0 else int(uniq_cnt[0])
+    
+    return Junction( data.region, cnt=data.score, 
+                     source_read_offset=src_rd_offset, uniq_cnt=uniq_cnt )
+
+def parse_jn_gff( input_file ):
+    if isinstance( input_file, str ):
+        fp = open( input_file )
+    else:
+        assert isinstance( input_file, file )
+        fp = input_file
+    
+    jns = []    
+    for line in fp:
+        jn = parse_jn_line( line )
+        if jn == None: continue
+        else: jns.append( jn )
+    
+    if isinstance( input_file, str ):
+        fp.close()
+    
+    return jns
+
+def parse_jn_gffs( gff_fnames, num_threads=1 ):
+    if num_threads == 1:
+        jns = []
+        for fname in gff_fnames:
+            if VERBOSE:
+                print >> sys.stderr, "Parsing '%s'" % fname
+            jns.append( parse_jn_gff( fname ) )
+        return jns                
+    else:
+        from multiprocessing import Process, Queue, Lock, Manager
+        from Queue import Empty
+        import cPickle
+        
+        #manager = Manager()
+        #output_jns = manager.dict()
+        
+        gff_fname_queue = Queue()
+        for i, fname in enumerate(gff_fnames):
+            gff_fname_queue.put( ( i, fname ) )
+
+        def foo( ipq ):
+            while not ipq.empty():
+                index, fname = ipq.get()
+               
+                if VERBOSE:
+                    print >> sys.stderr, "Parsing '%s'" % fname
+                
+                jns = parse_jn_gff( fname )
+                fp = open( "tmp%i.obj" % index, "w" )
+                cPickle.dump(jns, fp, cPickle.HIGHEST_PROTOCOL)
+                fp.close()
+                
+                if VERBOSE:
+                    print >> sys.stderr, "Finished parsing '%s'" % fname
+            
+            return
+
+        ps = []
+        for fname in gff_fnames:
+            p = Process( target=foo,
+                         args=[gff_fname_queue,] )
+            p.start()
+            ps.append( p )
+        
+        for p in ps:
+            p.join()
+        
+        if VERBOSE: print >> sys.stderr, "Unpickling jns."
+        rv = []
+        for index in xrange( len( gff_fnames ) ):
+            if VERBOSE: 
+                print >> sys.stderr, "Unpickling '%s'." % gff_fnames[index]
+            fp = open( "tmp%i.obj" % index )
+            rv.append( cPickle.load( fp ) )
+            fp.close()
+            
+        return rv
+    
+
+################################################################################################
+#
+#
+#  TODO: REMOVE EVERYTHING BELOW HERE
+#
+#
+
+def build_jn_line( region, group_id, count=0, uniq_cnt=None, fasta_obj=None, intron_type=None):
     group_id_str = str( group_id ) #'group_id "{0}";'.format( str(group_id) )
     
     
@@ -50,12 +208,16 @@ def build_jn_line( region, group_id, count=0, fasta_obj=None, intron_type=None):
         intron_type = get_jn_type( region.chr, region.start, region.stop, \
                                        fasta_obj, region.strand )
     
+    if uniq_cnt != None:
+        group_id_str += ' uniq_cnt "{0}";'.format( uniq_cnt )        
+    
     if intron_type != None:
         group_id_str += ' type "{0}";'.format( intron_type )
-    
+        
     jn_line = create_gff_line( region, group_id_str, score=count )
     return jn_line
 
+    
 def write_junctions( junctions, out_fp, scores=None, groups=None, 
                      fasta_fn=None, first_contig_len=None,
                      track_name="discovered_jns" ):
