@@ -40,19 +40,21 @@ def iter_junctions( reads_fn, fasta_fn, stranded, reverse_strand ):
     reads = Samfile( reads_fn, "rb" )
     fasta_obj = None if fasta_fn == None else Fastafile( fasta_fn )
     
-    reads_db = {}
-    
+    # store how many times we have observed each read
+    query_name_cnts = defaultdict( int )
+    jn_reads = []
+    for read in reads.fetch():
+        # increment the number of times we've seen this read
+        query_name_cnts[ read.qname ] += 1
+        if read_spans_single_intron( read ):
+            jn_reads.append( read )
+
     # store the number of reads across the junction for each relative 
     # read position
     all_junctions = defaultdict(int)
+    unique_junctions = defaultdict(int)
     
-    for read in reads.fetch():        
-        # This could be changed to incorporate more complex reads 
-        # indicating an intron such as including reads with clipped, 
-        # inserted, or deleted regions or spanning multiple introns
-        if not read_spans_single_intron( read ):
-            continue
-        
+    for read in jn_reads:
         # obtain chrm from read pysam object
         chrm = clean_chr_name( reads.getrname( read.tid ) )
         
@@ -86,19 +88,10 @@ def iter_junctions( reads_fn, fasta_fn, stranded, reverse_strand ):
         jn_type = ( chrm, strand, upstrm_intron_pos, \
                         dnstrm_intron_pos, read.cigar[0][1] )
         
-        if read.qname in reads_db:
-            reads_db[ read.qname ] = "DUP"
-        else:
-            reads_db[ read.qname ] = jn_type
-        
         all_junctions[ jn_type ] += 1
-
-    # store the number of reads across the junction for each relative 
-    # read position
-    unique_junctions = defaultdict(int)
-    for val in reads_db.itervalues():
-        if val == 'DUP': continue
-        unique_junctions[ val ] += 1
+        
+        if query_name_cnts[ read.qname ] == 2:
+            unique_junctions[ jn_type ] += 1
     
     jns = []
     read_offsets = []
