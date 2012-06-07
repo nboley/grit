@@ -1624,11 +1624,7 @@ def main():
     build_high_quality_junctions( elements, pserver, base_dir + "junctions/" )
     intersect_all_junctions( elements, pserver, base_dir + "junctions/" )
     merge_sample_type_junctions( elements, pserver, base_dir + "junctions/" )
-    
-    pserver.process_queue()    
-
-    return
-    
+        
     build_all_cov_wiggles( elements, pserver, base_dir + "read_cov_bedgraphs" )
     
     build_all_exon_files( elements, pserver, base_dir + "exons" )

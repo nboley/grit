@@ -15,7 +15,7 @@ from itertools import izip
 MIN_CNT_RATIO= 0.10
 USE_MIN_ACCEPTOR = False
 NUM_JN_BASES = 30
-MAX_NUM_MISMATCHES = 4
+MAX_NUM_MISMATCHES = 8
 MIN_UNIQ_CNT_FRAC = 0.5
 
 
@@ -91,14 +91,14 @@ def find_sequence( jn, fasta ):
 
     rv = fasta.fetch( 'chr' + jn.chrm, start, start+NUM_JN_BASES )
     if rv != "": 
-        return rv
+        return rv.upper()
     else:
-        return fasta.fetch( jn.chrm, start, start+NUM_JN_BASES )
+        return fasta.fetch( jn.chrm, start, start+NUM_JN_BASES ).upper()
 
-def identical_seq_exists( jn, donor_seq_mapping ):
+def identical_seq_exists( jn, donor_seq_mapping, fasta ):
     def seq_matches( seq1, seq2 ):
         num_mismatches = 0
-        for b1, b2 in izip( seq1, seq2 ):
+        for b1, b2 in izip( seq1.upper(), seq2.upper() ):
             if b1 != b2: num_mismatches += 1
             if num_mismatches > MAX_NUM_MISMATCHES:
                 return False
@@ -109,8 +109,20 @@ def identical_seq_exists( jn, donor_seq_mapping ):
     key = ( jn.chrm, jn.strand, donor )
     seqs = [ seq for a, seq in donor_seq_mapping[key] if acceptor == a ]
     assert len( seqs ) == 1
-    seq = seqs[0]
+    seq = seqs[0].upper()
     
+    # first make sure that this doesnt match the sequence right after the donor
+    if jn.strand == '+':
+        start, stop = donor, donor+NUM_JN_BASES
+    else:
+        start, stop = donor-NUM_JN_BASES, donor
+    read_through_seq = fasta.fetch( jn.chrm, start, stop ).upper()
+    if read_through_seq == "":
+        read_through_seq = fasta.fetch( 'chr' + jn.chrm, start, stop ).upper()
+    if seq_matches( read_through_seq, seq ):
+        return True
+    
+    # now, check all of the other junctions
     for other_acceptor, other_seq in donor_seq_mapping[key]:
         # if this seqeunce corresponds to jn, obviously it's a perfect match
         if acceptor == other_acceptor: continue
@@ -199,7 +211,7 @@ def main():
                 gene_merges[ tuple(genes) ][0] += 1
                 if write_bad_gm_jns:
                     print jn.build_gff_line() + gene_merge_line + FAILS_MULTI_MAPPER_UNIQ
-            elif identical_seq_exists( jn, donor_seq_mapping ):
+            elif identical_seq_exists( jn, donor_seq_mapping, fasta ):
                 gene_merges[ tuple(genes) ][1] += 1
                 if write_bad_gm_jns:
                     print jn.build_gff_line() + gene_merge_line + FAILS_SEQ_UNIQ
