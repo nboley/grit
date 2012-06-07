@@ -59,7 +59,9 @@ def parse_arguments():
 
     parser.add_argument('genome-sequence', type=file, 
                         help="A FASTA file containing the genomw sequence.")
-    
+
+    parser.add_argument('--external-gene-merge-list', type=file, 
+                        help="A tab seperated list of gene merges and their classifications.")    
     parser.add_argument( '--write-good-gene-merge-jns', 
                          default=False, action='store_true',
                          help='Write out gene merge jns that pass the filter.')
@@ -78,7 +80,8 @@ def parse_arguments():
         
     return getattr(args, 'jns-gff'), getattr(args, 'ref-gtf'), getattr(args, 'genome-sequence'), \
         args.write_good_gene_merge_jns, args.write_bad_gene_merge_jns, \
-        args.write_non_gene_merge_jns, args.gene_merges_summary_fname
+        args.write_non_gene_merge_jns, \
+        args.gene_merges_summary_fname, args.external_gene_merge_list
 
 def find_sequence( jn, fasta ):
     if jn.strand == '+':
@@ -115,15 +118,32 @@ def identical_seq_exists( jn, donor_seq_mapping ):
             return True
     
     return False
+
+def parse_external_gene_merge_list( fp ):
+    genes = {}
+    for line in fp:
+        data = line.split()
+        if len( data ) == 0: continue
+        gene_1 = data[0]
+        gene_2 = data[1]
+        classification = " ".join( data[2:] )
+        assert tuple(sorted( (gene_1, gene_2) ) ) not in genes
+        genes[tuple(sorted((gene_1, gene_2)))] = classification
+    
+    return genes
     
 def main():
     jns_fp, ref_fp, fasta_fp, \
         write_good_gm_jns, write_bad_gm_jns, write_non_gm_jns, \
-        gene_merges_summary_fname = parse_arguments()
+        gene_merges_summary_fname, external_gene_merge_fp = parse_arguments()
     
     jns = parse_jn_gff( jns_fp )
     ref_genes = load_gtf( ref_fp.name )
     fasta = pysam.Fastafile( fasta_fp.name )
+    if external_gene_merge_fp != None:
+        ext_gml = parse_external_gene_merge_list( external_gene_merge_fp )
+    else: 
+        ext_gml = {}
     
     gene_bndrys = defaultdict( list )
     bndry_to_gene_mapping = {}
@@ -202,10 +222,11 @@ def main():
         gene_merge_of = open( gene_merges_summary_fname, "w" )
         print >> gene_merge_of, "\t".join(
             ("Gene1".ljust(30), "Gene2".ljust(30), 
-             "F_MM_U", "F_SEQ_U", "F_SIG", "PASS", "STATUS"))
+             "F_MM_U", "F_SEQ_U", "F_SIG", "PASS", "STATUS", "EXTERNAL_CLASSIFICATION"))
                                             
         for key in sorted( gene_merges ):
             args = list( key )
+            gene_mg_key = tuple(sorted((args[0].strip(), args[1].strip())))
             args[0] = args[0].ljust(30)
             args[1] = args[1].ljust(30)
             args.extend( gene_merges[key] )
@@ -213,7 +234,11 @@ def main():
                 args.append( "GOOD" )
             else:
                 args.append( "BAD" )
-
+            if gene_mg_key in ext_gml:
+                args.append( ext_gml[gene_mg_key] )
+            else:
+                args.append( "UNKNOWN" )
+            
             print >> gene_merge_of, "\t".join( map( str, args ) )
         
         gene_merge_of.close()
