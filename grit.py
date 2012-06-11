@@ -100,6 +100,8 @@ RnaSeqDataTypes = [ "rnaseq_polyaplus_bam",
                     "rnaseq_polyaplus_rev_bam",
                     "rnaseq_polyaplus_unstranded_bam",
                     "rnaseq_cov_bedgraph",
+                    "rnaseq_cov_pair1_bedgraph",
+                    "rnaseq_cov_pair2_bedgraph",
                     "rnaseq_total_bam",
                     "filtered_jns_gff",
                     "jns_gff", 
@@ -750,14 +752,13 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
         cmd += "--mapped-reads-fname {0} ".format( bam_fname )
         if rev_strand:
             cmd += "--reverse-read-strand ".format( bam_fname )
-
-        
+        # cmd += "--merge-read-ends"
         
         dependencies.extend( ( bam_fname, ) )
         output_fnames = []
-        for strand in ( 'plus', 'minus' ):
+        for extension in ('rd1.plus', 'rd1.minus', 'rd2.plus', 'rd2.minus'):
             output_fnames.append( os.path.join( \
-                    derived_output_dir, basename + ".%s.bedGraph" % strand ) )
+                    derived_output_dir, basename + ".%s.bedGraph" % extension ))
         
         return cmd, output_fnames, dependencies
     
@@ -778,12 +779,22 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
 
             cov_wig_fnames[ sample.sample_type ].extend( output_fnames )
 
-            et1 = ElementType( \
-               "rnaseq_cov_bedgraph", sample.sample_type, sample.sample_id, "+")
-            et2 = ElementType( \
-               "rnaseq_cov_bedgraph", sample.sample_type, sample.sample_id, "-")
+            et1 = ElementType( 
+                "rnaseq_cov_pair1_bedgraph", 
+                sample.sample_type, sample.sample_id, "+")
+            et2 = ElementType( 
+                "rnaseq_cov_pair1_bedgraph", 
+                sample.sample_type, sample.sample_id, "-")
+            et3 = ElementType( 
+                "rnaseq_cov_pair2_bedgraph", 
+                sample.sample_type, sample.sample_id, "+")
+            et4 = ElementType( 
+                "rnaseq_cov_pair2_bedgraph", 
+                sample.sample_type, sample.sample_id, "-")
 
-            cmd = Cmd( cmd_str, [et1, et2], output_fnames, dependencies )
+            cmd = Cmd( cmd_str, [et1, et2, et3, et4], 
+                       output_fnames, dependencies )
+            
             process_server.add_process( cmd, Resource(1) )
 
     # first get all of the read bams
@@ -1619,18 +1630,14 @@ def main():
         elements = Elements( fp )
     
     pserver = ProcessServer( elements, Resource( num_threads )  )
+
+    build_all_cov_wiggles( elements, pserver, base_dir + "read_cov_bedgraphs" )
     
     extract_all_junctions( elements, pserver, base_dir + "junctions/" )
     build_high_quality_junctions( elements, pserver, base_dir + "junctions/" )
     intersect_all_junctions( elements, pserver, base_dir + "junctions/" )
     merge_sample_type_junctions( elements, pserver, base_dir + "junctions/" )
-    
-    pserver.process_queue()    
-
-    return
-    
-    build_all_cov_wiggles( elements, pserver, base_dir + "read_cov_bedgraphs" )
-    
+        
     build_all_exon_files( elements, pserver, base_dir + "exons" )
     
     # estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
@@ -1641,7 +1648,7 @@ def main():
 
     # sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
 
-    call_orfs( elements, pserver, base_dir + "transcripts" )
+    # call_orfs( elements, pserver, base_dir + "transcripts" )
     
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
 

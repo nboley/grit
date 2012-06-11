@@ -13,10 +13,23 @@ def clean_chr_name( chrm ):
         chrm = "M"
     return chrm
 
-def populate_wiggle( reads, wiggle, reverse_read_strand=False ):
+def populate_wiggle( reads, rd1_wig, rd2_wig, reverse_read_strand=False ):
     """Get all of the junctions represented in a reads object
     """
     for read in reads.fetch():
+        # skip reads that aren't mapped in pair
+        if not read.is_proper_pair:
+            continue
+
+        # find which wiggle to write the read to
+        if rd2_wig == None:
+            wiggle = rd1_wig
+        else:
+            if read.is_read1 or ( read.is_read2 and reverse_read_strand ):
+                wiggle = rd1_wig
+            else:
+                wiggle = rd2_wig
+        
         # make sure that the read is on the correct strand
         if ( read.is_read1 and not read.is_reverse ) \
                 or ( read.is_read2 and read.is_reverse ):
@@ -29,6 +42,7 @@ def populate_wiggle( reads, wiggle, reverse_read_strand=False ):
                 strand = '-'
             else:
                 strand = '+'
+            
         
         # get the chromosome, correcting for alternate chrm names
         chrm = reads.getrname( read.tid )
@@ -77,12 +91,17 @@ def parse_arguments():
         help='BAM or SAM file containing the mapped reads.')
     parser.add_argument( '--chrm-sizes', '-c', required=True, type=file, \
         help='File with chromosome names and sizes.')
+    
     parser.add_argument( '--reverse-read-strand', '-r', default=False, \
                              action='store_true', \
         help='Whether or not to reverse the strand of the read.')
+    parser.add_argument( '--merge-read-ends', '-m', default=False, \
+                             action='store_true', \
+        help='Whether or not to merge pair1 and pair2 reads for paired reads.')
+    
     parser.add_argument( '--out-fname-prefix', '-o', required=True,\
         help='Output files will be named outprefix.(plus,minus).bedGraph')
-    parser.add_argument( '--verbose', '-v', default=False, action='store_true', \
+    parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
         help='Whether or not to print status information.')
     args = parser.parse_args()
     
@@ -90,21 +109,34 @@ def parse_arguments():
     VERBOSE = args.verbose
     
     return args.mapped_reads_fname, args.chrm_sizes, args.out_fname_prefix, \
-        args.reverse_read_strand
+        args.reverse_read_strand, args.merge_read_ends
 
 def main():
-    reads_fname, chrm_sizes, op_prefix, reverse_read_strand = parse_arguments()
+    reads_fname, chrm_sizes, op_prefix, reverse_read_strand, merge_read_ends \
+        = parse_arguments()
     
     # open the reads object
     reads = pysam.Samfile( reads_fname, "rb" )
     # build a new wiggle object to put the reads in
-    wiggle = Wiggle( chrm_sizes )
+    rd1_wig = Wiggle( chrm_sizes )
+    rd2_wig = Wiggle( chrm_sizes ) if not merge_read_ends else None
+    
     # populate the wiggle from the bam file
-    populate_wiggle( reads, wiggle, reverse_read_strand )
+    populate_wiggle( reads, rd1_wig, rd2_wig, reverse_read_strand )
+    
     # write the wiggle to disk
-    wiggle.write_wiggles( "{0}.{1}.bedGraph".format( op_prefix, "plus"), \
-                          "{0}.{1}.bedGraph".format( op_prefix, "minus"),
-                          ignore_zeros=True)
+    if merge_read_ends:
+        rd1_wig.write_wiggles( "{0}.{1}.bedGraph".format( op_prefix, "plus"),
+                               "{0}.{1}.bedGraph".format( op_prefix, "minus"),
+                              ignore_zeros=True)
+    else:
+        rd1_wig.write_wiggles( "{0}.{1}.{2}.bedGraph".format( op_prefix, "rd1", "plus"),
+                               "{0}.{1}.{2}.bedGraph".format( op_prefix, "rd1", "minus"),
+                              ignore_zeros=True)
+        rd2_wig.write_wiggles( "{0}.{1}.{2}.bedGraph".format( op_prefix, "rd2", "plus"),
+                               "{0}.{1}.{2}.bedGraph".format( op_prefix, "rd2", "minus"),
+                              ignore_zeros=True)
+    
     return
 
 if __name__ == "__main__":

@@ -611,7 +611,6 @@ def check_exon_for_gene_merge( strand, start, stop, \
     # add one to guard against divide zero, and remove low read cov
     min_cov = window_covs[ min_index ] + 1            
     
-        
     # if this does not look like a gene merge exon...
     if left_cov/min_cov < EXON_SPLIT_RATIO \
             or right_cov/min_cov < EXON_SPLIT_RATIO:

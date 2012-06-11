@@ -222,7 +222,8 @@ def main():
         gene_merge_of = open( gene_merges_summary_fname, "w" )
         print >> gene_merge_of, "\t".join(
             ("Gene1".ljust(30), "Gene2".ljust(30), 
-             "F_MM_U", "F_SEQ_U", "F_SIG", "PASS", "STATUS", "EXTERNAL_CLASSIFICATION"))
+             "F_MM_U", "F_SEQ_U", "F_SIG", "PASS", 
+             "STATUS", "EXTERNAL_CLASSIFICATION"))
                                             
         for key in sorted( gene_merges ):
             args = list( key )
