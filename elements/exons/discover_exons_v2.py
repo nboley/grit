@@ -1,11 +1,12 @@
 import sys, os
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 from itertools import izip
 import numpy
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../", 'file_types'))
 from wiggle import Wiggle
 from junctions_file import parse_junctions_file_dont_freeze
+from build_genelets import cluster_exons
 
 # length of contiguous space to define as an empty region
 EMPTY_REGION_SPLIT_SIZE = 80
@@ -229,39 +230,12 @@ def refine_se_gene_labels( labels, bndrys, read1_cov, read2_cov, cage_cov ):
     
     return new_labels
 
-def find_genes_in_contig( strand, 
-                          merged_read_cov, zero_intervals, jns,
-                          read1_cov, read2_cov, 
-                          all_cage_cov, polya_cov ):
-    # segment the genome
-    labels, bndrys = find_initial_boundaries_and_labels( 
-        merged_read_cov, zero_intervals, jns )
-    
-    if strand == '-':
-        bndrys = [ len(merged_read_cov)-bndry for bndry in reversed(bndrys)]
-        labels = labels[::-1]
-        merged_read_cov = merged_read_cov[::-1]
-        read1_cov = read1_cov[::-1]
-        read2_cov = read2_cov[::-1]
-        all_cage_cov = all_cage_cov[::-1]
-    
-    #labels = refine_se_gene_labels( 
-    #    labels, bndrys, read1_cov, read2_cov, all_cage_cov )
-    
-    # find gene split exons
-    for label, (left_bndry, right_bndry) in izip( 
-            labels[:-1], izip(bndrys[:-1], bndrys[1:]) ):
-        #if label != 'Exon': continue
-        if strand != '+': continue
-        
-        if right_bndry - left_bndry < 2*BIN_BOUNDRY_SIZE + EXON_SPLIT_SIZE + 10:
-            continue
-        
-        PLT_OFF = 0
-        cov_1 = read1_cov[ left_bndry-PLT_OFF:right_bndry-1+PLT_OFF ]
-        cov_2 = read2_cov[ left_bndry-PLT_OFF:right_bndry-1+PLT_OFF ]
-        cage_cov = all_cage_cov[left_bndry-PLT_OFF:right_bndry-1+PLT_OFF]
-        merged_cov = merged_read_cov[ left_bndry-PLT_OFF:right_bndry-1+PLT_OFF ]
+def split_gene_merge_exons( labels, bndrys, merged_read_cov, 
+                           read1_cov, read2_cov, all_cage_cov ):
+    def check_gene_merge( region_start, merged_cov, cov_1, cov_2, cage_cov ):
+        if len(cov_1) < 2*BIN_BOUNDRY_SIZE + EXON_SPLIT_SIZE + 1:
+            return [ region_start, ], [ 'Exon', ]
+
         merged_cov_cumsum = merged_cov.cumsum()
         
         window_covs = merged_cov_cumsum[EXON_SPLIT_SIZE:] \
@@ -272,12 +246,8 @@ def find_genes_in_contig( strand,
         right_bndry = len(merged_cov)-BIN_BOUNDRY_SIZE
         global_min_cov = window_covs[BIN_BOUNDRY_SIZE:-BIN_BOUNDRY_SIZE].min()+1
         
-        print strand, label, ( left_bndry, right_bndry ), \
-            left_cov, global_min_cov, right_cov
-        
         if right_bndry - left_bndry < 1:
-            continue
-            #return [ start, ], [ 'Exon', ]
+            return [ region_start, ], [ 'Exon', ]
 
         min_index = numpy.argmin( \
             window_covs[left_bndry:right_bndry+1] ) + left_bndry
@@ -287,14 +257,14 @@ def find_genes_in_contig( strand,
         # if this does not look like a gene merge exon...
         if left_cov/min_cov < EXON_SPLIT_RATIO \
                 or right_cov/min_cov < EXON_SPLIT_RATIO:
-            continue
-
+            return [ region_start, ], [ 'Exon', ]
+        
         # find the cage peak
         peaks = find_peaks( cage_cov, 10, 100, 1.0 )
         if len( peaks ) == 0:
-            continue
+            return [ region_start, ], [ 'Exon', ]
         
-        print peaks
+        peak = peaks[0]
         
         """
         bndry_size = 100
@@ -311,18 +281,311 @@ def find_genes_in_contig( strand,
         #print (cov_1 + cov_2)
         #print numpy.log(((cov_2+1)/(cov_1+1)))
 
+        """
         import matplotlib.pyplot as plt
         plt.plot( range(len(cage_cov)), cage_cov, label="Cage Cov" )
         plt.plot( range(len(cov_1)), cov_1, label="Read 1 Cov" )
         plt.plot( range(len(cov_2)), cov_2, label="Read 2 Cov" )
-        plt.axvline( PLT_OFF, color='b' )
-        plt.axvline( len(cov_1)-PLT_OFF, color='b' )
         plt.legend()
         plt.show()
-
-        #raw_input()
+        """
         
-    pass
+        return [region_start, region_start+peak[0]-10, region_start+peak[0] ], \
+            ['exon_extension', 'empty', 'exon_extension']
+            
+    
+    new_labels = []
+    new_bndrys = []
+
+    for label, (left_bndry, right_bndry) in izip( 
+            labels[:-1], izip(bndrys[:-1], bndrys[1:]) ):
+        if label != 'Exon': 
+            new_labels.append( label )
+            new_bndrys.append( left_bndry )
+            continue
+        
+        cov_1 = read1_cov[ left_bndry:right_bndry-1 ]
+        cov_2 = read2_cov[ left_bndry:right_bndry-1 ]
+        cage_cov = all_cage_cov[left_bndry:right_bndry-1]
+        merged_cov = merged_read_cov[ left_bndry:right_bndry-1 ]
+
+        gs_bndrys, gs_labels = check_gene_merge( 
+            left_bndry, merged_cov, cov_1, cov_2, cage_cov  )
+        
+        new_bndrys.extend( gs_bndrys )
+        new_labels.extend( gs_labels )
+    
+    new_labels.append( labels[-1] )
+    new_bndrys.append( bndrys[-1] )
+    
+    return new_labels, new_bndrys
+    
+def refine_retained_introns( labels, bndrys, merged_read_cov ):
+    new_labels = []
+    for label, (left_bndry, right_bndry) in izip( 
+            labels[:-1], izip(bndrys[:-1], bndrys[1:]) ):
+        if label != 'Intron':
+            new_labels.append( label )
+            continue
+        
+        new_labels.append( 'Intron' )
+    
+    return new_labels
+
+
+def find_genes_in_contig( strand, 
+                          merged_read_cov, zero_intervals,
+                          jns_w_cnts,
+                          read1_cov, read2_cov, 
+                          all_cage_cov, polya_cov ):
+    contig_stop = len( merged_read_cov )
+    
+    # segment the genome
+    labels, bndrys = find_initial_boundaries_and_labels( 
+        merged_read_cov, zero_intervals, jns_w_cnts.keys() )
+    
+    if strand == '-':
+        return []
+        bndrys = [ len(merged_read_cov)-bndry for bndry in reversed(bndrys)]
+        labels = labels[::-1]
+        merged_read_cov = merged_read_cov[::-1]
+        read1_cov = read1_cov[::-1]
+        read2_cov = read2_cov[::-1]
+        all_cage_cov = all_cage_cov[::-1]
+        
+    labels = refine_se_gene_labels( 
+        labels, bndrys, read1_cov, read2_cov, all_cage_cov )
+    
+    labels, bndrys = split_gene_merge_exons( 
+        labels, bndrys, merged_read_cov, read1_cov, read2_cov, all_cage_cov )
+       
+    labels = refine_retained_introns( labels, bndrys, merged_read_cov )
+    
+    clustered_labels, clustered_bndrys = cluster_labels_and_bndrys( 
+        labels, bndrys, jns_w_cnts, contig_stop )
+    
+    return zip( clustered_labels, clustered_bndrys )
+
+###############################################################################
+#
+#
+#  Post initial labelling
+#
+#
+
+
+def get_possible_exon_bndrys( labels, boundaries, chrm_stop ):
+    """Get all of the possible exon boundaries corresponding to contiguous 'Ee's
+    Invalid exons (starting with intron_start or ending with intron_stop) are 
+    removed later.
+    """
+    # get all labels that are either 'Ee'
+    exon_indices = []
+    for index, label in enumerate( labels ):
+        if label in ('TSS', 'TES', 'T_S', 'Exon', 'exon_extension'):
+            exon_indices.append( index )
+    
+    if len( exon_indices ) == 0:
+        return []
+    
+    # find and group contiguous 'Ee' regions
+    exon_grps = [ [exon_indices[0],], ]
+    for index in exon_indices[1:]:
+        if index - exon_grps[-1][-1] == 1:
+            exon_grps[-1].append( index )
+        else:
+            exon_grps.append( [ index,] )
+    
+    bndrys = []
+    for exon_grp in exon_grps:
+        # look at all combinations of E or e's in a row
+        for start_i, start_exon in enumerate(exon_grp):
+            for stop_i, stop_exon in enumerate(exon_grp[start_i:]):
+                stop_i += start_i
+                # skip grps that contain zero 'E''s
+                if not any( labels[index] in ('Exon', 'TSS', 'T_S', 'TES') \
+                                for index in exon_grp[start_i:stop_i+1] ):
+                    continue
+                # if this is the last region goes to the end of the chrm then
+                # the last exon goes up to the end of the chromosome
+                if stop_exon+1 == len(boundaries):
+                    bndrys.append( ( boundaries[start_exon], chrm_stop ) )
+                else:
+                    bndrys.append( ( boundaries[start_exon], \
+                                         boundaries[stop_exon+1]-1 ) )
+    
+    return bndrys
+
+def build_genelets( labels, bndrys, jns_dict, chrm_stop ):
+    # first build a mapping of label indices to other label indices.
+    # a label connects to another label if:
+    #  1) label_bndry_start - 1 is the stop of another intron
+    #  2) label_bndry_stop is an intron start
+    #  3) the next or previous label is an 'exon' or 'exon_extension'
+    #
+    # So, first make these mappings
+    #
+    
+    intron_starts_to_stops = defaultdict(list)
+    intron_stops_to_starts = defaultdict(list)
+    for start, stop in jns_dict.keys():
+        intron_starts_to_stops[start].append( stop )
+        intron_stops_to_starts[stop].append( start )
+
+    label_start_to_index = dict( (x, i) for i, x in enumerate(bndrys) )
+    label_stop_to_index = dict( (x-1, i) for i, x in enumerate(bndrys[1:]) )
+    label_stop_to_index[ chrm_stop ] = len( bndrys )
+
+    # next, loop through each label
+    # if it is an exon or exon extension, then find the places that it connects
+    # to. And follow those. 
+    def find_connected_region_indices( label_index ):
+        connected_indices = []
+        
+        # find the region indices spliced to this
+        region_start = bndrys[ label_index ]        
+        intron_starts = intron_stops_to_starts[region_start-1]
+        #print region_start, intron_starts, \
+        #    [x in bndrys for x in intron_starts]
+        tmp_conn_indices = [ label_stop_to_index[x-1] 
+                             for x in intron_starts 
+                             if x-1 in label_stop_to_index ]
+        assert all( labels[i] != 'empty' for i in tmp_conn_indices )
+        connected_indices.extend( tmp_conn_indices )
+        region_stop = bndrys[ label_index+1 ] \
+            if label_index+1 < len(bndrys) else chrm_stop
+        
+        # find the region indices spliced from this
+        spliced_region_starts = intron_starts_to_stops[region_stop]
+        tmp_conn_indices = [ label_start_to_index[x+1] 
+                             for x in spliced_region_starts ]
+        assert all( labels[i] != 'empty' for i in tmp_conn_indices )
+        connected_indices.extend( tmp_conn_indices )
+        
+        if label_index+1 < len(labels) \
+                and labels[label_index+1] in ('exon_extension', 'Exon' ):
+            connected_indices.append( label_index+1 )
+        if label_index > 0 \
+                and labels[label_index-1] in ('exon_extension', 'Exon' ):
+            connected_indices.append( label_index-1 )
+        
+        return connected_indices
+    
+    def find_all_connected_region_indices( start_index ):
+        observed_indices = set((start_index,))
+        new_indices = [start_index,]
+        while len( new_indices ) > 0:
+            index = new_indices.pop()
+            connected_indices = find_connected_region_indices( index )
+            new_indices.extend( i for i in connected_indices 
+                                if i not in observed_indices  )
+            observed_indices.update( connected_indices )
+    
+        return observed_indices
+    
+    unobserved_label_indices = set()
+    for i, label in enumerate(labels):
+        if label in ('empty', 'Intron'): continue
+        unobserved_label_indices.add( i ) 
+    
+    clustered_indices = []
+    while len( unobserved_label_indices ) > 0:
+        start_index = unobserved_label_indices.pop()
+        print "START INDEX:", start_index, labels[start_index]
+        
+        tmp_conn_indices = find_all_connected_region_indices(start_index)
+        
+        # skip single exon genes
+        if len(tmp_conn_indices ) == 1: 
+            continue
+        
+        clustered_indices.append( tmp_conn_indices )
+        
+        assert len( clustered_indices[-1] ) == len(set(clustered_indices[-1]))
+        for index in clustered_indices[-1]:
+            print index, bndrys[index], labels[index]
+            if index != start_index:
+                assert index in unobserved_label_indices
+                unobserved_label_indices.remove( index )
+        
+    for cluster in clustered_indices:
+        print cluster
+    
+    assert False
+"""
+def build_genelets( labels, bndrys, jns_dict, chrm_stop ):
+    # get exon boundaries from assigned labels and boundaries
+    exon_bndrys = get_possible_exon_bndrys( \
+        labels, bndrys, chrm_stop )
+    
+    jns_wo_cnts = jns_dict.keys()
+    
+    # filter out any exon that start with a junction start or 
+    # stops at an junction stop
+    filtered_exon_bndrys = filter_exon_bndrys( \
+        exon_bndrys, jns_wo_cnts )
+    filtered_exon_bndrys = exon_bndrys
+    
+    bndries_array = numpy.array( bndrys )
+    exons = numpy.array( filtered_exon_bndrys )
+    clusters = cluster_exons( exons, jns_wo_cnts )
+    
+    clustered_labels = []
+    clustered_bndrys = []
+    for cluster in clusters:
+        print cluster
+        raw_input()
+        
+        cluster_bndry_indices = set()
+        for exon in cluster:
+            start_index, stop_index = find_bndry_indices( bndries_array, exon )
+            cluster_bndry_indices.update( xrange( start_index, stop_index+1 ) )
+        
+        cluster_bndry_indices = sorted( cluster_bndry_indices )
+        
+        cluster_bndrys, cluster_labels = build_cluster_labels_and_bndrys( 
+            cluster_bndry_indices, bndries_array, labels, chrm_stop )
+        
+        clustered_labels.append( cluster_labels )
+        clustered_bndrys.append( cluster_bndrys )
+    
+    return clustered_labels, clustered_bndrys
+"""
+
+def cluster_labels_and_bndrys( labels, bndrys, jns_w_cnts, chrm_stop ):
+    jns_dict = dict( jns_w_cnts )
+    
+    grpd_clusters = [ ( labels, bndrys), ]
+    final_cl_labels, final_cl_bndrys = [], []
+    while len( grpd_clusters ) > 0:
+        labels, bndrys = grpd_clusters.pop()
+                
+        clustered_labels, clustered_bndrys = build_genelets( \
+            labels, bndrys, jns_dict, chrm_stop )
+        
+        # if we didn't re cluster these, then we are done
+        assert len( clustered_labels ) == len( clustered_bndrys )
+        if len( clustered_labels ) == 1: 
+            """
+            jns_to_remove = find_min_cnt_jns( \
+                clustered_bndrys[0], clustered_labels[0], jns_dict )
+            if jns_to_remove != None:
+                for jn in jns_to_remove:
+                    del jns_dict[ jn ]
+                
+                grpd_clusters.append((clustered_labels[0], clustered_bndrys[0]))
+            else:
+                assert clustered_labels[0][0] == 'L' \
+                    and clustered_labels[0][-1] == 'L'
+            """
+            
+            final_cl_labels.append( clustered_labels[0] )
+            final_cl_bndrys.append( clustered_bndrys[0] )
+        else:
+            grpd_clusters.extend( zip(*(clustered_labels, clustered_bndrys)) )
+    
+    return final_cl_labels, final_cl_bndrys
+
 
 def parse_arguments():
     import argparse
@@ -398,10 +661,21 @@ def main():
     merged_read_cov.calc_zero_intervals()
     
     for key in merged_read_cov:
-        find_genes_in_contig( key[1],
-            merged_read_cov[key], merged_read_cov.zero_intervals[key], jns[key],
+        introns = jns[key]
+        scores = jns._scores[key]
+        jns_and_scores = dict(izip( introns, scores ))
+
+
+        clusters = find_genes_in_contig( key[1], 
+            merged_read_cov[key], merged_read_cov.zero_intervals[key], 
+            jns_and_scores,
             rd1_cov[key], rd2_cov[key],
             cage_cov[key], None )
+        
+        print clusters
+        
+        for cluster in clusters:
+            print cluster
         
     return
 
