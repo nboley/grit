@@ -885,37 +885,6 @@ def build_cluster_labels_and_bndrys(cluster_indices, bndrys, labels, chrm_stop):
     
     return new_bndrys, new_labels
 
-def find_min_cnt_jns( bndrys, labels, jns_dict ):
-    # build a list of possible introns
-    intron_starts = []
-    intron_stops = []
-    for bndry, label in izip(  bndrys[1:-1], labels[1:-1] ):
-        intron_starts.append( bndry )
-        intron_stops.append( bndry-1 )
-
-    introns = [ (start, stop) for start, stop 
-                in product( intron_starts, intron_stops )
-                if start <= stop and ( start, stop ) in jns_dict ]
-
-    cnts_w_introns = dict( (jns_dict[jn], jn) for jn in introns )
-    if len( cnts_w_introns ) == 0:
-        return None
-
-    max_intron_val = max( cnts_w_introns )
-    # min_intron_val = min( cnts_w_introns )
-
-    jns_to_remove = []
-    for val, jn in cnts_w_introns.iteritems():
-        if float(val)/max_intron_val < MIN_INTRON_CVG_FRAC:
-            jns_to_remove.append( jn )
-    
-    if len( jns_to_remove ) > 0:
-        return jns_to_remove
-    else:
-        return None
-    
-    assert False
-
 def build_genelets( labels, bndrys, jns_dict, chrm_stop ):
     # get exon boundaries from assigned labels and boundaries
     exon_bndrys = get_possible_exon_bndrys( \
@@ -964,20 +933,7 @@ def cluster_labels_and_bndrys( labels, bndrys, jns_w_cnts, chrm_stop ):
         
         # if we didn't re cluster these, then we are done
         assert len( clustered_labels ) == len( clustered_bndrys )
-        if len( clustered_labels ) == 1: 
-            """
-            jns_to_remove = find_min_cnt_jns( \
-                clustered_bndrys[0], clustered_labels[0], jns_dict )
-            if jns_to_remove != None:
-                for jn in jns_to_remove:
-                    del jns_dict[ jn ]
-                
-                grpd_clusters.append((clustered_labels[0], clustered_bndrys[0]))
-            else:
-                assert clustered_labels[0][0] == 'L' \
-                    and clustered_labels[0][-1] == 'L'
-            """
-            
+        if len( clustered_labels ) == 1:             
             final_cl_labels.append( clustered_labels[0] )
             final_cl_bndrys.append( clustered_bndrys[0] )
         else:
@@ -1387,36 +1343,31 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
     
     return all_seg_exons, all_tss_exons, all_internal_exons, \
            all_tes_exons, all_exons
-    
+
 def parse_arguments():
     import argparse
 
     parser = argparse.ArgumentParser(\
         description='Find exons from wiggle and junctions files.')
-    parser.add_argument( 'plus_wig', type=file, \
-        help='wig file over which to search for exons on the plus strand.')
-    parser.add_argument( 'minus_wig', type=file, \
-        help='wig file over which to search for exons on the minus strand.')
+
     parser.add_argument( 'junctions', type=file, \
         help='GTF format file of junctions(introns).')
     parser.add_argument( 'chrm_sizes_fname', type=file, \
         help='File with chromosome names and sizes.')
 
+    parser.add_argument( 'wigs', type=file, nargs="+", \
+        help='wig files over which to search for exons.')
+    
     parser.add_argument( '--cage-wigs', type=file, nargs='+', \
         help='wig files with cage reads, to identify tss exons.')
     parser.add_argument( '--polya-reads-gffs', type=file, nargs='+', \
         help='files with polya reads, to identify tes exons.')
-
     
     parser.add_argument( '--out-file-prefix', '-o', default="discovered_exons",\
         help='Output file name. (default: discovered_exons)')
-    parser.add_argument( '--labels-fname', '-l', type=file,\
-        help='Output file name for the region labels.')
+    
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
         help='Whether or not to print status information.')
-    parser.add_argument( '--make-debug-beds', '-d', default=False, \
-                             action='store_true', \
-        help="Produce bed files which show the intermediate label stages.")
 
     args = parser.parse_args()
     
@@ -1427,53 +1378,48 @@ def parse_arguments():
     for field_name in OutFPS._fields:
         fps.append(open("%s.%s.gff" % (args.out_file_prefix, field_name), "w"))
     ofps = OutFPS( *fps )
-    
-    # open debug filepointers if we chose that
-    debug_fps = None
-    if args.make_debug_beds:
-        raise NotImplemented, "DEBUG output hasn't been implemented."
-        debug_fps = { "+": [], "-": [] }
-        for strand in "+-":
-            strand_str = "plus" if strand == "+" else "minus"
-            for loop in xrange( 1, 5 ):
-                fname = args.out_fname + \
-                    ".debug.{0}.stage{1}.bed".format(  strand_str, str( loop ))
-                debug_fps[strand].append( open( fname, "w" ) )
-    
+        
     # set flag args
     global VERBOSE
     VERBOSE = args.verbose
     
-    return (args.plus_wig, args.minus_wig), args.junctions, \
-        args.chrm_sizes_fname, args.cage_wigs, args.polya_reads_gffs, \
-       ofps, debug_fps, args.labels_fname
-
+    rd1_plus_wigs = [ fp for fp in args.wigs 
+                      if fp.name.endswith("rd1.plus.bedGraph") ]
+    rd1_minus_wigs = [ fp for fp in args.wigs 
+                      if fp.name.endswith("rd1.minus.bedGraph") ]
+    rd2_plus_wigs = [ fp for fp in args.wigs 
+                      if fp.name.endswith("rd2.plus.bedGraph") ]
+    rd2_minus_wigs = [ fp for fp in args.wigs 
+                      if fp.name.endswith("rd2.minus.bedGraph") ]
+    
+    grpd_wigs = [ rd1_plus_wigs, rd1_minus_wigs, rd2_plus_wigs, rd2_minus_wigs ]
+    
+    return grpd_wigs, args.junctions, args.chrm_sizes_fname, \
+        args.cage_wigs, args.polya_reads_gffs, ofps
 
 def main():
-    (plus_wig_fp, minus_wig_fp), \
-        jns_fp, chrm_sizes_fp,   \
-        cage_wig_fps, tes_reads_fps, \
-        out_fps, debug_fps, labels_fp = parse_arguments()
+    wigs, jns_fp, chrm_sizes_fp, cage_wigs, tes_reads_fps, out_fps \
+        = parse_arguments()
     
-    # TUNING PARAMS
-    empty_region_split_size = EMPTY_REGION_SPLIT_SIZE
+    rd1_cov = Wiggle( 
+        chrm_sizes_fp, [wigs[0][0], wigs[1][0]], ['+','-'] )
+    rd2_cov = Wiggle( 
+        chrm_sizes_fp, [wigs[2][0], wigs[3][0]], ['+','-'] )
     
-    if VERBOSE: print >> sys.stderr, 'Loading read coverage data.'
-    read_cov = Wiggle( chrm_sizes_fp, \
-                                [plus_wig_fp, minus_wig_fp], ['+','-'] )
-    
-    if VERBOSE: print >> sys.stderr, 'Calculating zero intervals.'
-    read_cov.calc_zero_intervals( empty_region_split_size )
-    plus_wig_fp.close()
-    minus_wig_fp.close()
+    read_cov = Wiggle(
+        chrm_sizes_fp,
+        [ wigs[0][0], wigs[1][0], wigs[2][0], wigs[3][0] ],
+        ['+', '-', '+', '-']
+    )
+    read_cov.calc_zero_intervals()
     read_cov_sum = sum( array.sum() for array in read_cov.itervalues() )
     
     # open the cage data
-    cage_cov = Wiggle( chrm_sizes_fp, cage_wig_fps )
+    cage_cov = Wiggle( chrm_sizes_fp, cage_wigs )
     cage_sum = sum( cage_cov.apply( lambda a: a.sum() ).values() )
     global CAGE_TOT_FRAC
     CAGE_TOT_FRAC = (float(cage_sum)/read_cov_sum)*(1e-3)    
-    for cage_fp in cage_wig_fps: cage_fp.close()
+    for cage_fp in cage_wigs: cage_fp.close()
     
     # open the polya data
     polya_cov = build_coverage_wig_from_polya_reads( \
@@ -1492,7 +1438,7 @@ def main():
         out_fp.write( "track name=%s\n" % track_name )
 
     all_regions_iters = [ [], [], [], [], [] ]
-    
+
     keys = sorted( set( jns ) )
     for chrm, strand in keys:        
         read_cov_obj = ReadCoverageData( \
@@ -1517,53 +1463,8 @@ def main():
     
     for regions_iter, ofp in zip( all_regions_iters, out_fps ):
         ofp.write( "\n".join(iter_gff_lines( sorted(regions_iter) )) + "\n")
-    
-    if debug_fps != None:
-        for fp in [ fp for item in debug_fps.values() for fp in item ]:
-            fp.close()
-    
+        
     return
         
 if __name__ == "__main__":
     main()
-
-
-"""
-    # create a mapping from jn acceptors ( exon starts-1 ) and their cnts
-    acceptor_jns_map = defaultdict( list )
-    # create a mapping from jn donors ( exon stops+1 ) and their cnts
-    donor_jns_map = defaultdict( list )
-    for ( intron_start, intron_stop ), cnt in jns_w_cnts:
-        acceptor_jns_map[ intron_stop ].append( cnt )
-        donor_jns_map[ intron_start ].append( cnt )
-
-        # if we are removing introns
-        if len( filtered_introns_w_cnts ) < len( introns_w_cnts ):
-            # remove these entries from the donor and acceptor lists
-            for jn, cnt in introns_w_cnts.iteritems():
-                if jn in filtered_introns_w_cnts: continue
-                acceptor_jns_map[ jn[1] ].remove( cnt )
-                donor_jns_map[ jn[0] ].remove( cnt )
-        
-            acceptor_bndries_to_remove = \
-                set( bndry+1 for bndry, cnts in acceptor_jns_map.iteritems() \
-                     if len( cnts ) == 0 )
-            donor_bndries_to_remove = \
-                set( bndry for bndry, cnts in donor_jns_map.iteritems()  \
-                     if len( cnts ) == 0 )
-            
-            # rules for removing boundaries
-            # for acceptors:
-            #     JUST: change current label to 'L'
-            #     1) if the prev or next label is an L
-            #         -) change the current label to 'L'
-            #         -) remove the current boundary and label
-            #     2) if the next label is an exon or exon extension
-            #         -) cahnge the current label to an 'L'
-            
-            print strand
-            print acceptor_bndries_to_remove
-            print donor_bndries_to_remove
-            print zip( cluster_bndrys, cluster_labels )
-            raw_input()
-"""

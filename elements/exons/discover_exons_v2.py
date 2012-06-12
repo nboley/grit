@@ -332,7 +332,6 @@ def refine_retained_introns( labels, bndrys, merged_read_cov ):
     
     return new_labels
 
-
 def find_genes_in_contig( strand, 
                           merged_read_cov, zero_intervals,
                           jns_w_cnts,
@@ -565,20 +564,7 @@ def cluster_labels_and_bndrys( labels, bndrys, jns_w_cnts, chrm_stop ):
         
         # if we didn't re cluster these, then we are done
         assert len( clustered_labels ) == len( clustered_bndrys )
-        if len( clustered_labels ) == 1: 
-            """
-            jns_to_remove = find_min_cnt_jns( \
-                clustered_bndrys[0], clustered_labels[0], jns_dict )
-            if jns_to_remove != None:
-                for jn in jns_to_remove:
-                    del jns_dict[ jn ]
-                
-                grpd_clusters.append((clustered_labels[0], clustered_bndrys[0]))
-            else:
-                assert clustered_labels[0][0] == 'L' \
-                    and clustered_labels[0][-1] == 'L'
-            """
-            
+        if len( clustered_labels ) == 1:             
             final_cl_labels.append( clustered_labels[0] )
             final_cl_bndrys.append( clustered_bndrys[0] )
         else:
