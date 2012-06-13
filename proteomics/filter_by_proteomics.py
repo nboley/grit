@@ -17,7 +17,7 @@ def write_unrepresented_trans( missed_known_trans, unrepresented_trans_fp ):
     for (chrm, strand), key_known_trans in missed_known_trans.iteritems():
         for known_trans in key_known_trans:
             line_base = '\t'.join( ( 
-                    'chr'+chrm, 'known_trans', 'exon', '{0:d}', 
+                    'chr'+chrm, known_trans[1][2], 'exon', '{0:d}', 
                     '{1:d}', '.', strand, '.', 
                     'gene_id "{0}"; transcript_id "{1}";'.format( 
                         known_trans[1][0], known_trans[1][1] ) ) )
@@ -132,6 +132,25 @@ def get_sample_specific_novel( disc_orfs_for_novel, matched_fp_utrs,
     
     return novel_orfs
 
+def get_closest_tes_match( external_ann_coords, matched_orfs, strand ):
+    """ Get orf from matched_orfs which is closest to the known tes boundary
+    """
+    known_tes_ext_coord = external_ann_coords[0][1] if strand == '+' \
+        else external_ann_coords[0][0]
+    
+    match_bps_diff = None
+    for trans_struct, trans_sources in matched_orfs.iteritems():
+        trans_ext_tes_coord = trans_struct[2][-1][-1] if strand == '+' \
+            else trans_struct[2][0][0]
+        if match_bps_diff == None or \
+                abs( trans_ext_tes_coord - known_tes_ext_coord ) < match_bps_diff:
+            match_bps_diff = abs( trans_ext_tes_coord - known_tes_ext_coord )
+            
+            match_trans_struct = trans_struct
+            match_trans_sources = trans_sources
+    
+    return match_trans_struct, match_trans_sources
+
 def get_ann_matched_trans( disc_orfs, known_trans ):
     # lists to store for printing
     disc_matched_orfs = defaultdict( list )
@@ -147,19 +166,21 @@ def get_ann_matched_trans( disc_orfs, known_trans ):
             key_disc_orfs = disc_orfs[ (chrm, strand) ]
             for known_int_coords in key_known_trans.iterkeys():
                 if known_int_coords in key_disc_orfs:
-                    matched_orfs = key_disc_orfs[ known_int_coords ]
-                    disc_matched_orfs[ (chrm, strand) ].extend( 
-                        matched_orfs.items() )
+                    trans_struct, trans_sources = get_closest_tes_match( 
+                        key_known_trans[known_int_coords], 
+                        key_disc_orfs[ known_int_coords ], 
+                        strand )
+                    disc_matched_orfs[ (chrm, strand) ].append( 
+                        (trans_struct, trans_sources) )
                     
-                    for trans_struct, trans_sources in matched_orfs.iteritems():
-                        # store items matched indexed by cds for novels later
-                        matched_fp_utrs[ (chrm, strand) ][ trans_struct[1] ].add(
-                            trans_struct[0] )
-                        matched_tp_utrs[ (chrm, strand) ][ trans_struct[1] ].add(
-                            trans_struct[2] )
-                        
-                        matched_sources[ (chrm, strand) ][ 
-                            trans_struct[1] ].update( trans_sources )
+                    # store items matched indexed by cds for novels later
+                    matched_fp_utrs[ (chrm, strand) ][ trans_struct[1] ].add(
+                        trans_struct[0] )
+                    matched_tp_utrs[ (chrm, strand) ][ trans_struct[1] ].add(
+                        trans_struct[2] )
+                    
+                    matched_sources[ (chrm, strand) ][ 
+                        trans_struct[1] ].update( trans_sources )
                 else:
                     missed_known_trans[(chrm, strand)].append( 
                         ( ( key_known_trans[ known_int_coords ][0][:1] +
@@ -184,7 +205,7 @@ def parse_known_trans( cdna_fp, ann_fp ):
             gtfl = parse_gtf_line( line )
             if gtfl == None or gtfl.feature != 'exon': continue
             known_trans[ (gtfl.region.chr, gtfl.region.strand) ][ \
-                (gtfl.gene_id, gtfl.trans_id) ].append( 
+                (gtfl.gene_id, gtfl.trans_id, gtfl.source) ].append( 
                 (gtfl.region.start, gtfl.region.stop) )
         
         return known_trans

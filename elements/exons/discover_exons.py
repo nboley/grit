@@ -662,22 +662,6 @@ def check_exon_for_gene_merge( strand, start, stop, \
         if ds_polya_cov < 1: #POLYA_MIN_SCORE:
             return [ start, ], [ 'Exon', ]
     
-    """
-    print strand, start, stop
-    print prev_label, next_label, left_cov/min_cov, right_cov/min_cov
-    print left_cov, right_cov, min_cov
-    print 
-    if start > 5070220: raw_input()
-    """
-    
-    #print strand, start, new_intron_start, new_intron_stop+1, stop+1
-    #print "%e" % ( cage_cov.sum()/read_cov.rca.sum()  )
-    #print "%e" % (ds_cage_cov/ds_read_cov), ds_cage_cov, ds_read_cov
-    #raw_input()
-
-    #print >> sys.stderr, left_cov, min_cov, right_cov
-    #print >> sys.stderr, start, new_intron_start, \
-    #         new_intron_stop+1, stop
     try:
         assert start < new_intron_start < new_intron_stop+1 < stop
     except:
@@ -790,8 +774,7 @@ def label_regions( strand, read_cov, bndrys, labels, cage_cov, polya_cov ):
         strand, labels, bndrys, read_cov, cage_cov, polya_cov )
     
     #refine_single_exon_genes( read_cov.rca, cage_cov, labels, bndrys )
-    #iter_connected_regions( read_cov.read_coverage_array, labels, bndrys )
-
+    
     return labels, bndrys
 
 def find_internal_exons( exon_bndrys, intron_starts, intron_stops ):
@@ -1237,14 +1220,6 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
             
             continue
         
-        """
-        # check for merege
-        split_bndrys, split_labels, = check_exon_for_gene_merge( \
-            strand, start, stop, prev, next, read_cov, cage_cov)
-        new_bndrys.extend( split_bndrys )
-        new_labels.extend( split_labels )
-        """
-
         # find tss exons
         tss_exons = find_distal_exons( \
             cage_cov, (strand=='+'), intron_starts, intron_stops,
@@ -1254,38 +1229,8 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
         
         # if we can't find a TSS index, continue
         if len( tss_exons ) == 0:
-            #print "HERE", tss_indices
-            continue
-        
-        """
-        cov = read_cov_obj.rca
-        # check for a gene merge inthe TSS exons
-        for start, stop in tss_exons:
-            # find the bndry that this tss exon corresponds to
-            if strand == '+':
-                bndry_i = min( i for i, bndry in enumerate(bs) 
-                               if bndry-1 == stop )
-                if bs[bndry_i-1]-1 not in intron_stops:
-                    continue
+           continue
                 
-                assert bs[bndry_i]-1 == stop
-                
-                pre_tss_score = cov[ max(1,start-20):start  ].mean()
-                other_score = cov[ bs[bndry_i-1]:bs[bndry_i-1]+20 ].mean()
-                if other_score/(pre_tss_score+1.0) > 4.0:
-                    #print pre_tss_score, other_score, bs[bndry_i-1], stop
-                    #print bs
-                    #print ls
-                    bs.insert( bndry_i, start )
-                    ls.insert( bndry_i, 'E' )
-                    bs.insert( bndry_i, start-10 )
-                    ls.insert( bndry_i, 'L' )
-                    #print
-                    #print bs
-                    #print ls
-                    #raw_input()
-        """
-        
         exon_bndrys = get_possible_exon_bndrys( \
             ls, bs, read_cov_obj.chrm_stop )        
         
@@ -1300,39 +1245,8 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
         
         # if we can't find a TSS index, continue
         if len( tes_exons ) == 0:
-            #print "HERE2", tes_indices
             continue
-            
-        
-        """
-        tss_starts = dict( (start, stop) for start, stop in tss_exons )
-        tss_stops = dict( (stop, start) for start, stop in tss_exons )
-        
-        new_internal_exons = []
-        for start, stop in internal_exons:
-            if strand == '+' and stop in tss_stops and tss_stops[stop] > start:
-                continue
-            if strand == '-' and start in tss_starts and tss_starts[start] < stop:
-                continue
-            new_internal_exons.append( (start, stop) )
-
-        internal_exons = new_internal_exons\
-        """
-
-        """
-        print ls
-        print bs
-        print exon_bndrys
-        print
-        print tss_exons
-        print internal_exons
-        print tes_exons
-        print
-        #print sorted(intron_starts)
-        #print sorted(intron_stops)
-        raw_input()
-        """
-        
+                
         all_tss_exons.extend( tss_exons )
         all_internal_exons.extend( internal_exons )
         all_tes_exons.extend( tes_exons )

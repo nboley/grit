@@ -177,9 +177,6 @@ def find_peaks( cage_cov, window_len, min_score, max_score_frac ):
     print >> sys.stderr, "EXHAUSTED EVERY REGION?!?!?!", scores
     return peaks
 
-def check_exon_for_gene_split( rd1_cov, rd2_cov ):
-    pass
-
 def refine_se_gene_labels( labels, bndrys, read1_cov, read2_cov, cage_cov ):
     new_labels = []
     for label, (left_bndry, right_bndry) in izip( 

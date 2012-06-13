@@ -5,12 +5,11 @@ DO_PROFILE = False
 LOW_CDS_JN_RATIO_THRESH = 0.1
 HIGH_CDS_JN_RATIO_THRESH = 0.3
 
+INCLUDE_AA_AO_CLASSES = False
+
 ACCEPT_ALL_UTRS = True
 UTR_JN_RATIO_THRESH = 0.1
 
-AS_CLASS_SUFFIX = '.AS_class.gtf'
-FILTERED_AS_CLASS_SUFFIX = '.AS_class.filtered.gtf'
-KI_CLASS_SUFFIX = '.KI_class.gtf'
 ALL_FILTERED_SUFFIX = '.all_filtered.gtf'
 
 import re
@@ -18,6 +17,7 @@ import numpy
 
 from collections import defaultdict
 from itertools import izip
+from bx.intervals.intersection import Intersecter, Interval
 
 sys.path.append( os.path.join(os.path.dirname(__file__), "..", "file_types") )
 from gtf_file import parse_gtf_line
@@ -25,23 +25,19 @@ from gtf_file import parse_gtf_line
 sys.path.append( os.path.join( os.path.dirname(__file__), "..", "file_types" ) )
 from junctions_file import parse_junctions_file
 
-def write_all_filtered_orfs( out_prefix ):
-    out_fn = out_prefix + ALL_FILTERED_SUFFIX
-    ki_fn = out_prefix + KI_CLASS_SUFFIX
-    as_filtered_fn = out_prefix + FILTERED_AS_CLASS_SUFFIX
-    
-    # get only exact protein matches and same start stop class
-    cat_cmd = "cat {0} {1} > {2}".format( as_filtered_fn, ki_fn, out_fn )
-    os.system( cat_cmd )
+def write_all_filtered_orfs( out_prefix, filtered_lines ):
+    with open( out_prefix + ALL_FILTERED_SUFFIX, "w" ) as out_fp:
+        for line in filtered_lines:
+            out_fp.write( line )
     
     return
 
-def write_filtered_as_orfs( as_orfs, filtered_as_fp, disc_orf_lines ):
+def get_filtered_as_orfs( as_orfs, disc_orf_lines ):
+    filtered_as_lines = []
     for key in as_orfs:
-        filtered_as_fp.write( disc_orf_lines[key] )
-    filtered_as_fp.close()
+        filtered_as_lines.append( disc_orf_lines[key] )
     
-    return
+    return filtered_as_lines
 
 def write_shifted_orfs( shifted_orfs, shifted_orfs_fp, disc_orf_lines ):
     for key in shifted_orfs:
@@ -224,6 +220,50 @@ def filter_shifted_trans( disc_orfs, known_introns, all_jns ):
     
     return as_orfs, shifted_orfs
 
+def filter_alt_ends( utr_regions, ref_intersecter, UTR_flag, trans_lines ):
+    '''
+    Use bx python Intersecter to overlap the grit UTR and reference CDS 
+    annotations.  Obtain a list of transcripts/ORFs that Pass and ones that Fail
+    '''
+    fail_trans = 0
+    
+    passed_trans_lines = []
+    failed_trans_lines = []
+    for chrm_strand, transcripts in utr_regions.iteritems():
+        chrm, strand = chrm_strand
+        for trans_id, utrs in transcripts.iteritems():
+            utrs.sort()
+            fails = False
+            if (UTR_flag == '5UTR' and strand == '+') or \
+                    (UTR_flag == '3UTR' and strand == '-'):
+                # grab the distal utr exon from 
+                exon = utrs[-1]
+                
+                overlap_cds = ref_intersecter[chrm_strand].find(exon[0],exon[1])
+                for cds in overlap_cds:
+                    # if the utr is completely with in a cds exon then 
+                    # get rid of this trans
+                    if cds.start <= exon[0] and cds.end >= exon[0]:
+                        fails = True
+                        break
+            else:
+                exon = utrs[0]
+                overlap_cds = ref_intersecter[chrm_strand].find(exon[0],exon[1])
+                for cds in overlap_cds:
+                    if cds.start <= exon[1] and cds.end >= exon[1]:
+                        fails = True
+                        break
+            
+            if fails:
+                failed_trans_lines.extend( trans_lines[ trans_id ] )
+                fail_trans += 1
+            else:
+                passed_trans_lines.extend( trans_lines[ trans_id ] )
+    
+    #print fail_trans
+    
+    return passed_trans_lines
+
 def parse_jns( jn_fp ):
     all_jns = defaultdict( dict )
     jns = parse_junctions_file(jn_fp)
@@ -283,12 +323,12 @@ def parse_known_orfs( ann_fp ):
     
     return known_introns
 
-def parse_discovered_orfs( orfs_fp ):
+def parse_discovered_orfs( orf_lines ):
     """Parse gtf file with discovered orfs
     """
     disc_orfs = defaultdict( lambda: defaultdict( lambda: defaultdict(list) ) )
     disc_orf_lines = defaultdict( str )
-    for line in orfs_fp:
+    for line in orf_lines['AS']:
         gtfl = parse_gtf_line( line )
         if gtfl == None or gtfl.feature not in \
                 ( 'CDS', '5UTR', '3UTR' ): continue
@@ -299,38 +339,80 @@ def parse_discovered_orfs( orfs_fp ):
     
     return disc_orfs, disc_orf_lines
 
-def create_orf_class_files( orfs_fn, out_prefix ):
-    as_class_fn = out_prefix + AS_CLASS_SUFFIX
-    ki_class_fn = out_prefix + KI_CLASS_SUFFIX
-    get_class_cmd = 'grep {0}: {1} > {2}'
+def get_orf_class_lines( orfs_fp ):
+    pertinent_lines = { 'AA':[], 'AO':[], 'AS':[], 'KI':[] }
+    orf_class_pat = re.compile( 'orf_class "(..):' )
+    for line in orfs_fp:
+        orf_class_match = orf_class_pat.search( line )
+        if orf_class_match == None: continue
+        orf_class = orf_class_match.group( 1 )
+        
+        if orf_class not in ( 'AA', 'AO', 'AS', 'KI' ): continue
+        
+        pertinent_lines[ orf_class ].append( line )
     
-    # get AS class file
-    os.system( get_class_cmd.format( 'AS', orfs_fn, as_class_fn ) )
-    # get KI class file
-    os.system( get_class_cmd.format( 'KI', orfs_fn, ki_class_fn ) )
-    
-    return as_class_fn, ki_class_fn
+    return pertinent_lines
 
-def build_objects( orfs_fn, ann_fp, jns_fp, out_prefix ):
-    if VERBOSE: print >> sys.stderr, 'creating class files.'
-    as_class_fn, ki_class_fn = create_orf_class_files( orfs_fn, out_prefix )
-    as_class_fp = open( as_class_fn )
+def build_cds_tree( ref_fp ):
+    '''
+    Build an Intersecter for the CDS's in the annotation file.
+    This will be used to filter out fragmented transcripts that begin in the
+    middle of CDSs.  Transcripts like this do exist in the genome, but we
+    don't have the ability to find them in an automated fashion with much
+    confidence as yet.  Improved CAGE peak calling would be needed for the 5'
+    ends, and infinitely superior 3' end data would be required to do this for 
+    3' ends.  
+    '''
+    ref_intersecter = defaultdict( Intersecter )
+    for line in ref_fp:
+        gtfl = parse_gtf_line( line )
+        
+        if gtfl.feature != 'CDS': continue
+        
+        ref_intersecter[ (gtfl.region.chr, gtfl.region.strand) ].insert_interval( 
+            Interval( gtfl.region.start, gtfl.region.stop ) )
     
-    filtered_as_fp = open( out_prefix + FILTERED_AS_CLASS_SUFFIX, 'w' )
+    return ref_intersecter
+
+def get_utrs( orf_class_lines, UTR_flag ):
+    '''
+    Build and interval object for the automated annotation. This requires a UTR
+    flag, to determine whether we are to look at 5' or 3' ends.  
+    '''
+    utr_regions = defaultdict( lambda: defaultdict( list ) )
+    all_lines = defaultdict( list )
+    for line in orf_class_lines:
+        gtfl = parse_gtf_line( line )
+        all_lines[ gtfl.trans_id ].append( line )
+        
+        if gtfl.feature != UTR_flag: continue
+        
+        utr_regions[ (gtfl.region.chr, gtfl.region.strand) ][ gtfl.trans_id ].append( 
+            (gtfl.region.start, gtfl.region.stop) )
+    
+    return utr_regions, all_lines
+
+def build_objects( orfs_fp, ref_fp, jns_fp ):
+    if VERBOSE: print >> sys.stderr, 'getting class lines'
+    orf_lines = get_orf_class_lines( orfs_fp )
+    aa_utr_regions, aa_lines = get_utrs( orf_lines[ 'AA' ], '5UTR' )
+    ao_utr_regions, ao_lines = get_utrs( orf_lines[ 'AO' ], '3UTR' )
     
     if VERBOSE: print >> sys.stderr, 'parsing junctions'
     all_jns = parse_jns( jns_fp )
     jns_fp.close()
     
     if VERBOSE: print >> sys.stderr, 'parsing discovered orfs'
-    disc_orfs, disc_orf_lines = parse_discovered_orfs( as_class_fp )
-    as_class_fp.close()
+    disc_orfs, disc_orf_lines = parse_discovered_orfs( orf_lines )
     
     if VERBOSE: print >> sys.stderr, 'parsing known orfs'
-    known_introns = parse_known_orfs( ann_fp )
-    ann_fp.close()
+    known_introns = parse_known_orfs( ref_fp )
+    ref_fp.seek(0)
+    ref_intersecter = build_cds_tree( ref_fp )
+    ref_fp.close()
     
-    return disc_orfs, disc_orf_lines, known_introns, all_jns, filtered_as_fp
+    return disc_orfs, disc_orf_lines, known_introns, all_jns, orf_lines, \
+        ref_intersecter, aa_utr_regions, aa_lines, ao_utr_regions, ao_lines
 
 def parse_arguments():
     global LOW_CDS_JN_RATIO_THRESH
@@ -341,13 +423,13 @@ def parse_arguments():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description = 'Find discovered alternatively splice ORFs that do not ' + \
-            'shift the frame of the known ORF.' )
+        description = 'Find discovered alternatively splice ORFs that do not '
+        + 'shift the frame of the known ORF.' )
     parser.add_argument(
-        'orfs_gtf',
+        'orfs_gtf', type=file,
         help='GTF file with CDS and UTR regions.' )
     parser.add_argument(
-        'annotation', type=file,
+        'reference', type=file,
         help='GTF file of annotated orfs assocaited with genes and transcripts.')
     parser.add_argument(
         'junctions', type=file,
@@ -385,29 +467,40 @@ def parse_arguments():
     
     # create default if no prefix provided or if same as gtf filename
     out_prefix = args.out_prefix if args.out_prefix != None else \
-        os.path.basename( os.path.basename( args.orfs_gtf ) )
+        os.path.basename( os.path.basename( args.orfs_gtf.name ) )
     
     # set flag args
     global VERBOSE
     VERBOSE = args.verbose
     
-    return args.orfs_gtf, args.annotation, args.junctions, out_prefix
+    return args.orfs_gtf, args.reference, args.junctions, out_prefix
 
 def main():
-    disc_orfs_fn, ann_fp, jns_fp, out_prefix = parse_arguments()
+    disc_orfs_fp, ref_fp, jns_fp, out_prefix = parse_arguments()
     
-    disc_orfs, disc_orf_lines, known_introns, all_jns, filtered_as_fp = \
-        build_objects( disc_orfs_fn, ann_fp, jns_fp, out_prefix )
+    disc_orfs, disc_orf_lines, known_introns, all_jns, orf_lines, \
+        ref_intersecter, aa_utr_regions, aa_lines, ao_utr_regions, ao_lines = \
+        build_objects( disc_orfs_fp, ref_fp, jns_fp )
     
     if VERBOSE: print >> sys.stderr, 'filtering orfs with shifted frames'
     as_orfs, shifted_orfs = filter_shifted_trans( 
         disc_orfs, known_introns, all_jns )
     
-    if VERBOSE: print >> sys.stderr, 'writing out filtered transcripts'
-    write_filtered_as_orfs( as_orfs, filtered_as_fp, disc_orf_lines )
-    #write_shifted_orfs( shifted_orfs, shifted_orfs_fp, disc_orf_lines )
+    filtered_lines = []    
+    if INCLUDE_AA_AO_CLASSES:
+        aa_filtered_lines = filter_alt_ends( aa_utr_regions, ref_intersecter, 
+                                             '5UTR', aa_lines )
+        filtered_lines.extend( aa_filtered_lines )
+        ao_filtered_lines = filter_alt_ends( ao_utr_regions, ref_intersecter, 
+                                             '3UTR', ao_lines )
+        filtered_lines.extend( ao_filtered_lines )    
     
-    write_all_filtered_orfs( out_prefix )
+    if VERBOSE: print >> sys.stderr, 'writing out filtered transcripts'
+    as_filt_lines = get_filtered_as_orfs( as_orfs, disc_orf_lines )
+    filtered_lines.extend( as_filt_lines )
+    filtered_lines.extend( orf_lines['KI'] )
+    
+    write_all_filtered_orfs( out_prefix, filtered_lines )
     
     return
 

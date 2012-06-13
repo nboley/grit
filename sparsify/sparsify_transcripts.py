@@ -420,7 +420,7 @@ def build_reads_objs( bam_fns, fl_dists, read_grp_mappings ):
             continue
         
         reads.fl_dists = fl_dists
-        reads.read_group_mappings = read_group_mappings
+        reads.read_group_mappings = read_grp_mappings
         
         reads_objs[ bam_fn ] = reads
 

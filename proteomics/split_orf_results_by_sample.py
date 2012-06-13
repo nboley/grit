@@ -4,14 +4,14 @@ from collections import defaultdict
 
 DO_PROFILE = False
 
-def write_orfs_for_all_sources( disc_orfs, sources, out_suffix ):
+def write_orfs_for_all_sources( disc_orfs, sources, out_prefix, out_suffix ):
     sources_fps = {}
     for key, lines in disc_orfs.iteritems():
         for source in sources[key]:
             if source in sources_fps:
                 sources_fps[source].write( lines )
             else:
-                sources_fps[source] = open( source + '.' + out_suffix, 'w' )
+                sources_fps[source] = open( out_prefix + source + out_suffix, 'w' )
                 sources_fps[source].write( lines )
     
     for source_fp in sources_fps.itervalues():
@@ -57,8 +57,8 @@ def parse_arguments():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description = 'Find discovered alternatively splice ORFs that do not ' + \
-            'shift the frame of the known ORF.' )
+        description = 'Find discovered alternatively splice ORFs that do not '
+        + 'shift the frame of the known ORF.' )
     parser.add_argument(
         'orf_finder_output', type=file,
         help='GTF file with CDS and UTR regions.' )
@@ -67,7 +67,10 @@ def parse_arguments():
         help='sources_file from merge_transcripts.py.')
     
     parser.add_argument(
-        '--out-suffix', '-o', default='',
+        '--out-prefix',
+        help='Prefix or path of output files.')
+    parser.add_argument(
+        '--out-suffix', default='.annotated.gtf',
         help='Suffix of output file. (default: %(default)s)')
     parser.add_argument( 
         '--verbose', '-v', default=False, action='store_true',
@@ -78,13 +81,13 @@ def parse_arguments():
     global VERBOSE
     VERBOSE = args.verbose
     
-    return args.orf_finder_output, args.source_file, args.out_suffix
+    return args.orf_finder_output, args.source_file, args.out_prefix, args.out_suffix
 
 def main():
-    disc_orfs_fp, sources_fp, out_suffix = parse_arguments()
+    disc_orfs_fp, sources_fp, out_prefix, out_suffix = parse_arguments()
     disc_orfs, sources = build_objects( disc_orfs_fp, sources_fp )
     
-    write_orfs_for_all_sources( disc_orfs, sources, out_suffix )
+    write_orfs_for_all_sources( disc_orfs, sources, out_prefix, out_suffix )
     
     return
 

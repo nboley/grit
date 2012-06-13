@@ -317,8 +317,8 @@ def get_orf_class( genomic_region, known_orfs_data, gene, trans ):
     ( exact_match, same_start_stop, same_stop, same_start, shared_splice,
       start_stop_no_splice, stop_no_splice, start_no_splice,
       general_overlap ) = range(9)
-    orf_classes = { exact_match: 'KI', same_start_stop:'AS', same_stop:'AO',
-                    same_start:'AA', shared_splice:'NI',
+    orf_classes = { exact_match: 'KI', same_start_stop:'AS', same_stop:'AA',
+                    same_start:'AO', shared_splice:'NI',
                     start_stop_no_splice:'SN', stop_no_splice:'ON',
                     start_no_splice:'AN', general_overlap:'CG' }
     
@@ -922,7 +922,7 @@ def parse_arguments():
         help='GTF file of annotated CDS regions. '
         'This will be used to catagorize ORFs.' )
     parser.add_argument(
-        '--min_aas', '-m', type=int,
+        '--min-aas', '-m', type=int,
         help='Number of amino acids to require for an open read frame. ' +
         '(default: {0:d})'.format( MIN_AAS_PER_ORF ))
     
@@ -932,7 +932,7 @@ def parse_arguments():
         '(default: %(default)d)')
     
     parser.add_argument(
-        '--out_prefix', '-o',
+        '--out-prefix', '-o',
         help='Prefix of output file. (default: gtf)')
     parser.add_argument( 
         '--verbose', '-v', default=False, action='store_true',

@@ -459,6 +459,9 @@ class Wiggle( dict ):
     def _fp_is_bedgraph( wig_fp ):
         wig_fp.seek(0)
         data = wig_fp.readline().split()
+        if len( data ) == 0: 
+            return False
+        
         if not data[0].lower() == 'track':
             wig_fp.seek(0)
             return False

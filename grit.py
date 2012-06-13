@@ -119,6 +119,8 @@ RnaSeqDataTypes = [ "rnaseq_polyaplus_bam",
                     "cdna_jns_gff",
                     "fl_dist",
                     "stats",
+                    "coding_transcripts_gtf",
+                    "non_coding_transcripts_gtf",
                     "annotation_gtf",
                     "CDS_annotation_gtf",
                     "transcript_sources" ]
@@ -1050,11 +1052,21 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         
         # find all of the merged rnaseq coverage files
         res = elements.get_elements_from_db( \
-            "rnaseq_cov_bedgraph", sample_type, sample_id )
-        bedgraph_fnames = [ i.fname for i in res ]
-        if len( bedgraph_fnames ) != 2:
+            "rnaseq_cov_pair1_bedgraph", sample_type, sample_id )
+        rd1_bedgraph_fnames = [ i.fname for i in res ]
+        if len( rd1_bedgraph_fnames ) != 2:
             raise ValueError, "Can't find the rnaseq coverage files " \
                               + "necessary to build exons from."
+
+        res = elements.get_elements_from_db( \
+            "rnaseq_cov_pair2_bedgraph", sample_type, sample_id )
+        rd2_bedgraph_fnames = [ i.fname for i in res ]
+        if len( rd2_bedgraph_fnames ) != 2:
+            raise ValueError, "Can't find the rnaseq coverage files " \
+                              + "necessary to build exons from."
+        
+        bedgraph_fnames = rd1_bedgraph_fnames + rd2_bedgraph_fnames
+        
         
         # find the merged, filtered jns file
         if USE_MERGED_JNS_FOR_EXONS:
@@ -1109,11 +1121,11 @@ def build_all_exon_files( elements, pserver, output_prefix ):
             "discovered_exons.%s.%s" % ( sample_type, sample_id ) )
         output_fn_prefix = output_fn_prefix.replace( ".*", "" )
         
-        call = call_template.format( FIND_EXONS_CMD, " ".join(bedgraph_fnames),\
-                            jns_fname, chrm_sizes_fname, \
-                            " ".join(cage_wig_fnames),   \
-                            " ".join( polya_gff_fnames), \
-                            output_fn_prefix )
+        call = call_template.format( 
+            FIND_EXONS_CMD, jns_fname, chrm_sizes_fname,
+            " ".join(bedgraph_fnames),   
+            " ".join(cage_wig_fnames), " ".join( polya_gff_fnames),
+            output_fn_prefix )
 
         extensions = [ ".internal_exons.gff",    \
                        ".tss_exons.gff",  \
@@ -1515,6 +1527,7 @@ def run_all_slide_compares(elements, pserver, output_prefix, build_maps=False):
     
     return
 
+
 def call_orfs( elements, pserver, output_prefix ):
     try:
         os.makedirs( output_prefix )
@@ -1531,55 +1544,142 @@ def call_orfs( elements, pserver, output_prefix ):
         --out_prefix tmp \
 
     OUTPUTS:
-    tmp.annotated.gtf
+    tmp.annotated.gtf    tmp.non_coding_genes.gtf
+    """
+    
+    def call_orfs( use_merged_input=False  ):
+        sample_type = '*' if use_merged_input else 'M'
+        # get the merged transcripts from the database
+        res = elements.get_elements_from_db("transcripts_gtf", sample_type, "*")
+        assert len( res ) == 1
+        merged_trans_fname = res[0].fname
 
-    time python split_orf_results_by_sample.py tmp.annotated.gtf merged.sources out_suffix
-    merged_source.out_suffix
+        # get the fasta file from the DB
+        fasta_fn = elements.genome_fname
 
-    INPUTS: 
+        # get the CODING annotation file 
+        res = elements.get_elements_from_db( "CDS_annotation_gtf" )
+        assert len( res ) == 1
+        coding_ann_fname = res[0].fname
+
+        out_file_prefix = os.path.join( \
+            output_prefix, os.path.basename( merged_trans_fname ) )
+
+        call = "python {0} {1} {2} --annotation {3} --out-prefix {4}"
+        call = call.format( FIND_ORFS_CMD, merged_trans_fname, fasta_fn, 
+                            coding_ann_fname, out_file_prefix )
+        call += " --threads {threads}"
+
+        op_element_types = [ 
+            ElementType( "coding_transcripts_gtf", sample_type, "*", "." ),
+            ElementType( "non_coding_transcripts_gtf", sample_type, "*", "." ) ]
+        op_fnames = [ out_file_prefix + '.annotated.gtf', 
+                      out_file_prefix + '.non_coding_genes.gtf' ]
+        dependencies = [ merged_trans_fname, fasta_fn, coding_ann_fname ]
+        
+        cmd = Cmd( call, op_element_types, op_fnames, dependencies )
+        pserver.add_process( cmd, 
+                             Resource(pserver.max_available_resources-2), 
+                             Resource(pserver.max_available_resources) )
+    
+    call_orfs(use_merged_input=True)
+    
+    return
+
+def split_orf_results_by_sample( elements, pserver, output_prefix ):
+    try:
+        os.makedirs( output_prefix )
+    except OSError:
+        # assume that the directory already exists, and continue
+        pass
+    
+    """pass orf_transcripts to split_orf_results_by_sample.py and produce 
+    one orf results per merge_input_fn 
+    
+    python split_orf_results_by_sample.py 
+         tmp.annotated.gtf 
+         merged.sources 
+         --out-prefix ./proteomics/tmp.annotated.gtf
+    """
+    orf_gtf_e = elements.get_elements_from_db( 
+        "coding_transcripts_gtf", "M", "*")
+    assert len( orf_gtf_e ) == 1
+    orf_gtf_fn = orf_gtf_e[0].fname
+    
+    sources_e = elements.get_elements_from_db("transcript_sources", "M", "*")
+    assert len( sources_e ) == 1
+    sources_fn = sources_e[0].fname
+    
+    # find the transcript filenames, by source. 
+    in_es = elements.get_elements_from_db( "transcripts_gtf" )
+    transcript_fnames_and_sample_types = [ 
+        (e.sample_type, e.fname) for e in in_es 
+        if e.sample_id == "*" and e.sample_type not in 'M*' ]
+    
+    # build the output
+    op_fns = []
+    op_element_types = []
+    for sample_type, sample_fn in transcript_fnames_and_sample_types:
+        op_fns.append( sample_fn + '.annotated.gtf' ))
+        op_element_types.append( ElementType( "coding_transcripts_gtf", 
+                                              sample_type, "*", "." ) )
+    
+    dependencies = [ orf_gtf_fn, sources_fn ]
+    
+    call = "python {0} {1} {2} --out-prefix {3}".format( 
+        SPLIT_ORFS_CMD, orf_gtf_fn, sources_fn, output_prefix + '/' )
+    
+    cmd = Cmd( call, op_element_types, op_fns, dependencies )
+    pserver.add_process( cmd, Resource( 1 ) )
+    
+    return
+
+
+def filter_frameshifts( elements, pserver, output_prefix ):
+    try:
+        os.makedirs( output_prefix )
+    except OSError:
+        # assume that the directory already exists, and continue
+        pass
+    
+    """run filter_frameshifts.py on each individual orf finder results file. Produce a filtered orf results file.
+    
+        INPUTS: 
     # maybe change to accept all, and then filter AS and KI classes
-    time python ~/grit/proteomics/filter_frame_shifts.py 
-        tmp.AS_class.gtf 
+    python ~/grit/proteomics/filter_frame_shifts.py 
+        tmp.annotated.gtf 
         /media/scratch/genomes/drosophila/dmel-all-r5.45.cds.gtf 
         junctions/merged.filtered.jns.gff 
-        tmp.KI_class.gtf 
-        --out-prefix TMP.filtered
+        --out-prefix 
+        
+    """
+    def add_filter_frameshifts_cmd(  ):
+        return
+    
+    sample_annot_trans_es = elements.get_elements_from_db( "coding_transcripts_gtf" )
+    for s_a_t_e in sample_annot_trans_es:
+        if s_a_t_e.sample_type in "M*": continue
+        add_filter_frameshifts_cmd( s_a_t_e.sample_type,  )
+    
+    return
 
-
-    python ~/grit/proteomics/filter_by_proteomics.py 
+def merge_orf_results( elements, pserver, output_prefix ):
+    try:
+        os.makedirs( output_prefix )
+    except OSError:
+        # assume that the directory already exists, and continue
+        pass
+    
+    """pass all source orf results to filter_by_proteomics.py and create final proteomics filtered trans and orf files.
+    
+        python ~/grit/proteomics/filter_by_proteomics.py 
         TMP.filtered.all_filtered.gtf 
         --cDNA-gtf /media/scratch/RNAseq/cdnas.gtf 
         --annotation /media/scratch/genomes/drosophila/flybase_mRNA.r5_32.gtf 
         -o TMP.merged.filtered
     
     """
-    # get the merged transcripts from the database
-    res = elements.get_elements_from_db( "transcripts_gtf", "*", "*" )
-    assert len( res ) == 1
-    merged_trans_fname = res[0].fname
-
-    
-    # get the fasta file from the DB
-    fasta_fn = elements.genome_fname
-    
-    # get the CODING annotation file 
-    res = elements.get_elements_from_db( "CDS_annotation_gtf" )
-    assert len( res ) == 1
-    coding_ann_fname = res[0].fname
-    
-    out_prefix = "CDStrans." + merged_trans_fname[:-4]
-    
-    call = "python %s {0} {1} --annotation {2} --out-prefix {3}" \
-        % FIND_ORFS_CMD
-    call.format( merged_trans_fname, fasta_fn, coding_ann_fname, out_prefix )
-    call += " --threads {threads}"
-    
-    op_fnames = [ out_prefix + ".%s.gtf" % suff for suff in \
-                      ("KI_class", "AS_class") ]
-
-    print call
     return
-
 
 def extract_cdna_elements( elements, pserver, tss_op_prefix, tes_op_prefix ):
     def build_extract_cdnas_cmd( input_element ):
@@ -1648,11 +1748,10 @@ def main():
 
     # sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
 
-    # call_orfs( elements, pserver, base_dir + "transcripts" )
+    call_orfs( elements, pserver, base_dir + "transcripts" )
     
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
-
-
+    
     pserver.process_queue()    
     return
 
