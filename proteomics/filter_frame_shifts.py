@@ -171,7 +171,7 @@ def is_valid_trans( trans_data, known_introns, jns ):
                     continue
             
             # if no valid mutation of this intron is found then return False
-            #print 'fails 5": chr2L:{0[0]:d}-{0[1]:d}'.format( disc_fp_utr_intron )
+            # print 'fails 5": chr2L:{0[0]:d}-{0[1]:d}'.format( disc_fp_utr_intron )
             return False
     
     disc_tp_utr = sorted( trans_data[ '3UTR' ] )

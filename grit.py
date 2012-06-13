@@ -1642,9 +1642,10 @@ def filter_frameshifts( elements, pserver, output_prefix ):
         # assume that the directory already exists, and continue
         pass
     
-    """run filter_frameshifts.py on each individual orf finder results file. Produce a filtered orf results file.
+    """run filter_frameshifts.py on each individual orf finder results file. 
+    Produce a filtered orf results file.
     
-        INPUTS: 
+    INPUTS: 
     # maybe change to accept all, and then filter AS and KI classes
     python ~/grit/proteomics/filter_frame_shifts.py 
         tmp.annotated.gtf 
@@ -1653,13 +1654,11 @@ def filter_frameshifts( elements, pserver, output_prefix ):
         --out-prefix 
         
     """
-    def add_filter_frameshifts_cmd(  ):
-        return
-    
-    sample_annot_trans_es = elements.get_elements_from_db( "coding_transcripts_gtf" )
-    for s_a_t_e in sample_annot_trans_es:
-        if s_a_t_e.sample_type in "M*": continue
-        add_filter_frameshifts_cmd( s_a_t_e.sample_type,  )
+    def add_filter_frameshifts_cmd( sample_type ):
+        sample_annot_trans_es = elements.get_elements_from_db( "coding_transcripts_gtf" )
+        for s_a_t_e in sample_annot_trans_es:
+            if s_a_t_e.sample_type in "M*": continue
+            add_filter_frameshifts_cmd( s_a_t_e.sample_type,  )
     
     return
 
@@ -1670,7 +1669,8 @@ def merge_orf_results( elements, pserver, output_prefix ):
         # assume that the directory already exists, and continue
         pass
     
-    """pass all source orf results to filter_by_proteomics.py and create final proteomics filtered trans and orf files.
+    """pass all source orf results to filter_by_proteomics.py and create 
+       final proteomics filtered trans and orf files.
     
         python ~/grit/proteomics/filter_by_proteomics.py 
         TMP.filtered.all_filtered.gtf 
