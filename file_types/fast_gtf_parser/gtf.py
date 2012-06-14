@@ -2,7 +2,11 @@ import sys, os
 import numpy
 import signal
 from ctypes import *
-from itertools import izip
+from itertools import izip, repeat
+
+sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
+                                      ".." ) )
+from gtf_file import create_gtf_line, GenomicInterval
 
 VERBOSE = False
 
@@ -61,6 +65,7 @@ class Transcript( list ):
         
         self.exon_bnds = exon_bnds
         
+        self.is_protein_coding = ( cds_region != None )
         self.cds_region = cds_region
         self.cds_exons = None
         self.fp_utr_exons = None
@@ -69,36 +74,29 @@ class Transcript( list ):
         if cds_region != None:
             # find the start index of the coding sequence
             cds_start_bndry_index = exon_bnds.index( cds_region[0] )
-            #while cds_start_bndry_index < len(cds_region) \
-            #        and exon_bnds[ cds_start_bndry_index + 1 ] \
-            #            == exon_bnds[ cds_start_bndry_index ]:
-            #    cds_start_bndry_index += 1
-            
             cds_stop_bndry_index = exon_bnds.index( cds_region[1] )
-            #while cds_stop_bndry_index < len(cds_region) \
-            #        and exon_bnds[ cds_stop_bndry_index + 1 ] \
-            #            == exon_bnds[ cds_stop_bndry_index ]:
-            #    cds_stop_bndry_index += 1
             
             cds_exon_bnds = exon_bnds[cds_start_bndry_index:cds_stop_bndry_index+1]
             fp_bnds = exon_bnds[:cds_start_bndry_index]
             tp_bnds = exon_bnds[cds_stop_bndry_index+1:]
 
-            self.cds_exons = zip(cds_exon_bnds[:-1:2], cds_exon_bnds[1::2])
-            self.fp_utr_exons = zip(fp_bnds[:-1:2], fp_bnds[1::2])
-            self.tp_utr_exons = zip(tp_bnds[:-1:2], tp_bnds[1::2])
+            self.cds_exons = tuple(zip(cds_exon_bnds[:-1:2], cds_exon_bnds[1::2]))
+            self.us_exons = tuple(zip(fp_bnds[:-1:2], fp_bnds[1::2]))
+            self.ds_exons = tuple(zip(tp_bnds[:-1:2], tp_bnds[1::2]))
 
             # if this is a reverse strand transcript, rev 5' and 3' ends
-            if self.strand == '-':
+            if self.strand == '+':
                 self.fp_utr_exons, self.tp_utr_exons \
-                    = self.tp_utr_exons, self.fp_utr_exons
+                    = self.us_exons, self.ds_exons
+            else:
+                self.fp_utr_exons, self.tp_utr_exons \
+                    = self.ds_exons, self.us_exons
             
             # now, remove CDS boundaries if they aren't real ( ie, if they just
             # differentiate between coding and non coding sequence )
             
-            
             # start with the stop so we don't have to re-search for the index
-            if cds_stop_bndry_index < len(exon_bnds) + 1 \
+            if cds_stop_bndry_index+1 < len(exon_bnds) \
                     and exon_bnds[ cds_stop_bndry_index+1 ] == cds_region[1]+1:
                 del exon_bnds[ cds_stop_bndry_index:cds_stop_bndry_index+2 ]
             
@@ -106,13 +104,55 @@ class Transcript( list ):
                     and exon_bnds[ cds_start_bndry_index-1]+1 == cds_region[0]:
                 del exon_bnds[ cds_start_bndry_index-1:cds_start_bndry_index+1 ]
         
-        self.exons = zip(exon_bnds[:-1:2], exon_bnds[1::2])
-        self.introns = [ (x+1, y-1) for x, y in izip(exon_bnds[1:-2:2], exon_bnds[2:-1:2]) ]
+        self.exons = tuple(zip(exon_bnds[:-1:2], exon_bnds[1::2]))
+        self.introns = tuple([ (x+1, y-1) for x, y in 
+                               izip(exon_bnds[1:-2:2], exon_bnds[2:-1:2]) ])
         
         # add these for compatability
         self.append( trans_id )
         self.append( exon_bnds )        
+    
+    def __hash__( self ):
+        if self.cds_region != None:
+            return hash( (self.exons, tuple(self.cds_region)) )
+        else:
+            return hash( self.exons )
+    
+    def build_gtf_lines( self, gene_id, meta_data, score='.', source='.'):
+        ret_lines = []
+        def build_lines_for_feature( exons, feature, is_CDS=False ):
+            current_frame = 0
+            for start, stop in exons:
+                region = GenomicInterval( self.chrm, self.strand, start, stop )
+                frame = current_frame if is_CDS else '.'
+                yield create_gtf_line( region, gene_id, self.id, 
+                                       {}, score, feature=feature, frame=str(frame) )
+                current_frame = ( current_frame + stop - start + 1 )%3
+            return
+        
+        if self.cds_region == None:
+            ret_lines.extend( build_lines_for_feature( 
+                    self.exons, 'exon', False ) )
+        else:
+            us_exons, ds_exons = self.fp_utr_exons, self.tp_utr_exons
+            us_label, ds_label = 'five_prime_UTR', 'three_prime_UTR'
+            us_label, ds_label = 'exon', 'exon'
+            if self.strand == '-': 
+                us_exons, ds_exons = ds_exons, us_exons
+                us_label, ds_label = ds_label, us_label
+            
+            ret_lines.extend( build_lines_for_feature( 
+                    us_exons, us_label, False ) )
 
+            ret_lines.extend( build_lines_for_feature( 
+                    #self.cds_exons, 'exon'.ljust(15), False ) )
+                    self.cds_exons, 'CDS', True ) )
+
+            ret_lines.extend( build_lines_for_feature( 
+                    ds_exons, ds_label, False ) )
+        
+        return "\n".join( ret_lines )
+    
 def load_gtf( fname ):
     c_genes_p = c_void_p()   
     num_genes = c_int()

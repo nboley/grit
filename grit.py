@@ -1620,7 +1620,7 @@ def split_orf_results_by_sample( elements, pserver, output_prefix ):
     op_fns = []
     op_element_types = []
     for sample_type, sample_fn in transcript_fnames_and_sample_types:
-        op_fns.append( sample_fn + '.annotated.gtf' ))
+        op_fns.append( sample_fn + '.annotated.gtf' )
         op_element_types.append( ElementType( "coding_transcripts_gtf", 
                                               sample_type, "*", "." ) )
     

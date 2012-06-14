@@ -82,13 +82,19 @@ find_element_type_from_str( char* element_type_str ) {
 
     if( 0 == strcmp(element_type_str, "exon") )
         return UNKNOWN;
-
+    
     if( 0 == strcmp(element_type_str, "3UTR") )
         return TPUTR;
 
+    if( 0 == strcmp(element_type_str, "three_prime_UTR") )
+        return TPUTR;
+    
     if( 0 == strcmp(element_type_str, "5UTR") )
         return FPUTR;
 
+    if( 0 == strcmp(element_type_str, "five_prime_UTR") )
+        return TPUTR;
+    
     if( 0 == strcmp(element_type_str, "CDS") )
         return CDS;
     

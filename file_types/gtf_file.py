@@ -115,7 +115,7 @@ def create_gtf_line( region, gene_id, transcript_id, meta_data, score=0, \
     # an optimization for the common case that only gene and transcript id
     # are included
     if len( meta_data ) > 0:
-        # remove geneid and transctipt id frm the dict if they
+        # remove geneid and transctipt id from the dict if they
         # exist so that we dont double count them
         try: del meta_data['gene_id']
         except KeyError: pass
@@ -125,7 +125,6 @@ def create_gtf_line( region, gene_id, transcript_id, meta_data, score=0, \
         items = [ " " + str(k) + ' "%s";' % str(v) \
                      for k, v in meta_data.iteritems() ]
         meta_data_str += "".join( items )
- 
     
     gtf_line = [ chrm, source, feature, str(r.start), str(r.stop), \
                  str(score), r.strand, frame, meta_data_str ]
