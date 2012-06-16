@@ -118,7 +118,14 @@ class Transcript( list ):
         else:
             return hash( self.exons )
     
-    def build_gtf_lines( self, gene_id, meta_data, score='.', source='.'):
+    def IB_key( self ):
+        """Return a key for matching transcripts on their external bounds.
+
+        """
+        return (tuple(self.exon_bnds[1:-1]), self.cds_region)
+    
+    def build_gtf_lines( self, gene_id, meta_data, 
+                         score='.', source='.', add_trans_line=False):
         ret_lines = []
         def build_lines_for_feature( exons, feature, is_CDS=False ):
             current_frame = 0
@@ -150,6 +157,14 @@ class Transcript( list ):
 
             ret_lines.extend( build_lines_for_feature( 
                     ds_exons, ds_label, False ) )
+        
+        if add_trans_line:
+            start = self.exons[0][0]
+            stop = self.exons[-1][1]
+            region = GenomicInterval( self.chrm, self.strand, start, stop )
+            line = create_gtf_line( region, gene_id, self.id, 
+                                    {}, score='.', feature='transcript'  )
+            ret_lines.insert( 0, line )
         
         return "\n".join( ret_lines )
     

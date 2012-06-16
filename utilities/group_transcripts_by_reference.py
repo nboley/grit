@@ -1,34 +1,52 @@
 import sys, os
-from itertools import izip, combinations
+from itertools import izip, combinations, chain
 from collections import defaultdict
 import re
 
 sys.path.append( os.path.join( os.path.dirname( __file__), 
                                "../file_types/fast_gtf_parser/" ) )
-from gtf import load_gtfs
+from gtf import load_gtfs, Transcript
 
 sys.path.append( os.path.join( os.path.dirname( __file__), "../file_types/" ) )
-from gtf_file import create_gtf_line, GenomicInterval
+from gtf_file import create_gff_line, parse_gff_line, GenomicInterval
 
 # bijective hexavijezimal
 
 def get_introns_by_gene_name( genes ):
-    intron_to_gene_name = defaultdict(dict)
-    trans_to_ref_name = defaultdict(dict)
+    intron_to_gene_name = defaultdict( lambda: defaultdict(set) )
+    trans_to_ref_name = defaultdict( lambda: defaultdict(set) )
     for ( gene_name, chrm, strand, start, stop, transcripts ) in genes:
         for trans in transcripts:
-            trans_to_ref_name[ ( chrm, strand )][ tuple(trans[1][1:-1]) ] = trans[0]
+            trans_to_ref_name[(chrm, strand)][trans.IB_key()].add(trans.id)
             for bndry in trans[1][1:-1]:
-                intron_to_gene_name[ ( chrm, strand )][ bndry ] = gene_name
+                intron_to_gene_name[(chrm, strand)][bndry].add(gene_name)
     
     return intron_to_gene_name, trans_to_ref_name
 
 def find_associated_genes( trans, intron_to_gene_name ):
+    # genes which are associated with every bndry
+    fully_assoc_genes = set()
+    # genes associated with *any* bndry
     genes = set()
-    for bndry in trans[1][1:-1]:
+    
+    # initialize the gene sets with genes from the first boundary
+    first_bndry = trans[1][1]
+    if first_bndry in intron_to_gene_name:
+        genes.update( intron_to_gene_name[ first_bndry ] )
+        fully_assoc_genes.update( intron_to_gene_name[ first_bndry ] )
+    
+    # for a gene to be fully associated it has to be associated with *every* 
+    # boundary, so we take the intersection. to be associated, it has to be 
+    # associated with any, so we take the union
+    for bndry in trans[1][2:-1]:
         if bndry in intron_to_gene_name:
-            genes.add( intron_to_gene_name[ bndry ] )
-    return tuple(sorted(genes))
+            assoc_genes = intron_to_gene_name[ bndry ] 
+            genes.update( assoc_genes )
+            if len( assoc_genes ) > 0:
+                fully_assoc_genes.intersection_update(
+                    intron_to_gene_name[ bndry ])
+    
+    return tuple(sorted(fully_assoc_genes)), tuple(sorted(genes))
 
 def get_good_gene_merges( fname ):
     good_gene_merges = set()
@@ -43,6 +61,7 @@ def get_good_gene_merges( fname ):
     
     return good_gene_merges
 
+"""
 def get_blacklist_regions( fname, ref_genes ):
     gene_regions = {}
     for gene_name, chrm, strand, start, stop, transcripts in ref_genes:
@@ -55,7 +74,8 @@ def get_blacklist_regions( fname, ref_genes ):
             try:
                 chrm, strand, start, stop = gene_regions[ gene_name ]
             except KeyError:
-                print >> sys.stderr, "WARNING: Can't find black list gene '%s'" % gene_name
+                print >> sys.stderr, \
+                    "WARNING: Can't find black list gene '%s'" % gene_name
                 continue
             
             blacklist_regions[(chrm, strand)].add( (start, stop ) )
@@ -64,6 +84,11 @@ def get_blacklist_regions( fname, ref_genes ):
         blacklist_regions[key] = sorted( blacklist_regions[key] )
     
     return blacklist_regions
+"""
+
+def get_blacklist_genes( fname ):
+    with open( fname ) as fp:
+        return set( fp.read().strip().split() )
 
 class HexavijezimalCntr( object ):
     def __init__( self ):
@@ -86,6 +111,7 @@ class HexavijezimalCntr( object ):
     def increment( self ):
         self.value += 1
 
+"""
 def is_blacklisted( region, bl_regions ):
     start, stop = region
     for bl_start, bl_stop in bl_regions:
@@ -93,8 +119,16 @@ def is_blacklisted( region, bl_regions ):
             return True
     
     return False
+"""
 
-def main( ann_fname, ref_fname, good_gene_merges_fname, bl_regions_fname ):
+def build_gff_line_for_gene( gene ):
+    start = min( min(trans[1]) for trans in gene[-1] )
+    stop = max( max(trans[1]) for trans in gene[-1] )
+    region = GenomicInterval( gene[1], gene[2], start, stop )
+    return create_gff_line( region, gene[0], score='.', feature='gene' )
+
+def main( ann_fname, ref_fname, good_gene_merges_fname, 
+          bl_regions_fname, tss_exons_fname ):
     ann_ofp = open( "filtered.renamed.transcripts.gtf", "w" )
 
     novel_gene_names_set = set()
@@ -112,20 +146,32 @@ def main( ann_fname, ref_fname, good_gene_merges_fname, bl_regions_fname ):
     
     good_gene_merges = get_good_gene_merges( good_gene_merges_fname )
     novel_genes, ref_genes =  load_gtfs( ( ann_fname, ref_fname ), 2 )
-    bl_regions = get_blacklist_regions( bl_regions_fname, ref_genes )
+    # bl_regions = get_blacklist_regions( bl_regions_fname, ref_genes )
+    blacklist_genes = get_blacklist_genes( bl_regions_fname )
     intron_to_gene_name, trans_to_ref_name = get_introns_by_gene_name(ref_genes)
     
     # keep track of the genes that we've seen exactly
     observed_reference_trans = set()
     
+    gene_names_and_locs = defaultdict( lambda: [1e50, 0] )
+    
     trans_id_to_names = {}
     for ( gene_name, chrm, strand, start, stop, transcripts ) in novel_genes:
-        # check to see if this overlaps a black list region
-        if is_blacklisted( (start, stop), bl_regions[(chrm, strand)] ):
-            continue
+        num_trans = 0
 
+        # check to see if this overlaps a black list region
+        # if is_blacklisted( (start, stop), bl_regions[(chrm, strand)] ):
+        #    continue
+        
         for trans in transcripts:
-            assoc_genes = find_associated_genes(trans, intron_to_gene_name[(chrm, strand)])
+            fully_assoc_genes, assoc_genes = find_associated_genes(
+                trans, intron_to_gene_name[(chrm, strand)])
+            
+            # if this intersects with any blacklist gene, then
+            # skip this transcript
+            if any( x in blacklist_genes for x in assoc_genes ):
+                continue
+            
             # if this is a completely novel transcript
             if len( assoc_genes ) == 0:
                 if gene_name not in novel_gene_names_set:
@@ -137,15 +183,21 @@ def main( ann_fname, ref_fname, good_gene_merges_fname, bl_regions_fname ):
                     NOVEL_TRANS_CNTR[ new_gene_name ].increment()
                 NOVEL_TRANS_CNTR[ new_gene_name ].increment()
                 
-                new_trans_name = new_gene_name + '.' + str( NOVEL_TRANS_CNTR[ new_gene_name ] )
-                trans_id_to_names[trans[0]] = ( new_gene_name, new_trans_name )
+                new_trans_name = new_gene_name + '.' + \
+                    str( NOVEL_TRANS_CNTR[ new_gene_name ] )
+                trans_id_to_names[trans.id] = ( new_gene_name, new_trans_name )
             # if there is only 1 corresponding ref gene
-            elif len( assoc_genes ) == 1:
+            elif len(fully_assoc_genes) > 0 or len( assoc_genes ) == 1:
+                best_gene_name = assoc_genes[0]
+                if len( fully_assoc_genes ) > 0:
+                    best_gene_name = fully_assoc_genes[0]
+                
                 # check to see if this is an exact match
-                if tuple(trans[1][1:-1]) in trans_to_ref_name[(chrm, strand)]:
-                    i_trans_name = trans_to_ref_name[(chrm, strand)][tuple(trans[1][1:-1])]
+                if trans.IB_key in trans_to_ref_name[(chrm, strand)]:
+                    i_trans_name = trans_to_ref_name[(chrm, strand)][
+                        trans.IB_key][0]
                     
-                    observed_reference_trans.add( i_trans_name )
+                    observed_reference_trans.update( i_trans_name )
                     
                     if IDENT_CNTR[ i_trans_name ].value > 0:
                         new_i_trans_name = i_trans_name + ".%s" \
@@ -156,19 +208,20 @@ def main( ann_fname, ref_fname, good_gene_merges_fname, bl_regions_fname ):
                     
                     IDENT_CNTR[ i_trans_name ].increment()
                     
-                    trans_id_to_names[ trans[0] ] = ( 
-                        assoc_genes[0], new_i_trans_name )
+                    trans_id_to_names[ trans.id ] = ( 
+                        best_gene_name, new_i_trans_name )
                 # if it's not, it must be a partial match
                 else:
                     if assoc_genes[0] not in ALTERNATE_SPLICE_CNTR:
-                        ALTERNATE_SPLICE_CNTR[ assoc_genes[0] ].increment()
-                    ALTERNATE_SPLICE_CNTR[ assoc_genes[0] ].increment()
+                        ALTERNATE_SPLICE_CNTR[ best_gene_name ].increment()
+                    ALTERNATE_SPLICE_CNTR[ best_gene_name ].increment()
                     i_trans_name = "%s.%s" % ( 
-                        assoc_genes[0], ALTERNATE_SPLICE_CNTR[ assoc_genes[0] ])
-                    trans_id_to_names[ trans[0] ] = ( 
-                        assoc_genes[0], i_trans_name )
+                        best_gene_name, ALTERNATE_SPLICE_CNTR[ best_gene_name ])
+                    trans_id_to_names[ trans.id ] = ( 
+                        best_gene_name, i_trans_name )
             # if this is a gene merge
             elif len( assoc_genes ) > 1:
+                assert len( fully_assoc_genes ) == 0
                 # make sure that it's white listed
                 if assoc_genes not in good_gene_merges:
                     continue
@@ -176,36 +229,104 @@ def main( ann_fname, ref_fname, good_gene_merges_fname, bl_regions_fname ):
                 ALTERNATE_SPLICE_CNTR[ i_gene_name ].increment()
                 i_trans_name = "%s.%s" % ( 
                     i_gene_name, ALTERNATE_SPLICE_CNTR[ i_gene_name ] )
-                trans_id_to_names[ trans[0] ] = ( i_gene_name, i_trans_name )
+                trans_id_to_names[ trans.id ] = ( i_gene_name, i_trans_name )
+
+            new_gene_name, new_trans_name = trans_id_to_names[ trans.id ]
             
-            new_gene_name, new_trans_name = trans_id_to_names[ trans[0] ]
-            for start, stop in zip( trans[1][0::2], trans[1][1::2] ):
-                region = GenomicInterval( chrm, strand, start, stop )
-                ann_ofp.write( create_gtf_line( \
-                        region, new_gene_name, new_trans_name, {}, \
-                        feature='exon', source='grit' ) + "\n" )
-                                                
+            # update the gene name boundaries
+            key = (new_gene_name, trans.chrm, trans.strand)
+            gene_names_and_locs[ key ][0] = min( 
+                gene_names_and_locs[ key ][0], min(trans[1]) )
+            gene_names_and_locs[ key ][1] = max( 
+                gene_names_and_locs[ key ][1], max(trans[1]) )
+
+            trans.id = new_trans_name
+            gtf_lines = trans.build_gtf_lines( new_gene_name, {}, add_trans_line=True )
+            ann_ofp.write(  gtf_lines + "\n" )
+    
+    for (name, chrm, strand), (start, stop) in gene_names_and_locs.iteritems():
+        region = GenomicInterval( chrm, strand, start, stop )
+        line = create_gff_line(region, name, score='.', feature='gene')
+        ann_ofp.write( line + "\n" )
+    
     ann_ofp.close()
     
     unobserved_trans_ids = set()
     for item in trans_to_ref_name.values():
         unobserved_trans_ids.update( 
-            set( item.values() ).difference( observed_reference_trans ) )
+            set( chain(*item.values()) ).difference( observed_reference_trans ))
+
+    tss_exons_mapping = defaultdict( set )
+    with open( tss_exons_fname ) as fp:
+        for line in fp:
+            data = parse_gff_line( line )
+            if data == None: continue
+            rgn = data.region
+            if data.region.strand == '+':
+                tss_exons_mapping[(rgn.chr, rgn.strand, rgn.stop) ].add(
+                    rgn.start )
+            else:
+                tss_exons_mapping[(rgn.chr, rgn.strand, rgn.start)].add(
+                    rgn.stop )
+    
+    def fix_5p_bnd( tr ):
+        if tr.strand == '+':
+            key = (tr.chrm, tr.strand, tr.exons[0][1])
+            bnd = tr.exons[0][0]
+        else:
+            key = (tr.chrm, tr.strand, tr.exons[-1][0])
+            bnd = tr.exons[-1][1]
+        
+        # if this is a novel bnd, return the original transcript
+        if key not in tss_exons_mapping:
+            return tr
+        
+        # otherwise, get the previous boundaries
+        if not tr.is_protein_coding:
+            bnds = tr.exon_bnds
+        else:
+            bnds = list( chain( chain(*tr.us_exons), 
+                                chain(*tr.cds_exons), 
+                                chain(*tr.ds_exons) ) )
+        if tr.strand == '+':
+            other_bnds = [i for i in tss_exons_mapping[key] 
+                              if i <= bnd and bnd - i < 500 ]
+            if len( other_bnds ) == 0: return tr
+            new_distal = min( other_bnds )
+            if len(tr.us_exons) > 0:
+                bnds[0] = new_distal
+            else:
+                bnds.insert(0, bnds[1]-1) 
+                bnds.insert(0, new_distal )
+        else:
+            other_bnds = [ i for i in tss_exons_mapping[key] 
+                              if i >= bnd and i - bnd < 500  ]
+            if len( other_bnds ) == 0: return tr
+            new_distal = max( other_bnds )
+            if len(tr.ds_exons) > 0:
+                bnds[-1] = new_distal
+            else:
+                bnds.append(bnds[-1]+1) 
+                bnds.append(new_distal)
+                
+        return Transcript( tr.id, tr.chrm, tr.strand, bnds, tr.cds_region )
     
     fb_ofp = open( "unobserved_reference.gtf", "w" )
-    with open( ref_fname ) as fp:
-        for line in fp:
-            trans_id = re.findall("transcript_id \"(.*?)\"", line)
-            if len( trans_id ) != 1:
-                print >> sys.stderr, line
-                continue
-            else:
-                trans_id = trans_id[0]
-            if trans_id in unobserved_trans_ids:
-                fb_ofp.write( line )
+    for gene in ref_genes:
+        num_trans = 0
+        for trans in gene[-1]:
+            if trans.id in unobserved_trans_ids:
+                trans = fix_5p_bnd( trans )
+                lines = trans.build_gtf_lines(gene[0], {}, add_trans_line=True)
+                if num_trans == 0:
+                    ln = build_gff_line_for_gene( gene )
+                    fb_ofp.write( ln + "\n" )
+                num_trans += 1
+                fb_ofp.write( lines + "\n" )
+    
     fb_ofp.close()
     
     return
 
 if __name__ == "__main__":
-    main( sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] )
+    main( sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5] )
