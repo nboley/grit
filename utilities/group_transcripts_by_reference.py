@@ -121,12 +121,6 @@ def is_blacklisted( region, bl_regions ):
     return False
 """
 
-def build_gff_line_for_gene( gene ):
-    start = min( min(trans[1]) for trans in gene[-1] )
-    stop = max( max(trans[1]) for trans in gene[-1] )
-    region = GenomicInterval( gene[1], gene[2], start, stop )
-    return create_gff_line( region, gene[0], score='.', feature='gene' )
-
 def main( ann_fname, ref_fname, good_gene_merges_fname, 
           bl_regions_fname, tss_exons_fname ):
     ann_ofp = open( "filtered.renamed.transcripts.gtf", "w" )
@@ -152,8 +146,6 @@ def main( ann_fname, ref_fname, good_gene_merges_fname,
     
     # keep track of the genes that we've seen exactly
     observed_reference_trans = set()
-    
-    gene_names_and_locs = defaultdict( lambda: [1e50, 0] )
     
     trans_id_to_names = {}
     for ( gene_name, chrm, strand, start, stop, transcripts ) in novel_genes:
@@ -233,22 +225,12 @@ def main( ann_fname, ref_fname, good_gene_merges_fname,
 
             new_gene_name, new_trans_name = trans_id_to_names[ trans.id ]
             
-            # update the gene name boundaries
-            key = (new_gene_name, trans.chrm, trans.strand)
-            gene_names_and_locs[ key ][0] = min( 
-                gene_names_and_locs[ key ][0], min(trans[1]) )
-            gene_names_and_locs[ key ][1] = max( 
-                gene_names_and_locs[ key ][1], max(trans[1]) )
-
             trans.id = new_trans_name
-            gtf_lines = trans.build_gtf_lines( new_gene_name, {}, add_trans_line=True )
+            gtf_lines = trans.build_gtf_lines( new_gene_name,
+                {'gene_type': 'gene', 'transcript_type': 'mRNA'} )
+            
             ann_ofp.write(  gtf_lines + "\n" )
-    
-    for (name, chrm, strand), (start, stop) in gene_names_and_locs.iteritems():
-        region = GenomicInterval( chrm, strand, start, stop )
-        line = create_gff_line(region, name, score='.', feature='gene')
-        ann_ofp.write( line + "\n" )
-    
+        
     ann_ofp.close()
     
     unobserved_trans_ids = set()
@@ -313,15 +295,11 @@ def main( ann_fname, ref_fname, good_gene_merges_fname,
     
     fb_ofp = open( "unobserved_reference.gtf", "w" )
     for gene in ref_genes:
-        num_trans = 0
         for trans in gene[-1]:
             if trans.id in unobserved_trans_ids:
                 trans = fix_5p_bnd( trans )
-                lines = trans.build_gtf_lines(gene[0], {}, add_trans_line=True)
-                if num_trans == 0:
-                    ln = build_gff_line_for_gene( gene )
-                    fb_ofp.write( ln + "\n" )
-                num_trans += 1
+                lines = trans.build_gtf_lines(gene[0], 
+                    { 'gene_type': 'gene', 'transcript_type': 'mRNA' } )
                 fb_ofp.write( lines + "\n" )
     
     fb_ofp.close()

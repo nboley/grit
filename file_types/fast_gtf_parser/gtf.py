@@ -124,16 +124,15 @@ class Transcript( list ):
         """
         return (tuple(self.exon_bnds[1:-1]), self.cds_region)
     
-    def build_gtf_lines( self, gene_id, meta_data, 
-                         score='.', source='.', add_trans_line=False):
+    def build_gtf_lines( self, gene_id, meta_data, score='.', source='.'):
         ret_lines = []
         def build_lines_for_feature( exons, feature, is_CDS=False ):
             current_frame = 0
             for start, stop in exons:
                 region = GenomicInterval( self.chrm, self.strand, start, stop )
                 frame = current_frame if is_CDS else '.'
-                yield create_gtf_line( region, gene_id, self.id, 
-                                       {}, score, feature=feature, frame=str(frame) )
+                yield create_gtf_line( region, gene_id, self.id, meta_data,
+                                       score, feature=feature, frame=str(frame))
                 current_frame = ( current_frame + stop - start + 1 )%3
             return
         
@@ -157,14 +156,6 @@ class Transcript( list ):
 
             ret_lines.extend( build_lines_for_feature( 
                     ds_exons, ds_label, False ) )
-        
-        if add_trans_line:
-            start = self.exons[0][0]
-            stop = self.exons[-1][1]
-            region = GenomicInterval( self.chrm, self.strand, start, stop )
-            line = create_gtf_line( region, gene_id, self.id, 
-                                    {}, score='.', feature='transcript'  )
-            ret_lines.insert( 0, line )
         
         return "\n".join( ret_lines )
     
