@@ -38,7 +38,7 @@ def parse_gff_line( line, fix_chrm=True ):
         data[5] = 0
     else:
         try:
-            data[5] = int( data[5] )
+            data[5] = float(data[5])
         except ValueError:
             return None
     

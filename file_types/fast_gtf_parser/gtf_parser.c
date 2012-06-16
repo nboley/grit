@@ -65,7 +65,7 @@ get_id_ptr(
     while( ';' != *(id_start+id_len) )
         (id_len)++;
     
-    while( !isalnum( *(id_start+id_len-1) ) && ')' != *(id_start+id_len) )
+    while( !isalnum( *(id_start+id_len-1) ) && ')' != *(id_start+id_len-1) )
         (id_len)--;
 
     *id = calloc( sizeof(char), id_len + 1 );
