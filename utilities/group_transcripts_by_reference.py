@@ -14,14 +14,20 @@ from gtf_file import create_gff_line, parse_gff_line, GenomicInterval
 
 def get_introns_by_gene_name( genes ):
     intron_to_gene_name = defaultdict( lambda: defaultdict(set) )
+    cds_bnds_to_gene_name = defaultdict( lambda: defaultdict(set) )
     trans_to_ref_name = defaultdict( lambda: defaultdict(set) )
+    
     for ( gene_name, chrm, strand, start, stop, transcripts ) in genes:
         for trans in transcripts:
-            trans_to_ref_name[(chrm, strand)][trans.IB_key()].add(trans.id)
+            trans_to_ref_name[(chrm, strand)][trans.IB_key()].add(
+                (trans.id, gene_name ))
+            if trans.is_protein_coding:
+                cds_bnds_to_gene_name[(chrm, strand)][trans.cds_region].add(
+                    gene_name)
             for bndry in trans[1][1:-1]:
                 intron_to_gene_name[(chrm, strand)][bndry].add(gene_name)
     
-    return intron_to_gene_name, trans_to_ref_name
+    return intron_to_gene_name, trans_to_ref_name, cds_bnds_to_gene_name
 
 def find_associated_genes( trans, intron_to_gene_name ):
     # genes which are associated with every bndry
@@ -142,7 +148,8 @@ def main( ann_fname, ref_fname, good_gene_merges_fname,
     novel_genes, ref_genes =  load_gtfs( ( ann_fname, ref_fname ), 2 )
     # bl_regions = get_blacklist_regions( bl_regions_fname, ref_genes )
     blacklist_genes = get_blacklist_genes( bl_regions_fname )
-    intron_to_gene_name, trans_to_ref_name = get_introns_by_gene_name(ref_genes)
+    intron_to_gene_name, trans_to_ref_name, cds_bnds_to_gene_name \
+        = get_introns_by_gene_name(ref_genes)
     
     # keep track of the genes that we've seen exactly
     observed_reference_trans = set()
@@ -180,16 +187,16 @@ def main( ann_fname, ref_fname, good_gene_merges_fname,
                 trans_id_to_names[trans.id] = ( new_gene_name, new_trans_name )
             # if there is only 1 corresponding ref gene
             elif len(fully_assoc_genes) > 0 or len( assoc_genes ) == 1:
-                best_gene_name = assoc_genes[0]
-                if len( fully_assoc_genes ) > 0:
-                    best_gene_name = fully_assoc_genes[0]
-                
                 # check to see if this is an exact match
-                if trans.IB_key in trans_to_ref_name[(chrm, strand)]:
-                    i_trans_name = trans_to_ref_name[(chrm, strand)][
-                        trans.IB_key][0]
+                if trans.IB_key() in trans_to_ref_name[(chrm, strand)]:
+                    i_assoc_transripts = trans_to_ref_name[
+                        (chrm, strand)][trans.IB_key()]
                     
-                    observed_reference_trans.update( i_trans_name )
+                    i_trans_name, best_gene_name = \
+                        next(iter(i_assoc_transripts))
+                    
+                    observed_reference_trans.update( 
+                        x[0] for x in i_assoc_transripts )
                     
                     if IDENT_CNTR[ i_trans_name ].value > 0:
                         new_i_trans_name = i_trans_name + ".%s" \
@@ -204,7 +211,26 @@ def main( ann_fname, ref_fname, good_gene_merges_fname,
                         best_gene_name, new_i_trans_name )
                 # if it's not, it must be a partial match
                 else:
-                    if assoc_genes[0] not in ALTERNATE_SPLICE_CNTR:
+                    # try to find the best gene name
+                    # first search in CDS matched genes
+                    cds_gene_names = cds_bnds_to_gene_name[
+                        (chrm, strand)][trans.cds_region]
+                    if len( cds_gene_names ) > 0:
+                        fully_assoc_cds_gene_names = cds_gene_names.intersection(
+                            fully_assoc_genes)
+                        if len( fully_assoc_cds_gene_names ) > 0:
+                            best_gene_name = next(iter(fully_assoc_cds_gene_names))
+                        else:
+                            best_gene_name = next(iter(cds_gene_names))
+                    # if there are no matching CDS genes, then prefer fully 
+                    # matching genes, 
+                    else:
+                        if len( fully_assoc_genes ) > 0:
+                            best_gene_name = fully_assoc_genes[0]
+                        else:
+                            best_gene_name = assoc_genes[0]
+                
+                    if best_gene_name not in ALTERNATE_SPLICE_CNTR:
                         ALTERNATE_SPLICE_CNTR[ best_gene_name ].increment()
                     ALTERNATE_SPLICE_CNTR[ best_gene_name ].increment()
                     i_trans_name = "%s.%s" % ( 
@@ -233,11 +259,6 @@ def main( ann_fname, ref_fname, good_gene_merges_fname,
         
     ann_ofp.close()
     
-    unobserved_trans_ids = set()
-    for item in trans_to_ref_name.values():
-        unobserved_trans_ids.update( 
-            set( chain(*item.values()) ).difference( observed_reference_trans ))
-
     tss_exons_mapping = defaultdict( set )
     with open( tss_exons_fname ) as fp:
         for line in fp:
@@ -292,6 +313,13 @@ def main( ann_fname, ref_fname, good_gene_merges_fname,
                 bnds.append(new_distal)
                 
         return Transcript( tr.id, tr.chrm, tr.strand, bnds, tr.cds_region )
+
+    unobserved_trans_ids = set()
+    for item in trans_to_ref_name.values():
+        for i_item in item.values():
+            for trans_id, gene_id in i_item:
+                if trans_id not in observed_reference_trans:
+                    unobserved_trans_ids.add( trans_id )
     
     fb_ofp = open( "unobserved_reference.gtf", "w" )
     for gene in ref_genes:
