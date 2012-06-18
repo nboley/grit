@@ -44,7 +44,7 @@ def estimate_exon_expression( exons, read_cov, num_mapped_bases ):
     for start, stop in izip(bndries[:-1], bndries[1:]):
         if stop in starts:
             stop -= 1
-        pseudo_cnts[start] = read_cov[start:stop+1].mean()
+        pseudo_cnts[start] = 1000*read_cov[start:stop+1].mean()
     
     # build the design matrix. That is, for each exon, find which pseudo
     # exons it overlaps
@@ -73,7 +73,7 @@ def estimate_exon_expression( exons, read_cov, num_mapped_bases ):
     #print coefs
     #coefs = lstsq( X.T, y )[0]
     # turn the estiamtes into rpkm
-    return [ float(x)/num_mapped_bases for x in coefs ]
+    return [ int(x)/num_mapped_bases for x in coefs ]
 
 def parse_arguments():
     import argparse
@@ -100,33 +100,18 @@ def parse_arguments():
     # set flag args
     global VERBOSE
     VERBOSE = args.verbose
-    
-    """
-    rd1_plus_wigs = [ fp for fp in args.rnaseq_wigs 
-                      if fp.name.endswith("rd1.plus.bedGraph") ]
-    rd1_minus_wigs = [ fp for fp in args.rnaseq_wigs 
-                      if fp.name.endswith("rd1.minus.bedGraph") ]
-    rd2_plus_wigs = [ fp for fp in args.rnaseq_wigs 
-                      if fp.name.endswith("rd2.plus.bedGraph") ]
-    rd2_minus_wigs = [ fp for fp in args.rnaseq_wigs 
-                      if fp.name.endswith("rd2.minus.bedGraph") ]
-    
-    grpd_wigs = [ rd1_plus_wigs, rd1_minus_wigs, rd2_plus_wigs, rd2_minus_wigs ]
-    """
+
     
     return args.transcripts_gtf.name, args.rnaseq_wigs, args.chrm_sizes_fname, args.cage_wigs
 
 def main():
     transcripts_gtf_fname, wigs, chrm_sizes_fp, cage_wigs = parse_arguments()
 
-    read_cov = Wiggle( chrm_sizes_fp, wigs )    
-    num_mapped_bases = sum( x.sum() for x in read_cov.values() )
-
     transcripts = load_gtf( transcripts_gtf_fname )
     grpd_exons, tss_exons, tes_exons = group_exons_by_gene( transcripts )
 
     read_cov = Wiggle( chrm_sizes_fp, wigs )    
-    num_mapped_bases = sum( float(x.sum())/1e9 for x in read_cov.values() )
+    num_mapped_bases = sum( float(x.sum())/1e6 for x in read_cov.values() )
     
     for (gene_name, chrm, strand, gene_start, gene_stop), exons \
             in grpd_exons.iteritems():
