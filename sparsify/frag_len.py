@@ -1,5 +1,7 @@
 #!/usr/bin/python
 
+# Copyright (c) 2011-2012 Nathan Boley
+
 import numpy
 from numpy import mean, std, append
 import operator

@@ -1,3 +1,5 @@
+# Copyright (c) 2011-2012 Nathan Boley
+
 MAX_NUM_TRANSCRIPTS = 50000
 MIN_INTRON_CNT_FRAC = 0.001
 VERBOSE = False

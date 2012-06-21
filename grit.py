@@ -1,3 +1,5 @@
+# Copyright (c) 2011-2012 Nathan Boley
+
 """TODO
 
 Currently, if you add a sample the merged samples won't be re-run.

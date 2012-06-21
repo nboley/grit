@@ -1,3 +1,5 @@
+# Copyright (c) 2011-2012 Nathan Boley
+
 import sys, os
 sys.path.append( os.path.join( os.path.dirname(__file__), "../.." ) )
 from gene_models import parse_gff_line, GenomicInterval

@@ -1,4 +1,7 @@
 #!/usr/bin/python
+
+# Copyright (c) 2011-2012 Nathan Boley
+
 import sys
 import os
 
