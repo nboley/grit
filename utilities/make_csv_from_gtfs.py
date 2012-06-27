@@ -25,7 +25,7 @@ def get_exons_and_genes_in_gff(gff_fname):
             print "UNRECOGNIZED FEATURE", line.strip()
     
     fp.close()
-    sample_name = ".".join(os.path.basename(gff_fname).split(".")[:-3])
+    sample_name = ".".join(os.path.basename(gff_fname).split(".")[:-2])
     return sample_name, gene_expression_scores, \
         exon_expression_scores, jn_expression_scores
     
@@ -69,6 +69,7 @@ def main():
         ofp.write( ",".join( op_line ) + "\n" )
     ofp.close()
 
+    """    
     # write out the jn scores
     ofp = open( "jn_expression_scores.csv", "w" )
     ofp.write( "gene_name," + ",".join( sample_names ) + "\n" )
@@ -81,6 +82,6 @@ def main():
     ofp.close()
 
     #print exon_expression_scores
-    
+    """
 
 main()

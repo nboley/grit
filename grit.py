@@ -807,12 +807,22 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
     build_build_read_cov_cmds( res, cov_wig_fnames, rev_strand=True )
     
     # add the wiggle merger process
-    def add_merge_cmd( sample_type, cov_wig_fnames ):
+    def add_merge_cmd( sample_type, cov_wig_fnames, read_num ):
         if sample_type == "*": 
             base_name = "rnaseq_cov"
         else:
             base_name =  "rnaseq_cov." + sample_type
-                    
+        
+        if read_num == 1:
+            element_type_str = "rnaseq_cov_pair1_bedgraph"
+            base_name += ".rd1"
+        elif read_num == 2:
+            element_type_str = "rnaseq_cov_pair2_bedgraph"
+            base_name += ".rd2"
+        else:
+            element_type_str = "rnaseq_cov_bedgraph"
+            assert read_num ==  None
+        
         #### Get the subprocess command info together
             
         # choose with chromosome because the input wiggles are always have a chr
@@ -838,8 +848,8 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
 
 
         output_element_types = [ 
-            ElementType( "rnaseq_cov_bedgraph", sample_type, "*", "+" ),  \
-            ElementType( "rnaseq_cov_bedgraph", sample_type, "*", "-" )   \
+            ElementType( element_type_str, sample_type, "*", "+" ),  \
+            ElementType( element_type_str, sample_type, "*", "-" )   \
         ]
         
         
@@ -853,14 +863,37 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
                    output_fnames, dependency_fnames )
         
         process_server.add_process( cmd, Resource(1) )
-        
     
     # build the merge sample type wiggles    
-    for sample_type, fnames in cov_wig_fnames.iteritems():
-        add_merge_cmd( sample_type, fnames )
+    res = elements.get_elements_from_db( "rnaseq_cov_pair1_bedgraph" )
+    if len( res ) > 0:
+        rd1_cov_fnames = defaultdict( list )
+        for entry in res:
+            rd1_cov_fnames[entry.sample_type].append( entry.fname )
+        for sample_type, fnames in rd1_cov_fnames.iteritems():
+            add_merge_cmd( sample_type, fnames, 1 )
+        add_merge_cmd( "*", list( itertools.chain( *rd1_cov_fnames.values() ) ), 1 )
+    
+    res = elements.get_elements_from_db( "rnaseq_cov_pair2_bedgraph" )
+    if len( res ) > 0:
+        rd2_cov_fnames = defaultdict( list )
+        for entry in res:
+            rd2_cov_fnames[entry.sample_type].append( entry.fname )
+        for sample_type, fnames in rd2_cov_fnames.iteritems():
+            add_merge_cmd( sample_type, fnames, 2 )
+        add_merge_cmd( "*", list( itertools.chain( *rd2_cov_fnames.values() ) ), 2 )
+
+    res = elements.get_elements_from_db( "rnaseq_cov_bedgraph" )
+    if len( res ) > 0:
+        rd_cov_fnames = defaultdict( list )
+        for entry in res:
+            rd_cov_fnames[entry.sample_type].append( entry.fname )
+        for sample_type, fnames in rd_cov_fnames.iteritems():
+            add_merge_cmd( sample_type, fnames, None )
+        add_merge_cmd("*", list( itertools.chain(*rd_cov_fnames.values() ) ), None)
     
     # add the merge everything sample
-    add_merge_cmd( "*", list( itertools.chain( *cov_wig_fnames.values() ) ) )
+    #add_merge_cmd( "*", list( itertools.chain( *cov_wig_fnames.values() ) ) )
     
     return 
 
@@ -1055,6 +1088,7 @@ def build_all_exon_files( elements, pserver, output_prefix ):
             "rnaseq_cov_pair1_bedgraph", sample_type, sample_id )
         rd1_bedgraph_fnames = [ i.fname for i in res ]
         if len( rd1_bedgraph_fnames ) != 2:
+            print elements
             raise ValueError, "Can't find the rnaseq coverage files " \
                               + "necessary to build exons from."
 
@@ -1748,7 +1782,17 @@ def main():
 
     # sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
 
-    call_orfs( elements, pserver, base_dir + "transcripts" )
+    # call_orfs( elements, pserver, base_dir + "transcripts" )
+    
+    # DO PROTEIN FILTERING ( need to write this... )
+    
+    # DO THE 5'/3' COMBINING
+    
+    # CALL THE RENAMING SCRIPT
+    
+    # CALCULATE EXPRESSION SCORES
+    # include, build expression csv
+    
     
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
     
