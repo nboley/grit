@@ -1,3 +1,5 @@
+# Copyright (c) 2011-2012 Nathan Boley
+
 import os, sys
 import numpy
 from collections import defaultdict

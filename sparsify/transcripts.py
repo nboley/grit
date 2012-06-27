@@ -1,3 +1,5 @@
+# Copyright (c) 2011-2012 Nathan Boley
+
 """Methods for building transcript models. 
 
 Outputs tracking and combined gtf file information

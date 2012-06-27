@@ -1,3 +1,5 @@
+# Copyright (c) 2011-2012 Nathan Boley
+
 import numpy
 MAX_NUM_UNMAPPABLE_BASES = 0
 RUN_INLINE_TESTS = False

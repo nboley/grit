@@ -1,3 +1,5 @@
+/* Copyright (c) 2011-2012 Nathan Boley */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

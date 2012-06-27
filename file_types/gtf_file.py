@@ -1,3 +1,5 @@
+# Copyright (c) 2011-2012 Nathan Boley
+
 import sys
 from genomic_intervals import GenomicInterval
 from collections import namedtuple

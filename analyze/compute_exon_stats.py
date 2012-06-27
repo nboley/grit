@@ -1,3 +1,5 @@
+# Copyright (c) 2011-2012 Nathan Boley
+
 import sys, os
 
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
