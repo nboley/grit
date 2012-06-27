@@ -1,0 +1,108 @@
+README for the ModEncode Drosophila Transcriptome v2. 
+
+Additional questions can be directed to Nathan Boley 
+( nboley@berkeley.edu )
+
+Annotation files:
+
+1) Celniker_Drosophila_Annotation_20120616_1428.gtf.gz:
+Contains all transcripts in gtf format. Coding regions are 
+represented by the CDS element type. Exon and CDS lines with
+the same transcript_id field correspond to the same transcript. 
+So, to find all of the exons associated with mgn000001.a, run
+
+grep mgn000001.a Celniker_Drosophila_Annotation_20120616_1428.gtf 
+
+at a unix shell. The transcript and gene naming conventions are 
+described at the bottom of the README.
+
+2) Celniker_Drosophila_Annotation_20120616_1428.gene.gtf.gz:
+Contains gene bounds in GFF2 format. This information can be
+extracted directly from the transcripts file. 
+
+3) Celniker_Drosophila_Annotation_20120616_1428.trancript_bnds.gff.gz
+Contains transcript bounds in GFF2 format. This information can be
+extracted directly from the transcripts file.
+
+4) Celniker_Drosophila_Annotation_20120616_1428.tss.gtf.gz:
+Transcription start sites in GFF2. Locations included in this list
+were either verified experimentally with CAGE signal or a full
+length cDNA. 
+
+5) Celniker_Drosophila_Annotation_20120616_1428.tes.gtf:
+Transcription end sites in GFF2. Locations included in this list
+were discovered from RNAseq data or a poly(a) read spanning cDNAs.
+
+6) Celniker_Drosophila_Annotation_20120616_1428_jn.gff.gz:
+Contains discovered intron regions in GFF2. The start and stop fields 
+indicate the 1 based, inclusive, start and stop coordinates for each 
+intron. The initial set of junctions were produced from the merged set
+of tophat mapped RNAseq data. Potential junctions reads were 
+then filtered according to the following rules:
+
+a) Canonical  Junctions
+Information score >= 2.0 in 2 distinct samples
+b) Non-Canonical Junctions
+Information score >= 2.5 in 2 distinct samples
+c) Canonical Junctions Wrong Strand
+Same as non-canonical and needed to have greater than 1% of the 
+frequency of the corresponding canonical junction.
+
+Finally, junctions that merged two genes were filtered
+for uniqueness. 
+
+The information score calculation  is described in "The developmental 
+transcriptome of Drosophila melanogaster" ( Graveley et. al. )
+
+Expression Scores:
+
+1) Celniker_Drosophila_Annotation_20120616_1428_gene_expression.csv:
+Contains the total number of bases that overlaps at least one exon in 
+the gene in the left most column. Each column corresponds to a single 
+sample type, which is listed in the first row.
+
+2) Celniker_Drosophila_Annotation_20120616_1428_exon_expression.csv:
+Contains the total number of bases that overlaps the exon given by the 
+region string in the left most column. The region strings take the form
+"chromosome:strand:start_1_based_inclusive-stop_1_based_inclusive". Each 
+additional column corresponds to a sample type, given in the first row.
+If multiple exons overlap the same region, we distribute reads between 
+them to maximize the read uniformity within an exon. The method is 
+detailed in GRIT in estimate_exon_expression.py. 
+
+3) Celniker_Drosophila_Annotation_20120616_1428_jn_expression.csv:
+Contains the total number of junction reads that span the intron described by
+the region string in the left most column. The region string format is
+Chromosome:strand:start_1_based_inclusive-stop_1_based_inclusive. Each 
+additional column corresponds with a sample type listed in the first row.
+
+Naming Convention:
+
+Transcripts names were chosen in an attempt to preserve the Flybase naming 
+scheme whenever possible. We used the following procedure:
+
+1) Matching Transcripts
+    Must share the same introns as at least one flybase transcript. 
+    - Use the flybase transcript and gene names
+    - If there are multiple transcripts that match the flybase
+      transcript, then give following transcripts FBNAME.a, 
+      FBNAME.b, etc.
+
+2) Overlapping Transcripts
+    Must share a jn boundary or overlap a flybase gene
+    - Use FBGENE_NAME for the gene name, and FBGENE_NAME.a, 
+      FBGENE_NAME.b, etc. for the transcript names.
+
+3) Novel Transcripts
+    - name genes mgnXXXXX, and transcripts mgnXXXXX.a, mgnXXXXX.b, etc.
+      where XXXXX is a five digit number.
+
+Ensembl Name Mappings:
+
+Were prepared by the Gerstein lab and are available for download at:
+
+http://archive.gersteinlab.org/proj/orthologs/Orthologs/Mapping/flybase.ensembl.idmapping
+
+
+
+
