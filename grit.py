@@ -121,10 +121,8 @@ RnaSeqDataTypes = [ "rnaseq_polyaplus_bam",
                     "cdna_jns_gff",
                     "fl_dist",
                     "stats",
-                    "coding_transcripts_gtf",
-                    "non_coding_transcripts_gtf",
+                    "CDS_transcripts_gtf",
                     "annotation_gtf",
-                    "CDS_annotation_gtf",
                     "transcript_sources" ]
 
 Element = namedtuple( "Element", ["data_type", "sample_type", \
@@ -1575,12 +1573,11 @@ def call_orfs( elements, pserver, output_prefix ):
     time python ~/grit/proteomics/ORF_finder.py \
         ./transcripts/merged_input.merged_input.transcripts.gtf  \
         /media/scratch/genomes/drosophila/BDGP_5/all_fa/fly.fa \
-        --annotation /media/scratch/genomes/drosophila/dmel-all-r5.45.cds.gtf \
         --threads=50 \
-        --out_prefix tmp \
-
+        --output-filename output.cds.gtf
+    
     OUTPUTS:
-    tmp.annotated.gtf    tmp.non_coding_genes.gtf
+    output.cds.gtf
     """
     
     def call_orfs( use_merged_input=False  ):
@@ -1598,22 +1595,18 @@ def call_orfs( elements, pserver, output_prefix ):
         assert len( res ) == 1
         coding_ann_fname = res[0].fname
 
-        out_file_prefix = os.path.join( \
-            output_prefix, os.path.basename( merged_trans_fname ) )
+        # just append CDS.gtf to the transcripts gtf, for the CDS annotated GTF
+        op_fname = os.path.join(output_prefix, merged_trans_fname + ".CDS.gtf")
 
-        call = "python {0} {1} {2} --annotation {3} --out-prefix {4}"
-        call = call.format( FIND_ORFS_CMD, merged_trans_fname, fasta_fn, 
-                            coding_ann_fname, out_file_prefix )
+        call = "python %s {0} {1} --output-filename {2}" % FIND_ORFS_CMD
+        call = call.format( merged_trans_fname, fasta_fn, op_fname )
         call += " --threads {threads}"
 
         op_element_types = [ 
-            ElementType( "coding_transcripts_gtf", sample_type, "*", "." ),
-            ElementType( "non_coding_transcripts_gtf", sample_type, "*", "." ) ]
-        op_fnames = [ out_file_prefix + '.annotated.gtf', 
-                      out_file_prefix + '.non_coding_genes.gtf' ]
-        dependencies = [ merged_trans_fname, fasta_fn, coding_ann_fname ]
+            ElementType( "CDS_transcripts_gtf", sample_type, "*", "." ), ]
+        op_fnames = [ op_fname, ]
+        dependencies = [ merged_trans_fname, fasta_fn ]
         
-        print call
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
         pserver.add_process( cmd, 
                              Resource(pserver.max_available_resources-2), 
