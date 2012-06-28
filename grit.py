@@ -1594,7 +1594,7 @@ def call_orfs( elements, pserver, output_prefix ):
         fasta_fn = elements.genome_fname
 
         # get the CODING annotation file 
-        res = elements.get_elements_from_db( "CDS_annotation_gtf" )
+        res = elements.get_elements_from_db( "annotation_gtf" )
         assert len( res ) == 1
         coding_ann_fname = res[0].fname
 
@@ -1613,6 +1613,7 @@ def call_orfs( elements, pserver, output_prefix ):
                       out_file_prefix + '.non_coding_genes.gtf' ]
         dependencies = [ merged_trans_fname, fasta_fn, coding_ann_fname ]
         
+        print call
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
         pserver.add_process( cmd, 
                              Resource(pserver.max_available_resources-2), 
@@ -1784,7 +1785,7 @@ def main():
 
     # sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
 
-    # call_orfs( elements, pserver, base_dir + "transcripts" )
+    call_orfs( elements, pserver, base_dir + "transcripts" )
     
     # DO PROTEIN FILTERING ( need to write this... )
     

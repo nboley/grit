@@ -8,6 +8,8 @@ sys.path.append( os.path.join( os.path.dirname(__file__),
                                '..', 'file_types', 'fast_gtf_parser' ) )
 from gtf import load_gtf, Transcript
 
+VERBOSE = False
+
 def merge_distal_bndries( transcripts ):
     def make_mapping( max_link_size, is_downstream ):
         bnd_index = -1 if is_downstream else 0
@@ -142,16 +144,42 @@ def split_transcripts_by_CDS( gene, fl_transcripts_set ):
         
     return final_transcripts
 
+def parse_arguments():
+    import argparse
+
+    parser = argparse.ArgumentParser(\
+        description='Find exons from wiggle and junctions files.')
+
+    parser.add_argument( 'novel_genes', type=file, \
+        help='GTF with transcripts to be filtered.')
+    parser.add_argument( 'ref_genes', type=file, \
+        help='GTF with reference transcripts.')
+    parser.add_argument( 'cdnas', type=file, \
+        help='GTF with full length cDNAs.')
+    
+    parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
+        help='Whether or not to print status information.')
+
+    args = parser.parse_args()
+    
+    # set flag args
+    global VERBOSE
+    VERBOSE = args.verbose
+    
+    return args.novel_genes, args.ref_genes, args.cdnas
+
 def main():
+    novel_genes_fp, ref_genes_fp, cdnas_fp = parse_arguments()
+    
     # load the proteomics gtf file
     # transcripts hould have: 5' UTR, CDS, 3'UTR
-    novel_genes = load_gtf( sys.argv[1] )
+    novel_genes = load_gtf( novel_genes_fp )
         
     # build a set of the full length transcripts
-    ref_genes = load_gtf( sys.argv[2] )
+    ref_genes = load_gtf( ref_genes_fp )
     
-    # build a set of the full length transcripts
-    cdna_genes = load_gtf( sys.argv[3] )
+    # find the full length cDNAs
+    cdna_genes = load_gtf( cdnas_fp )
     
     full_len_transcripts = defaultdict( set )
     for gene in chain( ref_genes, cdna_genes ):
@@ -165,7 +193,5 @@ def main():
             gene, full_len_transcripts[(gene[1], gene[2])] )
         for tr in filtered_transcripts:
             print tr.build_gtf_lines( gene[0], {} )
-
-        #raw_input()
     
 main()

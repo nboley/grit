@@ -161,6 +161,17 @@ class Transcript( list ):
         
         return "\n".join( ret_lines )
     
+class Gene( list ):
+    def __init__( self, id, chrm, strand, start, stop, transcripts ):
+        self.id = id
+        self.chrm = chrm
+        self.strand = strand
+        self.start = start
+        self.stop = stop
+        self.transcripts = transcripts
+        list.extend( self, ( id, chrm, strand, start, stop, transcripts ) )
+        return    
+
 def load_gtf( fname ):
     c_genes_p = c_void_p()   
     num_genes = c_int()
@@ -179,7 +190,6 @@ def load_gtf( fname ):
         chrm = g.chrm
         if chrm.startswith( "chr" ):
             chrm = chrm[3:]
-        data = [g.gene_id, chrm, g.strand, g.min_loc, g.max_loc]
         transcripts = []
         for j in xrange( g.num_transcripts ):
             trans_id = g.transcripts[j].contents.trans_id
@@ -195,8 +205,9 @@ def load_gtf( fname ):
             transcripts.append( 
                 Transcript(trans_id, chrm, g.strand, exon_bnds, cds_region) )
         
-        data.append( transcripts )
-        genes.append( data )
+        gene =  Gene( g.gene_id, chrm, g.strand, 
+                      g.min_loc, g.max_loc, transcripts )
+        genes.append( gene )
     
     gtf_o.free_gtf_data( c_genes_p, num_genes )    
     
@@ -263,7 +274,7 @@ def load_gtfs( fnames, num_threads ):
 
 if __name__ == "__main__":
     VERBOSE = True
-    gene_grps = load_gtfs( sys.argv[1:], 4 )
+    gene_grps = load_gtfs( sys.argv[1:], 1 )
     for genes in gene_grps:
         for gene in genes:
             print gene[0]
