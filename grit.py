@@ -72,7 +72,7 @@ BUILD_TRANSCRIPTS_CMD = os.path.join( os.path.dirname( __file__ ),
                               "./elements/", "build_transcripts.py" )
 
 MERGE_TRANSCRIPTS_CMD = os.path.join( os.path.dirname( __file__ ), 
-                              "./elements/transcripts/", "merge_transcripts.py" )
+                              "./elements/transcripts/", "merge_transcripts.py")
 
 TRANS_CMP_CMD = os.path.join( os.path.dirname( __file__ ), 
                               "./analyze/", "compare_annotations.py" )
@@ -83,11 +83,15 @@ EXTRACT_ELEMENTS_CMD = os.path.join( os.path.dirname( __file__ ),
 BUILD_FL_DIST_CMD = os.path.join( os.path.dirname( __file__ ), 
                         "./sparsify/", "frag_len.py" )
 
-SPARSIFY_TRANSCRIPTS_CMD = os.path.join( os.path.dirname( __file__ ), 
-                        "./sparsify/", "sparsify_transcripts.py" )
+SPARSIFY_TRANSCRIPTS_CMD = os.path.join( 
+    os.path.dirname( __file__ ), "./sparsify/", "sparsify_transcripts.py" )
 
-FIND_ORFS_CMD = os.path.join( os.path.dirname( __file__ ), \
-                                  "./proteomics/", "ORF_finder.py" )
+FIND_ORFS_CMD = os.path.join( 
+    os.path.dirname( __file__ ), "./proteomics/", "ORF_finder.py" )
+
+SPLIT_MERGED_TRANS_CMD = os.path.join( 
+    os.path.dirname( __file__ ), "./elements/transcripts/", "ORF_finder.py" )
+        
 
 
 
@@ -1563,6 +1567,13 @@ def run_all_slide_compares(elements, pserver, output_prefix, build_maps=False):
 
 
 def call_orfs( elements, pserver, output_prefix ):
+    """Find orfs for each transript file.
+
+    Since ORF finding can be slow, and doing it sample by sample is very 
+    redundant, we call orfs on the merged samples and then split them
+    using the merged samples file.
+    """
+    
     try:
         os.makedirs( output_prefix )
     except OSError:
@@ -1578,12 +1589,23 @@ def call_orfs( elements, pserver, output_prefix ):
     
     OUTPUTS:
     output.cds.gtf
+
+    python ~/Desktop/grit/elements/transcripts/split_merged_transcripts.py \
+        transcripts/merged.transcripts.gtf 
+        transcripts/merged.sources 
+        --suffix .cds.gtf
+        --output-dir output_prefix
+    
+    OUTPUTS:
+    *.CDS.gtf
+    
+    
     """
     
-    def call_orfs( use_merged_input=False  ):
-        sample_type = '*' if use_merged_input else 'M'
+    def call_orfs( sample_type, sample_id  ):
         # get the merged transcripts from the database
-        res = elements.get_elements_from_db("transcripts_gtf", sample_type, "*")
+        res = elements.get_elements_from_db(
+            "transcripts_gtf", sample_type, sample_id)
         assert len( res ) == 1
         merged_trans_fname = res[0].fname
 
@@ -1596,14 +1618,16 @@ def call_orfs( elements, pserver, output_prefix ):
         coding_ann_fname = res[0].fname
 
         # just append CDS.gtf to the transcripts gtf, for the CDS annotated GTF
-        op_fname = os.path.join(output_prefix, merged_trans_fname + ".CDS.gtf")
-
+        basename = os.path.basename(merged_trans_fname)
+        if basename.endswith( '.gtf' ): basename = basename[:-4]
+        op_fname = os.path.join( output_prefix, basename + ".CDS.gtf")
+        
         call = "python %s {0} {1} --output-filename {2}" % FIND_ORFS_CMD
         call = call.format( merged_trans_fname, fasta_fn, op_fname )
         call += " --threads {threads}"
-
+        
         op_element_types = [ 
-            ElementType( "CDS_transcripts_gtf", sample_type, "*", "." ), ]
+            ElementType( "CDS_transcripts_gtf", sample_type, sample_id, "." ), ]
         op_fnames = [ op_fname, ]
         dependencies = [ merged_trans_fname, fasta_fn ]
         
@@ -1611,59 +1635,63 @@ def call_orfs( elements, pserver, output_prefix ):
         pserver.add_process( cmd, 
                              Resource(pserver.max_available_resources-2), 
                              Resource(pserver.max_available_resources) )
+
+
+    # TODO - add split ORFs cmd
+    def split_orf_results_by_sample( elements, pserver, output_prefix ):
+        try:
+            os.makedirs( output_prefix )
+        except OSError:
+            # assume that the directory already exists, and continue
+            pass
+
+        """pass orf_transcripts to split_orf_results_by_sample.py and produce 
+        one orf results per merge_input_fn 
+
+        python split_orf_results_by_sample.py 
+             tmp.annotated.gtf 
+             merged.sources 
+             --out-prefix ./proteomics/tmp.annotated.gtf
+        """
+        orf_gtf_e = elements.get_elements_from_db( 
+            "coding_transcripts_gtf", "M", "*")
+        assert len( orf_gtf_e ) == 1
+        orf_gtf_fn = orf_gtf_e[0].fname
+
+        sources_e = elements.get_elements_from_db("transcript_sources", "M", "*")
+        assert len( sources_e ) == 1
+        sources_fn = sources_e[0].fname
+
+        # find the transcript filenames, by source. 
+        in_es = elements.get_elements_from_db( "transcripts_gtf" )
+        transcript_fnames_and_sample_types = [ 
+            (e.sample_type, e.fname) for e in in_es 
+            if e.sample_id == "*" and e.sample_type not in 'M*' ]
+
+        # build the output
+        op_fns = []
+        op_element_types = []
+        for sample_type, sample_fn in transcript_fnames_and_sample_types:
+            op_fns.append( sample_fn + '.annotated.gtf' )
+            op_element_types.append( ElementType( "coding_transcripts_gtf", 
+                                                  sample_type, "*", "." ) )
+
+        dependencies = [ orf_gtf_fn, sources_fn ]
+
+        call = "python {0} {1} {2} --out-prefix {3}".format( 
+            SPLIT_ORFS_CMD, orf_gtf_fn, sources_fn, output_prefix + '/' )
+
+        cmd = Cmd( call, op_element_types, op_fns, dependencies )
+        pserver.add_process( cmd, Resource( 1 ) )
+
+        return
     
-    call_orfs(use_merged_input=True)
+    # call on merged input transcripts
+    call_orfs("*", "*")
+    # call on merged transcripts
+    call_orfs("*", "M")
     
     return
-
-def split_orf_results_by_sample( elements, pserver, output_prefix ):
-    try:
-        os.makedirs( output_prefix )
-    except OSError:
-        # assume that the directory already exists, and continue
-        pass
-    
-    """pass orf_transcripts to split_orf_results_by_sample.py and produce 
-    one orf results per merge_input_fn 
-    
-    python split_orf_results_by_sample.py 
-         tmp.annotated.gtf 
-         merged.sources 
-         --out-prefix ./proteomics/tmp.annotated.gtf
-    """
-    orf_gtf_e = elements.get_elements_from_db( 
-        "coding_transcripts_gtf", "M", "*")
-    assert len( orf_gtf_e ) == 1
-    orf_gtf_fn = orf_gtf_e[0].fname
-    
-    sources_e = elements.get_elements_from_db("transcript_sources", "M", "*")
-    assert len( sources_e ) == 1
-    sources_fn = sources_e[0].fname
-    
-    # find the transcript filenames, by source. 
-    in_es = elements.get_elements_from_db( "transcripts_gtf" )
-    transcript_fnames_and_sample_types = [ 
-        (e.sample_type, e.fname) for e in in_es 
-        if e.sample_id == "*" and e.sample_type not in 'M*' ]
-    
-    # build the output
-    op_fns = []
-    op_element_types = []
-    for sample_type, sample_fn in transcript_fnames_and_sample_types:
-        op_fns.append( sample_fn + '.annotated.gtf' )
-        op_element_types.append( ElementType( "coding_transcripts_gtf", 
-                                              sample_type, "*", "." ) )
-    
-    dependencies = [ orf_gtf_fn, sources_fn ]
-    
-    call = "python {0} {1} {2} --out-prefix {3}".format( 
-        SPLIT_ORFS_CMD, orf_gtf_fn, sources_fn, output_prefix + '/' )
-    
-    cmd = Cmd( call, op_element_types, op_fns, dependencies )
-    pserver.add_process( cmd, Resource( 1 ) )
-    
-    return
-
 
 def filter_frameshifts( elements, pserver, output_prefix ):
     try:
@@ -1778,7 +1806,7 @@ def main():
 
     # sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
 
-    call_orfs( elements, pserver, base_dir + "transcripts" )
+    call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
     
     # DO PROTEIN FILTERING ( need to write this... )
     

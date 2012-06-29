@@ -172,7 +172,7 @@ def main():
     novel_genes_fp, ref_genes_fp, cdnas_fp = parse_arguments()
     
     # load the proteomics gtf file
-    # transcripts hould have: 5' UTR, CDS, 3'UTR
+    # transcripts should have: 5' UTR, CDS, 3'UTR
     novel_genes = load_gtf( novel_genes_fp )
         
     # build a set of the full length transcripts
