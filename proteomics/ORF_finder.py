@@ -216,6 +216,7 @@ def find_cds_for_gene( gene, fasta ):
         orfs = find_orfs( trans_seq )
         if len( orfs ) == 0:
             annotated_transcripts.append( trans )
+            continue
         
         for orf_id, (start, stop) in enumerate( orfs ):
             if gene.strand == '-':
@@ -225,19 +226,21 @@ def find_cds_for_gene( gene, fasta ):
             # find the coding region boundaries in genomic coordinates
             start = convert_to_genomic( start, trans.exons )
             stop = convert_to_genomic( stop, trans.exons )
-            cds_region = tuple(sorted((start, stop)))
-        
+            start, stop = sorted((start, stop))
             # update the exon bounds to include the cds boundaries
-            exon_bnds = copy( trans.exon_bnds )
-            exon_bnds.extend( (start, stop) )
+            exon_bnds = list( trans.exon_bnds )
+            if start not in exon_bnds:
+                exon_bnds.extend( (start-1, start ) )
+            if stop not in exon_bnds:
+                exon_bnds.extend( (stop, stop+1 ) )
+            
             exon_bnds = sorted( exon_bnds )
             
             trans_id = trans.id + "_CDS%i" % (orf_id+1) \
                 if len( orfs ) > 1 else trans.id
-            
             new_trans = Transcript( 
-                trans_id, trans.chrm, trans.strand, exon_bnds, cds_region )
-                
+                trans_id, trans.chrm, trans.strand, exon_bnds, (start, stop) )
+            
             annotated_transcripts.append( new_trans )
     
     return annotated_transcripts

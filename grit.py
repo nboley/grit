@@ -90,10 +90,15 @@ FIND_ORFS_CMD = os.path.join(
     os.path.dirname( __file__ ), "./proteomics/", "ORF_finder.py" )
 
 SPLIT_MERGED_TRANS_CMD = os.path.join( 
-    os.path.dirname( __file__ ), "./elements/transcripts/", "ORF_finder.py" )
-        
+    os.path.dirname( __file__ ), "./elements/transcripts/", 
+    "split_merged_transcripts.py" )
 
+HEURISTIC_FILTER_TRANS_CMD = os.path.join( 
+    os.path.dirname( __file__ ), "./sparsify/", "filter_transcript_set.py" )
 
+RENAME_TRANS_CMD = os.path.join( 
+    os.path.dirname( __file__ ), "./utilities/", 
+    "group_transcripts_by_reference.py" )
 
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
                                       "./file_types/" ) )
@@ -105,10 +110,12 @@ GENOME_DATA_TYPE = "genome"
 RnaSeqDataTypes = [ "rnaseq_polyaplus_bam",
                     "rnaseq_polyaplus_rev_bam",
                     "rnaseq_polyaplus_unstranded_bam",
+                    "rnaseq_total_bam",
+                    "annotation_gtf",
+                    "gene_merges_white_list",
                     "rnaseq_cov_bedgraph",
                     "rnaseq_cov_pair1_bedgraph",
                     "rnaseq_cov_pair2_bedgraph",
-                    "rnaseq_total_bam",
                     "filtered_jns_gff",
                     "jns_gff", 
                     "cage_fastq", 
@@ -126,7 +133,11 @@ RnaSeqDataTypes = [ "rnaseq_polyaplus_bam",
                     "fl_dist",
                     "stats",
                     "CDS_transcripts_gtf",
-                    "annotation_gtf",
+                    "CDS_renamed_transcripts_gtf",
+                    "CDS_missing_transcripts_gtf",
+                    "heur_filtered_transcripts_gtf",
+                    "heur_filtered_renamed_transcripts_gtf",
+                    'heur_filtered_missing_transcripts_gtf',
                     "transcript_sources" ]
 
 Element = namedtuple( "Element", ["data_type", "sample_type", \
@@ -136,13 +147,15 @@ ElementType = namedtuple( "ElementType", \
                                    "sample_id", "strand"] )
 
 
-def get_sample_type_name( sample_type ):
+def GSTN( sample_type ):
     if sample_type == '*':
+        return "merged_input"
+    elif sample_type == 'M':
         return "merged"
     else:
         return sample_type
 
-get_sample_id_name = get_sample_type_name
+GSIN = GSTN
 
 
 def calc_chksum( fname, blocksize=8*1024*1024 ):
@@ -1064,6 +1077,43 @@ def intersect_all_junctions( elements, pserver, output_prefix ):
     
     return
 
+def extract_cdna_elements( elements, pserver, tss_op_prefix, tes_op_prefix ):
+    def build_extract_cdnas_cmd( input_element ):
+        input_fname = input_element.fname
+        
+        sample_type_name = get_sample_type_name( input_element.sample_type )
+        sample_id_name = get_sample_id_name( input_element.sample_id )
+        op_fname_prefix = "%s.%s" % (sample_type_name, sample_id_name )
+
+        tss_op_fname = os.path.join( \
+            tss_op_prefix, op_fname_prefix + ".cdna_tss_exons.gff" )
+        tes_op_fname = os.path.join( \
+            tes_op_prefix, op_fname_prefix + ".cdna_tes_exons.gff" )
+
+        call = "python %s --tss-fname {0} --tes-fname {1} {2}" \
+            % EXTRACT_ELEMENTS_CMD
+        call = call.format( tss_op_fname, tes_op_fname, input_fname )
+
+        op_element_types = [ \
+            ElementType( "cdna_tss_gff", input_element.sample_type, \
+                         input_element.sample_id, "." ),
+            ElementType( "cdna_tes_gff", input_element.sample_type, \
+                         input_element.sample_id, "." ) 
+            ]
+        
+        op_fnames = [ tss_op_fname, tes_op_fname ]
+        
+        dependencies = [ input_fname, ]
+        
+        cmd = Cmd( call, op_element_types, op_fnames, dependencies )
+        pserver.add_process( cmd, Resource(1) )
+        
+    
+    # get all of the cdna elements
+    for e in elements.get_elements_from_db( "cdna_gtf" ):
+        build_extract_cdnas_cmd( e )
+    
+    return
 
 
 def build_all_exon_files( elements, pserver, output_prefix ):
@@ -1693,90 +1743,189 @@ def call_orfs( elements, pserver, output_prefix ):
     
     return
 
-def filter_frameshifts( elements, pserver, output_prefix ):
+def produce_final_annotation( elements, pserver, output_prefix ):
+    """Produce a final annotation.
+
+    This means running everything through the heuristic transcript 
+    filtering scripts, and then running the renaming script. The 
+    renaming script also does some filtering, particularly for gene 
+    merges, and then re-adds any transcript models from the annotation
+    that we ended up missing.
+    """
     try:
         os.makedirs( output_prefix )
+        os.makedirs( os.path.join( output_prefix, "heuristic_filtered" ) )
     except OSError:
         # assume that the directory already exists, and continue
-        pass
-    
-    """run filter_frameshifts.py on each individual orf finder results file. 
-    Produce a filtered orf results file.
-    
-    INPUTS: 
-    # maybe change to accept all, and then filter AS and KI classes
-    python ~/grit/proteomics/filter_frame_shifts.py 
-        tmp.annotated.gtf 
-        /media/scratch/genomes/drosophila/dmel-all-r5.45.cds.gtf 
-        junctions/merged.filtered.jns.gff 
-        --out-prefix 
-        
+        pass    
     """
-    def add_filter_frameshifts_cmd( sample_type ):
-        sample_annot_trans_es = elements.get_elements_from_db( "coding_transcripts_gtf" )
-        for s_a_t_e in sample_annot_trans_es:
-            if s_a_t_e.sample_type in "M*": continue
-            add_filter_frameshifts_cmd( s_a_t_e.sample_type,  )
-    
-    return
-
-def merge_orf_results( elements, pserver, output_prefix ):
-    try:
-        os.makedirs( output_prefix )
-    except OSError:
-        # assume that the directory already exists, and continue
-        pass
-    
-    """pass all source orf results to filter_by_proteomics.py and create 
-       final proteomics filtered trans and orf files.
-    
-        python ~/grit/proteomics/filter_by_proteomics.py 
-        TMP.filtered.all_filtered.gtf 
-        --cDNA-gtf /media/scratch/RNAseq/cdnas.gtf 
-        --annotation /media/scratch/genomes/drosophila/flybase_mRNA.r5_32.gtf 
-        -o TMP.merged.filtered
+    python ~/Desktop/grit/sparsify/filter_transcript_set.py 
+        CDS_transcripts/merged_input.merged_input.transcripts.CDS.gtf 
+        ../chr4_test_data/raw_data/chr4_flybase.gtf  
+        ../chr4_test_data/raw_data/chr4.polya_cdna.gtf
     
     """
-    return
+    def add_heur_filter_transcripts_cmd( sample_type, sample_id  ):
+        # get the merged transcripts from the database
+        res = elements.get_elements_from_db(
+            "CDS_transcripts_gtf", sample_type, sample_id)
+        assert len( res ) == 1
+        trans_fname = res[0].fname
 
-def extract_cdna_elements( elements, pserver, tss_op_prefix, tes_op_prefix ):
-    def build_extract_cdnas_cmd( input_element ):
-        input_fname = input_element.fname
+        # get the CODING annotation file 
+        res = elements.get_elements_from_db( "annotation_gtf" )
+        assert len( res ) == 1
+        ann_fname = res[0].fname
+
+        # get the full length cdnas file 
+        res = elements.get_elements_from_db( "cdna_gtf" )
+        assert len( res ) == 1
+        cdnas_fname = res[0].fname
         
-        sample_type_name = get_sample_type_name( input_element.sample_type )
-        sample_id_name = get_sample_id_name( input_element.sample_id )
-        op_fname_prefix = "%s.%s" % (sample_type_name, sample_id_name )
-
-        tss_op_fname = os.path.join( \
-            tss_op_prefix, op_fname_prefix + ".cdna_tss_exons.gff" )
-        tes_op_fname = os.path.join( \
-            tes_op_prefix, op_fname_prefix + ".cdna_tes_exons.gff" )
-
-        call = "python %s --tss-fname {0} --tes-fname {1} {2}" \
-            % EXTRACT_ELEMENTS_CMD
-        call = call.format( tss_op_fname, tes_op_fname, input_fname )
-
-        op_element_types = [ \
-            ElementType( "cdna_tss_gff", input_element.sample_type, \
-                         input_element.sample_id, "." ),
-            ElementType( "cdna_tes_gff", input_element.sample_type, \
-                         input_element.sample_id, "." ) 
-            ]
+        op_fname = os.path.join( output_prefix, "heuristic_filtered",
+                                 "%s.%s.transcripts.cds.heur_filt.gtf" %
+                                 ( GSTN(sample_type), GSTN(sample_id) ) )
         
-        op_fnames = [ tss_op_fname, tes_op_fname ]
+        call = "python %s {0} {1} {2} > {3}" % HEURISTIC_FILTER_TRANS_CMD
+        call = call.format( trans_fname, ann_fname, cdnas_fname, op_fname )
         
-        dependencies = [ input_fname, ]
+        op_element_types = [ 
+            ElementType( "heur_filtered_transcripts_gtf", 
+                         sample_type, sample_id, "." ), ]
+        op_fnames = [ op_fname, ]
+        dependencies = [ trans_fname, ann_fname, cdnas_fname ]
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
         pserver.add_process( cmd, Resource(1) )
+
+    """
+        python ~/Desktop/grit/utilities/group_transcripts_by_reference.py 
+        final_ann/heuristic_filtered/MI.MI.transcripts.cds.heur_filt.gtf 
+        ../chr4_test_data/raw_data/chr4_flybase.gtf 
+        --reference-ofname tmp.missing.gtf 
+        --annotation-ofname tmp.renamed.gtf 
+        --good-gene-merges ../chr4_test_data/good_gene_merges.txt 
+        --tss-exons exons/discovered_exons.tss_exons.gff
+
+    """
+    def add_rename_transcripts_cmd( 
+            sample_type, sample_id, use_heuristic_filtered  ):
         
-    
-    # get all of the cdna elements
-    for e in elements.get_elements_from_db( "cdna_gtf" ):
-        build_extract_cdnas_cmd( e )
+        if use_heuristic_filtered:
+            ip_element_type = "heur_filtered_transcripts_gtf"
+            op_element_type_prefix = "heur_filtered"
+        else:
+            ip_element_type = "CDS_transcripts_gtf"
+            op_element_type_prefix = "CDS"
+
+        # get the merged transcripts from the database
+        res = elements.get_elements_from_db( 
+            ip_element_type, sample_type, sample_id)
+        assert len( res ) == 1
+        trans_fname = res[0].fname
+        op_fname = os.path.join( output_prefix, "%s.%s.%s.renamed.gtf" %(
+            GSTN(sample_type), GSTN(sample_id), op_element_type_prefix ) )
+        
+        # get the CODING annotation file 
+        res = elements.get_elements_from_db( "annotation_gtf" )
+        assert len( res ) == 1
+        ann_fname = res[0].fname
+        missing_op_fname = os.path.join( output_prefix, "%s.%s.%s.missing.gtf"%(
+                GSTN(sample_type), GSTN(sample_id), op_element_type_prefix ) )
+        
+        # get the tss exons
+        res = elements.get_elements_from_db( "cage_tss_exons_gff", sample_type )
+        assert len( res ) == 1
+        tss_exons_fname = res[0].fname
+
+        res = elements.get_elements_from_db( "gene_merges_white_list" )
+        assert len( res ) in ( 0, 1 )
+        good_gene_merges_fname = res[0].fname if len(res) == 1 else None
+        
+        call  = "python {0} {1} {2}".format( 
+            RENAME_TRANS_CMD, trans_fname, ann_fname  )
+        call += " --reference-ofname {0}".format( op_fname )
+        call += " --annotation-ofname {0}".format( missing_op_fname )
+        dependencies = [ trans_fname, ann_fname ]
+
+        if good_gene_merges_fname != None:
+            call += " --good-gene-merges {0}".format( good_gene_merges_fname )
+            dependencies.append( good_gene_merges_fname )
+        
+        if tss_exons_fname != None:
+            call += " --tss-exons {0}".format( tss_exons_fname )
+            dependencies.append( tss_exons_fname )
+        
+        op_element_types = [ 
+            ElementType( op_element_type_prefix + "_renamed_transcripts_gtf", 
+                         sample_type, sample_id, "." ),
+            ElementType( op_element_type_prefix + "_missing_transcripts_gtf", 
+                         sample_type, sample_id, "." ) ]
+
+        op_fnames = [ op_fname, missing_op_fname ]
+        
+        cmd = Cmd( call, op_element_types, op_fnames, dependencies )
+        pserver.add_process( cmd, Resource(1) )
+
+    add_heur_filter_transcripts_cmd( "*", "M" )
+    add_rename_transcripts_cmd( "*", "M", True )
+    add_rename_transcripts_cmd( "*", "M", False )
+
+    add_heur_filter_transcripts_cmd( "*", "*" )
+    add_rename_transcripts_cmd( "*", "*", True )
+    add_rename_transcripts_cmd( "*", "*", False )
     
     return
 
+def calc_expression_scores( elements, pserver, output_prefix ):
+    try:
+        os.makedirs( output_prefix )
+    except OSError:
+        # assume that the directory already exists, and continue
+        pass
+    
+    """
+    python ~/Desktop/grit/sparsify/sparsify_transcripts.py 
+    tmp.transcripts.sparse.gtf                            # ofname
+    transcripts/merged_input.merged_input.transcripts.gtf #candidate transcripts
+    ../chr4_test_data/raw_data/bams/L3_ImaginalDiscs.56*.bam 
+    --fl-dists fl_dists/*.obj 
+    --threads=3 
+    -m
+    """
+    
+    # get all of the bam files
+    ress = elements.get_elements_from_db( "rnaseq_polyaplus_bam" )
+    bam_fnames = [ res.fname for res in ress ]
+    
+    ress = elements.get_elements_from_db( "fl_dist" )
+    fldist_fnames = [ res.fname for res in ress ]
+    
+    ress = elements.get_elements_from_db( "transcripts_gtf", "M", "M" )
+    assert( len(ress) == 1 )
+    merged_transcript_fname = ress[0].fname
+    
+    op_fname = os.path.join( output_prefix, "merged.sparse.transcripts.gtf" )
+
+    cmd_str_template  = "python %s %s %s %s --fl-dists %s -m "   \
+        % ( SPARSIFY_TRANSCRIPTS_CMD,                            \
+            op_fname, merged_transcript_fname,                    \
+            " ".join(bam_fnames), " ".join( fldist_fnames)  )
+    cmd_str_template += "--threads={threads}"
+    call = cmd_str_template
+    
+    op_element_types = [ \
+        ElementType( "sparse_transcripts_gtf", "M", "M", "." ),]
+    op_fnames = [ op_fname,]
+    
+    dependencies = [ merged_transcript_fname, ]
+    dependencies.extend( bam_fnames )
+    dependencies.extend( fldist_fnames )
+
+    cmd = Cmd( call, op_element_types, op_fnames, dependencies )
+    pserver.add_process( cmd,  Resource(pserver.max_available_resources) )
+        
+    return
 
 
 def main():
@@ -1809,11 +1958,8 @@ def main():
     call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
     
     # DO PROTEIN FILTERING ( need to write this... )
-    
-    # DO THE 5'/3' COMBINING
-    
-    # CALL THE RENAMING SCRIPT
-    
+    produce_final_annotation( elements, pserver, base_dir + "final_ann" )
+        
     # CALCULATE EXPRESSION SCORES
     # include, build expression csv
     

@@ -173,13 +173,13 @@ def main():
     
     # load the proteomics gtf file
     # transcripts should have: 5' UTR, CDS, 3'UTR
-    novel_genes = load_gtf( novel_genes_fp )
+    novel_genes = load_gtf( novel_genes_fp.name )
         
     # build a set of the full length transcripts
-    ref_genes = load_gtf( ref_genes_fp )
+    ref_genes = load_gtf( ref_genes_fp.name )
     
     # find the full length cDNAs
-    cdna_genes = load_gtf( cdnas_fp )
+    cdna_genes = load_gtf( cdnas_fp.name )
     
     full_len_transcripts = defaultdict( set )
     for gene in chain( ref_genes, cdna_genes ):
