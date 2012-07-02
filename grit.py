@@ -104,6 +104,10 @@ EST_EXON_EXP_CMD = os.path.join(
     os.path.dirname( __file__ ), "expression", 
     "estimate_exon_expression.py" )
 
+AGGREGATE_EXP_CMD = os.path.join( 
+    os.path.dirname( __file__ ), "expression", 
+    "make_csv_from_gtfs.py" )
+
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
                                       "./file_types/" ) )
 from chrm_sizes import ChrmSizes
@@ -141,6 +145,11 @@ RnaSeqDataTypes = [ "rnaseq_polyaplus_bam",
                     "heur_filtered_renamed_transcripts_gtf",
                     "CDS_expression_gff",
                     "heur_filtered_expression_gff",
+                    "intron_expression_csv",
+                    "gene_expression_csv",
+                    "exon_expression_csv",
+                    "heur_filtered_gene_expression_csv",
+                    "heur_filtered_exon_expression_csv",
                     "transcript_sources" ]
 
 Element = namedtuple( "Element", ["data_type", "sample_type", \
@@ -151,6 +160,8 @@ ElementType = namedtuple( "ElementType", \
 
 
 def GSTN( sample_type ):
+    """Get Sample Type Name ( from sample type str )
+    """
     if sample_type == '*':
         return "merged_input"
     elif sample_type == 'M':
@@ -1887,6 +1898,7 @@ def produce_final_annotation( elements, pserver, output_prefix ):
 def calc_expression_scores( elements, pserver, output_prefix ):
     try:
         os.makedirs( output_prefix )
+        os.makedirs( os.path.join( output_prefix, "expression_gffs" ) )
     except OSError:
         # assume that the directory already exists, and continue
         pass
@@ -1911,8 +1923,9 @@ def calc_expression_scores( elements, pserver, output_prefix ):
         
         chrm_sizes_fname = elements.chr_sizes.get_tmp_fname( with_chr = True )
         
-        op_fname = os.path.join( output_prefix, "%s.%s.%s.expression.gff" % ( 
-            GSTN(sample_type), GSTN(sample_id), op_type ) )
+        op_fname = os.path.join( output_prefix, "expression_gffs", 
+                                 "%s.%s.%s.expression.gff" % ( 
+                GSTN(sample_type), GSTN(sample_id), op_type ) )
                 
         cmd_str_template  = "python %s {0} {1} {2} > {3}" % EST_EXON_EXP_CMD
         call = cmd_str_template.format( trans_fname, chrm_sizes_fname, 
@@ -1928,6 +1941,58 @@ def calc_expression_scores( elements, pserver, output_prefix ):
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
         pserver.add_process( cmd,  Resource(1) )
     
+    def add_build_csv_cmd( element_type, use_heuristic_filtering=True ):
+        """
+        python ~/Desktop/grit/utilities/make_csv_from_gtfs.py 
+        expression/*.CDS.* 
+        junctions/*.* 
+        --intron-output-filename 
+        intron.tmp.csv
+        """
+        assert element_type in ['intron', 'exon', 'gene']
+        if element_type == 'intron':
+            input_element_type = 'filtered_jns_gff'
+            op_fname = os.path.join( output_prefix, "intron_expression.csv" )
+            output_flag = "--intron-output-filename "
+            op_fname_prefix = ""
+        else:
+            if use_heuristic_filtering:
+                input_element_type = 'heur_filtered_renamed_transcripts_gtf'
+                op_fname_prefix = "heur_filtered_"
+            else:
+                input_element_type = 'CDS_renamed_transcripts_gtf'
+                op_fname_prefix = "" 
+
+            if element_type == 'exon':
+                op_fname = os.path.join( 
+                    output_prefix, op_fname_prefix + "exon_expression.csv" )
+                output_flag = "--exon-output-filename "
+            elif element_type == 'gene':
+                op_fname = os.path.join( 
+                    output_prefix, op_fname_prefix + "gene_expression.csv" )
+                output_flag = "--gene-output-filename "
+            else:
+                raise ValueError, "Unrecognized element type for " \
+                    + "quantification '%s'." % element_type
+        
+        input_fnames = [ element.fname for element in 
+                         elements.get_elements_from_db(input_element_type) ]
+        assert len( input_fnames ) > 0
+        cmd = "python %s {0} {1} {2}" % AGGREGATE_EXP_CMD
+        call = cmd.format( " ".join(input_fnames), output_flag, op_fname )
+        
+        op_fnames = [ op_fname, ]
+        op_element_types = [ \
+            ElementType( op_fname_prefix + element_type + "_expression_csv", 
+                         "M", "M", "." ),]
+        
+        dependencies = []
+        dependencies.extend( input_fnames )
+        
+        cmd = Cmd( call, op_element_types, op_fnames, dependencies )
+        pserver.add_process( cmd,  Resource(1) )
+        
+        return
     
     sample_types_and_ids = elements.get_distinct_element_types_and_ids( 
         ["rnaseq_cov_pair1_bedgraph", "rnaseq_cov_pair2_bedgraph"], 
@@ -1938,10 +2003,18 @@ def calc_expression_scores( elements, pserver, output_prefix ):
                                      "CDS_renamed_transcripts_gtf", "*", "*", 
                                      "CDS", "CDS_expression_gff")
         add_calc_exon_expression_cmd(sample_type, sample_id, 
-                                     "heur_filtered_renamed_transcripts_gtf", "*", "*", 
+                                     "heur_filtered_renamed_transcripts_gtf", 
+                                     "*", "*", 
                                      "heur_filtered",
                                      "heur_filtered_expression_gff")
-                                 
+    
+    # add build csv command
+    add_build_csv_cmd( "intron" )
+    add_build_csv_cmd( "exon", True )
+    add_build_csv_cmd( "exon", False )
+    add_build_csv_cmd( "gene", True )
+    add_build_csv_cmd( "gene", False )
+
     return
 
 
