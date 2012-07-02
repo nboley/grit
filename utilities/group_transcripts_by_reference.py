@@ -220,7 +220,7 @@ def build_gtf_lines_for_gene( gene, cntrs,
 
         trans.id = new_trans_name
         gtf_lines = trans.build_gtf_lines( new_gene_name,
-            {'gene_type': 'gene', 'transcript_type': 'mRNA'} )
+            {'gene_type': 'gene', 'transcript_type': 'mRNA'}, source='grit' )
 
         lines.append( gtf_lines )
     
@@ -318,16 +318,13 @@ def parse_arguments():
         'annotation', type=file,
         help='GTF containing the annotation to be renamed.' )
     parser.add_argument(
-        '--annotation-ofname', default="filtered.renamed.transcripts.gtf",
-        help='File to write renamed and filtered transcripts to.' )
-
-    parser.add_argument(
         'reference', type=file,
         help='GTF file containing the reference annotation.' )
-    parser.add_argument(
-        '--reference-ofname', default="missing_ref_transcripts.gtf",
-        help='File to write unobserved transcripts to.' )
 
+    parser.add_argument(
+        '--output-file', 
+        help='File to write renamed and filtered transcripts to.' )
+    
     parser.add_argument(
         '--good-gene-merges', type=file,
         help='A file containing allowed gene merges WRT the reference. ' \
@@ -343,30 +340,23 @@ def parse_arguments():
         
     args = parser.parse_args()
     
-    ann_ofp = open( args.annotation_ofname, "w")
-    ref_ofp = open( args.reference_ofname, "w" )
+    ofp = open( args.output_file, "w") \
+        if args.output_file != None else sys.stdout
     
-    return args.annotation, ann_ofp, \
-        args.reference, ref_ofp, \
+    return args.annotation, args.reference, ofp, \
         args.good_gene_merges, args.blacklist_genes, \
         args.tss_exons
 
 def main():
-    ann_fp, ann_ofp, ref_fp, ref_ofp, \
+    ann_fp, ref_fp, ofp, \
         ggm_fp, blg_fp, tss_exons_fp = parse_arguments()
-    
-    print ann_fp
-    print ann_ofp
-    print ref_fp
-    print ref_ofp
-    
+        
     ggm = get_good_gene_merges( ggm_fp ) if ggm_fp != None else None
     bl_genes = get_blacklist_genes(blg_fp) if blg_fp != None else None
     novel_genes, ref_genes =  load_gtfs( ( ann_fp.name, ref_fp.name ), 2 )
 
     observed_reference_trans = filter_and_rename_transcripts( 
-        ref_genes, novel_genes, ann_ofp, ggm, bl_genes )
-    ann_ofp.close()
+        ref_genes, novel_genes, ofp, ggm, bl_genes )
     
     tss_exons_mapping = build_tss_exons_mapping( tss_exons_fp ) \
         if tss_exons_fp != None else set()
@@ -382,9 +372,11 @@ def main():
             if trans.id in unobserved_trans_ids:
                 trans = fix_5p_bnd( trans, tss_exons_mapping )
                 lines = trans.build_gtf_lines(gene[0], 
-                    { 'gene_type': 'gene', 'transcript_type': 'mRNA' } )
-                ref_ofp.write( lines + "\n" )
-    ref_ofp.close()
+                    { 'gene_type': 'gene', 'transcript_type': 'mRNA' },
+                                              source="reference")
+                ofp.write( lines + "\n" )
+    
+    ofp.close()
     
     return
 

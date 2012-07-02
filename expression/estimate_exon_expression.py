@@ -6,6 +6,7 @@ from collections import defaultdict
 from itertools import izip, chain
 
 import numpy
+from numpy import mean
 from numpy.linalg import lstsq
 from scipy.optimize import nnls
 
@@ -66,14 +67,14 @@ def estimate_exon_expression( exons, read_cov, num_mapped_bases ):
         y.append( pseudo_cnts[bndry] )
     y = numpy.array( y ).T
     
-    #print y
-    #print X
+    # print y
+    # print X
     # y = x*Beta
     # choose beta to minimize (y - X*Beta)^2
-    #print nnls( X.T, y )
+    # print nnls( X.T, y )
     coefs = nnls( X.T, y )[0]
-    #print coefs
-    #coefs = lstsq( X.T, y )[0]
+    # print coefs
+    # coefs = lstsq( X.T, y )[0]
     # turn the estiamtes into rpkm
     return [ int(x)/num_mapped_bases for x in coefs ]
 
@@ -123,7 +124,7 @@ def main():
         
         region = GenomicInterval( chrm, strand, gene_start, gene_stop )
         print create_gff_line( region, gene_name, 
-                               int(sum(exp_scores)), feature='gene', source='grit' )
+                               mean(exp_scores), feature='gene', source='grit' )
 
         for (start, stop), score in izip( exons, exp_scores ):
             exon_num += 1

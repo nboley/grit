@@ -134,7 +134,8 @@ class Transcript( list ):
                 region = GenomicInterval( self.chrm, self.strand, start, stop )
                 frame = current_frame if is_CDS else '.'
                 yield create_gtf_line( region, gene_id, self.id, meta_data,
-                                       score, feature=feature, frame=str(frame))
+                                       score, feature=feature, frame=str(frame),
+                                       source=source)
                 current_frame = ( current_frame + stop - start + 1 )%3
             return
         

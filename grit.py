@@ -100,6 +100,10 @@ RENAME_TRANS_CMD = os.path.join(
     os.path.dirname( __file__ ), "./utilities/", 
     "group_transcripts_by_reference.py" )
 
+EST_EXON_EXP_CMD = os.path.join( 
+    os.path.dirname( __file__ ), "expression", 
+    "estimate_exon_expression.py" )
+
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
                                       "./file_types/" ) )
 from chrm_sizes import ChrmSizes
@@ -113,7 +117,6 @@ RnaSeqDataTypes = [ "rnaseq_polyaplus_bam",
                     "rnaseq_total_bam",
                     "annotation_gtf",
                     "gene_merges_white_list",
-                    "rnaseq_cov_bedgraph",
                     "rnaseq_cov_pair1_bedgraph",
                     "rnaseq_cov_pair2_bedgraph",
                     "filtered_jns_gff",
@@ -134,10 +137,10 @@ RnaSeqDataTypes = [ "rnaseq_polyaplus_bam",
                     "stats",
                     "CDS_transcripts_gtf",
                     "CDS_renamed_transcripts_gtf",
-                    "CDS_missing_transcripts_gtf",
                     "heur_filtered_transcripts_gtf",
                     "heur_filtered_renamed_transcripts_gtf",
-                    'heur_filtered_missing_transcripts_gtf',
+                    "CDS_expression_gff",
+                    "heur_filtered_expression_gff",
                     "transcript_sources" ]
 
 Element = namedtuple( "Element", ["data_type", "sample_type", \
@@ -900,6 +903,10 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
             add_merge_cmd( sample_type, fnames, 2 )
         add_merge_cmd( "*", list( itertools.chain( *rd2_cov_fnames.values() ) ), 2 )
 
+    """
+    # comments this out because we no longer usee the merged RNAseq covergae,
+    # but we may wish to in the future.
+    
     res = elements.get_elements_from_db( "rnaseq_cov_bedgraph" )
     if len( res ) > 0:
         rd_cov_fnames = defaultdict( list )
@@ -908,9 +915,7 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
         for sample_type, fnames in rd_cov_fnames.iteritems():
             add_merge_cmd( sample_type, fnames, None )
         add_merge_cmd("*", list( itertools.chain(*rd_cov_fnames.values() ) ), None)
-    
-    # add the merge everything sample
-    #add_merge_cmd( "*", list( itertools.chain( *cov_wig_fnames.values() ) ) )
+    """
     
     return 
 
@@ -1115,6 +1120,27 @@ def extract_cdna_elements( elements, pserver, tss_op_prefix, tes_op_prefix ):
     
     return
 
+def get_rnaseqcov_bedgraphs( elements, sample_type, sample_id ):
+    # find all of the merged rnaseq coverage files
+    res = elements.get_elements_from_db( \
+        "rnaseq_cov_pair1_bedgraph", sample_type, sample_id )
+    rd1_bedgraph_fnames = [ i.fname for i in res ]
+    if len( rd1_bedgraph_fnames ) != 2:
+        print elements
+        raise ValueError, "Can't find the rnaseq coverage files " \
+                          + "necessary to build exons from."
+
+    res = elements.get_elements_from_db( \
+        "rnaseq_cov_pair2_bedgraph", sample_type, sample_id )
+    rd2_bedgraph_fnames = [ i.fname for i in res ]
+    if len( rd2_bedgraph_fnames ) != 2:
+        raise ValueError, "Can't find the rnaseq coverage files " \
+                          + "necessary to build exons from."
+
+    return rd1_bedgraph_fnames + rd2_bedgraph_fnames
+
+    pass
+
 
 def build_all_exon_files( elements, pserver, output_prefix ):
     try:
@@ -1137,24 +1163,8 @@ def build_all_exon_files( elements, pserver, output_prefix ):
     def build_find_exons_cmds( sample_type, sample_id ):
         call_template = "python {0} {1} {2} {3} --cage-wigs {4} --polya-reads-gffs {5} --out-file-prefix {6}"
         
-        # find all of the merged rnaseq coverage files
-        res = elements.get_elements_from_db( \
-            "rnaseq_cov_pair1_bedgraph", sample_type, sample_id )
-        rd1_bedgraph_fnames = [ i.fname for i in res ]
-        if len( rd1_bedgraph_fnames ) != 2:
-            print elements
-            raise ValueError, "Can't find the rnaseq coverage files " \
-                              + "necessary to build exons from."
-
-        res = elements.get_elements_from_db( \
-            "rnaseq_cov_pair2_bedgraph", sample_type, sample_id )
-        rd2_bedgraph_fnames = [ i.fname for i in res ]
-        if len( rd2_bedgraph_fnames ) != 2:
-            raise ValueError, "Can't find the rnaseq coverage files " \
-                              + "necessary to build exons from."
-        
-        bedgraph_fnames = rd1_bedgraph_fnames + rd2_bedgraph_fnames
-        
+        bedgraph_fnames = get_rnaseqcov_bedgraphs( 
+            elements, sample_type, sample_id )
         
         # find the merged, filtered jns file
         if USE_MERGED_JNS_FOR_EXONS:
@@ -1237,8 +1247,10 @@ def build_all_exon_files( elements, pserver, output_prefix ):
     build_find_exons_cmds( "*", "*" )
     
     if BUILD_SAMPLE_SPECIFIC_EXONS:
+        element_types = [ "filtered_jns_gff", "rnaseq_cov_pair1_bedgraph", 
+                         "rnaseq_cov_pair2_bedgraph"]
         sample_types_and_ids = elements.get_distinct_element_types_and_ids( \
-            [ "filtered_jns_gff", "rnaseq_cov_bedgraph" ], get_merged=True )
+            element_types, get_merged=True )
         
         # buidl the build eoxn cmds
         for sample_type, sample_id in sample_types_and_ids:
@@ -1802,8 +1814,7 @@ def produce_final_annotation( elements, pserver, output_prefix ):
         python ~/Desktop/grit/utilities/group_transcripts_by_reference.py 
         final_ann/heuristic_filtered/MI.MI.transcripts.cds.heur_filt.gtf 
         ../chr4_test_data/raw_data/chr4_flybase.gtf 
-        --reference-ofname tmp.missing.gtf 
-        --annotation-ofname tmp.renamed.gtf 
+        --output-file tmp.renamed.gtf 
         --good-gene-merges ../chr4_test_data/good_gene_merges.txt 
         --tss-exons exons/discovered_exons.tss_exons.gff
 
@@ -1823,15 +1834,14 @@ def produce_final_annotation( elements, pserver, output_prefix ):
             ip_element_type, sample_type, sample_id)
         assert len( res ) == 1
         trans_fname = res[0].fname
-        op_fname = os.path.join( output_prefix, "%s.%s.%s.renamed.gtf" %(
-            GSTN(sample_type), GSTN(sample_id), op_element_type_prefix ) )
         
         # get the CODING annotation file 
         res = elements.get_elements_from_db( "annotation_gtf" )
         assert len( res ) == 1
         ann_fname = res[0].fname
-        missing_op_fname = os.path.join( output_prefix, "%s.%s.%s.missing.gtf"%(
-                GSTN(sample_type), GSTN(sample_id), op_element_type_prefix ) )
+        
+        op_fname = os.path.join( output_prefix, "%s.%s.%s.renamed.gtf" %(
+            GSTN(sample_type), GSTN(sample_id), op_element_type_prefix ) )
         
         # get the tss exons
         res = elements.get_elements_from_db( "cage_tss_exons_gff", sample_type )
@@ -1844,8 +1854,7 @@ def produce_final_annotation( elements, pserver, output_prefix ):
         
         call  = "python {0} {1} {2}".format( 
             RENAME_TRANS_CMD, trans_fname, ann_fname  )
-        call += " --reference-ofname {0}".format( op_fname )
-        call += " --annotation-ofname {0}".format( missing_op_fname )
+        call += " --output-file {0}".format( op_fname )
         dependencies = [ trans_fname, ann_fname ]
 
         if good_gene_merges_fname != None:
@@ -1858,11 +1867,9 @@ def produce_final_annotation( elements, pserver, output_prefix ):
         
         op_element_types = [ 
             ElementType( op_element_type_prefix + "_renamed_transcripts_gtf", 
-                         sample_type, sample_id, "." ),
-            ElementType( op_element_type_prefix + "_missing_transcripts_gtf", 
-                         sample_type, sample_id, "." ) ]
+                         sample_type, sample_id, "." ), ]
 
-        op_fnames = [ op_fname, missing_op_fname ]
+        op_fnames = [ op_fname,  ]
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
         pserver.add_process( cmd, Resource(1) )
@@ -1883,48 +1890,58 @@ def calc_expression_scores( elements, pserver, output_prefix ):
     except OSError:
         # assume that the directory already exists, and continue
         pass
-    
-    """
-    python ~/Desktop/grit/sparsify/sparsify_transcripts.py 
-    tmp.transcripts.sparse.gtf                            # ofname
-    transcripts/merged_input.merged_input.transcripts.gtf #candidate transcripts
-    ../chr4_test_data/raw_data/bams/L3_ImaginalDiscs.56*.bam 
-    --fl-dists fl_dists/*.obj 
-    --threads=3 
-    -m
-    """
-    
-    # get all of the bam files
-    ress = elements.get_elements_from_db( "rnaseq_polyaplus_bam" )
-    bam_fnames = [ res.fname for res in ress ]
-    
-    ress = elements.get_elements_from_db( "fl_dist" )
-    fldist_fnames = [ res.fname for res in ress ]
-    
-    ress = elements.get_elements_from_db( "transcripts_gtf", "M", "M" )
-    assert( len(ress) == 1 )
-    merged_transcript_fname = ress[0].fname
-    
-    op_fname = os.path.join( output_prefix, "merged.sparse.transcripts.gtf" )
 
-    cmd_str_template  = "python %s %s %s %s --fl-dists %s -m "   \
-        % ( SPARSIFY_TRANSCRIPTS_CMD,                            \
-            op_fname, merged_transcript_fname,                    \
-            " ".join(bam_fnames), " ".join( fldist_fnames)  )
-    cmd_str_template += "--threads={threads}"
-    call = cmd_str_template
-    
-    op_element_types = [ \
-        ElementType( "sparse_transcripts_gtf", "M", "M", "." ),]
-    op_fnames = [ op_fname,]
-    
-    dependencies = [ merged_transcript_fname, ]
-    dependencies.extend( bam_fnames )
-    dependencies.extend( fldist_fnames )
-
-    cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-    pserver.add_process( cmd,  Resource(pserver.max_available_resources) )
+    """
+        python ~/Desktop/grit/expression/estimate_exon_expression.py 
+        final_ann/merged_input.merged_input.CDS.missing.gtf 
+        /home/nboley/Desktop/grit_test_data/genomes/drosophila/dm3.chrom.sizes 
+        read_cov_bedgraphs/L3_ImaginalDiscs.566_BS303.*
         
+    """
+    def add_calc_exon_expression_cmd(sample_type, sample_id, 
+                                     t_element_type, t_sample_type, t_sample_id,
+                                     op_type, op_e_type):
+        bedgraph_fnames = get_rnaseqcov_bedgraphs( 
+            elements, sample_type, sample_id )
+        
+        res = elements.get_elements_from_db( 
+            t_element_type, t_sample_type, t_sample_id )
+        assert len( res ) == 1
+        trans_fname = res[0].fname
+        
+        chrm_sizes_fname = elements.chr_sizes.get_tmp_fname( with_chr = True )
+        
+        op_fname = os.path.join( output_prefix, "%s.%s.%s.expression.gff" % ( 
+            GSTN(sample_type), GSTN(sample_id), op_type ) )
+                
+        cmd_str_template  = "python %s {0} {1} {2} > {3}" % EST_EXON_EXP_CMD
+        call = cmd_str_template.format( trans_fname, chrm_sizes_fname, 
+                                        " ".join( bedgraph_fnames ), op_fname )
+        
+        op_fnames = [ op_fname, ]
+        op_element_types = [ \
+            ElementType( op_e_type, sample_type, sample_id, "." ),]
+        
+        dependencies = [ trans_fname, ]
+        dependencies.extend( bedgraph_fnames )
+        
+        cmd = Cmd( call, op_element_types, op_fnames, dependencies )
+        pserver.add_process( cmd,  Resource(1) )
+    
+    
+    sample_types_and_ids = elements.get_distinct_element_types_and_ids( 
+        ["rnaseq_cov_pair1_bedgraph", "rnaseq_cov_pair2_bedgraph"], 
+        get_merged=True )
+    
+    for sample_type, sample_id in sample_types_and_ids:
+        add_calc_exon_expression_cmd(sample_type, sample_id, 
+                                     "CDS_renamed_transcripts_gtf", "*", "*", 
+                                     "CDS", "CDS_expression_gff")
+        add_calc_exon_expression_cmd(sample_type, sample_id, 
+                                     "heur_filtered_renamed_transcripts_gtf", "*", "*", 
+                                     "heur_filtered",
+                                     "heur_filtered_expression_gff")
+                                 
     return
 
 
@@ -1962,7 +1979,7 @@ def main():
         
     # CALCULATE EXPRESSION SCORES
     # include, build expression csv
-    
+    calc_expression_scores( elements, pserver, base_dir + "expression" )
     
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
     

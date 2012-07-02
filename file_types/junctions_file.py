@@ -103,7 +103,8 @@ class Junction( _JnNamedTuple ):
         
         count = self.cnt if self.cnt != None else 0
         
-        return create_gff_line( self.region, group_id_str, score=count )
+        return create_gff_line( 
+            self.region, group_id_str, score=count, feature='intron' )
 
 def parse_jn_line( line, return_tuple=False ):
     data = parse_gff_line( line )
