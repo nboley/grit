@@ -1957,10 +1957,10 @@ def calc_expression_scores( elements, pserver, output_prefix ):
             op_fname_prefix = ""
         else:
             if use_heuristic_filtering:
-                input_element_type = 'heur_filtered_renamed_transcripts_gtf'
+                input_element_type = 'heur_filtered_expression_gff'
                 op_fname_prefix = "heur_filtered_"
             else:
-                input_element_type = 'CDS_renamed_transcripts_gtf'
+                input_element_type = 'CDS_expression_gff'
                 op_fname_prefix = "" 
 
             if element_type == 'exon':

@@ -39,6 +39,9 @@ def group_exons_by_gene( genes ):
     return grpd_exons, tss_exons, tes_exons
 
 def estimate_exon_expression( exons, read_cov, num_mapped_bases ):
+    if num_mapped_bases == 0:
+        return [0]*len( exons )
+    
     starts = set( exon[0] for exon in exons )
     bndries = sorted(set(chain(*exons)))
     

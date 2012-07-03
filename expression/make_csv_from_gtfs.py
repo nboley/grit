@@ -23,7 +23,7 @@ def get_exons_and_genes_in_gff(gff_fname):
         elif data.feature == 'intron':
             jn_expression_scores[data.region] = data.score
         else:
-            print "UNRECOGNIZED FEATURE", line.strip()
+            raise ValueError, "UNRECOGNIZED FEATURE" + line.strip()
     
     fp.close()
     sample_name = ".".join(os.path.basename(gff_fname).split(".")[:-2])
