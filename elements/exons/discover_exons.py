@@ -9,6 +9,12 @@ from scipy import median
 from build_genelets import cluster_exons
 from math import log
 
+from multiprocessing import Queue, Process
+from Queue import Empty
+from time import sleep
+
+num_threads = 10
+
 # since some mismapped signal spills into intron
 # this many bases are ignored when finding 
 # ONE_SIDE_EXTENTION_FRACTION of cvrg
@@ -1206,6 +1212,64 @@ def find_distal_exons( cov, find_upstream_exons,
         
     return distal_exons
 
+def find_exons_in_cluster(op_queue, ls, bs, strand, 
+                          read_cov_obj, cage_cov, 
+                          intron_starts, intron_stops ):
+    all_exons = []
+    all_seg_exons = []
+    all_tss_exons = []
+    all_internal_exons = []
+    all_tes_exons = []
+    
+    # search for single exon genes
+    if len( ls ) == 3 and ls[1] in ( 'Exon', 'exon_extension' ):
+        start, stop = bs[1], bs[2]-1
+        new_label = refine_single_exon_gene_label(\
+            start, stop, read_cov_obj.rca, cage_cov)
+        if new_label == 'S': 
+            all_seg_exons.append( (start, stop) )
+        else:
+            assert new_label == 'L'
+
+        op_queue.put( ([], all_seg_exons, [], [], []) )
+        return 
+    
+    # find tss exons
+    tss_exons = find_distal_exons( \
+        cage_cov, (strand=='+'), intron_starts, intron_stops,
+        bs, ls, read_cov_obj.rca, \
+        CAGE_MIN_SCORE, CAGE_WINDOW_LEN, CAGE_MAX_SCORE_FRAC, \
+        require_signal = True)
+
+    # if we can't find a TSS index, continue
+    if len( tss_exons ) == 0:
+        return
+    
+    exon_bndrys = get_possible_exon_bndrys( \
+        ls, bs, read_cov_obj.chrm_stop )        
+
+    internal_exons = find_internal_exons( \
+        exon_bndrys, intron_starts, intron_stops )
+
+
+    tes_exons = find_distal_exons( \
+        None, (strand=='-'), intron_starts, intron_stops, \
+        bs, ls, read_cov_obj.rca, \
+        POLYA_MIN_SCORE, POLYA_WINDOW_LEN, POLYA_MAX_SCORE_FRAC )
+
+    # if we can't find a TSS index, continue
+    if len( tes_exons ) == 0:
+        return
+    
+    all_tss_exons.extend( tss_exons )
+    all_internal_exons.extend( internal_exons )
+    all_tes_exons.extend( tes_exons )
+    all_exons.extend( exon_bndrys )
+
+    op_queue.put( ( all_exons, all_seg_exons, \
+                    all_tss_exons, all_internal_exons, all_tes_exons ) )
+    return
+
 def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
     jns_wo_cnts = [ jn for jn, score in jns_w_cnts ]
 
@@ -1228,55 +1292,63 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
     all_tss_exons = []
     all_internal_exons = []
     all_tes_exons = []
-
+    
+    
+    output_queue = Queue()
+    ps = [None]*num_threads
     if VERBOSE: print >> sys.stderr,  'Finding and categorizing exons in cluster.'
-    for cluster_index, (ls, bs) in enumerate(izip(
-            clustered_labels, clustered_bndrys)):
-        if VERBOSE: print >> sys.stderr,  'Cluster %i (%i labels)' % \
-                ( cluster_index, len(ls) )
-        # search for single exon genes
-        if len( ls ) == 3 and ls[1] in ( 'Exon', 'exon_extension' ):
-            start, stop = bs[1], bs[2]-1
-            new_label = refine_single_exon_gene_label(\
-                start, stop, read_cov_obj.rca, cage_cov)
-            if new_label == 'S': 
-                all_seg_exons.append( (start, stop) )
-            else:
-                assert new_label == 'L'
+    cluster_data = list(enumerate(izip(clustered_labels, clustered_bndrys)))
+    while len( cluster_data ) > 0:
+        # empty the output queue
+        try:
+            while True:
+                rv = output_queue.get_nowait()
+                all_exons.extend( rv[0] )
+                all_seg_exons.extend( rv[1] )
+                all_tss_exons.extend( rv[2] )
+                all_internal_exons.extend( rv[3] )
+                all_tes_exons.extend( rv[4] )
+        except Empty:
+            pass
+        
+        # find an empty process
+        for p_i, p in enumerate(ps):
+            if p == None or not p.is_alive():
+                break
+        
+        # if we couldn't find a finished process, then we wait
+        if p_i == len(ps)-1 and ( p == None or p.is_alive ):
+            sleep( 0.001 )
+        # otherwise, we start a new process in it's place
+        else:
+            cluster_index, (ls, bs) = cluster_data.pop()
+            args = ( output_queue, ls, bs, strand, 
+                     read_cov_obj, cage_cov, 
+                     intron_starts, intron_stops )
+            p = Process(target=find_exons_in_cluster, 
+                        name="%i-%i" % (cluster_index, len(ls)), args=args)
+            if VERBOSE:
+                print >> sys.stderr, "Spawned", p
             
-            continue
-        
-        # find tss exons
-        tss_exons = find_distal_exons( \
-            cage_cov, (strand=='+'), intron_starts, intron_stops,
-            bs, ls, read_cov_obj.rca, \
-            CAGE_MIN_SCORE, CAGE_WINDOW_LEN, CAGE_MAX_SCORE_FRAC, \
-            require_signal = True)
-        
-        # if we can't find a TSS index, continue
-        if len( tss_exons ) == 0:
-           continue
-                
-        exon_bndrys = get_possible_exon_bndrys( \
-            ls, bs, read_cov_obj.chrm_stop )        
-        
-        internal_exons = find_internal_exons( \
-            exon_bndrys, intron_starts, intron_stops )
+            ps[p_i] = p
+            p.start()
+    
+    # cleanup all remaining processes
+    for p in ps:
+        if p != None:
+            p.join()
 
-
-        tes_exons = find_distal_exons( \
-            None, (strand=='-'), intron_starts, intron_stops, \
-            bs, ls, read_cov_obj.rca, \
-            POLYA_MIN_SCORE, POLYA_WINDOW_LEN, POLYA_MAX_SCORE_FRAC )
-        
-        # if we can't find a TSS index, continue
-        if len( tes_exons ) == 0:
-            continue
-                
-        all_tss_exons.extend( tss_exons )
-        all_internal_exons.extend( internal_exons )
-        all_tes_exons.extend( tes_exons )
-        all_exons.extend( exon_bndrys )
+    # empty the queue one last time
+    try:
+        while True:
+            rv = output_queue.get_nowait()
+            all_exons.extend( rv[0] )
+            all_seg_exons.extend( rv[1] )
+            all_tss_exons.extend( rv[2] )
+            all_internal_exons.extend( rv[3] )
+            all_tes_exons.extend( rv[4] )
+    except Empty:
+        pass
     
     #se_genes = get_possible_single_exon_genes( \
     #    new_labels, new_bndrys, read_cov_obj.chrm_stop )
