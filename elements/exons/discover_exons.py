@@ -1316,6 +1316,10 @@ def parse_arguments():
 def main():
     wigs, jns_fp, chrm_sizes_fp, cage_wigs, tes_reads_fps, out_fps \
         = parse_arguments()
+
+    # process each chrm, strand combination separately
+    for out_fp, track_name in zip( out_fps, out_fps._fields ):
+        out_fp.write( "track name=%s\n" % track_name )
     
     rd1_cov = Wiggle( 
         chrm_sizes_fp, [wigs[0][0], wigs[1][0]], ['+','-'] )
@@ -1329,7 +1333,11 @@ def main():
     )
     read_cov.calc_zero_intervals()
     read_cov_sum = sum( array.sum() for array in read_cov.itervalues() )
-    
+        
+    if read_cov_sum == 0:
+        [ fp.close() for fp in out_fps ]
+        return
+
     # open the cage data
     cage_cov = Wiggle( chrm_sizes_fp, cage_wigs )
     cage_sum = sum( cage_cov.apply( lambda a: a.sum() ).values() )
@@ -1348,11 +1356,7 @@ def main():
 
     if VERBOSE: print >> sys.stderr,  'Loading junctions.'
     jns = parse_junctions_file_dont_freeze( jns_fp )
-    
-    # process each chrm, strand combination separately
-    for out_fp, track_name in zip( out_fps, out_fps._fields ):
-        out_fp.write( "track name=%s\n" % track_name )
-
+        
     all_regions_iters = [ [], [], [], [], [] ]
 
     keys = sorted( set( jns ) )

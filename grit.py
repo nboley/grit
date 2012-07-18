@@ -1174,7 +1174,7 @@ def build_all_exon_files( elements, pserver, output_prefix ):
       --out-file-prefix=test
     """
     def build_find_exons_cmds( sample_type, sample_id ):
-        call_template = "python {0} {1} {2} {3} --cage-wigs {4} --polya-reads-gffs {5} --out-file-prefix {6}"
+        call_template = "python {0} {1} {2} {3} --cage-wigs {4} {5} --out-file-prefix {6}"
         
         bedgraph_fnames = get_rnaseqcov_bedgraphs( 
             elements, sample_type, sample_id )
@@ -1233,7 +1233,8 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         call = call_template.format( 
             FIND_EXONS_CMD, jns_fname, chrm_sizes_fname,
             " ".join(bedgraph_fnames),   
-            " ".join(cage_wig_fnames), " ".join( polya_gff_fnames),
+            " ".join(cage_wig_fnames), 
+            "--polya-reads-gffs "+" ".join( polya_gff_fnames),
             output_fn_prefix )
 
         extensions = [ ".internal_exons.gff",    \
@@ -2027,8 +2028,7 @@ def main():
         elements = Elements( fp )
     
     pserver = ProcessServer( elements, Resource( num_threads )  )
-
-    build_all_cov_wiggles( elements, pserver, base_dir + "read_cov_bedgraphs" )
+    build_all_cov_wiggles( elements, pserver, base_dir + "read_cov_bedgraphs" )    
     
     extract_all_junctions( elements, pserver, base_dir + "junctions/" )
     build_high_quality_junctions( elements, pserver, base_dir + "junctions/" )

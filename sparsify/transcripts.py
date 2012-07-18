@@ -895,14 +895,6 @@ def build_possible_transcripts( gene, binned_reads, prior_connected_exons=[], \
     
     TODO - document the heuristics here.
     """
-    # we only consider exons with less than MAX_NUM_EXONS exons
-    if len( gene.exon_bndrys ) > sparsify_transcripts.py.MAX_NUM_EXONS:
-        if VERBOSE:
-            print "TOO MANY EXONS...."
-        raise sparsify_transcripts.py.GeneProcessingError( \
-            gene, binned_reads.reads, \
-                "Too many exons ( {0:d} )".format(len( gene.exon_bndrys ) ) )
-    
     # check to make sure we have at least 1 exon 
     if len( gene.exon_bndrys ) == 0:
         if PAUSE_ON_ERROR:

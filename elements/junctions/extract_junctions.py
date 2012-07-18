@@ -13,9 +13,7 @@ from collections import defaultdict
 sys.path.append( os.path.join( os.path.dirname(__file__), \
                                    "..", "..", "file_types" ) )
 from junctions_file import Junction, GenomicInterval, get_jn_type
-
-sys.path.append( os.path.join( os.path.dirname(__file__), ".." ) )
-from build_read_coverage_bedgraph import clean_chr_name
+from reads import clean_chr_name
 
 def read_spans_single_intron( read ):
     # quickly check if read could spans a single intron
