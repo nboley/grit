@@ -2,35 +2,133 @@
 
 import sys, os
 import pysam
+import numpy
 
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
                                       "../file_types/" ) )
-from wiggle import Wiggle
-from reads import iter_coverage_regions_for_read
+from reads import iter_coverage_regions_for_read, clean_chr_name
 
-def populate_wiggle( reads, rd1_wig, rd2_wig, 
-                     reverse_read_strand, pairs_are_opp_strand ):
+import multiprocessing
+from multiprocessing import Process
+
+class threadsafeFile( file ):
+    def __init__( self, *args ):
+        self.lock = multiprocessing.Lock()
+        file.__init__( self, *args )
+    
+    def write( self, data ):
+        self.lock.acquire()
+        file.write( self, data )
+        self.lock.release()
+
+def populate_cvg_arrays( reads_fname, chrm, separate_read_pairs, 
+                         reverse_read_strand, pairs_are_opp_strand ):
+                     
     """Get all of the junctions represented in a reads object
     """
-    for read in reads.fetch():
+
+    reads = pysam.Samfile( reads_fname, "rb" )
+
+    # get the refernece length. If there is no such reference, return
+    ref_index = reads.references.index( chrm )
+    if ref_index == -1:
+        reads.close()
+        return
+    chrm_len = reads.lengths[ ref_index ]
+    
+    
+    # try to get one read. If we cant, then skip this chromosome
+    try:
+        next( iter(reads.fetch(chrm)) )
+    except StopIteration:
+        reads.close()
+        return
+
+    read1_cov = { '+': numpy.zeros(chrm_len), '-': numpy.zeros(chrm_len) }
+    if separate_read_pairs:
+        read2_cov = { '+': numpy.zeros(chrm_len), '-': numpy.zeros(chrm_len) }
+    else:
+        read2_cov = None
+    
+    for i, read in enumerate(reads.fetch(chrm)):
         # skip reads that aren't mapped in pair
         if not read.is_proper_pair:
             continue
-
-        # find which wiggle to write the read to
-        if rd2_wig == None:
-            wiggle = rd1_wig
-        else:
-            if read.is_read1 or ( read.is_read2 and reverse_read_strand ):
-                wiggle = rd1_wig
-            else:
-                wiggle = rd2_wig
-                
+        
         for chrm, strand, start, stop in iter_coverage_regions_for_read( 
                 read, reads, reverse_read_strand, pairs_are_opp_strand ):
-            wiggle.add_cvg( chrm, strand, start, stop, 1.0 )
+            if separate_read_pairs and not read.is_read1:
+                arr = read2_cov[ strand ]
+            else:
+                arr = read1_cov[ strand ]
+            arr[start:stop+1] += 1.0
     
     reads.close()
+    
+    return read1_cov, read2_cov
+
+def build_bedgraph_lines_from_array( ofp, array, chrm ):
+    lines = []
+    prev_pos = 0
+    prev_val = array[0]
+    for pos, val in enumerate(array[1:]):
+        if val != prev_val:
+            if prev_val > 1e-12:
+                lines.append( "chr%s\t%i\t%i\t%.2f" % (
+                        chrm, prev_pos, pos+1, prev_val) )
+            prev_pos = pos+1
+            prev_val = val
+    
+    if prev_val > 1e-12:
+        lines.append( "chr%s\t%i\t%i\t%.2f" % (chrm, prev_pos, pos+2, prev_val) )
+    ofp.write( "\n".join( lines ) + "\n" )
+    return
+
+
+def populate_wiggles_worker( reads_fname, chrm, rd1_ofps, rd2_ofps, 
+                             reverse_read_strand, pairs_are_opp_strand, 
+                             separate_read_pairs ):
+    res = populate_cvg_arrays( reads_fname, chrm, 
+                               separate_read_pairs, 
+                               reverse_read_strand,
+                               pairs_are_opp_strand )
+    
+    # if we couldn't get a single read, then continue
+    if res == None: return
+    else: read1_arr, read2_arr = res
+
+    bedgraph_lines = build_bedgraph_lines_from_array( 
+        rd1_ofps['+'], read1_arr['+'], clean_chr_name(chrm) )
+    bedgraph_lines = build_bedgraph_lines_from_array( 
+        rd1_ofps['-'], read1_arr['-'], clean_chr_name(chrm) )
+
+    if rd2_ofps != None:
+        bedgraph_lines = build_bedgraph_lines_from_array( 
+            rd2_ofps['+'], read2_arr['+'], clean_chr_name(chrm) )
+        bedgraph_lines = build_bedgraph_lines_from_array( 
+            rd2_ofps['-'], read2_arr['-'], clean_chr_name(chrm) )
+    
+    return
+
+def populate_wiggle( reads_fname, chrms, rd1_ofps, rd2_ofps, 
+                     reverse_read_strand, pairs_are_opp_strand ):
+    """Get all of the junctions represented in a reads object
+    """
+    separate_read_pairs = ( rd2_ofps != None )
+    
+    all_args = []
+    for chrm in chrms:
+        all_args.append( ( reads_fname, chrm, rd1_ofps, rd2_ofps, 
+                           reverse_read_strand, pairs_are_opp_strand,
+                           separate_read_pairs ) )
+    
+    ps = []
+    for args in all_args:
+        ps.append( Process(target=populate_wiggles_worker, name=args[1], args=args))
+        ps[-1].start()
+    
+    for p in ps:
+        p.join()
     
     return
 
@@ -68,29 +166,48 @@ def parse_arguments():
 def main():
     reads_fname, chrm_sizes, op_prefix, reverse_read_strand, merge_read_ends, \
         pairs_are_opp_strand = parse_arguments()
+
+    track_prefix = os.path.basename( op_prefix )
     
-    # open the reads object
+    # make sure that we can open the reads object
     reads = pysam.Samfile( reads_fname, "rb" )
-    # build a new wiggle object to put the reads in
-    rd1_wig = Wiggle( chrm_sizes )
-    rd2_wig = Wiggle( chrm_sizes ) if not merge_read_ends else None
-    
-    # populate the wiggle from the bam file
-    populate_wiggle( reads, rd1_wig, rd2_wig, reverse_read_strand, pairs_are_opp_strand )
+    chrm_names = reads.references
+    reads.close()
     
     # write the wiggle to disk
     if merge_read_ends:
-        rd1_wig.write_wiggles( "{0}.{1}.bedGraph".format( op_prefix, "plus"),
-                               "{0}.{1}.bedGraph".format( op_prefix, "minus"),
-                              ignore_zeros=True)
+        rd1_fps = { 
+            '+': threadsafeFile("{0}.{1}.bedGraph".format( op_prefix, "plus"), "w"),
+            '-': threadsafeFile("{0}.{1}.bedGraph".format( op_prefix, "minus"), "w")
+            }
+        for key, val in rd1_fps.iteritems():
+            strand_str = 'plus' if key == '+' else 'minus'
+            val.write("track type=bedGraph name={0}_{1}\n".format(track_prefix, strand_str))
+
+        rd2_fps = None
     else:
-        rd1_wig.write_wiggles( "{0}.{1}.{2}.bedGraph".format( op_prefix, "rd1", "plus"),
-                               "{0}.{1}.{2}.bedGraph".format( op_prefix, "rd1", "minus"),
-                              ignore_zeros=True)
-        rd2_wig.write_wiggles( "{0}.{1}.{2}.bedGraph".format( op_prefix, "rd2", "plus"),
-                               "{0}.{1}.{2}.bedGraph".format( op_prefix, "rd2", "minus"),
-                              ignore_zeros=True)
+        rd1_fps = {
+            '+': threadsafeFile("{0}.{1}.{2}.bedGraph".format( op_prefix, "rd1", "plus"), "w"),
+            '-': threadsafeFile("{0}.{1}.{2}.bedGraph".format( op_prefix, "rd1", "minus"), "w")
+            }
+        for key, val in rd1_fps.iteritems():
+            strand_str = 'plus' if key == '+' else 'minus'
+            val.write("track type=bedGraph name={0}_rd1_{1}\n".format(track_prefix, strand_str))
+
+        rd2_fps = {
+            '+': threadsafeFile("{0}.{1}.{2}.bedGraph".format( op_prefix, "rd2", "plus"), "w"),
+            '-': threadsafeFile("{0}.{1}.{2}.bedGraph".format( op_prefix, "rd2", "minus"), "w")
+            }
+        for key, val in rd2_fps.iteritems():
+            strand_str = 'plus' if key == '+' else 'minus'
+            val.write("track type=bedGraph name={0}_rd2_{1}\n".format(track_prefix, strand_str))
+
+        
     
+    # populate the wiggle from the bam file
+    populate_wiggle( reads_fname, chrm_names, 
+                     rd1_fps, rd2_fps,
+                     reverse_read_strand, pairs_are_opp_strand )
     return
 
 if __name__ == "__main__":

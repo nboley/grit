@@ -830,6 +830,8 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
             cmd = Cmd( cmd_str, [et1, et2, et3, et4], 
                        output_fnames, dependencies )
             
+            print cmd_str
+            
             process_server.add_process( cmd, Resource(1) )
 
     # first get all of the read bams
@@ -966,8 +968,6 @@ def extract_all_junctions( elements, pserver, output_prefix ):
             "jns_gff", bam_element.sample_type, \
                 bam_element.sample_id, bam_element.strand )
         output_element_types = [ output_element_type, ]
-        
-        print call
         
         return Cmd(call, output_element_types, output_fnames, dependency_fnames)
     

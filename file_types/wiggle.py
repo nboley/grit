@@ -434,27 +434,32 @@ class Wiggle( dict ):
                           value )
         
         return
+
+    def add_cvg_from_array( self, array, chrm_name, strand ):
+        # strip the leading 'chr' for UCSC compatability
+        if chrm_name.startswith( 'chr' ):
+            chrm_name = chrm_name[3:]
+
+        if chrm_name not in self.chrm_sizes:
+            print >> sys.stderr, "WARNING: '%s' does not" % chrm_name \
+                + "exist in the chrm lens file. Skipping this contig." 
+            return
+
+        key = ( chrm_name, strand )
+        contig_size = self.chrm_sizes[ chrm_name ]
+        if len( array ) > contig_size:
+            print >> sys.stderr, "WARNING: Values extend past the end of " \
+            + "the '%s'. Truncating the array from %i to %i." \
+            % ( chrm_name, len(array), contig_size )
+            array = array[:contig_size]
+
+        self[ key ][ :len(array) ] += array
+        
+
     def add_cvg_from_bedgraph( self, fname, strand ):
         for chrm_name, array in iter_bedgraph_tracks( fname ):
-            # strip the leading 'chr' for UCSC compatability
-            if chrm_name.startswith( 'chr' ):
-                chrm_name = chrm_name[3:]
-
-            if chrm_name not in self.chrm_sizes:
-                print >> sys.stderr, "WARNING: '%s' does not" % chrm_name \
-                    + "exist in the chrm lens file. Skipping this contig." 
-                continue
-
-            key = ( chrm_name, strand )
-            contig_size = self.chrm_sizes[ chrm_name ]
-            if len( array ) > contig_size:
-                print >> sys.stderr, "WARNING: Values extend past the end of " \
-                + "the '%s'. Truncating the array from %i to %i." \
-                % ( chrm_name, len(array), contig_size )
-                array = array[:contig_size]
-            
-            self[ key ][ :len(array) ] += array
-
+            self.add_cvg_from_array( array, chrm_name, strand )
+        
         return
 
     @staticmethod
