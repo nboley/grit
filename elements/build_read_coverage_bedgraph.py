@@ -6,14 +6,7 @@ import pysam
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
                                       "../file_types/" ) )
 from wiggle import Wiggle
-
-def clean_chr_name( chrm ):
-    if chrm.startswith( "chr" ):
-        chrm = chrm[3:]
-    # convert the dmel chrm to M, to be consistent with ucsc
-    if chrm == 'dmel_mitochondrion_genome':
-        chrm = "M"
-    return chrm
+from reads import iter_coverage_regions_for_read
 
 def populate_wiggle( reads, rd1_wig, rd2_wig, reverse_read_strand=False ):
     """Get all of the junctions represented in a reads object
@@ -21,7 +14,7 @@ def populate_wiggle( reads, rd1_wig, rd2_wig, reverse_read_strand=False ):
     for read in reads.fetch():
         # skip reads that aren't mapped in pair
         if not read.is_proper_pair:
-            continue
+            return
 
         # find which wiggle to write the read to
         if rd2_wig == None:
@@ -31,56 +24,11 @@ def populate_wiggle( reads, rd1_wig, rd2_wig, reverse_read_strand=False ):
                 wiggle = rd1_wig
             else:
                 wiggle = rd2_wig
-        
-        # make sure that the read is on the correct strand
-        if ( read.is_read1 and not read.is_reverse ) \
-                or ( read.is_read2 and read.is_reverse ):
-            strand = '+'
-        else:
-            strand = '-'
-        
-        if reverse_read_strand:
-            if strand == '+':
-                strand = '-'
-            else:
-                strand = '+'
-            
-        
-        # get the chromosome, correcting for alternate chrm names
-        chrm = reads.getrname( read.tid )
-        chrm = clean_chr_name( chrm )
-        
-        # we loop through each contig in the cigar string to deal
-        # with junctions reads.
-        # add 1 to the start because bam files are 0 based
-        start = read.pos + 1
-        for contig_type, length in read.cigar:
-            # if this is a match, add it 
-            if contig_type == 0:
-                wiggle.add_cvg( chrm, strand, start, start + length - 1, 1.0 )
-                start += length
-            # skip reference insertions
-            elif contig_type == 1:
-                pass
-            # move past refernce deletions
-            elif contig_type == 2:
-                start += length
-            # skip past skipped regions
-            elif contig_type == 3:
-                start += length
-            # skip past soft clipped regions, because the
-            # actual aligned sequence doesnt start until we've moved
-            # past the clipped region
-            elif contig_type == 4:
-                start += length
-            # hard clipped regions are not present int he aligned 
-            # sequence, so do nothing
-            elif contig_type == 5:
-                pass
-            else:
-                print >> sys.stderr, "Unrecognized cigar format:", read.cigar
-
-        
+                
+        for chrm, strand, start, stop in iter_coverage_regions_for_read( 
+                read, reverse_read_strand ):
+            wiggle.add_cvg( chrm, strand, start, stop, 1.0 )
+    
     reads.close()
     
     return

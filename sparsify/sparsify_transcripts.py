@@ -65,7 +65,7 @@ import transcripts
 transcripts.VERBOSE = VERBOSE
 
 from frag_len import build_normal_density, load_fl_dists
-from reads import Reads, BinnedReads
+from old_reads import Reads, BinnedReads
 from gene_models import parse_gff_line, GeneBoundaries
 from transcripts import *
 from f_matrix import *

@@ -1172,7 +1172,7 @@ def build_all_exon_files( elements, pserver, output_prefix ):
       --out-file-prefix=test
     """
     def build_find_exons_cmds( sample_type, sample_id ):
-        call_template = "python {0} {1} {2} {3} --cage-wigs {4} --polya-reads-gffs {5} --out-file-prefix {6}"
+        call_template = "python {0} {1} {2} {3} --cage-wigs {4} {5} --out-file-prefix {6}"
         
         bedgraph_fnames = get_rnaseqcov_bedgraphs( 
             elements, sample_type, sample_id )

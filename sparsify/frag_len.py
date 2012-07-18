@@ -12,7 +12,7 @@ import pickle
 
 import os
 
-from reads import Reads
+from old_reads import Reads
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
                                       "../file_types/" ))
 from gtf_file import parse_gff_line
@@ -536,9 +536,8 @@ def main():
         if read.is_paired:
             break
         if cnt > 100:
-            raise RuntimeError, "SLIDE is not compatible with single end reads"
-
-
+            raise RuntimeError, "GRIT is not compatible with single end reads"
+    
     VERBOSE = True
     fl_dists, fragments = estimate_fl_dists( reads, exons )
     
@@ -547,9 +546,6 @@ def main():
     
     with open( ofname, "w" ) as ofp:
         pickle.dump( fl_dists, ofp )
-    
-    return
-
     
     return
     

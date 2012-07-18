@@ -192,6 +192,7 @@ def parse_arguments():
 def main():
     jns_fns, fasta_fn, do_filter, num_threads, maximum_intron_size \
         = parse_arguments()
+    do_filter = False
     fasta_obj = None if fasta_fn == None else Fastafile( fasta_fn )
 
     grpd_jns = merge_jns( jns_fns, num_threads )
