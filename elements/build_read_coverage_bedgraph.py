@@ -8,7 +8,8 @@ sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
 from wiggle import Wiggle
 from reads import iter_coverage_regions_for_read
 
-def populate_wiggle( reads, rd1_wig, rd2_wig, reverse_read_strand=False ):
+def populate_wiggle( reads, rd1_wig, rd2_wig, 
+                     reverse_read_strand, pairs_are_opp_strand ):
     """Get all of the junctions represented in a reads object
     """
     for read in reads.fetch():
@@ -26,7 +27,7 @@ def populate_wiggle( reads, rd1_wig, rd2_wig, reverse_read_strand=False ):
                 wiggle = rd2_wig
                 
         for chrm, strand, start, stop in iter_coverage_regions_for_read( 
-                read, reads, reverse_read_strand ):
+                read, reads, reverse_read_strand, pairs_are_opp_strand ):
             wiggle.add_cvg( chrm, strand, start, stop, 1.0 )
     
     reads.close()
@@ -45,6 +46,9 @@ def parse_arguments():
     parser.add_argument( '--reverse-read-strand', '-r', default=False, \
                              action='store_true', \
         help='Whether or not to reverse the strand of the read.')
+    parser.add_argument( '--pairs-are-opp-strand', default=False, \
+                             action='store_true', \
+       help='Needs to be set if pairs are mapped to the oppsoite strand (ie, need to be reverse complemented)' )
     parser.add_argument( '--merge-read-ends', '-m', default=False, \
                              action='store_true', \
         help='Whether or not to merge pair1 and pair2 reads for paired reads.')
@@ -59,11 +63,11 @@ def parse_arguments():
     VERBOSE = args.verbose
     
     return args.mapped_reads_fname, args.chrm_sizes, args.out_fname_prefix, \
-        args.reverse_read_strand, args.merge_read_ends
+        args.reverse_read_strand, args.merge_read_ends, args.pairs_are_opp_strand
 
 def main():
-    reads_fname, chrm_sizes, op_prefix, reverse_read_strand, merge_read_ends \
-        = parse_arguments()
+    reads_fname, chrm_sizes, op_prefix, reverse_read_strand, merge_read_ends, \
+        pairs_are_opp_strand = parse_arguments()
     
     # open the reads object
     reads = pysam.Samfile( reads_fname, "rb" )
@@ -72,7 +76,7 @@ def main():
     rd2_wig = Wiggle( chrm_sizes ) if not merge_read_ends else None
     
     # populate the wiggle from the bam file
-    populate_wiggle( reads, rd1_wig, rd2_wig, reverse_read_strand )
+    populate_wiggle( reads, rd1_wig, rd2_wig, reverse_read_strand, pairs_are_opp_strand )
     
     # write the wiggle to disk
     if merge_read_ends:

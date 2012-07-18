@@ -13,7 +13,7 @@ from collections import defaultdict
 sys.path.append( os.path.join( os.path.dirname(__file__), \
                                    "..", "..", "file_types" ) )
 from junctions_file import Junction, GenomicInterval, get_jn_type
-from reads import clean_chr_name
+from reads import clean_chr_name, get_strand
 
 def read_spans_single_intron( read ):
     # quickly check if read could spans a single intron
@@ -33,7 +33,7 @@ def read_spans_single_intron( read ):
     
     return True
 
-def iter_junctions( reads_fn, fasta_fn, stranded, reverse_strand ):
+def iter_junctions( reads_fn, fasta_fn, stranded, reverse_strand, pairs_are_opp_strand ):
     """Get all of the junctions represented in a reads object
     """
     def find_junctions_in_chrm( chrm, all_junctions, unique_junctions ):
@@ -45,7 +45,9 @@ def iter_junctions( reads_fn, fasta_fn, stranded, reverse_strand ):
             query_name_cnts[ read.qname ] += 1
             if read_spans_single_intron( read ):
                 jn_reads.append( read )
-
+                #print reads.getrname( read.tid ), read.pos + read.cigar[0][1] + 1, read.pos + read.cigar[0][1] + 1 + read.cigar[1][1] - 1, read.is_read1,  not read.is_reverse
+                #print read
+                
         for read in jn_reads:
             # obtain chrm from read pysam object
             chrm = clean_chr_name( reads.getrname( read.tid ) )
@@ -57,18 +59,7 @@ def iter_junctions( reads_fn, fasta_fn, stranded, reverse_strand ):
             # if the protocol is stranded, get the strand from the read mapping 
             # directions
             if stranded:
-                if (read.is_read1 and not read.is_reverse) \
-                        or (read.is_read2 and read.is_reverse):
-                    strand = '+'
-                else:
-                    strand = '-'
-
-                # if the protocol strand is reversed, then reverse the strand
-                if reverse_strand:
-                    if strand == '+': 
-                        strand = '-'
-                    else: 
-                        strand = '+'
+                strand = get_strand( read, reverse_strand, pairs_are_opp_strand )
             else:
                 jn_type, strand = get_jn_type( \
                     chrm, upstrm_intron_pos, dnstrm_intron_pos, fasta_obj )
@@ -131,6 +122,9 @@ def parse_arguments():
     parser.add_argument( '--stranded', '-s', default=False, \
                              action='store_true', \
        help='Needs to be set if the jn file type is unstranded.' )
+    parser.add_argument( '--pairs-are-opp-strand', '-o', default=False, \
+                             action='store_true', \
+       help='Needs to be set if pairs are mapped to the oppsoite strand (ie, need to be reverse complemented)' )
     args = parser.parse_args()
     
     global VERBOSE
@@ -140,13 +134,13 @@ def parse_arguments():
         assert not args.reverse_strand
         assert args.fasta != None
     
-    return args.bam_fn, args.fasta, args.stranded, args.reverse_strand
+    return args.bam_fn, args.fasta, args.stranded, args.reverse_strand, args.pairs_are_opp_strand
 
 def main():
-    reads_fn, fasta_fn, stranded, reverse_strand = parse_arguments()
+    reads_fn, fasta_fn, stranded, reverse_strand, pairs_are_opp_strand = parse_arguments()
     
     # get junctions
-    for jn in iter_junctions(reads_fn, fasta_fn, stranded, reverse_strand):
+    for jn in iter_junctions(reads_fn, fasta_fn, stranded, reverse_strand, pairs_are_opp_strand):
         print jn.build_gff_line()
 
 if __name__ == "__main__":

@@ -967,9 +967,10 @@ def extract_all_junctions( elements, pserver, output_prefix ):
                 bam_element.sample_id, bam_element.strand )
         output_element_types = [ output_element_type, ]
         
+        print call
+        
         return Cmd(call, output_element_types, output_fnames, dependency_fnames)
-        
-        
+    
     # build all of the raw junctions
     res = elements.get_elements_from_db( "rnaseq_polyaplus_bam" )
     for e in res:
@@ -2028,7 +2029,7 @@ def main():
         elements = Elements( fp )
     
     pserver = ProcessServer( elements, Resource( num_threads )  )
-    build_all_cov_wiggles( elements, pserver, base_dir + "read_cov_bedgraphs" )    
+    build_all_cov_wiggles( elements, pserver, base_dir + "read_cov_bedgraphs" )
     
     extract_all_junctions( elements, pserver, base_dir + "junctions/" )
     build_high_quality_junctions( elements, pserver, base_dir + "junctions/" )
@@ -2036,7 +2037,10 @@ def main():
     merge_sample_type_junctions( elements, pserver, base_dir + "junctions/" )
     
     build_all_exon_files( elements, pserver, base_dir + "exons" )
-    
+
+    pserver.process_queue()    
+    return
+
     # estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
     
     build_transcripts( elements, pserver, base_dir + "transcripts" )

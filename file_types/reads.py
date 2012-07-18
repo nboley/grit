@@ -13,10 +13,13 @@ def get_chrm( read, bam_obj ):
     chrm = clean_chr_name( chrm )
     return chrm
 
-def get_strand( read, reverse_read_strand ):
+def get_strand( read, reverse_read_strand, pairs_are_opp_strand ):
     # make sure that the read is on the correct strand
-    if ( read.is_read1 and not read.is_reverse ) \
-            or ( read.is_read2 and read.is_reverse ):
+    if pairs_are_opp_strand  \
+            and ( ( read.is_read1 and not read.is_reverse ) \
+                      or ( read.is_read2 and read.is_reverse ) ):
+        strand = '+'
+    elif not pairs_are_opp_strand and not read.is_reverse:
         strand = '+'
     else:
         strand = '-'
@@ -29,11 +32,12 @@ def get_strand( read, reverse_read_strand ):
 
     return strand
 
-def iter_coverage_regions_for_read( read, bam_obj, reverse_read_strand ):
+def iter_coverage_regions_for_read( 
+    read, bam_obj, reverse_read_strand, pairs_are_opp_strand ):
     """Find the regions covered by this read
 
     """
-    strand = get_strand( read, reverse_read_strand )
+    strand = get_strand( read, reverse_read_strand, pairs_are_opp_strand )
 
     # get the chromosome, correcting for alternate chrm names
     chrm = get_chrm( read, bam_obj )
