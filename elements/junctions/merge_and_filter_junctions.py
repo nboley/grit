@@ -9,9 +9,9 @@ from collections import defaultdict
 from pysam import Fastafile
 
 VERBOSE = False
-MIN_CANONICAL_ENTROPY_SCORE = 1.5
+MIN_CANONICAL_ENTROPY_SCORE = 1.4
 MIN_NON_CANONICAL_ENTROPY_SCORE = 1.7
-MIN_NUM_SAMPLES = 2
+MIN_NUM_SAMPLES = 1
 MIN_SCORE_RATIO = 0.01
 MAX_INTRON_SIZE = 50000
 THRESHHOLD_BY_UNIQ = False
@@ -192,7 +192,6 @@ def parse_arguments():
 def main():
     jns_fns, fasta_fn, do_filter, num_threads, maximum_intron_size \
         = parse_arguments()
-    do_filter = False
     fasta_obj = None if fasta_fn == None else Fastafile( fasta_fn )
 
     grpd_jns = merge_jns( jns_fns, num_threads )

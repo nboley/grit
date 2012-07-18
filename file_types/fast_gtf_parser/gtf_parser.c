@@ -12,7 +12,12 @@ enum ELEMENT_TYPE {
     UNKNOWN,
     TPUTR,
     FPUTR,
-    CDS
+    UTR,
+    CDS,
+    GENE,
+    TRANSCRIPT,
+    START_CODON,
+    STOP_CODON
 };
 
 struct gtf_line {
@@ -84,6 +89,21 @@ find_element_type_from_str( char* element_type_str ) {
 
     if( 0 == strcmp(element_type_str, "exon") )
         return UNKNOWN;
+
+    if( 0 == strcmp(element_type_str, "gene") )
+        return GENE;
+
+    if( 0 == strcmp(element_type_str, "transcript") )
+        return TRANSCRIPT;
+
+    if( 0 == strcmp(element_type_str, "start_codon") )
+        return START_CODON;
+
+    if( 0 == strcmp(element_type_str, "stop_codon") )
+        return STOP_CODON;
+
+    if( 0 == strcmp(element_type_str, "UTR") )
+        return UTR;
     
     if( 0 == strcmp(element_type_str, "3UTR") )
         return TPUTR;

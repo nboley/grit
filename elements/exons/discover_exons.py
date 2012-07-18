@@ -17,14 +17,14 @@ BASES_TO_IGNORE_IN_RETAIN = 15
 # which to find collect cvrg stats for retained intron signal
 BIN_BOUNDRY_SIZE = 20
 # maximum ratio for retained intron bndry cvrg stats
-MAX_RETAIN_RATIO = 5.0
+MAX_RETAIN_RATIO = 2.0
 # fraction of coverage within intron to include 
 # in exon extention in a left/right retained intron
 ONE_SIDE_EXTENTION_FRACTION = 0.95
 # stop the intron when the average ( rather than the 
 # total ) falls below some threshold
 USE_AVERAGE_FOR_ONE_SIDE_RETAIN = False
-USE_PARTIALLY_RETAINED_INTRONS = True
+USE_PARTIALLY_RETAINED_INTRONS = False
 
 SPLIT_EXON_BNDRY_COV_FRAC = 0.95
 EXON_SPLIT_SIZE = 40
@@ -39,7 +39,7 @@ EMPTY_REGION_BNDRY_SHRINK = 0
 
 MAX_EXON_SIZE = 50000
 MIN_EXON_LEN = 15
-MIN_EXON_AVG_READCOV = 10
+MIN_EXON_AVG_READCOV = 1
 
 MIN_SE_GENE_LEN = 500
 MIN_SE_GENE_AVG_READCOV = 10
@@ -49,10 +49,11 @@ LOC_THRESH_REG_SZ = 50000
 
 ### CAGE TUUNING PARAMS
 CAGE_WINDOW_LEN = 40
-CAGE_MAX_SCORE_FRAC = 0.01
-CAGE_MIN_SCORE = 200
+CAGE_MAX_SCORE_FRAC = 0.20
+CAGE_MIN_SCORE = 1.0
 # this is set in main
 CAGE_TOT_FRAC = None
+USE_LOSSY_PEAK_BNDRIES = True
 
 MAX_NUM_PEAKS =20
 
@@ -68,7 +69,6 @@ FILTER_GENE_SPLITS_BY_POLYA = False
 
 DISTAL_EXON_EXPANSION = 500
 
-MIN_INTRON_CVG_FRAC = 0.10
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../", 'file_types'))
 from wiggle import Wiggle
@@ -365,7 +365,8 @@ def check_for_retained_intron( left, mid, right):
             return 'exon_extension'
         # if it's right retained *and* left retained, then 
         # mark this as an exon extension
-        elif right_retained and left_retained:
+        elif right_retained and left_retained and \
+                ( left[1].mean/mid[1].mean < 2 or  right[1].mean/mid[1].mean < 2 ):
             return 'exon_extension'
         # otherwise, we try and split the exon if it's either 
         # right retained or left retained but not both
@@ -1025,6 +1026,8 @@ def find_distal_exons_from_signal( cov, find_upstream_exons,
         
     
     region_cov = cov[ region_start:region_stop ]
+    if NORMALIZE_BY_RNASEQ_COV:
+        region_cov = region_cov/(rna_seq_cov[ region_start:region_stop ]+10)
     
     # TODO - zero out regions clearly not within this peak
 
@@ -1061,12 +1064,17 @@ def find_distal_exons_from_signal( cov, find_upstream_exons,
                     # if we havn't already called a peak here, add this
                     if all( end != bndry-1 for s, end in distal_exons ):
                         distal_exons.append( (start, bndry-1) )
-                
-                if bndry > stop: break
+
+                if bndry > stop: break                
             
             for i in xrange(bndry_i, len(bs)):
                 # if we are overlapping the next peak, break
                 if peak_i+1 < len(peaks) and bs[i]-1 > peaks[peak_i+1][0]:
+                    break
+                
+                if USE_LOSSY_PEAK_BNDRIES \
+                        and i > bndry_i \
+                        and float(abs(stop - bs[i]))/abs(start - bs[i] ) < 0.5:
                     break
 
                 if bs[i]-1+1 in intron_starts:
@@ -1081,7 +1089,6 @@ def find_distal_exons_from_signal( cov, find_upstream_exons,
             for bndry_i, bndry in reversed(list(enumerate(bs[:-1]))):
                 # if a peak overlaps a boundary:
                 if bndry < stop and bndry >= start:
-                    pass
                     # if we havn't already called a peak here, add this
                     if all( inner_s != bndry 
                             for inner_s, inner_e in distal_exons):
@@ -1094,6 +1101,11 @@ def find_distal_exons_from_signal( cov, find_upstream_exons,
                 if peak_i > 0 and bs[i] <= peaks[peak_i-1][1]:
                     break
 
+                if USE_LOSSY_PEAK_BNDRIES \
+                        and i < bndry_i \
+                        and float(abs(stop - bs[i]+1))/abs(start - bs[i]+1) > 0.5:
+                    break
+                
                 if bs[i]-1 in intron_stops:
                     distal_exons.append( (bs[i], stop)  ) 
                 #print "(%i-%i) %i %i" % ( bs[i], stop, bndry, bndry_i )
@@ -1146,6 +1158,7 @@ def find_distal_exons_without_signal(
             curr_tot += val
             if curr_tot > .99*total:
                 break
+            if i > 50000: break
         
         if find_upstream_exons:
             refined_exons.append( (exon[1]-i, exon[1]) )
@@ -1191,12 +1204,14 @@ def find_distal_exons( cov, find_upstream_exons,
 def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
     jns_wo_cnts = [ jn for jn, score in jns_w_cnts ]
 
+    if VERBOSE: print >> sys.stderr,  'Finding initial boundaries and labels'
     labels, bndrys = find_initial_boundaries_and_labels( \
         read_cov_obj, jns_wo_cnts )
     
     new_labels, new_bndrys = label_regions( \
         strand, read_cov_obj, bndrys, labels, cage_cov, polya_cov )
     
+    if VERBOSE: print >> sys.stderr,  'Clustering boundaries and labels'
     clustered_labels, clustered_bndrys = cluster_labels_and_bndrys( 
         new_labels, new_bndrys, jns_w_cnts, read_cov_obj.chrm_stop )
     
@@ -1208,8 +1223,12 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
     all_tss_exons = []
     all_internal_exons = []
     all_tes_exons = []
-    
-    for ls, bs in izip( clustered_labels, clustered_bndrys ):
+
+    if VERBOSE: print >> sys.stderr,  'Finding and categorizing exons in cluster.'
+    for cluster_index, (ls, bs) in enumerate(izip(
+            clustered_labels, clustered_bndrys)):
+        if VERBOSE: print >> sys.stderr,  'Cluster %i (%i labels)' % \
+                ( cluster_index, len(ls) )
         # search for single exon genes
         if len( ls ) == 3 and ls[1] in ( 'Exon', 'exon_extension' ):
             start, stop = bs[1], bs[2]-1
@@ -1339,6 +1358,7 @@ def main():
         return
 
     # open the cage data
+    if VERBOSE: print >> sys.stderr,  'Loading CAGE.'
     cage_cov = Wiggle( chrm_sizes_fp, cage_wigs )
     cage_sum = sum( cage_cov.apply( lambda a: a.sum() ).values() )
     global CAGE_TOT_FRAC
@@ -1346,6 +1366,7 @@ def main():
     for cage_fp in cage_wigs: cage_fp.close()
     
     # open the polya data
+    if VERBOSE: print >> sys.stderr,  'Loading polyA.'
     polya_cov = build_coverage_wig_from_polya_reads( \
         tes_reads_fps, chrm_sizes_fp )
     polya_sum = sum( cage_cov.apply( lambda a: a.sum() ).values() )
@@ -1361,6 +1382,8 @@ def main():
 
     keys = sorted( set( jns ) )
     for chrm, strand in keys:        
+        if VERBOSE: print >> sys.stderr,  'Processing chromosome %s strand %s.' % ( chrm, strand )
+        if VERBOSE: print >> sys.stderr,  'Loading read coverage data (%s,%s)' % ( chrm, strand )
         read_cov_obj = ReadCoverageData( \
             read_cov.zero_intervals[(chrm, strand)], read_cov[(chrm, strand)] )
         
@@ -1374,13 +1397,15 @@ def main():
         disc_grpd_exons = find_exons_in_contig( \
            strand, read_cov_obj, jns_and_scores, \
            cage_cov_array, polya_cov_array)
-        
+
+        if VERBOSE: print >> sys.stderr,  'Building output (%s,%s)' % ( chrm, strand )        
         for container, exons in zip( all_regions_iters, disc_grpd_exons ):
             regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
                                  for start, stop in exons                \
                                  if stop - start < MAX_EXON_SIZE )
             container.extend( regions_iter )
     
+    if VERBOSE: print >> sys.stderr,  'Writing output.'
     for regions_iter, ofp in zip( all_regions_iters, out_fps ):
         ofp.write( "\n".join(iter_gff_lines( sorted(regions_iter) )) + "\n")
         

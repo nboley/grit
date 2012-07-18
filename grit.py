@@ -1253,6 +1253,8 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         dependency_fnames.extend( bedgraph_fnames )
         dependency_fnames.extend( cage_wig_fnames )
         
+        print call
+        
         cmd = Cmd(call, output_element_types, output_fnames, dependency_fnames)
         pserver.add_process( cmd, Resource(1), Resource(1) )
 
@@ -2037,10 +2039,7 @@ def main():
     merge_sample_type_junctions( elements, pserver, base_dir + "junctions/" )
     
     build_all_exon_files( elements, pserver, base_dir + "exons" )
-
-    pserver.process_queue()    
-    return
-
+    
     # estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
     
     build_transcripts( elements, pserver, base_dir + "transcripts" )
@@ -2051,6 +2050,8 @@ def main():
 
     call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
 
+    run_all_slide_compares( elements, pserver, base_dir + "stats" )
+    
     pserver.process_queue()    
     return
 
