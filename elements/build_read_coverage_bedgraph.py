@@ -14,7 +14,7 @@ def populate_wiggle( reads, rd1_wig, rd2_wig, reverse_read_strand=False ):
     for read in reads.fetch():
         # skip reads that aren't mapped in pair
         if not read.is_proper_pair:
-            return
+            continue
 
         # find which wiggle to write the read to
         if rd2_wig == None:
@@ -26,7 +26,7 @@ def populate_wiggle( reads, rd1_wig, rd2_wig, reverse_read_strand=False ):
                 wiggle = rd2_wig
                 
         for chrm, strand, start, stop in iter_coverage_regions_for_read( 
-                read, reverse_read_strand ):
+                read, reads, reverse_read_strand ):
             wiggle.add_cvg( chrm, strand, start, stop, 1.0 )
     
     reads.close()
