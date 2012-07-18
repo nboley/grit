@@ -50,7 +50,7 @@ LOC_THRESH_REG_SZ = 50000
 ### CAGE TUUNING PARAMS
 CAGE_WINDOW_LEN = 40
 CAGE_MAX_SCORE_FRAC = 0.20
-CAGE_MIN_SCORE = 1.0
+CAGE_MIN_SCORE = 0.001
 # this is set in main
 CAGE_TOT_FRAC = None
 USE_LOSSY_PEAK_BNDRIES = True
@@ -64,7 +64,7 @@ POLYA_MIN_SCORE = 20
 # this is set in main
 POLYA_TOT_FRAC = None
 
-NORMALIZE_BY_RNASEQ_COV = True
+NORMALIZE_BY_RNASEQ_COV = False
 FILTER_GENE_SPLITS_BY_POLYA = False
 
 DISTAL_EXON_EXPANSION = 500
@@ -970,7 +970,8 @@ def find_peaks( cov, window_len, min_score, max_score_frac ):
     
     # merge the peaks
     def grow_peak( start, stop, grow_size=max(3, window_len/4), min_grow_ratio=0.5 ):
-        while True:
+        # grow a peak at most 5 times
+        for i in xrange(20):
             curr_signal = cov[start:stop+1].sum()
             downstream_sig = cov[max(0, start-grow_size):start].sum()
             upstream_sig = cov[stop+1:stop+1+grow_size].sum()
@@ -986,7 +987,11 @@ def find_peaks( cov, window_len, min_score, max_score_frac ):
                 stop += grow_size
             else:
                 start = max(0, start - grow_size )
-            
+        
+        if VERBOSE:
+            print "Warning: reached max peak iteration at %i-%i ( signal %.2f )" % (start, stop, cov[start:stop+1].sum() )
+            print 
+        return (start, stop )
     
     peaks = []
     peak_scores = []
