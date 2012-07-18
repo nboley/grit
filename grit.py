@@ -31,6 +31,8 @@ import itertools
 MAX_NUM_CKSUM_BLOCKS = 10
 USE_TF_ELEMENTS = False
 
+USE_POLYA_SIGNAL = False
+
 BUILD_SAMPLE_SPECIFIC_EXONS = True
 USE_SAMPLE_SPECIFIC_CAGE = True and BUILD_SAMPLE_SPECIFIC_EXONS
 USE_MERGED_RNASEQ_FOR_EXONS = True
@@ -1214,14 +1216,12 @@ def build_all_exon_files( elements, pserver, output_prefix ):
             ress = elements.get_elements_from_db( \
                 "polya_reads_gff", sample_type )
         
-        if len( ress ) != 1:
+        if len( ress ) > 1:
             ress = elements.get_elements_from_db( \
                 "polya_reads_gff", "*" , "*" )
             if len( ress ) != 1:
-                raise ValueError, "Can't find the polya signal files " \
-                    + "necessary to build exons."
+                raise ValueError, "To many polya signal files."
         
-        assert len( ress ) == 1
         polya_gff_fnames = [ res.fname for res in ress ]
         
         chrm_sizes_fname = elements.chr_sizes.get_tmp_fname( with_chr = True )
@@ -2046,7 +2046,10 @@ def main():
     # sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
 
     call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
-    
+
+    pserver.process_queue()    
+    return
+
     # DO PROTEIN FILTERING ( need to write this... )
     produce_final_annotation( elements, pserver, base_dir + "final_ann" )
         

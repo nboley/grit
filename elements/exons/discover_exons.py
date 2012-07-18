@@ -1276,7 +1276,7 @@ def parse_arguments():
     
     parser.add_argument( '--cage-wigs', type=file, nargs='+', \
         help='wig files with cage reads, to identify tss exons.')
-    parser.add_argument( '--polya-reads-gffs', type=file, nargs='+', \
+    parser.add_argument( '--polya-reads-gffs', type=file, nargs='*', \
         help='files with polya reads, to identify tes exons.')
     
     parser.add_argument( '--out-file-prefix', '-o', default="discovered_exons",\

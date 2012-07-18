@@ -158,13 +158,13 @@ def parse_var_step_wig_line( line, strand, chrm ):
 class Wiggle( dict ):
     @staticmethod
     def _infer_strand_from_fname( fname ):
-        if fname.find( "plus" ) >= 0:
+        if fname.lower().find( "plus" ) >= 0:
             return '+'
-        elif fname.find( "+" ) >= 0:
+        elif fname.lower().find( "+" ) >= 0:
             return '+'
-        elif fname.find( "minus" ) >= 0:
+        elif fname.lower().find( "minus" ) >= 0:
             return '-'
-        elif fname.find( "-" ) >= 0:
+        elif fname.lower().find( "-" ) >= 0:
             return '-'
         else:
             raise ValueError, "Couldn't infer strand from filename '%s'" % fname
