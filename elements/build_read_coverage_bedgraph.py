@@ -6,7 +6,8 @@ import numpy
 
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
                                       "../file_types/" ) )
-from reads import iter_coverage_regions_for_read, clean_chr_name
+from reads import iter_coverage_regions_for_read, clean_chr_name, \
+    read_pairs_are_on_same_strand
 
 import multiprocessing
 from multiprocessing import Process
@@ -144,9 +145,6 @@ def parse_arguments():
     parser.add_argument( '--reverse-read-strand', '-r', default=False, \
                              action='store_true', \
         help='Whether or not to reverse the strand of the read.')
-    parser.add_argument( '--pairs-are-opp-strand', default=False, \
-                             action='store_true', \
-       help='Needs to be set if pairs are mapped to the oppsoite strand (ie, need to be reverse complemented)' )
     parser.add_argument( '--merge-read-ends', '-m', default=False, \
                              action='store_true', \
         help='Whether or not to merge pair1 and pair2 reads for paired reads.')
@@ -161,17 +159,18 @@ def parse_arguments():
     VERBOSE = args.verbose
     
     return args.mapped_reads_fname, args.chrm_sizes, args.out_fname_prefix, \
-        args.reverse_read_strand, args.merge_read_ends, args.pairs_are_opp_strand
+        args.reverse_read_strand, args.merge_read_ends
 
 def main():
-    reads_fname, chrm_sizes, op_prefix, reverse_read_strand, merge_read_ends, \
-        pairs_are_opp_strand = parse_arguments()
+    reads_fname, chrm_sizes, op_prefix, reverse_read_strand, merge_read_ends \
+        = parse_arguments()
 
     track_prefix = os.path.basename( op_prefix )
     
     # make sure that we can open the reads object
     reads = pysam.Samfile( reads_fname, "rb" )
     chrm_names = reads.references
+    pairs_are_opp_strand = not read_pairs_are_on_same_strand( reads )
     reads.close()
     
     # write the wiggle to disk

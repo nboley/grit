@@ -13,7 +13,7 @@ from collections import defaultdict
 sys.path.append( os.path.join( os.path.dirname(__file__), \
                                    "..", "..", "file_types" ) )
 from junctions_file import Junction, GenomicInterval, get_jn_type
-from reads import clean_chr_name, get_strand
+from reads import clean_chr_name, get_strand, read_pairs_are_on_same_strand
 
 def read_spans_single_intron( read ):
     # quickly check if read could spans a single intron
@@ -122,9 +122,6 @@ def parse_arguments():
     parser.add_argument( '--stranded', '-s', default=False, \
                              action='store_true', \
        help='Needs to be set if the jn file type is unstranded.' )
-    parser.add_argument( '--pairs-are-opp-strand', '-o', default=False, \
-                             action='store_true', \
-       help='Needs to be set if pairs are mapped to the oppsoite strand (ie, need to be reverse complemented)' )
     args = parser.parse_args()
     
     global VERBOSE
@@ -134,10 +131,14 @@ def parse_arguments():
         assert not args.reverse_strand
         assert args.fasta != None
     
-    return args.bam_fn, args.fasta, args.stranded, args.reverse_strand, args.pairs_are_opp_strand
+    return args.bam_fn, args.fasta, args.stranded, args.reverse_strand
 
 def main():
-    reads_fn, fasta_fn, stranded, reverse_strand, pairs_are_opp_strand = parse_arguments()
+    reads_fn, fasta_fn, stranded, reverse_strand = parse_arguments()
+    
+    bam_obj = Samfile( reads_fn )
+    pairs_are_opp_strand = not read_pairs_are_on_same_strand( bam_obj )
+    bam_obj.close()
     
     # get junctions
     for jn in iter_junctions(reads_fn, fasta_fn, stranded, reverse_strand, pairs_are_opp_strand):
