@@ -37,10 +37,12 @@ def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=100 ):
     paired_cnts = {'no_mate': 0, 'same_strand': 1e-4, 'diff_strand': 1e-4}
     
     num_good_reads = 0
+    num_observed_reads = 0
     for read in bam_obj:
+        num_observed_reads += 1
         if read.is_paired and read.mate_is_unmapped:
             continue
-        
+
         if not read.is_paired:
             paired_cnts['no_mate'] += 1        
         elif read.is_reverse != read.mate_is_reverse:
@@ -63,7 +65,7 @@ def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=100 ):
     elif float(paired_cnts['diff_strand'])/paired_cnts['same_strand'] > 10:
         return False
     else:
-        print >> sys.stderr, paired_cnts
+        print >> sys.stderr, paired_cnts, num_observed_reads
         raise ValueError, "Reads appear to be a mix of reads on the same and different strands."
 
 def iter_coverage_regions_for_read( 

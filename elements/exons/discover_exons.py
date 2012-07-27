@@ -10,10 +10,12 @@ from build_genelets import cluster_exons
 from math import log
 
 from multiprocessing import Queue, Process
+import logging, multiprocessing
+
 from Queue import Empty
 from time import sleep
 
-num_threads = 10
+num_threads = 5
 
 # since some mismapped signal spills into intron
 # this many bases are ignored when finding 
@@ -1231,7 +1233,7 @@ def find_exons_in_cluster(op_queue, ls, bs, strand,
         else:
             assert new_label == 'L'
 
-        op_queue.put( ([], all_seg_exons, [], [], []) )
+        op_queue.append( ([], all_seg_exons, [], [], []) )
         return 
     
     # find tss exons
@@ -1265,9 +1267,9 @@ def find_exons_in_cluster(op_queue, ls, bs, strand,
     all_internal_exons.extend( internal_exons )
     all_tes_exons.extend( tes_exons )
     all_exons.extend( exon_bndrys )
-
-    op_queue.put( ( all_exons, all_seg_exons, \
-                    all_tss_exons, all_internal_exons, all_tes_exons ) )
+    
+    op_queue.append( ( all_exons, all_seg_exons, \
+                           all_tss_exons, all_internal_exons, all_tes_exons ) )
     return
 
 def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
@@ -1293,62 +1295,58 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
     all_internal_exons = []
     all_tes_exons = []
     
-    
-    output_queue = Queue()
-    ps = [None]*num_threads
-    if VERBOSE: print >> sys.stderr,  'Finding and categorizing exons in cluster.'
-    cluster_data = list(enumerate(izip(clustered_labels, clustered_bndrys)))
-    while len( cluster_data ) > 0:
-        # empty the output queue
-        try:
-            while True:
-                rv = output_queue.get_nowait()
-                all_exons.extend( rv[0] )
-                all_seg_exons.extend( rv[1] )
-                all_tss_exons.extend( rv[2] )
-                all_internal_exons.extend( rv[3] )
-                all_tes_exons.extend( rv[4] )
-        except Empty:
-            pass
-        
+    def find_empty_process_index( ps ):
         # find an empty process
         for p_i, p in enumerate(ps):
-            if p == None or not p.is_alive():
-                break
+            if p == None or p.exitcode != None:
+                return p_i
         
-        # if we couldn't find a finished process, then we wait
-        if p_i == len(ps)-1 and ( p == None or p.is_alive ):
-            sleep( 0.001 )
-        # otherwise, we start a new process in it's place
-        else:
-            cluster_index, (ls, bs) = cluster_data.pop()
-            args = ( output_queue, ls, bs, strand, 
-                     read_cov_obj, cage_cov, 
-                     intron_starts, intron_stops )
-            p = Process(target=find_exons_in_cluster, 
-                        name="%i-%i" % (cluster_index, len(ls)), args=args)
-            if VERBOSE:
-                print >> sys.stderr, "Spawned", p
-            
-            ps[p_i] = p
-            p.start()
+        return None
     
-    # cleanup all remaining processes
-    for p in ps:
-        if p != None:
-            p.join()
-
-    # empty the queue one last time
-    try:
-        while True:
-            rv = output_queue.get_nowait()
+    def empty_output_queue( output_queue ):
+        # empty the output queue
+        while len( output_queue ) > 0:
+            rv = output_queue.pop()
             all_exons.extend( rv[0] )
             all_seg_exons.extend( rv[1] )
             all_tss_exons.extend( rv[2] )
             all_internal_exons.extend( rv[3] )
             all_tes_exons.extend( rv[4] )
-    except Empty:
-        pass
+        
+        return
+ 
+    manager = multiprocessing.Manager()   
+    output_queue = manager.list()
+    
+    ps = [None]*num_threads
+    if VERBOSE: print >> sys.stderr,  'Finding and categorizing exons in cluster.'
+    cluster_data = list(enumerate(izip(clustered_labels, clustered_bndrys)))
+    while len( cluster_data ) > 0:
+        empty_output_queue( output_queue )
+        empty_p_index = find_empty_process_index( ps )
+        # if there is no empty space, then sleep and continue
+        if empty_p_index == None:
+            sleep( 0.1 )
+            continue
+            
+        cluster_index, (ls, bs) = cluster_data.pop()
+        args = ( output_queue, ls, bs, strand, 
+                 read_cov_obj, cage_cov, 
+                 intron_starts, intron_stops )
+        p = Process(target=find_exons_in_cluster, 
+                    name="%i-%i" % (cluster_index, len(ls)), args=args)
+        if VERBOSE:
+            print >> sys.stderr, "Spawned", p
+
+        ps[empty_p_index] = p
+        p.start()
+    
+    # cleanup all remaining processes
+    for p in ps:
+        if p != None:
+            p.join()
+    
+    empty_output_queue( output_queue )
     
     #se_genes = get_possible_single_exon_genes( \
     #    new_labels, new_bndrys, read_cov_obj.chrm_stop )
