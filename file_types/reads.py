@@ -65,7 +65,7 @@ def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=100 ):
     elif float(paired_cnts['diff_strand'])/paired_cnts['same_strand'] > 10:
         return False
     else:
-        print >> sys.stderr, paired_cnts, num_observed_reads
+        print >> sys.stderr, "Paired Cnts:", paired_cnts, "Num Reads", num_observed_reads
         raise ValueError, "Reads appear to be a mix of reads on the same and different strands."
 
 def iter_coverage_regions_for_read( 

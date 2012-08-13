@@ -33,7 +33,7 @@ USE_TF_ELEMENTS = False
 
 USE_POLYA_SIGNAL = False
 
-BUILD_SAMPLE_SPECIFIC_EXONS = True
+BUILD_SAMPLE_SPECIFIC_EXONS = False
 USE_SAMPLE_SPECIFIC_CAGE = True and BUILD_SAMPLE_SPECIFIC_EXONS
 USE_MERGED_RNASEQ_FOR_EXONS = True
 
@@ -2037,7 +2037,7 @@ def main():
     build_high_quality_junctions( elements, pserver, base_dir + "junctions/" )
     intersect_all_junctions( elements, pserver, base_dir + "junctions/" )
     merge_sample_type_junctions( elements, pserver, base_dir + "junctions/" )
-    
+        
     build_all_exon_files( elements, pserver, base_dir + "exons" )
     
     # estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )

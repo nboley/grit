@@ -45,9 +45,7 @@ def iter_junctions( reads_fn, fasta_fn, stranded, reverse_strand, pairs_are_opp_
             query_name_cnts[ read.qname ] += 1
             if read_spans_single_intron( read ):
                 jn_reads.append( read )
-                #print reads.getrname( read.tid ), read.pos + read.cigar[0][1] + 1, read.pos + read.cigar[0][1] + 1 + read.cigar[1][1] - 1, read.is_read1,  not read.is_reverse
-                #print read
-                
+        
         for read in jn_reads:
             # obtain chrm from read pysam object
             chrm = clean_chr_name( reads.getrname( read.tid ) )

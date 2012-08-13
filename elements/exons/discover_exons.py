@@ -56,14 +56,13 @@ MIN_SE_GENE_AVG_READCOV = 10
 LOC_THRESH_REG_SZ = 50000
 
 ### CAGE TUUNING PARAMS
-CAGE_WINDOW_LEN = 40
-CAGE_MAX_SCORE_FRAC = 0.20
-CAGE_MIN_SCORE = 0.001
+CAGE_WINDOW_LEN = 20
+CAGE_MAX_SCORE_FRAC = 0.05
+CAGE_MIN_SCORE = 5
 # this is set in main
 CAGE_TOT_FRAC = None
-USE_LOSSY_PEAK_BNDRIES = True
-
-MAX_NUM_PEAKS =20
+USE_LOSSY_PEAK_BNDRIES = False
+MAX_NUM_PEAKS = 20
 
 ### PolyA TUNING PARAMS
 POLYA_WINDOW_LEN = 5
@@ -415,7 +414,7 @@ def refine_intron_calls( labels, stats, boundaries ):
     new_labels = [ labels[0], ]
     for index, (left, mid, right) in \
             enumerate( izip( i_data(0,h-2), i_data(1,h-1), i_data(2,h) ) ):
-        # make sure that all of the empty regions were converted to 'L's
+        # make sure that all of the empty regionxs were converted to 'L's
         assert mid[0] != 'N'
         
         # check if the intron should be retained
@@ -895,7 +894,7 @@ def build_genelets( labels, bndrys, jns_dict, chrm_stop ):
     bndries_array = numpy.array( bndrys )
     exons = numpy.array( filtered_exon_bndrys )
     clusters = cluster_exons( exons, jns_wo_cnts )
-        
+    
     clustered_labels = []
     clustered_bndrys = []
     for cluster in clusters:
@@ -921,7 +920,7 @@ def cluster_labels_and_bndrys( labels, bndrys, jns_w_cnts, chrm_stop ):
     final_cl_labels, final_cl_bndrys = [], []
     while len( grpd_clusters ) > 0:
         labels, bndrys = grpd_clusters.pop()
-                
+        
         clustered_labels, clustered_bndrys = build_genelets( \
             labels, bndrys, jns_dict, chrm_stop )
         
@@ -979,16 +978,15 @@ def find_peaks( cov, window_len, min_score, max_score_frac ):
     # merge the peaks
     def grow_peak( start, stop, grow_size=max(3, window_len/4), min_grow_ratio=0.5 ):
         # grow a peak at most 5 times
-        for i in xrange(20):
+        for i in xrange(MAX_NUM_PEAKS):
             curr_signal = cov[start:stop+1].sum()
             downstream_sig = cov[max(0, start-grow_size):start].sum()
             upstream_sig = cov[stop+1:stop+1+grow_size].sum()
-
-            exp_factor = float(grow_size)/window_len
-
+            exp_factor = float( stop - start + 1 )/grow_size
+            
             # if neither passes the threshold, then return the current peak
             if float(max( upstream_sig, downstream_sig ))*exp_factor \
-                    < min_grow_ratio: return (start, stop)
+                    < curr_signal*min_grow_ratio: return (start, stop)
             
             # otherwise, we know one does
             if upstream_sig > downstream_sig:
@@ -997,7 +995,8 @@ def find_peaks( cov, window_len, min_score, max_score_frac ):
                 start = max(0, start - grow_size )
         
         if VERBOSE:
-            print "Warning: reached max peak iteration at %i-%i ( signal %.2f )" % (start, stop, cov[start:stop+1].sum() )
+            print "Warning: reached max peak iteration at %i-%i ( signal %.2f )"\
+                % (start, stop, cov[start:stop+1].sum() )
             print 
         return (start, stop )
     
@@ -1192,8 +1191,10 @@ def find_distal_exons( cov, find_upstream_exons,
     # skip the first and the last labels because these are outside of the cluster
     assert ls[0] == 'L'
     if ls[-1] != 'L':
+        print "WARNING: unexpected result."
         print >> sys.stderr, ls
         print >> sys.stderr, bs
+        assert False
         return []
     
     # if we have signal data
@@ -1232,7 +1233,7 @@ def find_exons_in_cluster(op_queue, ls, bs, strand,
             all_seg_exons.append( (start, stop) )
         else:
             assert new_label == 'L'
-
+        
         op_queue.append( ([], all_seg_exons, [], [], []) )
         return 
     
@@ -1245,11 +1246,12 @@ def find_exons_in_cluster(op_queue, ls, bs, strand,
 
     # if we can't find a TSS index, continue
     if len( tss_exons ) == 0:
+        # print >> sys.stderr, "WARNING: cant find any tss exons."
         return
     
     exon_bndrys = get_possible_exon_bndrys( \
         ls, bs, read_cov_obj.chrm_stop )        
-
+    
     internal_exons = find_internal_exons( \
         exon_bndrys, intron_starts, intron_stops )
 
@@ -1261,8 +1263,9 @@ def find_exons_in_cluster(op_queue, ls, bs, strand,
 
     # if we can't find a TSS index, continue
     if len( tes_exons ) == 0:
+        # print >> sys.stderr, "WARNING: cant find any tes exons."
         return
-    
+        
     all_tss_exons.extend( tss_exons )
     all_internal_exons.extend( internal_exons )
     all_tes_exons.extend( tes_exons )

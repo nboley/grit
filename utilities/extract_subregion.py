@@ -8,10 +8,11 @@ example command:
 python filter_bam_by_region.py `ls /media/scratch/RNAseq/all_samples/ | grep -P '^Ad|^L3_|^WPP_'`
 """
 
-region_chr = "chr20"
-start = 1042460
-stop = 3042460
-base_dir = "/media/scratch/human_grit_test/SMALL_GENOME/"
+region_chr = "4"
+start = 1
+stop = 1351858
+base_dir = "/media/scratch/dros_trans_v3/chr4/DATA/"
+
 EXTRACT_WIG_CMD = os.path.join( os.path.dirname( __file__ ), "extract_region_from_wiggle.py" )
 EXTRACT_GFF_CMD = os.path.join( os.path.dirname( __file__ ), "extract_region_from_gff.py" )
 global_region_str = "%s_%i_%i" % ( region_chr, start, stop )

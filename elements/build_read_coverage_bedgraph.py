@@ -20,6 +20,7 @@ class threadsafeFile( file ):
     def write( self, data ):
         self.lock.acquire()
         file.write( self, data )
+        file.flush( self )
         self.lock.release()
 
 def populate_cvg_arrays( reads_fname, chrm, separate_read_pairs, 
@@ -211,4 +212,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
