@@ -33,13 +33,13 @@ USE_TF_ELEMENTS = False
 
 USE_POLYA_SIGNAL = False
 
-BUILD_SAMPLE_SPECIFIC_EXONS = False
+BUILD_SAMPLE_SPECIFIC_EXONS = True
 USE_SAMPLE_SPECIFIC_CAGE = True and BUILD_SAMPLE_SPECIFIC_EXONS
-USE_MERGED_RNASEQ_FOR_EXONS = True
+USE_MERGED_RNASEQ_FOR_EXONS = True and BUILD_SAMPLE_SPECIFIC_EXONS
 
 USE_MERGED_JNS_FOR_EXONS = False
-USE_MERGED_CAGE_SIGNAL_FOR_EXONS = False
-USE_MERGED_POLYA_SIGNAL_FOR_EXONS = False
+USE_MERGED_CAGE_SIGNAL_FOR_EXONS = True
+USE_MERGED_POLYA_SIGNAL_FOR_EXONS = True
 
 USE_MERGED_EXONS_FOR_TRANSCRIPTS = False
 
@@ -67,8 +67,8 @@ FIND_EXONS_CMD = os.path.join( os.path.dirname( __file__ ),
 MERGE_EXONS_CMD = os.path.join( os.path.dirname( __file__ ), 
                                 "./elements/exons/", "merge_exons.py" )
 
-MERGE_WIGS_CMD = os.path.join( os.path.dirname( __file__ ), 
-                              "./utilities/", "wiggle_merger.py" )
+MERGE_BEDGRAPHS_CMD = os.path.join( os.path.dirname( __file__ ), 
+                              "./utilities/", "merge_bedgraphs.py" )
  
 BUILD_TRANSCRIPTS_CMD = os.path.join( os.path.dirname( __file__ ), 
                               "./elements/", "build_transcripts.py" )
@@ -829,9 +829,7 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
 
             cmd = Cmd( cmd_str, [et1, et2, et3, et4], 
                        output_fnames, dependencies )
-            
-            print cmd_str
-            
+                        
             process_server.add_process( cmd, Resource(1) )
 
     # first get all of the read bams
@@ -842,7 +840,7 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
     build_build_read_cov_cmds( res, cov_wig_fnames, rev_strand=True )
     
     # add the wiggle merger process
-    def add_merge_cmd( sample_type, cov_wig_fnames, read_num ):
+    def add_merge_cmd( sample_type, strand, read_num, cov_bedgraph_fnames ):
         if sample_type == "*": 
             base_name = "rnaseq_cov"
         else:
@@ -858,6 +856,13 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
             element_type_str = "rnaseq_cov_bedgraph"
             assert read_num ==  None
         
+        assert strand in '+-'
+        if strand == '+':
+            base_name += ".plus"
+        else:
+            base_name += ".minus"
+        ofname = base_name + ".bedGraph"
+            
         #### Get the subprocess command info together
             
         # choose with chromosome because the input wiggles are always have a chr
@@ -865,34 +870,25 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
         # a chrm sizes with chr as well
         chrm_sizes_fname = elements.chr_sizes.get_tmp_fname( with_chr = True )
         
-        # get the output filename without strand
-        out_fname_prefix = os.path.join( derived_output_dir, base_name )
-        out_fname_template = out_fname_prefix + ".{strand}.bedGraph"
+        # get the output filename
+        ofname = os.path.join( derived_output_dir, ofname )
         
-        # get the track name prefix
-        track_name_prefix = base_name
+        # get the track name
+        track_name = base_name
         
-        cmd_str_template = "python %s {0} --chrm-sizes {1} " % MERGE_WIGS_CMD
-        cmd_str_template += "--out-fname-prefix {2} --track-name-prefix {3}"
-        
-        
+        cmd_str_template = "python {0} {1} --out-fname {2} "
         
         ##### get the output data types
-        output_fnames = [ out_fname_template.format(strand="plus"), \
-                          out_fname_template.format(strand="minus")    ]
-
-
+        output_fnames = [ ofname, ]
+        
         output_element_types = [ 
-            ElementType( element_type_str, sample_type, "*", "+" ),  \
-            ElementType( element_type_str, sample_type, "*", "-" )   \
+            ElementType( element_type_str, sample_type, "*", strand ),  \
         ]
         
-        
-        dependency_fnames = cov_wig_fnames
+        dependency_fnames = cov_bedgraph_fnames
         
         cmd_str = cmd_str_template.format( \
-            " ".join(cov_wig_fnames), chrm_sizes_fname, \
-                out_fname_prefix, track_name_prefix )
+            MERGE_BEDGRAPHS_CMD, " ".join(cov_bedgraph_fnames), ofname )
         
         cmd = Cmd( cmd_str, output_element_types, \
                    output_fnames, dependency_fnames )
@@ -900,24 +896,25 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
         process_server.add_process( cmd, Resource(1) )
     
     # build the merge sample type wiggles    
+    cov_fnames = defaultdict( lambda: defaultdict(list) )
+    
     res = elements.get_elements_from_db( "rnaseq_cov_pair1_bedgraph" )
     if len( res ) > 0:
-        rd1_cov_fnames = defaultdict( list )
         for entry in res:
-            rd1_cov_fnames[entry.sample_type].append( entry.fname )
-        for sample_type, fnames in rd1_cov_fnames.iteritems():
-            add_merge_cmd( sample_type, fnames, 1 )
-        add_merge_cmd( "*", list( itertools.chain( *rd1_cov_fnames.values() ) ), 1 )
+            cov_fnames[(1, entry.strand)][entry.sample_type].append( entry.fname )
     
     res = elements.get_elements_from_db( "rnaseq_cov_pair2_bedgraph" )
     if len( res ) > 0:
         rd2_cov_fnames = defaultdict( list )
         for entry in res:
-            rd2_cov_fnames[entry.sample_type].append( entry.fname )
-        for sample_type, fnames in rd2_cov_fnames.iteritems():
-            add_merge_cmd( sample_type, fnames, 2 )
-        add_merge_cmd( "*", list( itertools.chain( *rd2_cov_fnames.values() ) ), 2 )
+            cov_fnames[(2, entry.strand)][entry.sample_type].append( entry.fname )
 
+    for (rd_num, strand), data in cov_fnames.iteritems():
+        for sample_type, fnames in data.iteritems():
+            add_merge_cmd( sample_type, strand, rd_num, fnames  )
+        merged_fnames = list( itertools.chain( *data.values() ) )
+        add_merge_cmd( "*", strand, rd_num, merged_fnames )
+    
     """
     # comments this out because we no longer usee the merged RNAseq covergae,
     # but we may wish to in the future.
@@ -1253,8 +1250,6 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         dependency_fnames.extend( bedgraph_fnames )
         dependency_fnames.extend( cage_wig_fnames )
         
-        print call
-        
         cmd = Cmd(call, output_element_types, output_fnames, dependency_fnames)
         pserver.add_process( cmd, Resource(1), Resource(1) )
 
@@ -1434,13 +1429,14 @@ def merge_transcripts( elements, pserver, output_prefix, \
         dependencies = input_fnames
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
+
         res = min(pserver.max_available_resources, 16, len(input_fnames) )
         pserver.add_process( cmd, Resource( res ) )
     
     # add the merge all command first, since it takes the 
     # longest to complete
     in_es = elements.get_elements_from_db( input_e_type )
-    input_fnames = [ e.fname for e in in_es 
+    input_fnames = [ e.fname for e in in_es \
                      if e.sample_id in "*" and e.sample_type != '*']
     if USE_MERGED_INPUT:
         merged_input_fname = elements.get_elements_from_db( \
@@ -2043,17 +2039,19 @@ def main():
     # estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
     
     build_transcripts( elements, pserver, base_dir + "transcripts" )
-    
+
     merge_transcripts( elements, pserver, base_dir + "transcripts" )
-
-    # sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
-
-    call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
-
+    
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
     
     pserver.process_queue()    
     return
+
+    call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
+    
+
+    # sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
+
 
     # DO PROTEIN FILTERING ( need to write this... )
     produce_final_annotation( elements, pserver, base_dir + "final_ann" )

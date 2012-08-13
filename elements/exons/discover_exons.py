@@ -15,7 +15,7 @@ import logging, multiprocessing
 from Queue import Empty
 from time import sleep
 
-num_threads = 5
+num_threads = 2
 
 # since some mismapped signal spills into intron
 # this many bases are ignored when finding 
@@ -23,9 +23,9 @@ num_threads = 5
 BASES_TO_IGNORE_IN_RETAIN = 15
 # region adjacent to boundaries defined by junctions and empty space over 
 # which to find collect cvrg stats for retained intron signal
-BIN_BOUNDRY_SIZE = 20
+BIN_BOUNDRY_SIZE = 30
 # maximum ratio for retained intron bndry cvrg stats
-MAX_RETAIN_RATIO = 2.0
+MAX_RETAIN_RATIO = 10.0
 # fraction of coverage within intron to include 
 # in exon extention in a left/right retained intron
 ONE_SIDE_EXTENTION_FRACTION = 0.95
@@ -36,7 +36,7 @@ USE_PARTIALLY_RETAINED_INTRONS = False
 
 SPLIT_EXON_BNDRY_COV_FRAC = 0.95
 EXON_SPLIT_SIZE = 40
-EXON_SPLIT_RATIO = 6
+EXON_SPLIT_RATIO = 4
 
 # length of contiguous space to define as an empty region
 EMPTY_REGION_SPLIT_SIZE = 80
@@ -45,9 +45,9 @@ EMPTY_REGION_SPLIT_SIZE = 80
 # set to 0 to not do this
 EMPTY_REGION_BNDRY_SHRINK = 0
 
-MAX_EXON_SIZE = 50000
+MAX_EXON_SIZE = 500000
 MIN_EXON_LEN = 15
-MIN_EXON_AVG_READCOV = 1
+MIN_EXON_AVG_READCOV = 10
 
 MIN_SE_GENE_LEN = 500
 MIN_SE_GENE_AVG_READCOV = 10
@@ -57,14 +57,16 @@ LOC_THRESH_REG_SZ = 50000
 
 ### CAGE TUUNING PARAMS
 CAGE_WINDOW_LEN = 20
-CAGE_MAX_SCORE_FRAC = 0.05
-CAGE_MIN_SCORE = 5
+CAGE_MAX_SCORE_FRAC = 0.01
+CAGE_MIN_SCORE = 20
+
 # this is set in main
 CAGE_TOT_FRAC = None
 USE_LOSSY_PEAK_BNDRIES = False
-MAX_NUM_PEAKS = 20
+MAX_NUM_PEAKS = 25
 
 ### PolyA TUNING PARAMS
+CONSIDER_ALL_POSS_TES_EXONS = True
 POLYA_WINDOW_LEN = 5
 POLYA_MAX_SCORE_FRAC = 0.20
 POLYA_MIN_SCORE = 20
@@ -373,8 +375,10 @@ def check_for_retained_intron( left, mid, right):
         # if it's right retained *and* left retained, then 
         # mark this as an exon extension
         elif right_retained and left_retained and \
-                ( left[1].mean/mid[1].mean < 2 or  right[1].mean/mid[1].mean < 2 ):
+                ( left[1].mean/mid[1].mean < MAX_RETAIN_RATIO \
+                  or  right[1].mean/mid[1].mean < MAX_RETAIN_RATIO ):
             return 'exon_extension'
+        
         # otherwise, we try and split the exon if it's either 
         # right retained or left retained but not both
         elif USE_PARTIALLY_RETAINED_INTRONS and left_retained:
@@ -677,6 +681,7 @@ def check_exon_for_gene_merge( strand, start, stop, \
     except:
         print start, new_intron_start, new_intron_stop+1, stop
         raise
+    
     new_bndrys = (start, new_intron_start, new_intron_stop+1)
     new_labels = ('Exon','L','Exon')
     return new_bndrys, new_labels
@@ -1135,7 +1140,8 @@ def find_distal_exons_without_signal(
         for i in xrange( 1, len(ls)-1 ):
             prev = ls[i-1]
             cand = ls[i]
-            if prev == 'L' and  cand != 'L' \
+            if (CONSIDER_ALL_POSS_TES_EXONS or prev == 'L') \
+                    and  cand != 'L' \
                     and bs[i]-1 not in intron_stops:
                for j in xrange( i, len(ls)-1 ):
                    if ls[j] == 'L': break
@@ -1145,7 +1151,8 @@ def find_distal_exons_without_signal(
         for i in xrange( len(ls)-2, 1, -1 ):
             prev = ls[i+1]
             cand = ls[i]
-            if prev == 'L' and  cand != 'L' \
+            if (CONSIDER_ALL_POSS_TES_EXONS or prev == 'L') \
+                    and  cand != 'L' \
                     and bs[i+1] not in intron_starts:
                for j in xrange( i, 1, -1 ):
                    if ls[j] == 'L': break
@@ -1165,10 +1172,10 @@ def find_distal_exons_without_signal(
         
         curr_tot = 0
         for i, val in base_iter:
-            if max_val > 0 and float(val+1)/max_val < 0.01:
+            if max_val > 0 and float(val+1)/max_val < 0.001:
                 break
             curr_tot += val
-            if curr_tot > .99*total:
+            if curr_tot > .999*total:
                 break
             if i > 50000: break
         
