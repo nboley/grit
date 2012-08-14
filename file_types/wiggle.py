@@ -436,6 +436,11 @@ class Wiggle( dict ):
         return
 
     def add_cvg_from_array( self, array, chrm_name, strand ):
+        if numpy.isnan(numpy.sum(array)):
+            print >> sys.stderr,"WARNING: Detected NaNs in 'add_cvg_from_array'"
+            print >> sys.stderr,"NaN locs:", numpy.where( numpy.isnan(array) )
+            assert not numpy.isnan(numpy.sum(array))
+        
         # strip the leading 'chr' for UCSC compatability
         if chrm_name.startswith( 'chr' ):
             chrm_name = chrm_name[3:]
@@ -458,12 +463,31 @@ class Wiggle( dict ):
 
     def add_cvg_from_bedgraph( self, fname, strand ):
         for chrm_name, array in iter_bedgraph_tracks( fname ):
+            if numpy.isnan(numpy.sum(array)):
+                print >> sys.stderr,"WARNING: Detected NaNs in 'add_cvg_from_bedgraph'"
+                print >> sys.stderr,"NaN locs:", numpy.where( numpy.isnan(array) )
+                array[ numpy.isnan(array) ] = 0
+
+            array[ array.min() < -1e50 ] = 0                
+            array[ array.max() > 1e50 ] = 0                
+            
+            if strand == '-' and array.max() <= 0:
+                array = array*-1
+                
+            if array.min() < 0:
+                print >> sys.stderr, "WARNING: negative values encountered", \
+                    array.min(), strand
+                array[ array.min() < 0 ] = 0                
+                        
             self.add_cvg_from_array( array, chrm_name, strand )
         
         return
 
     @staticmethod
     def _fp_is_bedgraph( wig_fp ):
+        if 'bedgraph' == wig_fp.name.split( "." )[-1].lower():
+            return True
+        
         wig_fp.seek(0)
         data = wig_fp.readline().split()
         if len( data ) == 0: 

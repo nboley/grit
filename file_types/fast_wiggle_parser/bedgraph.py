@@ -45,16 +45,38 @@ def iter_bedgraph_tracks( fname ):
     if not bool(c_contigs_p):
         raise IOError, "Couldn't load '%s'" % fname
     
+    res = []
+    
     c_contigs = cast( c_contigs_p, POINTER(c_contigs_t) ).contents
     for i in xrange( c_contigs.size ):
-        values = cast( c_contigs.contigs[i].values, POINTER(c_double) )
-        array = numpy.ctypeslib.as_array( values, (c_contigs.contigs[i].size,))
-        yield c_contigs.contigs[i].name, array
+        values = c_contigs.contigs[i].values
+        size = c_contigs.contigs[i].size
+        name = c_contigs.contigs[i].name
+        
+        if 0 == size:
+            print >> sys.stderr, "WARNING: found a 0 length chrm '%s'. Skipping it." % name
+            continue
+        
+        array = numpy.ctypeslib.as_array( values, (size,))
+
+        """
+        try:
+            assert( not numpy.isnan( array.sum() ) )
+        except:
+            print fname, size, name
+            print numpy.where( numpy.isnan(array) )
+            print array[ 1710:1720 ]
+            print values[ 1710:1720 ]
+            print c_contigs.contigs[i].values[ 1710:1720 ]
+            raise
+        """
+        
+        res.append( ( name, array ) )
     
-    return
+    return res
 
 if __name__ == "__main__":
     for name, track in iter_bedgraph_tracks( sys.argv[1] ):
-        print name, track
+        print name, track, track.min(), track.sum()
 
 # WAT?

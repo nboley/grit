@@ -15,7 +15,7 @@ import logging, multiprocessing
 from Queue import Empty
 from time import sleep
 
-num_threads = 2
+num_threads = 1
 
 # since some mismapped signal spills into intron
 # this many bases are ignored when finding 
@@ -69,7 +69,7 @@ MAX_NUM_PEAKS = 25
 CONSIDER_ALL_POSS_TES_EXONS = True
 POLYA_WINDOW_LEN = 5
 POLYA_MAX_SCORE_FRAC = 0.20
-POLYA_MIN_SCORE = 20
+POLYA_MIN_SCORE = 1
 # this is set in main
 POLYA_TOT_FRAC = None
 
@@ -673,7 +673,7 @@ def check_exon_for_gene_merge( strand, start, stop, \
         else:
             ds_polya_cov = polya_cov[ new_intron_stop+1:stop+1 ].sum()
 
-        if ds_polya_cov < 1: #POLYA_MIN_SCORE:
+        if ds_polya_cov < POLYA_MIN_SCORE:
             return [ start, ], [ 'Exon', ]
     
     try:
@@ -740,12 +740,14 @@ def refine_exon_extensions( \
     
     return new_labels, new_bndrys
 
-def refine_single_exon_gene_label(start, stop, read_coverage_array, cage_array):
+def refine_single_exon_gene_label(start, stop, 
+                                  region_start, region_stop,
+                                  read_coverage_array, cage_array):
     # if it's too short
     if stop - start < MIN_SE_GENE_LEN+10:
         return 'L'
-
-    seg_rc_array = read_coverage_array[ start:stop -1 ]
+    
+    seg_rc_array = read_coverage_array[start-region_start:stop-region_start -1]
     seg_rc_array_cumsum = seg_rc_array.cumsum()
     scores = seg_rc_array_cumsum[MIN_SE_GENE_LEN:] \
                   - seg_rc_array_cumsum[:-MIN_SE_GENE_LEN]
@@ -756,7 +758,7 @@ def refine_single_exon_gene_label(start, stop, read_coverage_array, cage_array):
         return 'L'
     
     # find the cage coverage
-    cage_cov = cage_array[start:stop+1]
+    cage_cov = cage_array[start-region_start:stop-region_start+1]
     cage_cov_score = score_distal_exon( cage_cov, CAGE_WINDOW_LEN )
     if cage_cov_score < CAGE_MIN_SCORE:
         return 'L'
@@ -1027,31 +1029,19 @@ def find_peaks( cov, window_len, min_score, max_score_frac ):
     print >> sys.stderr, "EXHAUSTED EVERY REGION?!?!?!", scores
     return peaks
 
-def find_distal_exons_from_signal( cov, find_upstream_exons,  
+def find_distal_exons_from_signal( ( region_cov, region_start, region_stop ), 
+                                   find_upstream_exons,  
                                    intron_starts, intron_stops, 
-                                   bs, ls, 
-                                   rna_seq_cov, 
+                                   bs, ls,
                                    min_score, window_len, 
-                                   max_score_frac ):
-    # find peaks purely from signal within a region
-    if find_upstream_exons:
-        region_start = max(0, bs[1] - DISTAL_EXON_EXPANSION)
-        region_stop = bs[-1]-1
-    else:
-        region_start = bs[1]
-        region_stop = bs[-1] - 1 + DISTAL_EXON_EXPANSION
-        
-    
-    region_cov = cov[ region_start:region_stop ]
-    if NORMALIZE_BY_RNASEQ_COV:
-        region_cov = region_cov/(rna_seq_cov[ region_start:region_stop ]+10)
-    
+                                   max_score_frac ):    
     # TODO - zero out regions clearly not within this peak
-
+    
     # find all of the distal exon peaks
     peaks = [ ( start+region_start, stop+region_start  )
               for start, stop in 
               find_peaks(region_cov, window_len, min_score, max_score_frac)]
+    
     if len( peaks ) == 0:
         return []
 
@@ -1131,7 +1121,8 @@ def find_distal_exons_from_signal( cov, find_upstream_exons,
     return distal_exons
 
 def find_distal_exons_without_signal( 
-        find_upstream_exons, intron_starts, intron_stops, bs, ls, cov ):
+        find_upstream_exons, intron_starts, intron_stops, bs, ls, 
+        ( rnaseq_cov_array, cov_start_pos ) ):
     # first, find the candidate indices
     candidate_exons = []
 
@@ -1158,10 +1149,10 @@ def find_distal_exons_without_signal(
                    if ls[j] == 'L': break
                    candidate_exons.append( (bs[j], bs[i+1]-1) )
 
-    # refine the eoxn bndrys
+    # refine the exon bndrys
     refined_exons = []
     for exon in candidate_exons:
-        exon_cvg = cov[exon[0]:exon[1]+1]
+        exon_cvg = rnaseq_cov_array[(exon[0]-cov_start_pos):(exon[1]-cov_start_pos+1)]
         total = exon_cvg.sum()
         if find_upstream_exons:
             max_val = exon_cvg[-20:].mean()
@@ -1189,10 +1180,11 @@ def find_distal_exons_without_signal(
     
     return refined_exons
 
-def find_distal_exons( cov, find_upstream_exons,  
+def find_distal_exons( region_start, region_stop,
+                       cov, find_upstream_exons,
                        intron_starts, intron_stops, 
                        bs, ls, 
-                       rna_seq_cov, 
+                       rnaseq_cov, 
                        min_score, window_len, 
                        max_score_frac, require_signal=False ):
     # skip the first and the last labels because these are outside of the cluster
@@ -1205,10 +1197,16 @@ def find_distal_exons( cov, find_upstream_exons,
         return []
     
     # if we have signal data
-    if cov != None:
+    if cov != None and cov.max() > 0:
+        # find peaks purely from signal within a region    
+        if NORMALIZE_BY_RNASEQ_COV:
+            raise NotImplemented, "Not implemented ( although easy to fix ) "
+            region_cov = region_cov/(rnaseq_cov+10)
+        
         distal_exons = find_distal_exons_from_signal( 
-            cov, find_upstream_exons, intron_starts, intron_stops,
-            bs, ls, rna_seq_cov, min_score, window_len, max_score_frac )
+            ( cov, region_start, region_stop ), 
+            find_upstream_exons, intron_starts, intron_stops,
+            bs, ls, min_score, window_len, max_score_frac )
         
         if len( distal_exons ) > 0: 
             return distal_exons
@@ -1218,12 +1216,15 @@ def find_distal_exons( cov, find_upstream_exons,
         return []
     
     distal_exons = find_distal_exons_without_signal( 
-        find_upstream_exons, intron_starts, intron_stops, bs, ls, rna_seq_cov )
+        find_upstream_exons, intron_starts, intron_stops, bs, ls, 
+        ( rnaseq_cov, region_start ) )
         
     return distal_exons
 
-def find_exons_in_cluster(op_queue, ls, bs, strand, 
-                          read_cov_obj, cage_cov, 
+def find_exons_in_cluster(op_queue, ls, bs, 
+                          strand, chrm_stop,
+                          region_start, region_stop,
+                          read_cov, cage_cov, 
                           intron_starts, intron_stops ):
     all_exons = []
     all_seg_exons = []
@@ -1235,7 +1236,9 @@ def find_exons_in_cluster(op_queue, ls, bs, strand,
     if len( ls ) == 3 and ls[1] in ( 'Exon', 'exon_extension' ):
         start, stop = bs[1], bs[2]-1
         new_label = refine_single_exon_gene_label(\
-            start, stop, read_cov_obj.rca, cage_cov)
+            start, stop, 
+            region_start, region_stop,
+            read_cov, cage_cov)
         if new_label == 'S': 
             all_seg_exons.append( (start, stop) )
         else:
@@ -1246,8 +1249,9 @@ def find_exons_in_cluster(op_queue, ls, bs, strand,
     
     # find tss exons
     tss_exons = find_distal_exons( \
-        cage_cov, (strand=='+'), intron_starts, intron_stops,
-        bs, ls, read_cov_obj.rca, \
+        region_start, region_stop, cage_cov, 
+        (strand=='+'), intron_starts, intron_stops,
+        bs, ls, read_cov, \
         CAGE_MIN_SCORE, CAGE_WINDOW_LEN, CAGE_MAX_SCORE_FRAC, \
         require_signal = True)
 
@@ -1257,15 +1261,16 @@ def find_exons_in_cluster(op_queue, ls, bs, strand,
         return
     
     exon_bndrys = get_possible_exon_bndrys( \
-        ls, bs, read_cov_obj.chrm_stop )        
+        ls, bs, chrm_stop )        
     
     internal_exons = find_internal_exons( \
         exon_bndrys, intron_starts, intron_stops )
 
 
     tes_exons = find_distal_exons( \
+        region_start, region_stop,
         None, (strand=='-'), intron_starts, intron_stops, \
-        bs, ls, read_cov_obj.rca, \
+        bs, ls, read_cov, \
         POLYA_MIN_SCORE, POLYA_WINDOW_LEN, POLYA_MAX_SCORE_FRAC )
 
     # if we can't find a TSS index, continue
@@ -1282,7 +1287,8 @@ def find_exons_in_cluster(op_queue, ls, bs, strand,
                            all_tss_exons, all_internal_exons, all_tes_exons ) )
     return
 
-def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
+def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, 
+                         cage_cov, polya_cov, num_threads=1):
     jns_wo_cnts = [ jn for jn, score in jns_w_cnts ]
 
     if VERBOSE: print >> sys.stderr,  'Finding initial boundaries and labels'
@@ -1326,35 +1332,50 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, cage_cov, polya_cov):
         return
  
     manager = multiprocessing.Manager()   
-    output_queue = manager.list()
-    
+    output_queue = manager.list()        
     ps = [None]*num_threads
     if VERBOSE: print >> sys.stderr,  'Finding and categorizing exons in cluster.'
     cluster_data = list(enumerate(izip(clustered_labels, clustered_bndrys)))
     while len( cluster_data ) > 0:
         empty_output_queue( output_queue )
-        empty_p_index = find_empty_process_index( ps )
-        # if there is no empty space, then sleep and continue
-        if empty_p_index == None:
-            sleep( 0.1 )
-            continue
-            
+        
+        if num_threads > 1:
+            empty_p_index = find_empty_process_index( ps )
+            # if there is no empty space, then sleep and continue
+            if empty_p_index == None:
+                sleep( 0.1 )
+                continue
+        
         cluster_index, (ls, bs) = cluster_data.pop()
-        args = ( output_queue, ls, bs, strand, 
-                 read_cov_obj, cage_cov, 
-                 intron_starts, intron_stops )
-        p = Process(target=find_exons_in_cluster, 
-                    name="%i-%i" % (cluster_index, len(ls)), args=args)
-        if VERBOSE:
-            print >> sys.stderr, "Spawned", p
 
-        ps[empty_p_index] = p
-        p.start()
+        region_start = max(0, bs[1] - DISTAL_EXON_EXPANSION)
+        region_stop = bs[-1] - 1 + DISTAL_EXON_EXPANSION    
+        region_read_cov = read_cov_obj.rca[region_start:region_stop+1]
+        region_cage_cov = cage_cov[ region_start:region_stop+1 ]
+        
+        args = ( output_queue, ls, bs, 
+                 strand, read_cov_obj.chrm_stop,
+                 region_start, region_stop,
+                 region_read_cov, region_cage_cov,
+                 intron_starts, intron_stops )
+        
+        if VERBOSE:
+            print >> sys.stderr, "Finding exons in cluster: %s:%i-%i" \
+                % ( strand, bs[1], bs[-2])
+
+        if num_threads > 1:
+            p = Process(target=find_exons_in_cluster, 
+                        name="%i-%i" % (cluster_index, len(ls)), args=args)
+            ps[empty_p_index] = p
+            p.start()
+        else:
+            find_exons_in_cluster( *args )
     
     # cleanup all remaining processes
-    for p in ps:
-        if p != None:
-            p.join()
+    if num_threads > 1:
+        for p in ps:
+            if p != None:
+                p.join()
     
     empty_output_queue( output_queue )
     
@@ -1388,6 +1409,8 @@ def parse_arguments():
     
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
         help='Whether or not to print status information.')
+    parser.add_argument( '--threads', '-t', default=1, type=int,
+        help='The number of threads to use.')
 
     args = parser.parse_args()
     
@@ -1415,10 +1438,10 @@ def parse_arguments():
     grpd_wigs = [ rd1_plus_wigs, rd1_minus_wigs, rd2_plus_wigs, rd2_minus_wigs ]
     
     return grpd_wigs, args.junctions, args.chrm_sizes_fname, \
-        args.cage_wigs, args.polya_reads_gffs, ofps
+        args.cage_wigs, args.polya_reads_gffs, ofps, args.threads
 
 def main():
-    wigs, jns_fp, chrm_sizes_fp, cage_wigs, tes_reads_fps, out_fps \
+    wigs, jns_fp, chrm_sizes_fp, cage_wigs, tes_reads_fps, out_fps, num_threads\
         = parse_arguments()
 
     # process each chrm, strand combination separately
@@ -1481,7 +1504,7 @@ def main():
         
         disc_grpd_exons = find_exons_in_contig( \
            strand, read_cov_obj, jns_and_scores, \
-           cage_cov_array, polya_cov_array)
+           cage_cov_array, polya_cov_array, num_threads)
 
         if VERBOSE: print >> sys.stderr,  'Building output (%s,%s)' % ( chrm, strand )        
         for container, exons in zip( all_regions_iters, disc_grpd_exons ):

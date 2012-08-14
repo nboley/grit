@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <assert.h>
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
@@ -26,7 +27,7 @@ add_values_to_contig( struct contig_t* contig, int start, int stop, double value
         size_t curr_size = contig->size;
         contig->size = stop;
         contig->values = realloc( contig->values, sizeof( double )*stop );
-        memset( contig->values + curr_size, 0, stop - curr_size );
+        memset( contig->values + curr_size, 0, stop - curr_size);
     }
     
     int i;
@@ -98,9 +99,10 @@ load_bedgraph( char* fname, struct contigs_t** contigs )
     {
         // chr4 . . 4754 6133 . + . 1
         char chrm[ MAX_CONTIG_NAME_LEN ];
-        int start;
-        int stop;
-        double value;
+        int start = -1 ;
+        int stop = -1;
+        double value = -1;
+        int rv1, rv2, rv3;
         
         fscanf( fp, "%s", chrm );
         if( 0 == strcmp( chrm, "track" ) )
@@ -115,23 +117,50 @@ load_bedgraph( char* fname, struct contigs_t** contigs )
             contig_index = add_new_contig( *contigs, chrm );
         }
         
-        fscanf( fp, "%i", &start );
-        fscanf( fp, "%i", &stop );
-        fscanf( fp, "%lf", &value );        
-        while( !feof(fp) && fgetc( fp ) != '\n' );
-
-        add_values_to_contig(
-            (*contigs)->contigs + contig_index, start,stop,value);
+        rv1 = fscanf( fp, "%i", &start );
+        rv2 = fscanf( fp, "%i", &stop );
+        rv3 = fscanf( fp, "%lf", &value );        
+        if( isnan( value ) ) {
+            fprintf( stderr, "WHAT???? %e\n", value );
+        };
+        
+        if( rv1 == rv2 == rv3 == 1 )
+        {
+            assert( start > 0 );
+            assert( stop > 0 );
+            assert( !isnan(value) );
+            add_values_to_contig(
+                (*contigs)->contigs + contig_index, start,stop,value);
+        } 
+        
+        while( !feof(fp) && fgetc( fp ) != '\n' );        
     }
 
+    /*
+    printf( "HERE: %e\n", (*contigs)->contigs[0].values[ 1717 ] );
+
+    int i, j;
+    for( i = 0; i < (*contigs)->size; i++ )
+    {
+        for( j = 0; j < (*contigs)->contigs[i].size; j++ )
+        {
+            assert( (*contigs)->contigs[i].values[ j ] >= 0 );
+            printf( "%e\n", (*contigs)->contigs[i].values[ j ] );
+        }
+    }
+    */
+    
     return 0;
 }
 
 int main( int argc, char** argv )
 {
     if( argc != 2 )
+    {
+        fprintf( stderr, "Need a bedgraph file.\n" );
         exit( -1 );
-
+    }
+    
     struct contigs_t* contigs;
     return load_bedgraph( argv[1], &contigs );
 
