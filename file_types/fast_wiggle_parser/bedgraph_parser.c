@@ -126,8 +126,8 @@ load_bedgraph( char* fname, struct contigs_t** contigs )
         
         if( rv1 == rv2 == rv3 == 1 )
         {
-            assert( start > 0 );
-            assert( stop > 0 );
+            assert( start >= 0 );
+            assert( stop >= 0 );
             assert( !isnan(value) );
             add_values_to_contig(
                 (*contigs)->contigs + contig_index, start,stop,value);
