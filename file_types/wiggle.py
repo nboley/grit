@@ -17,8 +17,10 @@ from bedgraph import iter_bedgraph_tracks
 
 VERBOSE = False
 
+
 GenomicInterval = namedtuple('GenomicInterval', \
                                  ['chr', 'strand', 'start', 'stop'])
+
 
 def threshold_and_scale_read_cvg_from_nc_density( \
         cvg, nc_wig, smoothing_window_size, ratio_threshold, \
@@ -468,9 +470,17 @@ class Wiggle( dict ):
                 print >> sys.stderr,"NaN locs:", numpy.where( numpy.isnan(array) )
                 array[ numpy.isnan(array) ] = 0
 
-            array[ array.min() < -1e50 ] = 0                
-            array[ array.max() > 1e50 ] = 0                
-            
+            if array.min() < -1e50:
+                print >> sys.stderr,"WARNING: Detected Very Small Numbers ( %e ) in 'add_cvg_from_bedgraph'" % array.min()
+                print >> sys.stderr,"Small num locs:", numpy.where( array.min() < -1e50 )
+                assert False
+
+            if array.min() > 1e50:
+                print >> sys.stderr,"WARNING: Detected Very Large Numbers ( %e ) in 'add_cvg_from_bedgraph'" % array.max()
+                print >> sys.stderr,"Big Num locs:", numpy.where( array.min() > 1e50 )
+                assert False
+
+            """
             if strand == '-' and array.max() <= 0:
                 array = array*-1
                 
@@ -478,7 +488,8 @@ class Wiggle( dict ):
                 print >> sys.stderr, "WARNING: negative values encountered", \
                     array.min(), strand
                 array[ array.min() < 0 ] = 0                
-                        
+            """
+            
             self.add_cvg_from_array( array, chrm_name, strand )
         
         return
@@ -593,12 +604,13 @@ class Wiggle( dict ):
         return
 
 def main():
-    raise NotImplementedError
+    #raise NotImplementedError
     chrm_sizes_fp = open( sys.argv[1] )
     fps = [ open( fname ) for fname in sys.argv[2:] ]
     wiggle = Wiggle( chrm_sizes_fp, fps )
-    wiggle.calc_all_intervals()
-    print wiggle.write_wiggles( "tmp.plus.gff", "tmp.minus.gff" )
+    print wiggle
+    #wiggle.calc_all_intervals()
+    #print wiggle.write_wiggles( "tmp.plus.gff", "tmp.minus.gff" )
 
 if __name__ == "__main__":    
     main()

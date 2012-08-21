@@ -5,6 +5,7 @@ import numpy
 import signal
 from ctypes import *
 import numpy.ctypeslib
+import multiprocessing as mp
 
 VERBOSE = False
 
@@ -59,24 +60,38 @@ def iter_bedgraph_tracks( fname ):
         
         array = numpy.ctypeslib.as_array( values, (size,))
 
-        """
+        # Copy the array into shared memory
+        shared_arr = mp.Array(c_double, size)
+        shared_arr[:] = array
+        
+        # delete free the C allocated memory
+        del array
+        
+        # cast the shared memory version to a numpy array
+        array = numpy.frombuffer( shared_arr.get_obj() )
+        
         try:
             assert( not numpy.isnan( array.sum() ) )
         except:
             print fname, size, name
             print numpy.where( numpy.isnan(array) )
-            print array[ 1710:1720 ]
-            print values[ 1710:1720 ]
-            print c_contigs.contigs[i].values[ 1710:1720 ]
             raise
-        """
         
         res.append( ( name, array ) )
+
+    bedgraph_o.free_contigs( c_contigs_p )
     
     return res
 
 if __name__ == "__main__":
-    for name, track in iter_bedgraph_tracks( sys.argv[1] ):
-        print name, track, track.min(), track.sum()
+    tracks = list( iter_bedgraph_tracks( sys.argv[1] ) )
+    from multiprocessing import Pool
+    def f(x):
+        for name, track in tracks:
+            print name, track, track.min(), track.sum()
+        return
+    
+    p = Pool(20)
+    p.map( f, range(200) )
 
 # WAT?

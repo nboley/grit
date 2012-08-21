@@ -52,6 +52,23 @@ init_contigs( struct contigs_t** contigs )
     (*contigs)->contigs = NULL;
 }
 
+void 
+free_contigs( struct contigs_t* contigs )
+{
+    int i;
+    for( i = 0; i < contigs->size; i++ )
+    {
+        free( contigs->contigs[i].values );
+    }
+
+    free( contigs->contigs );
+
+    contigs->size = -1;
+    contigs->contigs = NULL;
+
+    free( contigs );
+}
+
 int
 add_new_contig( struct contigs_t* contigs, char* name )
 {
@@ -162,6 +179,7 @@ int main( int argc, char** argv )
     }
     
     struct contigs_t* contigs;
-    return load_bedgraph( argv[1], &contigs );
-
+    int rv = load_bedgraph( argv[1], &contigs );
+    free_contigs( contigs );
+    return rv;
 }

@@ -4,6 +4,7 @@ import sys, os
 import copy
 import numpy
 from collections import defaultdict, namedtuple
+
 from itertools import izip, chain, takewhile, count, product
 from scipy import median
 from build_genelets import cluster_exons
@@ -85,11 +86,6 @@ from junctions_file import parse_junctions_file_dont_freeze
 from gtf_file import parse_gff_line, iter_gff_lines, GenomicInterval
 
 BinStats = namedtuple('BinStats', ['is_small', 'mean', 'lmn', 'rmn'] )
-
-OutFPS = namedtuple( "OutFPS", [
-        "single_exon_genes", "tss_exons", 
-        "internal_exons", "tes_exons", "all_exons"])
-
 
 def build_coverage_wig_from_polya_reads( tes_reads_fps, chrm_sizes_fp ):
     # build lists of the tes locations
@@ -1419,11 +1415,15 @@ def parse_arguments():
 
     args = parser.parse_args()
     
+    ofps_prefixes = [ "single_exon_genes", 
+                      "tss_exons", "internal_exons", "tes_exons", 
+                      "all_exons"]
+    
     fps = []
-    for field_name in OutFPS._fields:
+    for field_name in ofps_prefixes:
         fps.append(open("%s.%s.gff" % (args.out_file_prefix, field_name), "w"))
-    ofps = OutFPS( *fps )
-        
+    ofps = dict( zip( ofps_prefixes, fps ) )
+    
     # set flag args
     global VERBOSE
     VERBOSE = args.verbose
@@ -1443,11 +1443,16 @@ def parse_arguments():
         args.cage_wigs, args.polya_reads_gffs, ofps, args.threads
 
 def main():
+    from wiggle import iter_bedgraph_tracks
+    print iter_bedgraph_tracks( "/media/scratch/dros_trans_v3/chr4/read_cov_bedgraphs/rnaseq_cov.Cd_0.1M_Cdcl2_AdMixed_4days.rd1.minus.bedGraph" )
+    sys.exit()
+
+
     wigs, jns_fp, chrm_sizes_fp, cage_wigs, tes_reads_fps, out_fps, num_threads\
         = parse_arguments()
 
     # process each chrm, strand combination separately
-    for out_fp, track_name in zip( out_fps, out_fps._fields ):
+    for track_name, out_fp in out_fps.iteritems():
         out_fp.write( "track name=%s\n" % track_name )
     
     rd1_cov = Wiggle( 
