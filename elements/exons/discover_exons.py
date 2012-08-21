@@ -86,6 +86,11 @@ from gtf_file import parse_gff_line, iter_gff_lines, GenomicInterval
 
 BinStats = namedtuple('BinStats', ['is_small', 'mean', 'lmn', 'rmn'] )
 
+OutFPS = namedtuple( "OutFPS", [
+        "single_exon_genes", "tss_exons", 
+        "internal_exons", "tes_exons", "all_exons"])
+
+
 def build_coverage_wig_from_polya_reads( tes_reads_fps, chrm_sizes_fp ):
     # build lists of the tes locations
     def add_reads_to_locs( tes_reads_fp, locs ):
@@ -1414,9 +1419,6 @@ def parse_arguments():
 
     args = parser.parse_args()
     
-    OutFPS = namedtuple( "OutFPS", [\
-            "single_exon_genes", "tss_exons", \
-            "internal_exons", "tes_exons", "all_exons"])
     fps = []
     for field_name in OutFPS._fields:
         fps.append(open("%s.%s.gff" % (args.out_file_prefix, field_name), "w"))
