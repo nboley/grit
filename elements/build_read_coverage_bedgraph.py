@@ -11,6 +11,7 @@ from reads import iter_coverage_regions_for_read, clean_chr_name, \
 
 import multiprocessing
 from multiprocessing import Process
+num_threads = 1
 
 class threadsafeFile( file ):
     def __init__( self, *args ):
@@ -123,14 +124,37 @@ def populate_wiggle( reads_fname, chrms, rd1_ofps, rd2_ofps,
         all_args.append( ( reads_fname, chrm, rd1_ofps, rd2_ofps, 
                            reverse_read_strand, pairs_are_opp_strand,
                            separate_read_pairs ) )
-    
-    ps = []
-    for args in all_args:
-        ps.append( Process(target=populate_wiggles_worker, name=args[1], args=args))
-        ps[-1].start()
-    
-    for p in ps:
-        p.join()
+
+    if num_threads == 1:
+        for args in all_args:
+            populate_wiggles_worker( *args )
+    else:
+        from time import sleep
+        
+        ps = []
+        for thread_id, args in enumerate( all_args ):
+            p = Process(target=populate_wiggles_worker, name=args[1], args=args)
+            p.start()
+            ps.append( p )
+        
+        del all_args[:num_threads]
+        
+        while len(all_args) > 0:
+            sleep( 0.5 )
+            for p_i, p in enumerate(ps):
+                if len( all_args ) == 0:
+                    break
+                if not p.is_alive():
+                    ps[p_i].join()
+                    args = all_args.pop()
+                    ps[p_i] = Process(target=populate_wiggles_worker, 
+                                      name=args[1], args=args)
+                    ps[p_i].start()
+                
+        for p in ps:
+            p.join()
+        
+        assert len( all_args ) == 0
     
     return
 
@@ -154,7 +178,12 @@ def parse_arguments():
         help='Output files will be named outprefix.(plus,minus).bedGraph')
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
         help='Whether or not to print status information.')
+    parser.add_argument( '--threads', '-t', default=1, type=int,
+        help='The numnber of threads to run.')
     args = parser.parse_args()
+    
+    global num_threads
+    num_threads = args.threads
     
     global VERBOSE
     VERBOSE = args.verbose

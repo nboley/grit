@@ -691,10 +691,12 @@ class ProcessServer( object ):
             max_resources = min_resources
         
         assert min_resources <= max_resources
-        if max_resources > self.max_available_resources:
+        if min_resources > self.max_available_resources:
             error_str = "Can't run '%i' threads on a server with '%i' threads."
             raise ValueError, error_str % ( \
                 max_resources, self.max_available_resources )
+
+        max_resources = min( max_resources, self.max_available_resources )
         
         # check to see if we already have these elements. If we do, then
         # don't add them. 
@@ -826,11 +828,14 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
             et4 = ElementType( 
                 "rnaseq_cov_pair2_bedgraph", 
                 sample.sample_type, sample.sample_id, "-")
+            
+            cmd_str += " --threads={threads}"
 
+            
             cmd = Cmd( cmd_str, [et1, et2, et3, et4], 
                        output_fnames, dependencies )
-                        
-            process_server.add_process( cmd, Resource(1) )
+            
+            process_server.add_process( cmd, Resource(1), Resource(6) )
 
     # first get all of the read bams
     cov_wig_fnames = defaultdict( list )

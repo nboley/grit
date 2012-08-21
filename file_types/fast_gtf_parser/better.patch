@@ -1,0 +1,87 @@
+diff --git a/file_types/fast_gtf_parser/gtf.py b/file_types/fast_gtf_parser/gtf.py
+index 0022425..cef04ce 100644
+--- a/file_types/fast_gtf_parser/gtf.py
++++ b/file_types/fast_gtf_parser/gtf.py
+@@ -2,8 +2,10 @@ import sys, os
+ import numpy
+ import signal
+ from ctypes import *
++from itertools import izip
+ 
+ VERBOSE = False
++DEBUG = True
+ 
+ # load the gtf library
+ gtf_o = cdll.LoadLibrary( os.path.join( ".", \
+@@ -23,6 +25,30 @@ struct transcript {
+                 ("exon_bnds", POINTER(c_int))
+                ]
+ 
++class Transcript( list ):
++    def __init__( self, trans_id, exon_bnds ):
++        self.id = trans_id
++        for a, b in izip( exon_bnds[::2], exon_bnds[1::2] ):       
++            self.append( (a, b) )
++        if DEBUG:
++            for a, b in izip( exon_bnds[:-1], exon_bnds[1:]):
++                try:
++                    assert a <= b
++                except:
++                    print a, b
++                    print list( exon_bnds )
++                    print self.id
++                    #print exon_bnds
++                    raise
++        
++        return
++
++class Gene( list ):
++    def __init__( self, gene_id, chrm, strand, transcripts=[] ):
++        self.id = gene_id
++        self.extend( transcripts )
++        return
++
+ class c_gene_t(Structure):
+     """
+ struct gene {
+@@ -67,14 +93,14 @@ def load_gtf( fname ):
+             chrm = chrm[3:]
+         data = [g.gene_id, chrm, g.strand, g.min_loc, g.max_loc]
+         transcripts = []
++        gene = Gene( g.gene_id, chrm, g.strand )
+         for j in xrange( g.num_transcripts ):
+             trans_id = g.transcripts[j].contents.trans_id
+             num_exon_bnds = g.transcripts[j].contents.num_exon_bnds
+             exon_bnds = g.transcripts[j].contents.exon_bnds[:num_exon_bnds]
+-            transcripts.append( (trans_id, exon_bnds) )
++            gene.append( Transcript( trans_id, exon_bnds ) )
+         
+-        data.append( transcripts )
+-        genes.append( data )
++        genes.append( gene )
+     
+     gtf_o.free_gtf_data( c_genes_p, num_genes )    
+     
+@@ -141,8 +167,21 @@ def load_gtfs( fnames, num_threads ):
+ 
+ if __name__ == "__main__":
+     VERBOSE = True
++    from itertools import izip
++    load_gtf( sys.argv[1] )
+     gene_grps = load_gtfs( sys.argv[1:], 4 )
+     for genes in gene_grps:
+         for gene in genes:
+             print gene[0]
+-            #print "\t", [ i[0] for i in gene[-1] ]
++            print "\t", [ i[0] for i in gene[-1] ]
++            for i in gene[-1]:
++                print i
++                try:
++                    assert len( i[1] ) == len( i[1] )
++                    assert len( i[1] )%2 == 0
++                    for a, b in izip(i[1][:-1:2], i[1][1::2]):
++                        assert b >= a
++                except:
++                    print i
++                    raise
++            
