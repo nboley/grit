@@ -132,7 +132,7 @@ def populate_wiggle( reads_fname, chrms, rd1_ofps, rd2_ofps,
         from time import sleep
         
         ps = []
-        for thread_id, args in enumerate( all_args ):
+        for thread_id, args in zip( range(num_threads), all_args ):
             p = Process(target=populate_wiggles_worker, name=args[1], args=args)
             p.start()
             ps.append( p )
