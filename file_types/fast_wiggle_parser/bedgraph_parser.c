@@ -27,7 +27,7 @@ add_values_to_contig( struct contig_t* contig, int start, int stop, double value
         size_t curr_size = contig->size;
         contig->size = stop;
         contig->values = realloc( contig->values, sizeof( double )*stop );
-        memset( contig->values + curr_size, 0, stop - curr_size);
+        memset( contig->values + curr_size, 0, sizeof(double)*(stop - curr_size));
     }
     
     int i;

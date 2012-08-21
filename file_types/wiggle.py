@@ -479,16 +479,6 @@ class Wiggle( dict ):
                 print >> sys.stderr,"WARNING: Detected Very Large Numbers ( %e ) in 'add_cvg_from_bedgraph'" % array.max()
                 print >> sys.stderr,"Big Num locs:", numpy.where( array.min() > 1e50 )
                 assert False
-
-            """
-            if strand == '-' and array.max() <= 0:
-                array = array*-1
-                
-            if array.min() < 0:
-                print >> sys.stderr, "WARNING: negative values encountered", \
-                    array.min(), strand
-                array[ array.min() < 0 ] = 0                
-            """
             
             self.add_cvg_from_array( array, chrm_name, strand )
         

@@ -84,6 +84,7 @@ def iter_bedgraph_tracks( fname ):
     return res
 
 if __name__ == "__main__":
+    raise NotImplementedError("This is a module")
     tracks = list( iter_bedgraph_tracks( sys.argv[1] ) )
     from multiprocessing import Pool
     def f(x):

@@ -3,7 +3,7 @@
 import sys, os
 import copy
 import numpy
-from collections import defaultdict, namedtuple
+from collections import defaultdict, namedtuple, OrderedDict
 
 from itertools import izip, chain, takewhile, count, product
 from scipy import median
@@ -1414,7 +1414,7 @@ def parse_arguments():
         help='The number of threads to use.')
 
     args = parser.parse_args()
-    
+
     ofps_prefixes = [ "single_exon_genes", 
                       "tss_exons", "internal_exons", "tes_exons", 
                       "all_exons"]
@@ -1422,7 +1422,7 @@ def parse_arguments():
     fps = []
     for field_name in ofps_prefixes:
         fps.append(open("%s.%s.gff" % (args.out_file_prefix, field_name), "w"))
-    ofps = dict( zip( ofps_prefixes, fps ) )
+    ofps = OrderedDict( zip( ofps_prefixes, fps ) )
     
     # set flag args
     global VERBOSE
@@ -1443,14 +1443,9 @@ def parse_arguments():
         args.cage_wigs, args.polya_reads_gffs, ofps, args.threads
 
 def main():
-    from wiggle import iter_bedgraph_tracks
-    print iter_bedgraph_tracks( "/media/scratch/dros_trans_v3/chr4/read_cov_bedgraphs/rnaseq_cov.Cd_0.1M_Cdcl2_AdMixed_4days.rd1.minus.bedGraph" )
-    sys.exit()
-
-
     wigs, jns_fp, chrm_sizes_fp, cage_wigs, tes_reads_fps, out_fps, num_threads\
         = parse_arguments()
-
+    
     # process each chrm, strand combination separately
     for track_name, out_fp in out_fps.iteritems():
         out_fp.write( "track name=%s\n" % track_name )
@@ -1521,7 +1516,7 @@ def main():
             container.extend( regions_iter )
     
     if VERBOSE: print >> sys.stderr,  'Writing output.'
-    for regions_iter, ofp in zip( all_regions_iters, out_fps ):
+    for regions_iter, ofp in zip( all_regions_iters, out_fps.itervalues() ):
         ofp.write( "\n".join(iter_gff_lines( sorted(regions_iter) )) + "\n")
         
     return
