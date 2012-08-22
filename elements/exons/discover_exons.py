@@ -37,7 +37,7 @@ USE_PARTIALLY_RETAINED_INTRONS = False
 
 SPLIT_EXON_BNDRY_COV_FRAC = 0.95
 EXON_SPLIT_SIZE = 40
-EXON_SPLIT_RATIO = 8
+EXON_SPLIT_RATIO = 9
 
 # length of contiguous space to define as an empty region
 EMPTY_REGION_SPLIT_SIZE = 80
@@ -60,7 +60,7 @@ LOC_THRESH_REG_SZ = 50000
 CAGE_WINDOW_LEN = 40
 CAGE_MAX_SCORE_FRAC = 0.01
 CAGE_MIN_SCORE = 20
-REQUIRE_CAGE_SIGNAL_FOR_TSS_EXON = False
+REQUIRE_CAGE_SIGNAL_FOR_TSS_EXON = True
 
 # this is set in main
 CAGE_TOT_FRAC = None
@@ -69,7 +69,8 @@ MAX_NUM_PEAKS = 25
 
 ### PolyA TUNING PARAMS
 CONSIDER_ALL_POSS_TES_EXONS = True
-TES_EXON_EXPANSION = 100
+REQUIRE_POLYA_SITE_FOR_TES_EXON = True
+TES_EXON_EXPANSION = 30
 
 NORMALIZE_BY_RNASEQ_COV = False
 FILTER_GENE_SPLITS_BY_POLYA = False
@@ -1285,7 +1286,7 @@ def find_exons_in_cluster(op_queue, ls, bs,
             else:
                 filtered_tes_exons.add( (tes_exon_start, site) )
 
-    if len( filtered_tes_exons ) > 0:
+    if REQUIRE_POLYA_SITE_FOR_TES_EXON or len( filtered_tes_exons ) > 0:
         tes_exons = sorted( filtered_tes_exons )
     
     # if we can't find a TSS index, continue

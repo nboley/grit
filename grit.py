@@ -45,7 +45,7 @@ USE_MERGED_EXONS_FOR_TRANSCRIPTS = False
 
 # whether or not to include the merged_input transripts
 # in the final merged file
-USE_MERGED_INPUT=True
+USE_MERGED_INPUT=False
 
 VERBOSE = True
 STRESS_TEST_DEP_FINDER = False
