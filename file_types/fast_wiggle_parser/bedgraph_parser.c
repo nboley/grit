@@ -152,20 +152,6 @@ load_bedgraph( char* fname, struct contigs_t** contigs )
         
         while( !feof(fp) && fgetc( fp ) != '\n' );        
     }
-
-    /*
-    printf( "HERE: %e\n", (*contigs)->contigs[0].values[ 1717 ] );
-
-    int i, j;
-    for( i = 0; i < (*contigs)->size; i++ )
-    {
-        for( j = 0; j < (*contigs)->contigs[i].size; j++ )
-        {
-            assert( (*contigs)->contigs[i].values[ j ] >= 0 );
-            printf( "%e\n", (*contigs)->contigs[i].values[ j ] );
-        }
-    }
-    */
     
     return 0;
 }
