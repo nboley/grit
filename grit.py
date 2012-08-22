@@ -133,6 +133,7 @@ RnaSeqDataTypes = [ "rnaseq_polyaplus_bam",
                     "exons_gff",
                     "polya_reads_gff",
                     "polya_tes_exons_gff",
+                    "cand_polya_sites",
                     "transcripts_gtf",
                     "sparse_transcripts_gtf",
                     "cdna_gtf",
@@ -466,6 +467,9 @@ class Elements( object ):
             # database
             if status != 'finished' \
                     or self.element_has_changed( fname ):
+                self.remove_element( fname, commit=False )
+            
+            if status == 'finished' and not os.path.exists( fname ):
                 self.remove_element( fname, commit=False )
         
         # we set commit to false in remove_element to speed up bulk deletes,
@@ -1205,27 +1209,16 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         if len( ress ) != 2:
             ress = elements.get_elements_from_db( \
                 "cage_cov_wig", "*" , "*" )
-            
-            #raise ValueError, "Can't find the cage signal files " \
-            #                  + "necessary to build exons."
+        
         assert len( ress ) == 2
         cage_wig_fnames = [ res.fname for res in ress ]
         
-        # find the merged POLYA signal files
-        if USE_MERGED_POLYA_SIGNAL_FOR_EXONS:
-            ress = elements.get_elements_from_db( \
-                "polya_reads_gff", "*" , "*" )
-        else:
-            ress = elements.get_elements_from_db( \
-                "polya_reads_gff", sample_type )
+        # find the candidate polya files
+        ress = elements.get_elements_from_db( \
+            "cand_polya_sites", "*" , "*" )
+        assert len( ress ) in ( 0, 2 )
         
-        if len( ress ) > 1:
-            ress = elements.get_elements_from_db( \
-                "polya_reads_gff", "*" , "*" )
-            if len( ress ) != 1:
-                raise ValueError, "To many polya signal files."
-        
-        polya_gff_fnames = [ res.fname for res in ress ]
+        candidate_polya_site_fnames = [ res.fname for res in ress ]
         
         chrm_sizes_fname = elements.chr_sizes.get_tmp_fname( with_chr = True )
 
@@ -1237,7 +1230,7 @@ def build_all_exon_files( elements, pserver, output_prefix ):
             FIND_EXONS_CMD, jns_fname, chrm_sizes_fname,
             " ".join(bedgraph_fnames),   
             " ".join(cage_wig_fnames), 
-            "--polya-reads-gffs "+" ".join( polya_gff_fnames),
+            "--polya-candidate-sites "+" ".join( candidate_polya_site_fnames ),
             output_fn_prefix )
 
         extensions = [ ".internal_exons.gff",    \

@@ -21,6 +21,19 @@ VERBOSE = False
 GenomicInterval = namedtuple('GenomicInterval', \
                                  ['chr', 'strand', 'start', 'stop'])
 
+def guess_strand_from_fname( fname ):
+    if fname.lower().rfind( "plus" ) >= 0:
+        return '+'
+    elif fname.lower().rfind( "+" ) >= 0:
+        return '+'
+    elif fname.lower().rfind( "minus" ) >= 0:
+        return '-'
+    elif fname.lower().rfind( "-" ) >= 0:
+        return '-'
+    else:
+        raise ValueError, "Couldn't infer strand from filename '%s'" % fname
+    
+    assert False
 
 def threshold_and_scale_read_cvg_from_nc_density( \
         cvg, nc_wig, smoothing_window_size, ratio_threshold, \
@@ -160,18 +173,7 @@ def parse_var_step_wig_line( line, strand, chrm ):
 class Wiggle( dict ):
     @staticmethod
     def _infer_strand_from_fname( fname ):
-        if fname.lower().find( "plus" ) >= 0:
-            return '+'
-        elif fname.lower().find( "+" ) >= 0:
-            return '+'
-        elif fname.lower().find( "minus" ) >= 0:
-            return '-'
-        elif fname.lower().find( "-" ) >= 0:
-            return '-'
-        else:
-            raise ValueError, "Couldn't infer strand from filename '%s'" % fname
-        
-        return
+        return guess_strand_from_fname( fname )
     
     def write_wiggles( self, plus_out, minus_out, \
                            ignore_zeros=True, track_name_prefix=None, \

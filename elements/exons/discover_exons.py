@@ -37,7 +37,7 @@ USE_PARTIALLY_RETAINED_INTRONS = False
 
 SPLIT_EXON_BNDRY_COV_FRAC = 0.95
 EXON_SPLIT_SIZE = 40
-EXON_SPLIT_RATIO = 4
+EXON_SPLIT_RATIO = 8
 
 # length of contiguous space to define as an empty region
 EMPTY_REGION_SPLIT_SIZE = 80
@@ -57,9 +57,10 @@ MIN_SE_GENE_AVG_READCOV = 10
 LOC_THRESH_REG_SZ = 50000
 
 ### CAGE TUUNING PARAMS
-CAGE_WINDOW_LEN = 20
+CAGE_WINDOW_LEN = 40
 CAGE_MAX_SCORE_FRAC = 0.01
 CAGE_MIN_SCORE = 20
+REQUIRE_CAGE_SIGNAL_FOR_TSS_EXON = False
 
 # this is set in main
 CAGE_TOT_FRAC = None
@@ -68,11 +69,7 @@ MAX_NUM_PEAKS = 25
 
 ### PolyA TUNING PARAMS
 CONSIDER_ALL_POSS_TES_EXONS = True
-POLYA_WINDOW_LEN = 5
-POLYA_MAX_SCORE_FRAC = 0.20
-POLYA_MIN_SCORE = 1
-# this is set in main
-POLYA_TOT_FRAC = None
+TES_EXON_EXPANSION = 100
 
 NORMALIZE_BY_RNASEQ_COV = False
 FILTER_GENE_SPLITS_BY_POLYA = False
@@ -81,36 +78,39 @@ DISTAL_EXON_EXPANSION = 500
 
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../", 'file_types'))
-from wiggle import Wiggle
+from wiggle import Wiggle, guess_strand_from_fname
 from junctions_file import parse_junctions_file_dont_freeze
 from gtf_file import parse_gff_line, iter_gff_lines, GenomicInterval
 
 BinStats = namedtuple('BinStats', ['is_small', 'mean', 'lmn', 'rmn'] )
 
-def build_coverage_wig_from_polya_reads( tes_reads_fps, chrm_sizes_fp ):
-    # build lists of the tes locations
-    def add_reads_to_locs( tes_reads_fp, locs ):
-        for line in tes_reads_fp:
-            gff_l = parse_gff_line( line )
-            # skip lines that weren't able to be parsed
-            if gff_l == None: continue
-            
-            locs[ (gff_l.region.chr, gff_l.region.strand) ].append(
-                gff_l.region.stop )
-        
-        return
-    
-    # process tes reads gff files (i.e. poly-A)
+def find_polya_sites( polya_sites_fps ):
     locs = defaultdict( list )
-    for tes_reads_fp in tes_reads_fps:
-        add_reads_to_locs( tes_reads_fp, locs )
+    for fp in polya_sites_fps:
+        strand = guess_strand_from_fname( fp.name )
+        fp.seek(0)
+        for line in fp:
+            if line.startswith( "track" ): continue
+            data = line.split()
+            chrm, start, stop, value = \
+                data[0], int(data[1]), int(data[2]), float(data[3])
+            assert start == stop
+            assert value == 1
+            locs[(chrm, strand)].append( start )
     
-    # load locs data into a wiggle object
-    tes_cvrg = Wiggle( chrm_sizes_fp )
-    tes_cvrg.load_data_from_positions( locs )
-        
-    return tes_cvrg
+    # convert to a dict of sorted numpy arrays
+    numpy_locs = {}
+    for (chrm, strand), polya_sites in locs.iteritems():
+        # make sure they're unique
+        assert len( polya_sites ) == len( set( polya_sites ) )
 
+        polya_sites.sort()
+        if chrm.startswith( 'chr' ):
+            chrm = chrm[3:]
+        
+        numpy_locs[(chrm, strand)] = numpy.array( polya_sites )
+    
+    return numpy_locs
 
 class ReadCoverageData( object ):
     def __init__( self, zero_intervals, read_coverage_array ):
@@ -564,7 +564,7 @@ def find_initial_boundaries_and_labels( read_cov_obj, jns ):
 
 def check_exon_for_gene_merge( strand, start, stop, \
                                prev_label, next_label, \
-                               read_cov, cage_cov, polya_cov=None):
+                               read_cov, cage_cov, polya_sites):
     # check to see if this exon merges 5' and 3' ends of a gene
     try:
         assert prev_label in ('exon_extension','I','L')
@@ -668,27 +668,17 @@ def check_exon_for_gene_merge( strand, start, stop, \
             or (ds_cage_cov/ds_read_cov) < CAGE_TOT_FRAC:
         return [ start, ], [ 'Exon', ]
 
-    if FILTER_GENE_SPLITS_BY_POLYA and polya_cov != None:
-        if strand == '+':
-            ds_polya_cov = polya_cov[ start:new_intron_start ].sum()
-        else:
-            ds_polya_cov = polya_cov[ new_intron_stop+1:stop+1 ].sum()
-
-        if ds_polya_cov < POLYA_MIN_SCORE:
-            return [ start, ], [ 'Exon', ]
+    if FILTER_GENE_SPLITS_BY_POLYA:
+        raise NotImplemented, "Need to add in code to filter gene splits by polya"
     
-    try:
-        assert start < new_intron_start < new_intron_stop+1 < stop
-    except:
-        print start, new_intron_start, new_intron_stop+1, stop
-        raise
+    assert start < new_intron_start < new_intron_stop+1 < stop
     
     new_bndrys = (start, new_intron_start, new_intron_stop+1)
     new_labels = ('Exon','L','Exon')
     return new_bndrys, new_labels
 
-def refine_exon_extensions( \
-        strand, labels, bndrys, read_cov, cage_cov, polya_cov ):
+def refine_exons( \
+        strand, labels, bndrys, read_cov, cage_cov, polya_sites ):
     new_labels = [ labels[0], ]
     new_bndrys = [ bndrys[0], ]
     
@@ -730,7 +720,7 @@ def refine_exon_extensions( \
                 continue
 
             split_bndrys, split_labels, = check_exon_for_gene_merge( \
-                strand, start, stop, prev, next, read_cov, cage_cov, polya_cov)
+                strand, start, stop, prev, next, read_cov, cage_cov, polya_sites)
             new_bndrys.extend( split_bndrys )
             new_labels.extend( split_labels )
 
@@ -773,7 +763,7 @@ def refine_single_exon_gene_label(start, stop,
     
     return 'S'
 
-def label_regions( strand, read_cov, bndrys, labels, cage_cov, polya_cov ):
+def label_regions( strand, read_cov, bndrys, labels, cage_cov, polya_sites ):
     # calculate stats for each bin. 
     stats = build_bins_stats( bndrys, labels, read_cov )
     
@@ -787,9 +777,9 @@ def label_regions( strand, read_cov, bndrys, labels, cage_cov, polya_cov ):
         ONE_SIDE_EXTENTION_FRACTION, BASES_TO_IGNORE_IN_RETAIN )
     
     # remove exon extensions that neighbor low coverage 
-    # regions or exons. 
-    labels, bndrys = refine_exon_extensions( \
-        strand, labels, bndrys, read_cov, cage_cov, polya_cov )
+    # regions or exons, and check for gene merges.
+    labels, bndrys = refine_exons( \
+        strand, labels, bndrys, read_cov, cage_cov, polya_sites )
     
     #refine_single_exon_genes( read_cov.rca, cage_cov, labels, bndrys )
     
@@ -1225,7 +1215,7 @@ def find_distal_exons( region_start, region_stop,
 def find_exons_in_cluster(op_queue, ls, bs, 
                           strand, chrm_stop,
                           region_start, region_stop,
-                          read_cov, cage_cov, 
+                          read_cov, cage_cov, polya_sites,
                           intron_starts, intron_stops ):
     all_exons = []
     all_seg_exons = []
@@ -1254,7 +1244,7 @@ def find_exons_in_cluster(op_queue, ls, bs,
         (strand=='+'), intron_starts, intron_stops,
         bs, ls, read_cov, \
         CAGE_MIN_SCORE, CAGE_WINDOW_LEN, CAGE_MAX_SCORE_FRAC, \
-        require_signal = True)
+        require_signal = REQUIRE_CAGE_SIGNAL_FOR_TSS_EXON )
 
     # if we can't find a TSS index, continue
     if len( tss_exons ) == 0:
@@ -1272,8 +1262,32 @@ def find_exons_in_cluster(op_queue, ls, bs,
         region_start, region_stop,
         None, (strand=='-'), intron_starts, intron_stops, \
         bs, ls, read_cov, \
-        POLYA_MIN_SCORE, POLYA_WINDOW_LEN, POLYA_MAX_SCORE_FRAC )
+        None, None, None )
 
+    filtered_tes_exons = set()
+    for tes_exon_start, tes_exon_stop in tes_exons:
+        if strand == '-':
+            tes_exon_start = max( 0, tes_exon_start-TES_EXON_EXPANSION )
+        else:
+            tes_exon_stop = min( region_stop, tes_exon_stop+TES_EXON_EXPANSION )
+        
+        # find all of the polya sites that cover this exon
+        cluster_polya_sites = []
+        polya_i = polya_sites.searchsorted( tes_exon_start, side='left' )
+        while polya_i < len(polya_sites) \
+                and polya_sites[polya_i] <= tes_exon_stop:
+            cluster_polya_sites.append( polya_sites[polya_i] )
+            polya_i += 1
+        
+        for site in cluster_polya_sites:
+            if strand == '-':
+                filtered_tes_exons.add( (site, tes_exon_stop) )
+            else:
+                filtered_tes_exons.add( (tes_exon_start, site) )
+
+    if len( filtered_tes_exons ) > 0:
+        tes_exons = sorted( filtered_tes_exons )
+    
     # if we can't find a TSS index, continue
     if len( tes_exons ) == 0:
         # print >> sys.stderr, "WARNING: cant find any tes exons."
@@ -1289,7 +1303,7 @@ def find_exons_in_cluster(op_queue, ls, bs,
     return
 
 def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, 
-                         cage_cov, polya_cov, num_threads=1):
+                         cage_cov, polya_sites, num_threads=1):
     jns_wo_cnts = [ jn for jn, score in jns_w_cnts ]
 
     if VERBOSE: print >> sys.stderr,  'Finding initial boundaries and labels'
@@ -1297,7 +1311,7 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts,
         read_cov_obj, jns_wo_cnts )
     
     new_labels, new_bndrys = label_regions( \
-        strand, read_cov_obj, bndrys, labels, cage_cov, polya_cov )
+        strand, read_cov_obj, bndrys, labels, cage_cov, polya_sites )
     
     if VERBOSE: print >> sys.stderr,  'Clustering boundaries and labels'
     clustered_labels, clustered_bndrys = cluster_labels_and_bndrys( 
@@ -1358,6 +1372,7 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts,
                  strand, read_cov_obj.chrm_stop,
                  region_start, region_stop,
                  region_read_cov, region_cage_cov,
+                 polya_sites,
                  intron_starts, intron_stops )
         
         if VERBOSE:
@@ -1366,7 +1381,7 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts,
 
         if num_threads > 1:
             p = Process(target=find_exons_in_cluster, 
-                        name="%i-%i" % (cluster_index, len(ls)), args=args)
+                        name="%i-%i" % (cluster_index, len(ls)), args=args)            
             ps[empty_p_index] = p
             p.start()
         else:
@@ -1402,8 +1417,8 @@ def parse_arguments():
     
     parser.add_argument( '--cage-wigs', type=file, nargs='+', \
         help='wig files with cage reads, to identify tss exons.')
-    parser.add_argument( '--polya-reads-gffs', type=file, nargs='*', \
-        help='files with polya reads, to identify tes exons.')
+    parser.add_argument( '--polya-candidate-sites', type=file, nargs='*', \
+        help='files with allowed polya sites.')
     
     parser.add_argument( '--out-file-prefix', '-o', default="discovered_exons",\
         help='Output file name. (default: discovered_exons)')
@@ -1440,11 +1455,17 @@ def parse_arguments():
     grpd_wigs = [ rd1_plus_wigs, rd1_minus_wigs, rd2_plus_wigs, rd2_minus_wigs ]
     
     return grpd_wigs, args.junctions, args.chrm_sizes_fname, \
-        args.cage_wigs, args.polya_reads_gffs, ofps, args.threads
+        args.cage_wigs, args.polya_candidate_sites, ofps, args.threads
+
 
 def main():
-    wigs, jns_fp, chrm_sizes_fp, cage_wigs, tes_reads_fps, out_fps, num_threads\
+    wigs, jns_fp, chrm_sizes_fp, cage_wigs, polya_candidate_sites_fps, out_fps, num_threads\
         = parse_arguments()
+    
+    # open the polya data
+    if VERBOSE: print >> sys.stderr,  'Loading polyA.'
+    polya_sites = find_polya_sites( polya_candidate_sites_fps )
+    for fp in polya_candidate_sites_fps: fp.close()
     
     # process each chrm, strand combination separately
     for track_name, out_fp in out_fps.iteritems():
@@ -1474,17 +1495,7 @@ def main():
     global CAGE_TOT_FRAC
     CAGE_TOT_FRAC = (float(cage_sum)/read_cov_sum)*(1e-3)    
     for cage_fp in cage_wigs: cage_fp.close()
-    
-    # open the polya data
-    if VERBOSE: print >> sys.stderr,  'Loading polyA.'
-    polya_cov = build_coverage_wig_from_polya_reads( \
-        tes_reads_fps, chrm_sizes_fp )
-    polya_sum = sum( cage_cov.apply( lambda a: a.sum() ).values() )
-    global POLYA_TOT_FRAC
-    POLYA_TOT_FRAC = (float(polya_sum)/read_cov_sum)*(1e-3)
-    for tes_reads_fp in tes_reads_fps: tes_reads_fp.close()
-    
-
+        
     if VERBOSE: print >> sys.stderr,  'Loading junctions.'
     jns = parse_junctions_file_dont_freeze( jns_fp )
         
@@ -1492,23 +1503,26 @@ def main():
 
     keys = sorted( set( jns ) )
     for chrm, strand in keys:        
-        if VERBOSE: print >> sys.stderr,  'Processing chromosome %s strand %s.' % ( chrm, strand )
-        if VERBOSE: print >> sys.stderr,  'Loading read coverage data (%s,%s)' % ( chrm, strand )
+        if VERBOSE: print >> sys.stderr, 'Processing chromosome %s strand %s.'\
+            % ( chrm, strand )
+        if VERBOSE: print >> sys.stderr, 'Loading read coverage data (%s,%s)'\
+            % ( chrm, strand )
         read_cov_obj = ReadCoverageData( \
             read_cov.zero_intervals[(chrm, strand)], read_cov[(chrm, strand)] )
-        
-        cage_cov_array = cage_cov[ (chrm, strand) ]
-        polya_cov_array = polya_cov[ (chrm, strand) ]
         
         introns = jns[(chrm, strand)]
         scores = jns._scores[(chrm, strand)]
         jns_and_scores = zip( introns, scores )
         
         disc_grpd_exons = find_exons_in_contig( \
-           strand, read_cov_obj, jns_and_scores, \
-           cage_cov_array, polya_cov_array, num_threads)
+           strand, 
+           read_cov_obj, 
+           jns_and_scores,
+           cage_cov[ (chrm, strand) ], 
+           polya_sites[ (chrm, strand) ], 
+           num_threads)
 
-        if VERBOSE: print >> sys.stderr,  'Building output (%s,%s)' % ( chrm, strand )        
+        if VERBOSE: print >> sys.stderr,  'Building output (%s,%s)' % ( chrm, strand )
         for container, exons in zip( all_regions_iters, disc_grpd_exons ):
             regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
                                  for start, stop in exons                \
