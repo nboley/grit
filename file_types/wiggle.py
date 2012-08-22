@@ -568,7 +568,7 @@ class Wiggle( dict ):
         return dict.__getitem__( self, key )
     
     def __init__( self, chrm_sizes_fp, fps=[], strands=[ 'infer_from_fname', ]):
-        self.chrm_sizes = ChrmSizes( chrm_sizes_fp )
+        self.chrm_sizes = ChrmSizes( chrm_sizes_fp.name )
         
         # initialize wiggle arrays
         """
@@ -595,6 +595,16 @@ class Wiggle( dict ):
         
         return
 
+def load_wiggle( chrm_sizes_fname, fnames=[], strands=[ 'infer_from_fname', ] ):
+    chrm_sizes_fp = open( chrm_sizes_fname )
+    fps = [ open( fname ) for fname in fnames ]
+    rv = Wiggle( chrm_sizes_fp, fps, strands )
+    chrm_sizes_fp.close()
+    for fp in fps:
+        fp.close()
+    
+    return rv
+
 def main():
     #raise NotImplementedError
     chrm_sizes_fp = open( sys.argv[1] )
@@ -606,4 +616,3 @@ def main():
 
 if __name__ == "__main__":    
     main()
-

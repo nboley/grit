@@ -79,28 +79,32 @@ DISTAL_EXON_EXPANSION = 500
 
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../", 'file_types'))
-from wiggle import Wiggle, guess_strand_from_fname
+from wiggle import Wiggle, load_wiggle, guess_strand_from_fname
 from junctions_file import parse_junctions_file_dont_freeze
 from gtf_file import parse_gff_line, iter_gff_lines, GenomicInterval
 
 BinStats = namedtuple('BinStats', ['is_small', 'mean', 'lmn', 'rmn'] )
 
-def find_polya_sites( polya_sites_fps ):
+def build_empty_array():
+    return numpy.array(())
+
+def find_polya_sites( polya_sites_fnames ):
     locs = defaultdict( list )
-    for fp in polya_sites_fps:
-        strand = guess_strand_from_fname( fp.name )
-        fp.seek(0)
-        for line in fp:
-            if line.startswith( "track" ): continue
-            data = line.split()
-            chrm, start, stop, value = \
-                data[0], int(data[1]), int(data[2]), float(data[3])
-            assert start == stop
-            assert value == 1
-            locs[(chrm, strand)].append( start )
+    for fname in polya_sites_fnames:
+        strand = guess_strand_from_fname( fname )
+        with open( fname ) as fp:
+            for line in fp:
+                if line.startswith( "track" ): continue
+                data = line.split()
+                chrm, start, stop, value = \
+                    data[0], int(data[1]), int(data[2]), float(data[3])
+                assert start == stop
+                assert value == 1
+                locs[(chrm, strand)].append( start )
     
     # convert to a dict of sorted numpy arrays
-    numpy_locs = {}
+    numpy_locs = defaultdict( build_empty_array )
+
     for (chrm, strand), polya_sites in locs.iteritems():
         # make sure they're unique
         assert len( polya_sites ) == len( set( polya_sites ) )
@@ -1304,7 +1308,8 @@ def find_exons_in_cluster(op_queue, ls, bs,
     return
 
 def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, 
-                         cage_cov, polya_sites, num_threads=1):
+                         cage_cov, polya_sites ):
+                         
     jns_wo_cnts = [ jn for jn, score in jns_w_cnts ]
 
     if VERBOSE: print >> sys.stderr,  'Finding initial boundaries and labels'
@@ -1428,8 +1433,11 @@ def parse_arguments():
         help='Whether or not to print status information.')
     parser.add_argument( '--threads', '-t', default=1, type=int,
         help='The number of threads to use.')
-
+        
     args = parser.parse_args()
+
+    global num_threads
+    num_threads = args.threads
 
     ofps_prefixes = [ "single_exon_genes", 
                       "tss_exons", "internal_exons", "tes_exons", 
@@ -1456,60 +1464,86 @@ def parse_arguments():
     grpd_wigs = [ rd1_plus_wigs, rd1_minus_wigs, rd2_plus_wigs, rd2_minus_wigs ]
     
     return grpd_wigs, args.junctions, args.chrm_sizes_fname, \
-        args.cage_wigs, args.polya_candidate_sites, ofps, args.threads
+        args.cage_wigs, args.polya_candidate_sites, ofps
 
 
 def main():
-    wigs, jns_fp, chrm_sizes_fp, cage_wigs, polya_candidate_sites_fps, out_fps, num_threads\
+    wigs, jns_fp, chrm_sizes_fp, cage_wigs, polya_candidate_sites_fps, out_fps \
         = parse_arguments()
     
-    # open the polya data
-    if VERBOSE: print >> sys.stderr,  'Loading polyA.'
-    polya_sites = find_polya_sites( polya_candidate_sites_fps )
+    # set up all of the file processing calls
+    p = multiprocessing.Pool( processes=num_threads )
+    
+    if VERBOSE: print >> sys.stderr,  'Loading read pair 1 wiggles'    
+    args = [ chrm_sizes_fp.name, [wigs[0][0].name, wigs[1][0].name], ['+','-'] ]
+    rd1_cov_proc = p.apply_async( load_wiggle, args )
+    
+    if VERBOSE: print >> sys.stderr,  'Loading merged read pair wiggles'    
+    fnames =[wigs[0][0].name, wigs[1][0].name, wigs[2][0].name, wigs[3][0].name]
+    rd_cov_proc = p.apply_async( load_wiggle,
+        [ chrm_sizes_fp.name, fnames, ['+', '-', '+', '-'] ] )
+    
+    if VERBOSE: print >> sys.stderr,  'Loading read pair 2 wiggles'    
+    rd2_cov_proc = p.apply_async( load_wiggle,
+        [ chrm_sizes_fp.name, [wigs[2][0].name, wigs[3][0].name], ['+','-'] ] )
+
+    if VERBOSE: print >> sys.stderr,  'Loading CAGE.'
+    cage_cov_proc = p.apply_async( 
+        load_wiggle, [ chrm_sizes_fp.name, [x.name for x in cage_wigs] ] )
+    
+    if VERBOSE: print >> sys.stderr,  'Loading junctions.'
+    jns_proc = p.apply_async( 
+        parse_junctions_file_dont_freeze, [ jns_fp.name, ] )
+    
+    if VERBOSE: print >> sys.stderr,  'Loading candidate polyA sites'
+    polya_sites_proc = p.apply_async( 
+        find_polya_sites,  [[x.name for x in polya_candidate_sites_fps],] )
+    
+    # now, all of the async calls have been made so we collect the results
+    
+    polya_sites = polya_sites_proc.get()
     for fp in polya_candidate_sites_fps: fp.close()
+    if VERBOSE: print >> sys.stderr, 'Finished loading candidate polyA sites'
+
+    rd1_cov = rd1_cov_proc.get()
+    if VERBOSE: print >> sys.stderr, 'Finished loading read pair 1 wiggles'    
     
-    # process each chrm, strand combination separately
-    for track_name, out_fp in out_fps.iteritems():
-        out_fp.write( "track name=%s\n" % track_name )
-    
-    rd1_cov = Wiggle( 
-        chrm_sizes_fp, [wigs[0][0], wigs[1][0]], ['+','-'] )
-    rd2_cov = Wiggle( 
-        chrm_sizes_fp, [wigs[2][0], wigs[3][0]], ['+','-'] )
-    
-    read_cov = Wiggle(
-        chrm_sizes_fp,
-        [ wigs[0][0], wigs[1][0], wigs[2][0], wigs[3][0] ],
-        ['+', '-', '+', '-']
-    )
+    rd2_cov = rd2_cov_proc.get()
+    if VERBOSE: print >> sys.stderr, 'Finished loading read pair 2 wiggles'    
+
+    read_cov = rd_cov_proc.get()
     read_cov.calc_zero_intervals()
-    read_cov_sum = sum( array.sum() for array in read_cov.itervalues() )
-        
+    read_cov_sum = sum( array.sum() for array in read_cov.itervalues() ) 
+    if VERBOSE: print >> sys.stderr, 'Finished loading merged read pair wiggles'
+    
     if read_cov_sum == 0:
         [ fp.close() for fp in out_fps ]
         return
 
     # open the cage data
-    if VERBOSE: print >> sys.stderr,  'Loading CAGE.'
-    cage_cov = Wiggle( chrm_sizes_fp, cage_wigs )
+    cage_cov = cage_cov_proc.get()
     cage_sum = sum( cage_cov.apply( lambda a: a.sum() ).values() )
     global CAGE_TOT_FRAC
     CAGE_TOT_FRAC = (float(cage_sum)/read_cov_sum)*(1e-3)    
     for cage_fp in cage_wigs: cage_fp.close()
-        
-    if VERBOSE: print >> sys.stderr,  'Loading junctions.'
-    jns = parse_junctions_file_dont_freeze( jns_fp )
+    if VERBOSE: print >> sys.stderr, 'Finished loading CAGE data'
+    
+    jns = jns_proc.get() 
+    if VERBOSE: print >> sys.stderr,  'Finished loading junctions.'
         
     all_regions_iters = [ [], [], [], [], [] ]
 
     keys = sorted( set( jns ) )
     for chrm, strand in keys:        
-        if VERBOSE: print >> sys.stderr, 'Processing chromosome %s strand %s.'\
-            % ( chrm, strand )
-        if VERBOSE: print >> sys.stderr, 'Loading read coverage data (%s,%s)'\
-            % ( chrm, strand )
+        if VERBOSE: print >> sys.stderr, \
+                'Processing chromosome %s strand %s.' % ( chrm, strand )
+        
+        if VERBOSE: print >> sys.stderr, \
+                'Loading read coverage data (%s,%s)' % ( chrm, strand )
+        
         read_cov_obj = ReadCoverageData( \
-            read_cov.zero_intervals[(chrm, strand)], read_cov[(chrm, strand)] )
+            read_cov.zero_intervals[(chrm, strand)], 
+            read_cov[(chrm, strand)] )
         
         introns = jns[(chrm, strand)]
         scores = jns._scores[(chrm, strand)]
@@ -1520,15 +1554,21 @@ def main():
            read_cov_obj, 
            jns_and_scores,
            cage_cov[ (chrm, strand) ], 
-           polya_sites[ (chrm, strand) ], 
-           num_threads)
+           polya_sites[ (chrm, strand) ] )
 
-        if VERBOSE: print >> sys.stderr,  'Building output (%s,%s)' % ( chrm, strand )
+
+        if VERBOSE: print >> sys.stderr, \
+                'Building output (%s,%s)' % ( chrm, strand )
+        
         for container, exons in zip( all_regions_iters, disc_grpd_exons ):
             regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
                                  for start, stop in exons                \
                                  if stop - start < MAX_EXON_SIZE )
             container.extend( regions_iter )
+
+    # process each chrm, strand combination separately
+    for track_name, out_fp in out_fps.iteritems():
+        out_fp.write( "track name=%s\n" % track_name )
     
     if VERBOSE: print >> sys.stderr,  'Writing output.'
     for regions_iter, ofp in zip( all_regions_iters, out_fps.itervalues() ):
