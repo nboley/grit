@@ -1530,7 +1530,7 @@ def main():
     
     jns = jns_proc.get() 
     if VERBOSE: print >> sys.stderr,  'Finished loading junctions.'
-        
+    
     all_regions_iters = [ [], [], [], [], [] ]
 
     keys = sorted( set( jns ) )
