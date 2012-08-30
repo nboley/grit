@@ -491,7 +491,7 @@ class Elements( object ):
                         + "chrm file sizes file."
                 
                 with open( element.fname ) as fp:
-                    self.chr_sizes = ChrmSizes( fp )
+                    self.chr_sizes = ChrmSizes( fp.name )
             elif element.data_type == GENOME_DATA_TYPE:
                 if self.genome_fname != None:
                     raise ValueError, "Can only pass a single genome file."
