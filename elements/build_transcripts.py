@@ -118,14 +118,6 @@ def build_genes( exons, tss_exons, tes_exons, jns ):
             cluster_num += 1
             clustered_exons[ cluster_key ] = CategorizedExons( \
                 cluster_tss_exons, cluster_tes_exons, all_cluster_exons)
-
-    """
-    for key, val in clustered_exons.iteritems():
-        print key
-        print val.TSS
-        print val.TES
-        print val.internal
-    """
     
     return clustered_exons
 
@@ -309,9 +301,9 @@ def parse_arguments():
         help='Gff file(s) containing valid transcription stop site exons.')
     parser.add_argument( '--junctions', type=file, required=True, nargs="+", \
         help='Gff file(s) containing valid introns.')
+    parser.add_argument( '--single-exon-genes', type=file, nargs="*", 
+        help='Single exon genes file.')    
 
-    parser.add_argument( '--single-exon', default=False, action= 'store_true', 
-        help='Only build single exon genes.')    
     parser.add_argument( '--threads', '-t', type=int , default=1, \
                              help='Number of threads spawn for multithreading.')
     parser.add_argument( '--out-fname', '-o', default='',\
@@ -331,7 +323,7 @@ def parse_arguments():
     log_fp = multi_safe_file( args.log_fname, 'w' ) if args.log_fname else sys.stderr
     
     return args.exons, args.tss, args.tes, args.junctions, \
-        args.single_exon, args.threads, out_fp, log_fp
+        args.single_exon_genes, args.threads, out_fp, log_fp
 
 
 class DistalExonBndries( set ):
@@ -366,60 +358,34 @@ class DistalExonBndries( set ):
         assert not self.is_tss
         return self._is_distal_exon( exon )
 
-def iter_single_exon_gene_gtf_lines( exons, jns, tss_exons, tes_exons ):
-    se_genes = []
-    # search for single exon genes
-    for ( chrm, strand ), unclustered_inner_exons in exons.iteritems():
-        jn_bndries = set( jns[( chrm, strand )].ravel() )
-        tss_bndries = DistalExonBndries( strand, True, tss_exons[( chrm, strand )] )
-        tes_bndries = DistalExonBndries( strand, False, tes_exons[( chrm, strand )] )
-        exon_clusters = cluster_overlapping_exons( unclustered_inner_exons )
-        
-        se_gene_exons = defaultdict( list )
-        for cluster_id, inner_exons in exon_clusters.iteritems():
-            if len( inner_exons ) != 1: continue
-            exon = inner_exons[0]
-            if exon[0]-1 not in jn_bndries and exon[1]+1 not in jn_bndries:
-                #if tss_bndries.is_tss_exon( exon ): # \
-                #    #    and tes_bndries.is_tes_exon( exon ):
-                se_gene_exons[ cluster_id ].append( (max(1,exon[0]-400), exon[1]+400) )
-            
-            # test to see if this is a TSS exon
-            if len( inner_exons ) == 1 and 1 == len(se_gene_exons[ cluster_id ]):
-                start = se_gene_exons[ cluster_id ][0][0]
-                stop = se_gene_exons[ cluster_id ][0][1]
-                se_genes.append( ( chrm, strand, start, stop ) )
-    
-    for index, (chrm, strand, start, stop) in enumerate(se_genes):
-        gene_id = "SE_gene_%i" % (index + 1)
-        trans_id = gene_id
-        yield build_gtf_line( gene_id, chrm, strand, trans_id, 1, start, stop )
-
-    return
-
 def main():
     exon_fps, tss_exon_fps, tes_exon_fps, junction_fps, \
-        single_exon, threads, out_fp, log_fp = parse_arguments()
+        single_exon_fps, threads, out_fp, log_fp = parse_arguments()
     
     if VERBOSE:
         print >> sys.stderr, 'Parsing input...'
-    exons, tss_exons, tes_exons, jns = build_objs( \
-        exon_fps, tss_exon_fps, tes_exon_fps, junction_fps )
+    jns = parse_junctions_files( junction_fps )    
+    internal_exons = parse_exons_files( exon_fps )
+    tss_exons = parse_exons_files( tss_exon_fps )
+    tes_exons = parse_exons_files( tes_exon_fps )
+    if None != single_exon_fps:
+        se_genes = parse_exons_files( single_exon_fps )
+        gene_id = 1
+        for (chrm, strand), exons in se_genes.iteritems():
+            for start, stop in exons:
+                gene_name = "single_exon_gene_%i" % gene_id
+                out_fp.write( build_gtf_line( 
+                    gene_name, chrm, strand, gene_name, 1, start, stop ) + "\n")
+                gene_id += 1
     
     if VERBOSE:
         print >> sys.stderr, 'Clustering exons...'
-    genes = build_genes( exons, tss_exons, tes_exons, jns )
+    genes = build_genes( internal_exons, tss_exons, tes_exons, jns )
     
     if VERBOSE:
         print >> sys.stderr, 'Outputting all gene models...'
     write_transcripts( genes, jns, log_fp, out_fp, threads )
-    
-    """
-    se_gene_gtf_lines_iter = iter_single_exon_gene_gtf_lines( \
-        exons, tss_exons, tes_exons, jns )
-    out_fp.write( "\n".join(se_gene_gtf_lines_iter) + "\n" )
-    """
-    
+        
     return
 
 if __name__ == "__main__":

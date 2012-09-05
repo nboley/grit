@@ -38,7 +38,15 @@ struct contigs_t {
                  ("size", c_int),
                ]
 
-def iter_bedgraph_tracks( fname ):
+class Bedgraph( dict ):
+    def __init__(self, c_contigs_p ):
+        self.c_contigs_p = c_contigs_p
+    
+    def __del__(self):
+        bedgraph_o.free_contigs( self.c_contigs_p )
+        return
+
+def load_bedgraph( fname ):
     c_contigs_p = c_void_p()
     bedgraph_o.load_bedgraph( c_char_p(fname), byref(c_contigs_p) )
 
@@ -46,7 +54,7 @@ def iter_bedgraph_tracks( fname ):
     if not bool(c_contigs_p):
         raise IOError, "Couldn't load '%s'" % fname
     
-    res = []
+    rv = Bedgraph( c_contigs_p )
     
     c_contigs = cast( c_contigs_p, POINTER(c_contigs_t) ).contents
     for i in xrange( c_contigs.size ):
@@ -55,20 +63,11 @@ def iter_bedgraph_tracks( fname ):
         name = c_contigs.contigs[i].name
         
         if 0 == size:
-            print >> sys.stderr, "WARNING: found a 0 length chrm '%s'. Skipping it." % name
+            print >> sys.stderr, \
+                "WARNING: found a 0 length chrm '%s'. Skipping it." % name
             continue
         
         array = numpy.ctypeslib.as_array( values, (size,))
-
-        # Copy the array into shared memory
-        shared_arr = mp.Array(c_double, size)
-        shared_arr[:] = array
-        
-        # delete free the C allocated memory
-        del array
-        
-        # cast the shared memory version to a numpy array
-        array = numpy.frombuffer( shared_arr.get_obj() )
         
         try:
             assert( not numpy.isnan( array.sum() ) )
@@ -76,12 +75,10 @@ def iter_bedgraph_tracks( fname ):
             print fname, size, name
             print numpy.where( numpy.isnan(array) )
             raise
-        
-        res.append( ( name, array ) )
 
-    bedgraph_o.free_contigs( c_contigs_p )
+        rv[ name ] = array
     
-    return res
+    return rv
 
 if __name__ == "__main__":
     raise NotImplementedError("This is a module")

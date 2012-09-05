@@ -3,19 +3,27 @@
 import sys
 import os
 
+import multiprocessing as mp
 import numpy
 import re
 from collections import defaultdict, namedtuple
 from itertools import izip, product
 from copy import deepcopy
+import ctypes
 
 from chrm_sizes import ChrmSizes
 
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
                                       "./fast_wiggle_parser/" ) )
-from bedgraph import iter_bedgraph_tracks
+from bedgraph import load_bedgraph
 
 VERBOSE = False
+
+def fix_chr_name( name ):
+    if name.startswith( "chr" ):
+        return name[3:]
+    
+    return name
 
 
 GenomicInterval = namedtuple('GenomicInterval', \
@@ -145,8 +153,7 @@ def smooth(x,window_len=11,window='hanning'):
 def parse_bed_like_wig_line( line, strand, chrm=None ):
     data = line.split()
     if len(data) != 4: return None, None
-    chrm = data[0]
-    if chrm.startswith( 'chr' ): chrm = chrm[ 3:]
+    chrm = fix_chr_name( data[0] )
     try:
         start = int(data[1])
         stop = int(data[2])
@@ -446,9 +453,7 @@ class Wiggle( dict ):
             assert not numpy.isnan(numpy.sum(array))
         
         # strip the leading 'chr' for UCSC compatability
-        if chrm_name.startswith( 'chr' ):
-            chrm_name = chrm_name[3:]
-
+        chrm_name = fix_chr_name( chrm_name )
         if chrm_name not in self.chrm_sizes:
             print >> sys.stderr, "WARNING: '%s' does not" % chrm_name \
                 + "exist in the chrm lens file. Skipping this contig." 
@@ -466,24 +471,10 @@ class Wiggle( dict ):
         
 
     def add_cvg_from_bedgraph( self, fname, strand ):
-        for chrm_name, array in iter_bedgraph_tracks( fname ):
-            if numpy.isnan(numpy.sum(array)):
-                print >> sys.stderr,"WARNING: Detected NaNs in 'add_cvg_from_bedgraph'"
-                print >> sys.stderr,"NaN locs:", numpy.where( numpy.isnan(array) )
-                array[ numpy.isnan(array) ] = 0
-
-            if array.min() < -1e50:
-                print >> sys.stderr,"WARNING: Detected Very Small Numbers ( %e ) in 'add_cvg_from_bedgraph'" % array.min()
-                print >> sys.stderr,"Small num locs:", numpy.where( array.min() < -1e50 )
-                assert False
-
-            if array.min() > 1e50:
-                print >> sys.stderr,"WARNING: Detected Very Large Numbers ( %e ) in 'add_cvg_from_bedgraph'" % array.max()
-                print >> sys.stderr,"Big Num locs:", numpy.where( array.min() > 1e50 )
-                assert False
-            
-            self.add_cvg_from_array( array, chrm_name, strand )
-        
+        data = load_bedgraph( fname )
+        for name, array in data.iteritems():
+            key = ( fix_chr_name(name), strand )
+            self[key][:len(array)] += array
         return
 
     @staticmethod
@@ -516,18 +507,19 @@ class Wiggle( dict ):
         # if we don't know the strand, try and infer it from
         # the filename
         if strand == "infer_from_fname":
-            strand = self._infer_strand_from_fname( wig_fp.name )
+            strand = Wiggle._infer_strand_from_fname( wig_fp.name )
         else:
             if strand not in "+-":
                 raise ValueError, "Unrecognized strand '{0}'".format( strand )
             
         if self._fp_is_bedgraph( wig_fp ):        
             fname = wig_fp.name
-            self.add_cvg_from_bedgraph( fname, strand )
+            Wiggle.add_cvg_from_bedgraph( self, fname, strand )
         else:
+            assert not self.async
             self.add_cvg_from_wiggle( wig_fp, strand )
         
-        self.reset_intervals()
+        Wiggle.reset_intervals( self )
         
         return
     
@@ -563,20 +555,24 @@ class Wiggle( dict ):
                 return dict.__getitem__( self, key )
             
             contig_size = self.chrm_sizes[ chrm ]
-            self[ key ] = numpy.zeros( contig_size + 1)
+            shared_arr = mp.Array( ctypes.c_double, contig_size+1 )
+            self[ (chrm, strand) ] = \
+                numpy.frombuffer( shared_arr.get_obj() )
         
         return dict.__getitem__( self, key )
     
-    def __init__( self, chrm_sizes_fp, fps=[], strands=[ 'infer_from_fname', ]):
-        self.chrm_sizes = ChrmSizes( chrm_sizes_fp.name )
+    def join( self ):
+        # if this isn't asynchronous, there is nothing to do
+        if self.async == False:
+            return
+
+        for p in self._async_ps:
+            p.join()
         
-        # initialize wiggle arrays
-        """
-        for chrm, size in self.chrm_sizes.iteritems():
-            for strand in [ '+', '-' ]:
-                # add one to make array 1-based
-                self[ (chrm, strand) ] = numpy.zeros( size+1 )
-        """
+        return
+        
+    def __init__( self, chrm_sizes_fp, fps=[], strands=[ 'infer_from_fname', ] ):
+        self.chrm_sizes = ChrmSizes( chrm_sizes_fp.name )
         
         if strands != ['infer_from_fname', ]:
             if len( fps ) != len( strands ):
@@ -584,6 +580,16 @@ class Wiggle( dict ):
                    + "of strand entries needs to be equal to the number of fps."
         else:
             strands = ["infer_from_fname"]*len( fps )
+        
+        """
+        # intialize the wiggle
+        for chrm, size in self.chrm_sizes.iteritems():
+            for strand in [ '+', '-' ]:
+                contig_size = self.chrm_sizes[ chrm ]
+                shared_arr = mp.Array( ctypes.c_double, contig_size+1 )
+                self[ (chrm, strand) ] = \
+                    numpy.frombuffer( shared_arr.get_obj() )
+        """
         
         for fp, strand in zip( fps, strands ):
             self.load_data_from_fp( fp, strand )
@@ -595,15 +601,44 @@ class Wiggle( dict ):
         
         return
 
-def load_wiggle( chrm_sizes_fname, fnames=[], strands=[ 'infer_from_fname', ] ):
-    chrm_sizes_fp = open( chrm_sizes_fname )
-    fps = [ open( fname ) for fname in fnames ]
-    rv = Wiggle( chrm_sizes_fp, fps, strands )
-    chrm_sizes_fp.close()
-    for fp in fps:
-        fp.close()
+def load_bedgraph_and_add_to_wiggle( wig, fname, strand, worker_pool ):
+    worker_pool.acquire()
+    bedgraph = load_bedgraph( fname )
+    for name, array in bedgraph.iteritems():
+        key = ( fix_chr_name(name), strand )
+        assert key in wig
+        wig[key][:len(array)] += array
     
-    return rv
+    del bedgraph
+    worker_pool.release()
+    return
+
+def load_wiggle_asynchronously(chrm_sizes_fname, fnames, strands, worker_pool):
+    # first, load all of the necessary file pointers
+    chrm_sizes_fp = open( chrm_sizes_fname )
+    
+    # initialize an empty wiggle
+    wig = Wiggle( chrm_sizes_fp, [] )
+    chrm_sizes_fp.close()
+    
+    # initialize the wiggle arrays
+    for chrm, size in wig.chrm_sizes.iteritems():
+        for strand in [ '+', '-' ]:
+            contig_size = wig.chrm_sizes[ chrm ]
+            shared_arr = mp.Array( ctypes.c_double, contig_size+1 )
+            wig[ (chrm, strand) ] = \
+                numpy.frombuffer( shared_arr.get_obj() )
+    
+    # for each file, spawn a process that loads the bedgraph in to the wiggle
+    ps = []
+    for fname, strand in zip(fnames, strands):
+        p = mp.Process( target=load_bedgraph_and_add_to_wiggle, 
+                        name="load_%s_%s" % ( strand, fname ),
+                        args=[wig, fname, strand, worker_pool] )
+        p.start()
+        ps.append( p )
+    
+    return wig, ps
 
 def main():
     #raise NotImplementedError
