@@ -106,6 +106,16 @@ class Junction( _JnNamedTuple ):
         return create_gff_line( 
             self.region, group_id_str, score=count, feature='intron' )
 
+class Junctions( dict ):
+    def __init__( self, jns ):
+        for jn in jns:
+            key = ( jn.chrm, jn.strand )
+            if key not in self:
+                self[key] = defaultdict( int )
+            self[key][ ( jn.start, jn.stop ) ] += jn.cnt
+        
+        return
+    
 def parse_jn_line( line, return_tuple=False ):
     data = parse_gff_line( line )
     if data == None: return
@@ -275,107 +285,3 @@ def get_intron_bndry_sets( jns_fp ):
             downstream_jns[ (pos.chr, pos.strand) ].add( pos.start  )
 
     return upstream_jns, downstream_jns
-
-
-class Junctions( GenomicIntervals ):
-    def iter_connected_exons( self, chrm, strand, start, stop, exon_bndrys, \
-                                  include_scores=False ):
-        """Find the exon connections that this junction list implies.
-        if include_scores then also return connected_exons scores
-        """
-        jn_indices = self.iter_indices_overlapping_a_region( \
-            chrm, strand, start, stop )
-        paired_exons = []
-        paired_exon_scores = []
-        for index in jn_indices:
-            jn_start, jn_stop = self[(chrm, strand)][index]
-            jn_score = self._scores[(chrm, strand)][index]
-            # we use +/- 1, because the junctions are intron start/ends, inclusive
-            start_exons = [ i for i, bndries in enumerate( exon_bndrys ) 
-                            if bndries != None and jn_start - 1 == bndries[1] ]
-            stop_exons = [ i for i, bndries in enumerate( exon_bndrys ) 
-                            if bndries != None and jn_stop + 1 == bndries[0] ]
-            models = [ (i,j) for (i,j) in  product( start_exons, stop_exons ) if i <= j ]
-            paired_exons.extend( models )
-            paired_exon_scores.extend( [jn_score]*len(models) )
-        
-        if include_scores:
-            return paired_exons, paired_exon_scores
-        
-        return paired_exons
-    
-    def __init__( self ):
-        GenomicIntervals.__init__( self )
-        self._scores = defaultdict( list )
-        self._groups = defaultdict( list )
-        
-        return
-    
-    def add( self, chrm, strnd, start, stop, score=0, group='.' ):
-        GenomicIntervals.add( self, chrm, strnd, start, stop )
-        self._scores[ (chrm, strnd) ].append( score )
-        self._groups[ (chrm, strnd) ].append( group )
-        
-        return
-    
-    def iter_jns_and_cnts_and_grps( self ):
-        for (chrm, strand), chrm_jns in self.iteritems():
-            for (start, stop), score, grp in izip( \
-                    chrm_jns, self._scores[(chrm, strand)], \
-                        self._groups[(chrm, strand)] ):
-                yield ( GenomicInterval( chrm, strand, int(start), int(stop) ), \
-                            int(score), grp )
-        
-        return
-        
-    def freeze( self ):
-        """Convert the intervals into a sorted numpy array, for faster access.
-        Also order scores to maintain indices between intervals
-        """
-        new_grps = defaultdict( list )
-        for key in self:
-            # order start, stops by start coordinate
-            self[ key ] = numpy.array( self[ key ] )
-            sorted_indices = self[ key ][:,0].argsort()
-            self[ key ] = self[ key ][ sorted_indices ]
-            
-            # use same sorted_indices to sort _scores in the same order
-            self._scores[ key ] = numpy.array( self._scores[ key ] )
-            self._scores[ key ] = self._scores[ key ] [sorted_indices ]
-
-            for i in sorted_indices:
-                new_grps[key].append( self._groups[key][ i ] )
-        
-        self._groups = new_grps
-        self.is_frozen = True
-        
-        return
-
-def add_jns_from_gff_file( jns, junctions_fp ):
-    for line in junctions_fp:
-        gff = parse_gff_line( line )
-        # skip invlaid lines
-        if gff == None: continue
-
-        jns.add( gff.region.chr, gff.region.strand, gff.region.start, \
-                     gff.region.stop, gff.score, gff.group )
-    
-    return
-
-def parse_junctions_file_dont_freeze( junctions_fp ):
-    jns = Junctions()
-    add_jns_from_gff_file( jns, junctions_fp )
-    return jns
-
-def parse_junctions_file( junctions_fp ):
-    jns = parse_junctions_file_dont_freeze( junctions_fp )
-    jns.freeze()
-    return jns
-
-def parse_junctions_files( junctions_fps ):
-    jns = Junctions()
-    for junctions_fp in junctions_fps:
-        add_jns_from_gff_file( jns, junctions_fp )
-    
-    jns.freeze()
-    return jns
