@@ -49,15 +49,28 @@ class Bins( list ):
         self._bed_template = "\t".join( ["chr"+chrm, '{start}', '{stop}', '{name}', 
                                          '1000', strand, '{start}', '{stop}', 
                                          '{color}']  ) + "\n"
-        
-    def writeBedgraph( self, ofp ):
+    
+    def reverse_strand( self, contig_len ):
+        rev_bins = Bins( self.chrm, self.strand )
+        for bin in reversed(self):
+            rev_bins.append( bin.reverse_strand( contig_len ) )
+        return rev_bins
+    
+    def writeBedgraph( self, trackname, contig_len ):
         """
             chr7    127471196  127472363  Pos1  0  +  127471196  127472363  255,0,0
         """
-        ofp.write('track name="bins" visibility=2 itemRgb="On"\n')
-        for bin in self:
+        ofp = open( "%s_%s.bed" % (trackname, self.strand ), "w" )
+        if self.strand == '-':
+            writetable_bins = self.reverse_strand( contig_len )
+        else:
+            writetable_bins = self
+        
+        ofp.write('track name="%s.%s" visibility=2 itemRgb="On"\n'
+                  % ( trackname, self.strand) )
+        for bin in writetable_bins:
             length = max( (bin.stop - bin.start)/4, 1)
-            colors = bin._find_colors()
+            colors = bin._find_colors( self.strand )
             if isinstance( colors, str ):
                 op = self._bed_template.format(
                     start=bin.start,stop=bin.stop-1,color=colors, 
@@ -74,62 +87,276 @@ class Bins( list ):
                     name=bin.right_label)
                 ofp.write( op )
         
+        ofp.close()
         return
 
 class Bin( object ):
-    def __init__( self, start, stop, left_label, right_label ):
+    def __init__( self, start, stop, left_label, right_label, bin_type=None ):
         self.start = start
         self.stop = stop
         self.left_label = left_label
         self.right_label = right_label
-        
+        self.type = bin_type
+    
+    def reverse_strand(self, contig_len):
+        return Bin(contig_len-self.stop, contig_len-self.start, 
+                   self.right_label, self.left_label, self.type)
+    
     def __repr__( self ):
-        return "%i-%i\t%s\t%s" % ( self.start, self.stop, self.left_label,
-                                   self.right_label )
+        if self.type == None:
+            return "%i-%i\t%s\t%s" % ( self.start, self.stop, self.left_label,
+                                       self.right_label )
 
+        return "%i-%i\t%s" % ( self.start, self.stop, self.type )
+    
     _bndry_color_mapping = {
-        'START': '0,0,0',
-        'STOP': '0,0,0',
+        'CONTIG_BNDRY': '0,0,0',
         
-        'POLYA': '255,255,0', #
+        'POLYA': '255,255,0',
         
-        'D_JN': '173,255,47', # 
+        'D_JN': '173,255,47',
         'R_JN': '0,255,0',
-        
-        'E_ST': '0,255,255',
-        'E_SP': '0,0,255'    
     }
     
     def find_bndry_color( self, bndry ):
         return self._bndry_color_mapping[ bndry ]
     
-    def _find_colors( self ):
-        if self.left_label == 'E_ST' and self.right_label  == 'E_SP':
-            return '0,0,0'
-        if self.left_label == 'D_JN' and self.right_label  == 'R_JN':
+    def _find_colors( self, strand ):
+        if self.type != None:
+            if self.type =='GENE':
+                return '0,0,0'
+            if self.type =='CAGE_PEAK':
+                return '0,0,0'
+
+        if strand == '+':
+            left_label, right_label = self.left_label, self.right_label
+        else:
+            assert strand == '-'
+            left_label, right_label = self.right_label, self.left_label
+        
+        
+        if left_label == 'D_JN' and right_label  == 'R_JN':
             return '108,108,108'
-        if self.left_label == 'D_JN' and self.right_label  == 'D_JN':
+        if left_label == 'D_JN' and right_label  == 'D_JN':
             return '135,206,250'
-        if self.left_label == 'R_JN' and self.right_label  == 'R_JN':
+        if left_label == 'R_JN' and right_label  == 'R_JN':
             return '135,206,250'
-        if self.left_label == 'R_JN' and self.right_label  == 'D_JN':
+        if left_label == 'R_JN' and right_label  == 'D_JN':
             return '0,0,255'
-        if self.left_label == 'R_JN' and self.right_label  == 'POLYA':
+        if left_label == 'R_JN' and right_label  == 'POLYA':
             return '255,0,0'
-        if self.left_label == 'POLYA' and self.right_label  == 'POLYA':
+        if left_label == 'POLYA' and right_label  == 'POLYA':
             return ' 240,128,128'
-        if self.left_label == 'POLYA' and self.right_label  == 'D_JN':
+        if left_label == 'D_JN' and right_label  == 'POLYA':
+            return '240,128,128'
+        if left_label == 'POLYA' and right_label  == 'D_JN':
             return '147,112,219'
-        if self.left_label == 'POLYA' and self.right_label  == 'R_JN':
+        if left_label == 'POLYA' and right_label  == 'R_JN':
             return '159,153,87'
         
-        return ( self.find_bndry_color(self.left_label), 
-                 self.find_bndry_color(self.right_label) )
+        return ( self.find_bndry_color(left_label), 
+                 self.find_bndry_color(right_label) )
         
 
+def reverse_contig_data( rnaseq_cov, jns, cage_cov, polya_sites ):
+    assert len( rnaseq_cov ) == len( cage_cov )
+    genome_len = len( rnaseq_cov )
+    rev_jns = dict( ((genome_len-stop-1, genome_len-start-1), value) 
+                for (start, stop), value in jns.iteritems() )
+    return ( rnaseq_cov[::-1], rev_jns, cage_cov[::-1], genome_len-polya_sites )
 
-def find_exons_in_contig( ( chrm, strand ), rnaseq_cov, jns, cage_cov, polya_sites ):
-    assert strand == '+'
+def check_for_se_gene( start, stop, cage_cov, rnaseq_cov ):
+    # check to see if the rnaseq signal after the cage peak
+    # is much greater than before
+    split_pos = cage_cov[start:stop+1].argmax() + start
+    if cage_cov[split_pos-1:split_pos+2].sum() < 20:
+        return False
+    window_size = min( split_pos - start, stop - split_pos, 200 )
+    after_cov = rnaseq_cov[split_pos:split_pos+window_size].sum()
+    before_cov = rnaseq_cov[split_pos-window_size:split_pos].sum()
+    if (after_cov/(before_cov+1)) > 5:
+        return True
+ 
+    return False
+
+def find_gene_boundaries( (chrm, strand), bins, cage_cov, rnaseq_cov, jns ):
+    # find regions that end with a polya, and look like genic regions
+    # ( ie, they are a double polya that looks like a single exon gene, or
+    # they start after a polya leading into a donor exon
+    gene_starts_indices = []
+    for i, bin in enumerate( bins ):
+        if bin.left_label == 'POLYA' and bin.right_label  == 'D_JN':
+            gene_starts_indices.append( i )
+        if bin.left_label == 'POLYA' and bin.right_label  == 'POLYA':
+            if check_for_se_gene( bin.start, bin.stop, cage_cov, rnaseq_cov ):
+                gene_starts_indices.append( i )
+    
+    # build a bins object from the initial labels
+    gene_bndry_bins = Bins( chrm, strand )
+    for start_i, stop_i in \
+            zip( gene_starts_indices[:-1], gene_starts_indices[1:] ):
+        start = bins[start_i].start
+        left_label = bins[start_i].left_label
+        stop = bins[stop_i-1].stop
+        right_label = bins[stop_i-1].right_label
+        gene_bndry_bins.append(
+            Bin(start, stop, left_label, right_label, 'GENE'))
+    
+    gene_bndry_bins[0].start = 1
+    gene_bndry_bins[-1].stop = len( rnaseq_cov )-1
+    
+    # find the junctions that overlap multiple gene bins
+    sorted_jns = sorted( jns.keys() )
+    start_i = 0
+    merge_jns = []
+    for bin_i, bin in enumerate( gene_bndry_bins ):
+        # increment the start pointer
+        for jn in sorted_jns[start_i:]:
+            if jn[1] >= bin.start:
+                break
+            start_i += 1
+        
+        # find matching junctions
+        for jn in sorted_jns[start_i:]:
+            if jn[0] > bin.stop:
+                break
+            if jn[1] >= bin.stop:
+                merge_jns.append( ( jn, bin_i ) )
+    
+    joined_bins_mapping = defaultdict( int )
+    for jn, bin_i in merge_jns:
+        # find the bin index that the jn merges into
+        for end_bin_i, bin in enumerate( gene_bndry_bins[bin_i:] ):
+            if jn[1] < bin.start:
+                break
+        # take the largest bin merge. This means that we will merge over genes 
+        # if they exist int he middle
+        joined_bins_mapping[bin_i] = max( 
+            bin_i+end_bin_i-1, joined_bins_mapping[bin_i] )
+    
+    for start_bin, stop_bin in reversed(sorted(joined_bins_mapping.iteritems())):
+        gene_bndry_bins[start_bin].stop = gene_bndry_bins[stop_bin].stop
+        for x in xrange( start_bin+1, stop_bin+1 ):
+            del gene_bndry_bins[x]
+    
+    return gene_bndry_bins
+
+def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
+    cumsum_cvg_array = \
+        numpy.append(0, numpy.cumsum( cov ))
+    scores = cumsum_cvg_array[window_len:] - cumsum_cvg_array[:-window_len]
+    indices = numpy.argsort( scores )
+    
+    def overlaps_prev_peak( new_loc ):
+        for start, stop in peaks:
+            if not( new_loc > stop or new_loc + window_len < start ):
+                return True
+        return False
+    
+    # merge the peaks
+    def grow_peak( start, stop, grow_size=max(3, window_len/4), min_grow_ratio=0.5 ):
+        # grow a peak at most max_num_peaks times
+        for i in xrange(max_num_peaks):
+            curr_signal = cov[start:stop+1].sum()
+            downstream_sig = cov[max(0, start-grow_size):start].sum()
+            upstream_sig = cov[stop+1:stop+1+grow_size].sum()
+            exp_factor = float( stop - start + 1 )/grow_size
+            
+            # if neither passes the threshold, then return the current peak
+            if float(max( upstream_sig, downstream_sig ))*exp_factor \
+                    < curr_signal*min_grow_ratio: return (start, stop)
+            
+            # otherwise, we know one does
+            if upstream_sig > downstream_sig:
+                stop += grow_size
+            else:
+                start = max(0, start - grow_size )
+        
+        if VERBOSE:
+            print "Warning: reached max peak iteration at %i-%i ( signal %.2f )"\
+                % (start, stop, cov[start:stop+1].sum() )
+            print 
+        return (start, stop )
+    
+    peaks = []
+    peak_scores = []
+    
+    for index in reversed(indices):
+        if not overlaps_prev_peak( index ):
+            score = scores[ index ]
+            new_peak = grow_peak( index, index + window_len )
+            # if we are below the minimum score, then we are done
+            if score < min_score:
+                break
+
+            # if we have observed peaks, and the ratio between the highest
+            # and the lowest is sufficeintly high, we are done
+            if len( peak_scores ) > 0:
+                if float(score)/peak_scores[0] < max_score_frac:
+                    break
+                        
+            peaks.append( new_peak ) 
+            peak_scores.append( score )
+    
+    if len( peaks ) == 0:
+        return []
+    
+    # merge cage peaks together
+    def merge_peaks( peaks_and_scores ):
+        merged_peaks = set()
+        new_peaks = []
+        new_scores = []
+        for pk_i, (peak, score) in enumerate(peaks_and_scores):
+            if pk_i in merged_peaks: continue
+            curr_pk = list( peak )
+            curr_score = score
+            for i_pk_i, (i_peak, i_score) in enumerate(peaks_and_scores):
+                if i_pk_i in merged_peaks: continue
+                if i_peak[0] < curr_pk[0]: continue
+                if i_peak[0] - curr_pk[1] < max( window_len, 
+                                                 curr_pk[1]-curr_pk[0] ):
+                    curr_pk[1] = i_peak[1]
+                    curr_score += i_score
+                    merged_peaks.add( i_pk_i )
+                else:
+                    break
+
+            new_peaks.append( curr_pk )
+            new_scores.append( curr_score )
+        return zip( new_peaks, new_scores )
+    
+    peaks_and_scores = sorted( zip(peaks, peak_scores) )
+    old_len = len( peaks_and_scores )
+    for i in xrange( 99 ):
+        if i == 100: assert False
+        peaks_and_scores = merge_peaks( peaks_and_scores )
+        if len( peaks_and_scores ) == old_len: break
+    
+    max_score = max( s for p, s in peaks_and_scores )
+    return [ pk for pk, score in peaks_and_scores \
+                 if score/max_score > max_score_frac ]
+
+
+def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
+    raw_peaks = find_peaks( cage_cov[gene.start:gene.stop+1], 
+                            window_len=20, min_score=20, 
+                            max_score_frac=0.10, max_num_peaks=20 )
+    if len( raw_peaks ) == 0:
+        print >> sys.stderr, "WARNING: Can't find peak in region %s:%i-%i" % \
+            ( chrm, gene.start, gene.stop )
+        return []
+    
+    cage_peaks = Bins( chrm, strand )
+    for peak_st, peak_sp in raw_peaks:
+        cage_peaks.append( Bin( peak_st+gene.start, peak_sp+gene.start+1,
+                                "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK") )
+    return cage_peaks
+
+
+def find_bins_in_contig( ( chrm, strand ), rnaseq_cov, jns, cage_cov, polya_sites ):
+    if strand == '-':
+        rnaseq_cov, jns, cage_cov, polya_sites = reverse_contig_data( 
+            rnaseq_cov, jns, cage_cov, polya_sites )
     
     locs = {}
     for polya in polya_sites:
@@ -139,24 +366,32 @@ def find_exons_in_contig( ( chrm, strand ), rnaseq_cov, jns, cage_cov, polya_sit
         locs[start-1] = "D_JN"
         locs[stop+1] = "R_JN"
 
-    """
-    for start, stop in find_empty_regions( rnaseq_cov ):
-        locs[start-1] = "E_ST"
-        locs[stop+1] = "E_SP"
-    """
-    
+    # build all of the bins
     poss = sorted( locs.iteritems() )
-    bins = Bins( chrm, strand, [ Bin(0, poss[0][0], "START", poss[0][1]), ])
+    bins = Bins( chrm, strand, [ Bin(1, poss[0][0], "CONTIG_BNDRY", poss[0][1]), ])
     for index, ((start, left_label), (stop, right_label)) in \
             enumerate(izip(poss[:-1], poss[1:])):
-        mean_cov = rnaseq_cov[start:stop].mean()
         bins.append( Bin(start, stop, left_label, right_label) )
-        
-    bins.append( Bin( poss[-1][0], len(rnaseq_cov), poss[-1][1], "STOP" ) )
     
-    bins.writeBedgraph( sys.stdout )
+    bins.append( Bin( poss[-1][0], len(rnaseq_cov)-1, poss[-1][1], "CONTIG_BNDRY" ) )
+    bins.writeBedgraph( 'bins', len(rnaseq_cov) )
+    
+    # find gene regions
+    # first, find the gene bin indices
+    gene_bndry_bins = find_gene_boundaries( 
+        (chrm, strand), bins, cage_cov, rnaseq_cov, jns )
+    gene_bndry_bins.writeBedgraph( 'gene_boundaries', len(rnaseq_cov) )
+    
+    # find cage peaks
+    cage_peaks = Bins( chrm, strand )
+    for gene_bin in gene_bndry_bins:
+        cage_peaks.extend( find_cage_peaks_in_gene( 
+                (chrm, strand), gene_bin, cage_cov, rnaseq_cov ) )
+    
+    cage_peaks.writeBedgraph( 'cage_peaks', len(rnaseq_cov) )
     
     return
+
 
 def parse_arguments():
     import argparse
@@ -242,8 +477,7 @@ def main():
     polya_sites_proc = p.apply_async( 
         find_polya_sites,  [[x.name for x in polya_candidate_sites_fps],] )
     
-    # now, all of the async calls have been made so we collect the results
-    
+    # now, all of the async calls have been made so we collect the results    
     polya_sites = polya_sites_proc.get()
     for fp in polya_candidate_sites_fps: fp.close()
     if VERBOSE: print >> sys.stderr, 'Finished loading candidate polyA sites'
@@ -253,7 +487,6 @@ def main():
         
     # open the cage data
     cage_cov = cage_cov_proc.get()
-    cage_sum = sum( cage_cov.apply( lambda a: a.sum() ).values() )
     for cage_fp in cage_wigs: cage_fp.close()
     if VERBOSE: print >> sys.stderr, 'Finished loading CAGE data'
     
@@ -265,14 +498,12 @@ def main():
         if VERBOSE: print >> sys.stderr, \
                 'Processing chromosome %s strand %s.' % ( chrm, strand )
         
-        if strand != '+': continue
-        
-        disc_grpd_exons = find_exons_in_contig( \
+        bins = find_bins_in_contig( \
            ( chrm, strand ),
            read_cov[ (chrm, strand) ],
            jns[ (chrm, strand) ],
            cage_cov[ (chrm, strand) ], 
-           polya_sites[ (chrm, strand) ] )
+           polya_sites[ (chrm, strand) ] )        
     
     return
         
