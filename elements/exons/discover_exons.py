@@ -50,13 +50,13 @@ MAX_EXON_SIZE = 500000
 MIN_EXON_LEN = 15
 MIN_EXON_AVG_READCOV = 10
 
-MIN_SE_GENE_LEN = 500
-MIN_SE_GENE_AVG_READCOV = 10
+MIN_SE_GENE_LEN = 100
+MIN_SE_GENE_AVG_READCOV = 1
 
 # LOC_THRESH_FRAC = 0.20
 LOC_THRESH_REG_SZ = 50000
 
-### CAGE TUUNING PARAMS
+### CAGE TUNING PARAMS
 CAGE_WINDOW_LEN = 40
 CAGE_MAX_SCORE_FRAC = 0.01
 CAGE_MIN_SCORE = 20
@@ -79,11 +79,22 @@ DISTAL_EXON_EXPANSION = 500
 
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../", 'file_types'))
-from wiggle import Wiggle, load_wiggle, guess_strand_from_fname
+from wiggle import Wiggle, load_wiggle_asynchronously, guess_strand_from_fname
 from junctions_file import parse_junctions_file_dont_freeze
 from gtf_file import parse_gff_line, iter_gff_lines, GenomicInterval
 
 BinStats = namedtuple('BinStats', ['is_small', 'mean', 'lmn', 'rmn'] )
+
+class ThreadSafeFile( file ):
+    def __init__( self, fname, mode ):
+        file.__init__( self, fname, mode )
+        self._writelock = multiprocessing.Lock()
+    
+    def write( self, data ):
+        self._writelock.acquire()
+        file.write( self, data )
+        file.flush( self )
+        self._writelock.release()
 
 def build_empty_array():
     return numpy.array(())
@@ -725,7 +736,7 @@ def refine_exons( \
                 continue
 
             split_bndrys, split_labels, = check_exon_for_gene_merge( \
-                strand, start, stop, prev, next, read_cov, cage_cov, polya_sites)
+                strand, start, stop, prev, next,read_cov, cage_cov, polya_sites)
             new_bndrys.extend( split_bndrys )
             new_labels.extend( split_labels )
 
@@ -739,6 +750,7 @@ def refine_exons( \
 def refine_single_exon_gene_label(start, stop, 
                                   region_start, region_stop,
                                   read_coverage_array, cage_array):
+    print >> sys.stderr, "SINGLE EXON GENE", start, stop
     # if it's too short
     if stop - start < MIN_SE_GENE_LEN+10:
         return 'L'
@@ -853,6 +865,9 @@ def find_bndry_indices( bndries, exon ):
 
 def build_cluster_labels_and_bndrys(cluster_indices, bndrys, labels, chrm_stop):
     if len( cluster_indices ) == 0:
+        print >> sys.stderr, \
+            "WARNING: A cluster must have at least one non-zero region."
+        return [], []
         raise ValueError, "A cluster must have at least one non-zero region."
     
     new_bndrys = [1, bndrys[cluster_indices[0]]]
@@ -979,7 +994,9 @@ def find_peaks( cov, window_len, min_score, max_score_frac ):
         return False
     
     # merge the peaks
-    def grow_peak( start, stop, grow_size=max(3, window_len/4), min_grow_ratio=0.5 ):
+    def grow_peak( start, stop, 
+                   grow_size=max(3, window_len/4), 
+                   min_grow_ratio=0.5 ):
         # grow a peak at most 5 times
         for i in xrange(MAX_NUM_PEAKS):
             curr_signal = cov[start:stop+1].sum()
@@ -1106,7 +1123,7 @@ def find_distal_exons_from_signal( ( region_cov, region_start, region_stop ),
 
                 if USE_LOSSY_PEAK_BNDRIES \
                         and i < bndry_i \
-                        and float(abs(stop - bs[i]+1))/abs(start - bs[i]+1) > 0.5:
+                        and float(abs(stop-bs[i]+1))/abs(start-bs[i]+1) > 0.5:
                     break
                 
                 if bs[i]-1 in intron_stops:
@@ -1148,7 +1165,8 @@ def find_distal_exons_without_signal(
     # refine the exon bndrys
     refined_exons = []
     for exon in candidate_exons:
-        exon_cvg = rnaseq_cov_array[(exon[0]-cov_start_pos):(exon[1]-cov_start_pos+1)]
+        exon_cvg = rnaseq_cov_array[
+            (exon[0]-cov_start_pos):(exon[1]-cov_start_pos+1)]
         total = exon_cvg.sum()
         if find_upstream_exons:
             max_val = exon_cvg[-20:].mean()
@@ -1217,60 +1235,9 @@ def find_distal_exons( region_start, region_stop,
         
     return distal_exons
 
-def find_exons_in_cluster(op_queue, ls, bs, 
-                          strand, chrm_stop,
-                          region_start, region_stop,
-                          read_cov, cage_cov, polya_sites,
-                          intron_starts, intron_stops ):
-    all_exons = []
-    all_seg_exons = []
-    all_tss_exons = []
-    all_internal_exons = []
-    all_tes_exons = []
-    
-    # search for single exon genes
-    if len( ls ) == 3 and ls[1] in ( 'Exon', 'exon_extension' ):
-        start, stop = bs[1], bs[2]-1
-        new_label = refine_single_exon_gene_label(\
-            start, stop, 
-            region_start, region_stop,
-            read_cov, cage_cov)
-        if new_label == 'S': 
-            all_seg_exons.append( (start, stop) )
-        else:
-            assert new_label == 'L'
-        
-        op_queue.append( ([], all_seg_exons, [], [], []) )
-        return 
-    
-    # find tss exons
-    tss_exons = find_distal_exons( \
-        region_start, region_stop, cage_cov, 
-        (strand=='+'), intron_starts, intron_stops,
-        bs, ls, read_cov, \
-        CAGE_MIN_SCORE, CAGE_WINDOW_LEN, CAGE_MAX_SCORE_FRAC, \
-        require_signal = REQUIRE_CAGE_SIGNAL_FOR_TSS_EXON )
-
-    # if we can't find a TSS index, continue
-    if len( tss_exons ) == 0:
-        # print >> sys.stderr, "WARNING: cant find any tss exons."
-        return
-    
-    exon_bndrys = get_possible_exon_bndrys( \
-        ls, bs, chrm_stop )        
-    
-    internal_exons = find_internal_exons( \
-        exon_bndrys, intron_starts, intron_stops )
-
-
-    tes_exons = find_distal_exons( \
-        region_start, region_stop,
-        None, (strand=='-'), intron_starts, intron_stops, \
-        bs, ls, read_cov, \
-        None, None, None )
-
+def filter_exons_by_polya_signal(strand, region_stop, exon_bndrys, polya_sites):
     filtered_tes_exons = set()
-    for tes_exon_start, tes_exon_stop in tes_exons:
+    for tes_exon_start, tes_exon_stop in exon_bndrys:
         if strand == '-':
             tes_exon_start = max( 0, tes_exon_start-TES_EXON_EXPANSION )
         else:
@@ -1289,9 +1256,61 @@ def find_exons_in_cluster(op_queue, ls, bs,
                 filtered_tes_exons.add( (site, tes_exon_stop) )
             else:
                 filtered_tes_exons.add( (tes_exon_start, site) )
+    
+    return sorted( filtered_tes_exons )
 
-    if REQUIRE_POLYA_SITE_FOR_TES_EXON or len( filtered_tes_exons ) > 0:
-        tes_exons = sorted( filtered_tes_exons )
+
+def find_exons_in_cluster(op_queue, ls, bs, 
+                          strand, chrm_stop,
+                          region_start, region_stop,
+                          read_cov, cage_cov, polya_sites,
+                          intron_starts, intron_stops ):
+    all_exons = []
+    all_seg_exons = []
+    all_tss_exons = []
+    all_internal_exons = []
+    all_tes_exons = []
+    
+    # search for single exon genes
+    if len( ls ) == 3:
+        start, stop = bs[1], bs[2]-1
+        new_label = refine_single_exon_gene_label(\
+            start, stop, 
+            region_start, region_stop,
+            read_cov, cage_cov)
+        if new_label == 'S': 
+            all_seg_exons.append( (start, stop) )
+        else:
+            assert new_label == 'L'
+        
+        op_queue.append( ([], all_seg_exons, [], [], []) )
+        return 
+    
+    # find cage peaks
+    tss_exons = find_distal_exons_from_signal( 
+        ( cage_cov, region_start, region_stop ), 
+        (strand=='+'),  
+        intron_starts, intron_stops, 
+        bs, ls,
+        CAGE_MIN_SCORE, CAGE_WINDOW_LEN, CAGE_MAX_SCORE_FRAC )
+    
+    # if we can't find a TSS index, continue
+    if len( tss_exons ) == 0:
+        print >> sys.stderr, "WARNING: cant find any tss exons."
+        return
+    
+    all_seg_exons.extend( 
+        filter_exons_by_polya_signal( 
+            strand, region_stop, tss_exons, polya_sites ) )
+    
+    exon_bndrys = get_possible_exon_bndrys( \
+        ls, bs, chrm_stop )        
+    
+    internal_exons = find_internal_exons( \
+        exon_bndrys, intron_starts, intron_stops )
+    
+    tes_exons = filter_exons_by_polya_signal( 
+        strand, region_stop, exon_bndrys, polya_sites )
     
     # if we can't find a TSS index, continue
     if len( tes_exons ) == 0:
@@ -1303,9 +1322,40 @@ def find_exons_in_cluster(op_queue, ls, bs,
     all_tes_exons.extend( tes_exons )
     all_exons.extend( exon_bndrys )
     
-    op_queue.append( ( all_exons, all_seg_exons, \
-                           all_tss_exons, all_internal_exons, all_tes_exons ) )
-    return
+    return ( all_exons, all_seg_exons, \
+                 all_tss_exons, all_internal_exons, all_tes_exons )
+
+def find_exons_in_cluster_worker( read_cov_obj, cage_cov, polya_sites, 
+                                  intron_starts, intron_stops,
+                                  strand, cluster_data, output_queue  ):
+     while True:
+        # try to get a cluster. If there are none, then break.
+        try:
+            cluster_index, (ls, bs) = cluster_data.pop()
+        except IndexError:
+            break
+        
+        region_start = max(0, bs[1] - DISTAL_EXON_EXPANSION)
+        region_stop = bs[-1] - 1 + DISTAL_EXON_EXPANSION    
+        region_read_cov = read_cov_obj.rca[region_start:region_stop+1]
+        region_cage_cov = cage_cov[ region_start:region_stop+1 ]
+
+        args = ( output_queue, ls, bs, 
+                 strand, read_cov_obj.chrm_stop,
+                 region_start, region_stop,
+                 region_read_cov, region_cage_cov,
+                 polya_sites,
+                 intron_starts, intron_stops )
+
+        if VERBOSE:
+            print >> sys.stderr, "Finding exons in cluster: %s:%i-%i" \
+                % ( strand, bs[1], bs[-2])
+
+        res = find_exons_in_cluster( *args )
+        if res != None:
+            output_queue.append( res )
+     
+     return
 
 def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts, 
                          cage_cov, polya_sites ):
@@ -1323,27 +1373,19 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts,
     clustered_labels, clustered_bndrys = cluster_labels_and_bndrys( 
         new_labels, new_bndrys, jns_w_cnts, read_cov_obj.chrm_stop )
     
-    intron_starts = set( jn[0] for jn, score in jns_w_cnts )
-    intron_stops = set( jn[1] for jn, score in jns_w_cnts )
-    
     all_exons = []
     all_seg_exons = []
     all_tss_exons = []
     all_internal_exons = []
     all_tes_exons = []
     
-    def find_empty_process_index( ps ):
-        # find an empty process
-        for p_i, p in enumerate(ps):
-            if p == None or p.exitcode != None:
-                return p_i
-        
-        return None
-    
-    def empty_output_queue( output_queue ):
-        # empty the output queue
-        while len( output_queue ) > 0:
-            rv = output_queue.pop()
+    def empty_output_queue():
+        while True:
+            # try to get an item. If we can't the list must be empty
+            try:
+                rv = output_queue.pop()
+            except IndexError:
+                break
             all_exons.extend( rv[0] )
             all_seg_exons.extend( rv[1] )
             all_tss_exons.extend( rv[2] )
@@ -1351,65 +1393,54 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts,
             all_tes_exons.extend( rv[4] )
         
         return
- 
+
     manager = multiprocessing.Manager()   
     output_queue = manager.list()        
-    ps = [None]*num_threads
-    if VERBOSE: print >> sys.stderr,  'Finding and categorizing exons in cluster.'
-    cluster_data = list(enumerate(izip(clustered_labels, clustered_bndrys)))
-    while len( cluster_data ) > 0:
-        empty_output_queue( output_queue )
+
+    cluster_data = manager.list()
+    for x in enumerate(izip(clustered_labels, clustered_bndrys)):
+        cluster_data.append( x )
+    
+    intron_starts = set( jn[0] for jn, score in jns_w_cnts )
+    intron_stops = set( jn[1] for jn, score in jns_w_cnts )
+    
+    args = ( read_cov_obj, cage_cov, polya_sites, \
+             intron_starts, intron_stops, \
+             strand, cluster_data, output_queue )
+    
+    # if the number of threads is greater than 1
+    if num_threads > 1:    
+        # spawn all of the processes
+        ps = [ Process(target=find_exons_in_cluster_worker, args=args) 
+               for i in xrange( num_threads ) ]
+        for p in ps: p.start()
         
-        if num_threads > 1:
-            empty_p_index = find_empty_process_index( ps )
-            # if there is no empty space, then sleep and continue
-            if empty_p_index == None:
+        while True:
+            # start emptying the output queue
+            empty_output_queue()
+
+            # if every process is finished, break
+            if all( p.exitcode != None for p in ps ):
+                break
+            #otherwise, sleep for a bit
+            else:
                 sleep( 0.1 )
-                continue
         
-        cluster_index, (ls, bs) = cluster_data.pop()
-
-        region_start = max(0, bs[1] - DISTAL_EXON_EXPANSION)
-        region_stop = bs[-1] - 1 + DISTAL_EXON_EXPANSION    
-        region_read_cov = read_cov_obj.rca[region_start:region_stop+1]
-        region_cage_cov = cage_cov[ region_start:region_stop+1 ]
-        
-        args = ( output_queue, ls, bs, 
-                 strand, read_cov_obj.chrm_stop,
-                 region_start, region_stop,
-                 region_read_cov, region_cage_cov,
-                 polya_sites,
-                 intron_starts, intron_stops )
-        
-        if VERBOSE:
-            print >> sys.stderr, "Finding exons in cluster: %s:%i-%i" \
-                % ( strand, bs[1], bs[-2])
-
-        if num_threads > 1:
-            p = Process(target=find_exons_in_cluster, 
-                        name="%i-%i" % (cluster_index, len(ls)), args=args)            
-            ps[empty_p_index] = p
-            p.start()
-        else:
-            find_exons_in_cluster( *args )
+        # join all of the processes to enure that we are done
+        for p in ps: p.join()
+    else:
+        assert num_threads == 1
+        find_exons_in_cluster_worker( *args )
     
-    # cleanup all remaining processes
-    if num_threads > 1:
-        for p in ps:
-            if p != None:
-                p.join()
-    
-    empty_output_queue( output_queue )
-    
-    #se_genes = get_possible_single_exon_genes( \
-    #    new_labels, new_bndrys, read_cov_obj.chrm_stop )
+    # empty the output_queue 1 last time
+    empty_output_queue()
     
     return all_seg_exons, all_tss_exons, all_internal_exons, \
            all_tes_exons, all_exons
 
 def parse_arguments():
     import argparse
-
+    
     parser = argparse.ArgumentParser(\
         description='Find exons from wiggle and junctions files.')
 
@@ -1445,7 +1476,7 @@ def parse_arguments():
     
     fps = []
     for field_name in ofps_prefixes:
-        fps.append(open("%s.%s.gff" % (args.out_file_prefix, field_name), "w"))
+        fps.append(ThreadSafeFile("%s.%s.gff" % (args.out_file_prefix, field_name), "w"))
     ofps = OrderedDict( zip( ofps_prefixes, fps ) )
     
     # set flag args
@@ -1466,75 +1497,145 @@ def parse_arguments():
     return grpd_wigs, args.junctions, args.chrm_sizes_fname, \
         args.cage_wigs, args.polya_candidate_sites, ofps
 
+def find_exons_in_contig_worker(  
+        chrm, strand, 
+        read_cov_obj, 
+        jns_and_scores,
+        cage_cov, 
+        polya_sites,
+        grp_id_starts,
+        out_fps,
+        worker_pool
+    ):
+    
+    worker_pool.acquire()
+    
+    disc_grpd_exons = find_exons_in_contig( \
+       strand, 
+       read_cov_obj, 
+       jns_and_scores,
+       cage_cov, 
+       polya_sites )
+
+
+    if VERBOSE: print >> sys.stderr, \
+            'Building output (%s,%s)' % ( chrm, strand )
+    
+    for ofp, exons, grp_id_start in zip(
+            out_fps.values(), disc_grpd_exons, grp_id_starts ):
+        regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
+                             for start, stop in exons                \
+                             if stop - start < MAX_EXON_SIZE )
+        
+        grp_id_start.lock()
+        grp_id_iter = ( str(i) for i in count(int(str(grp_id_start))) )
+        grp_id_start += len( exons )
+        grp_id_start.release()
+        
+        ofp.write( "\n".join(iter_gff_lines( 
+                    sorted(regions_iter), grp_id_iter )) + "\n")
+    
+    worker_pool.release()
+    
+    return
+
+class GroupIdCntr( object ):
+    def __init__( self, start_val=0 ):
+        self.value = multiprocessing.RawValue( 'i', start_val )
+        self._lock = multiprocessing.RLock()
+
+    def __iadd__(self, val_to_add):
+        self._lock.acquire()
+        self.value.value += val_to_add
+        self._lock.release()
+        return self
+    
+    def lock(self):
+        self._lock.acquire()
+
+    def release(self):
+        self._lock.release()
+    
+    def __str__( self ):
+        self._lock.acquire()
+        rv = str(self.value.value)
+        self._lock.release()
+        return rv
 
 def main():
     wigs, jns_fp, chrm_sizes_fp, cage_wigs, polya_candidate_sites_fps, out_fps \
         = parse_arguments()
     
-    # set up all of the file processing calls
-    p = multiprocessing.Pool( processes=num_threads )
+    group_id_starts = [ GroupIdCntr(1) for fp in out_fps ]
     
-    if VERBOSE: print >> sys.stderr,  'Loading read pair 1 wiggles'    
-    args = [ chrm_sizes_fp.name, [wigs[0][0].name, wigs[1][0].name], ['+','-'] ]
-    rd1_cov_proc = p.apply_async( load_wiggle, args )
+    # set up all of the file processing calls
+    worker_pool = multiprocessing.BoundedSemaphore( num_threads )
+    ps = []
     
     if VERBOSE: print >> sys.stderr,  'Loading merged read pair wiggles'    
     fnames =[wigs[0][0].name, wigs[1][0].name, wigs[2][0].name, wigs[3][0].name]
-    rd_cov_proc = p.apply_async( load_wiggle,
-        [ chrm_sizes_fp.name, fnames, ['+', '-', '+', '-'] ] )
+    strands = ["+", "-", "+", "-"]
+    read_cov, new_ps = load_wiggle_asynchronously( 
+        chrm_sizes_fp.name, fnames, strands, worker_pool )
+    ps.extend( new_ps )    
     
-    if VERBOSE: print >> sys.stderr,  'Loading read pair 2 wiggles'    
-    rd2_cov_proc = p.apply_async( load_wiggle,
-        [ chrm_sizes_fp.name, [wigs[2][0].name, wigs[3][0].name], ['+','-'] ] )
-
     if VERBOSE: print >> sys.stderr,  'Loading CAGE.'
-    cage_cov_proc = p.apply_async( 
-        load_wiggle, [ chrm_sizes_fp.name, [x.name for x in cage_wigs] ] )
-    
-    if VERBOSE: print >> sys.stderr,  'Loading junctions.'
-    jns_proc = p.apply_async( 
-        parse_junctions_file_dont_freeze, [ jns_fp.name, ] )
-    
+    #cage_cov, new_ps = load_wiggle_asynchronously( 
+    #    chrm_sizes_fp.name, [f.name for f in cage_wigs], worker_pool )
+    #ps.extend( new_ps )
+    cage_cov = Wiggle( chrm_sizes_fp, cage_wigs )
+        
     if VERBOSE: print >> sys.stderr,  'Loading candidate polyA sites'
-    polya_sites_proc = p.apply_async( 
-        find_polya_sites,  [[x.name for x in polya_candidate_sites_fps],] )
-    
-    # now, all of the async calls have been made so we collect the results
-    
-    polya_sites = polya_sites_proc.get()
+    polya_sites = find_polya_sites([x.name for x in polya_candidate_sites_fps])
     for fp in polya_candidate_sites_fps: fp.close()
     if VERBOSE: print >> sys.stderr, 'Finished loading candidate polyA sites'
-
-    rd1_cov = rd1_cov_proc.get()
-    if VERBOSE: print >> sys.stderr, 'Finished loading read pair 1 wiggles'    
     
-    rd2_cov = rd2_cov_proc.get()
-    if VERBOSE: print >> sys.stderr, 'Finished loading read pair 2 wiggles'    
+    if VERBOSE: print >> sys.stderr,  'Loading junctions.'
+    jns = parse_junctions_file_dont_freeze( jns_fp )
+    if VERBOSE: print >> sys.stderr,  'Finished loading junctions.'
+    
+    for p in ps:
+        if VERBOSE:
+            print "Joining process: ", p
+        p.join()
+        if VERBOSE:
+            print "Joined process: ", p
 
-    read_cov = rd_cov_proc.get()
+    ##### join all of the wiggle processes
+    
+    # get the joined read data, and calculate stats
     read_cov.calc_zero_intervals()
     read_cov_sum = sum( array.sum() for array in read_cov.itervalues() ) 
     if VERBOSE: print >> sys.stderr, 'Finished loading merged read pair wiggles'
-    
     if read_cov_sum == 0:
-        [ fp.close() for fp in out_fps ]
         return
 
-    # open the cage data
-    cage_cov = cage_cov_proc.get()
+    # join the cage data, and calculate statistics
     cage_sum = sum( cage_cov.apply( lambda a: a.sum() ).values() )
     global CAGE_TOT_FRAC
     CAGE_TOT_FRAC = (float(cage_sum)/read_cov_sum)*(1e-3)    
     for cage_fp in cage_wigs: cage_fp.close()
     if VERBOSE: print >> sys.stderr, 'Finished loading CAGE data'
-    
-    jns = jns_proc.get() 
-    if VERBOSE: print >> sys.stderr,  'Finished loading junctions.'
+
+    if VERBOSE: print >> sys.stderr, 'Finished loading read pair 1 wiggles'
+
+    if VERBOSE: print >> sys.stderr, 'Finished loading read pair 2 wiggles'
     
     all_regions_iters = [ [], [], [], [], [] ]
-
+    
     keys = sorted( set( jns ) )
+    
+
+
+    # process each chrm, strand combination separately
+    for track_name, out_fp in out_fps.iteritems():
+        out_fp.write( "track name=%s\n" % track_name )
+    
+    ps = []
     for chrm, strand in keys:        
+        if VERBOSE: print >> sys.stderr, \
+                "Disocvering exons in chr %s on the %s strand" % (chrm, strand)
+
         if VERBOSE: print >> sys.stderr, \
                 'Processing chromosome %s strand %s.' % ( chrm, strand )
         
@@ -1548,32 +1649,24 @@ def main():
         introns = jns[(chrm, strand)]
         scores = jns._scores[(chrm, strand)]
         jns_and_scores = zip( introns, scores )
+        cage = cage_cov[(chrm, strand)]
+        polya = polya_sites[(chrm, strand)]
         
-        disc_grpd_exons = find_exons_in_contig( \
-           strand, 
-           read_cov_obj, 
-           jns_and_scores,
-           cage_cov[ (chrm, strand) ], 
-           polya_sites[ (chrm, strand) ] )
-
-
-        if VERBOSE: print >> sys.stderr, \
-                'Building output (%s,%s)' % ( chrm, strand )
+        args = [ chrm, strand, read_cov_obj, jns_and_scores, 
+                 cage, polya, group_id_starts, out_fps, worker_pool ]
         
-        for container, exons in zip( all_regions_iters, disc_grpd_exons ):
-            regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
-                                 for start, stop in exons                \
-                                 if stop - start < MAX_EXON_SIZE )
-            container.extend( regions_iter )
-
-    # process each chrm, strand combination separately
-    for track_name, out_fp in out_fps.iteritems():
-        out_fp.write( "track name=%s\n" % track_name )
+        p = Process( target=find_exons_in_contig_worker, args=args, 
+                     name="contig_%s_%s" % (chrm, strand) )
+        p.start()
+        ps.append( p )
+        
+    for p in ps:
+        if VERBOSE:
+            print "Joining process: ", p
+        p.join()
+        if VERBOSE:
+            print "Joined process: ", p
     
-    if VERBOSE: print >> sys.stderr,  'Writing output.'
-    for regions_iter, ofp in zip( all_regions_iters, out_fps.itervalues() ):
-        ofp.write( "\n".join(iter_gff_lines( sorted(regions_iter) )) + "\n")
-        
     return
         
 if __name__ == "__main__":

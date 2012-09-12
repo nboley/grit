@@ -33,7 +33,7 @@ USE_TF_ELEMENTS = False
 
 USE_POLYA_SIGNAL = False
 
-BUILD_SAMPLE_SPECIFIC_EXONS = True
+BUILD_SAMPLE_SPECIFIC_EXONS = False
 USE_SAMPLE_SPECIFIC_CAGE = True and BUILD_SAMPLE_SPECIFIC_EXONS
 USE_MERGED_RNASEQ_FOR_EXONS = True and BUILD_SAMPLE_SPECIFIC_EXONS
 
@@ -45,7 +45,7 @@ USE_MERGED_EXONS_FOR_TRANSCRIPTS = False
 
 # whether or not to include the merged_input transripts
 # in the final merged file
-USE_MERGED_INPUT=False
+USE_MERGED_INPUT=True
 
 VERBOSE = True
 STRESS_TEST_DEP_FINDER = False
@@ -133,6 +133,7 @@ RnaSeqDataTypes = [ "rnaseq_polyaplus_bam",
                     "exons_gff",
                     "polya_reads_gff",
                     "polya_tes_exons_gff",
+                    "single_exon_genes_gff",
                     "cand_polya_sites",
                     "transcripts_gtf",
                     "sparse_transcripts_gtf",
@@ -218,10 +219,8 @@ class Elements( object ):
                   VALUES
                   ( ?, ?)
             """
-        data = [ element.fname, None]
         for dependency_fname in dependencies:
-            data[1] = dependency_fname
-            c.execute( q, data )
+            c.execute( q, [element.fname, dependency_fname] )
         
         c.close()
         self.conn.commit()
@@ -1232,24 +1231,28 @@ def build_all_exon_files( elements, pserver, output_prefix ):
             " ".join(cage_wig_fnames), 
             "--polya-candidate-sites "+" ".join( candidate_polya_site_fnames ),
             output_fn_prefix )
-
-        extensions = [ ".internal_exons.gff",    \
-                       ".tss_exons.gff",  \
-                       ".tes_exons.gff" ]
         
-        output_fnames = [output_fn_prefix + extension for extension in extensions]
+        call += " --threads {threads}"
+        
+        extensions = [ ".internal_exons.gff",    
+                       ".tss_exons.gff", 
+                       ".tes_exons.gff" ,
+                       ".single_exon_genes.gff" ]
+        
+        output_fnames = [output_fn_prefix+extension for extension in extensions]
         output_element_types = [
               ElementType( "exons_gff", sample_type, sample_id, "." ),
               ElementType( "cage_tss_exons_gff", sample_type, sample_id, "." ),
-              ElementType( "polya_tes_exons_gff", sample_type, sample_id, "." )\
+              ElementType( "polya_tes_exons_gff", sample_type, sample_id, "." ),
+              ElementType( "single_exon_genes_gff", sample_type, sample_id, ".")
         ]
         
         dependency_fnames = [ jns_fname ]
         dependency_fnames.extend( bedgraph_fnames )
         dependency_fnames.extend( cage_wig_fnames )
-        
+        print call
         cmd = Cmd(call, output_element_types, output_fnames, dependency_fnames)
-        pserver.add_process( cmd, Resource(1), Resource(1) )
+        pserver.add_process( cmd, Resource(1), Resource(6) )
 
     # build the merged sample exons
     build_find_exons_cmds( "*", "*" )
@@ -1276,6 +1279,7 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
                               --tss TSS [TSS ...]
                               --tes TES [TES ...] 
                               --junctions JUNCTIONS [JUNCTIONS ...] 
+                              [ --single-exon-genes ]
                               [--threads THREADS]
                               [--out-fname OUT_FNAME] 
                               [--log-fname LOG_FNAME]
@@ -1331,17 +1335,29 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         else:
             ress = elements.get_elements_from_db( \
                 "polya_tes_exons_gff", "*", "*"  )
-        
+
         assert len( ress ) == 1
         tes_exons_fnames = [ ress[0].fname, ]
         ress = elements.get_elements_from_db( "cdna_tes_gff" )
         tes_exons_fnames.extend( e.fname for e in ress )
+
+        # get single exon genes
+        if not USE_MERGED_EXONS_FOR_TRANSCRIPTS and BUILD_SAMPLE_SPECIFIC_EXONS:
+            ress = elements.get_elements_from_db( \
+                "single_exon_genes_gff", sample_type, sample_id  )
+        else:
+            ress = elements.get_elements_from_db( \
+                "single_exon_genes_gff", "*", "*"  )
+
+        assert len( ress ) == 1
+        single_exon_genes_fnames = [ ress[0].fname, ]
 
         # get junctions
         ress = elements.get_elements_from_db( \
             jn_input_type, sample_type, sample_id  )
         assert len( ress ) == 1
         jns_fname = ress[0].fname
+
 
         sample_type_name = "merged_input" if sample_type == "*" else sample_type
         sample_id_name = "merged_input" if sample_id == "*" else sample_id
@@ -1353,12 +1369,15 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         log_fname = op_fname + ".log"
         
         call = "python %s --exons {0} --tss {1} --tes {2} --junctions {3} " \
-                      + " --out-fname {4} --log-fname {5}"
+                     + "--single-exon-genes {4} --out-fname {5} --log-fname {6}"
         call = call % BUILD_TRANSCRIPTS_CMD
         
-        call = call.format( exons_fname, " ".join( tss_exons_fnames ), \
-                                " ".join( tes_exons_fnames ),  \
-                                jns_fname, op_fname, log_fname  )
+        call = call.format( exons_fname, 
+                            " ".join( tss_exons_fnames ),
+                            " ".join( tes_exons_fnames ),
+                            jns_fname,
+                            " ".join( single_exon_genes_fnames ),
+                            op_fname, log_fname  )
         call +=  " --threads={threads}"
         
         op_element_types = [ \
@@ -1370,6 +1389,7 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         dependencies.extend( tes_exons_fnames )
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
+        
         max_res = min(Resource(8), Resource(pserver.max_available_resources))
         pserver.add_process( cmd, Resource(1), max_res )
         return
@@ -2047,10 +2067,8 @@ def main():
 
     call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
     
-
     # sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
-
-
+    
     # DO PROTEIN FILTERING ( need to write this... )
     produce_final_annotation( elements, pserver, base_dir + "final_ann" )
         
