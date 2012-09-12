@@ -607,7 +607,12 @@ def load_bedgraph_and_add_to_wiggle( wig, fname, strand, worker_pool ):
     for name, array in bedgraph.iteritems():
         key = ( fix_chr_name(name), strand )
         assert key in wig
-        wig[key][:len(array)] += array
+        # if all of the signal is negative and this is on the minus strand, 
+        # then someone probably just inverted the signal for display purposes.
+        if strand in ("-", "minus") and array.max() <= 0:
+            wig[key][:len(array)] -= array
+        else:
+            wig[key][:len(array)] += array
     
     del bedgraph
     worker_pool.release()
@@ -632,6 +637,8 @@ def load_wiggle_asynchronously(chrm_sizes_fname, fnames, strands, worker_pool):
     # for each file, spawn a process that loads the bedgraph in to the wiggle
     ps = []
     for fname, strand in zip(fnames, strands):
+        #load_bedgraph_and_add_to_wiggle( wig, fname, strand, worker_pool )
+        #continue
         p = mp.Process( target=load_bedgraph_and_add_to_wiggle, 
                         name="load_%s_%s" % ( strand, fname ),
                         args=[wig, fname, strand, worker_pool] )

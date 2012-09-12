@@ -6,8 +6,46 @@ from collections import OrderedDict, defaultdict
 from itertools import izip
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../", 'file_types'))
-from wiggle import Wiggle, load_wiggle, guess_strand_from_fname
+from wiggle import Wiggle, load_wiggle_asynchronously, guess_strand_from_fname
 from junctions_file import parse_jn_gff, Junctions
+
+class ThreadSafeFile( file ):
+    def __init__( self, fname, mode, trackname=None ):
+        file.__init__( self, fname, mode )
+        self._writelock = multiprocessing.Lock()
+        if trackname != None:
+            self.write('track name="%s" visibility=2 itemRgb="On"\n'%trackname)
+    
+    def write( self, data ):
+        self._writelock.acquire()
+        file.write( self, data )
+        file.flush( self )
+        self._writelock.release()
+
+
+class GroupIdCntr( object ):
+    def __init__( self, start_val=0 ):
+        self.value = multiprocessing.RawValue( 'i', start_val )
+        self._lock = multiprocessing.RLock()
+
+    def __iadd__(self, val_to_add):
+        self._lock.acquire()
+        self.value.value += val_to_add
+        self._lock.release()
+        return self
+    
+    def lock(self):
+        self._lock.acquire()
+
+    def release(self):
+        self._lock.release()
+    
+    def __str__( self ):
+        self._lock.acquire()
+        rv = str(self.value.value)
+        self._lock.release()
+        return rv
+
 
 def build_empty_array():
     return numpy.array(())
@@ -56,18 +94,15 @@ class Bins( list ):
             rev_bins.append( bin.reverse_strand( contig_len ) )
         return rev_bins
     
-    def writeBedgraph( self, trackname, contig_len ):
+    def writeBedgraph( self, ofp, contig_len ):
         """
             chr7    127471196  127472363  Pos1  0  +  127471196  127472363  255,0,0
         """
-        ofp = open( "%s_%s.bed" % (trackname, self.strand ), "w" )
         if self.strand == '-':
             writetable_bins = self.reverse_strand( contig_len )
         else:
             writetable_bins = self
         
-        ofp.write('track name="%s.%s" visibility=2 itemRgb="On"\n'
-                  % ( trackname, self.strand) )
         for bin in writetable_bins:
             length = max( (bin.stop - bin.start)/4, 1)
             colors = bin._find_colors( self.strand )
@@ -87,7 +122,6 @@ class Bins( list ):
                     name=bin.right_label)
                 ofp.write( op )
         
-        ofp.close()
         return
 
 class Bin( object ):
@@ -201,6 +235,9 @@ def find_gene_boundaries( (chrm, strand), bins, cage_cov, rnaseq_cov, jns ):
         right_label = bins[stop_i-1].right_label
         gene_bndry_bins.append(
             Bin(start, stop, left_label, right_label, 'GENE'))
+
+    if 0 == len( gene_bndry_bins  ):
+        return gene_bndry_bins
     
     gene_bndry_bins[0].start = 1
     gene_bndry_bins[-1].stop = len( rnaseq_cov )-1
@@ -357,7 +394,7 @@ def find_bins_in_contig( ( chrm, strand ), rnaseq_cov, jns, cage_cov, polya_site
     if strand == '-':
         rnaseq_cov, jns, cage_cov, polya_sites = reverse_contig_data( 
             rnaseq_cov, jns, cage_cov, polya_sites )
-    
+        
     locs = {}
     for polya in polya_sites:
         locs[ polya ] = "POLYA"
@@ -374,21 +411,30 @@ def find_bins_in_contig( ( chrm, strand ), rnaseq_cov, jns, cage_cov, polya_site
         bins.append( Bin(start, stop, left_label, right_label) )
     
     bins.append( Bin( poss[-1][0], len(rnaseq_cov)-1, poss[-1][1], "CONTIG_BNDRY" ) )
-    bins.writeBedgraph( 'bins', len(rnaseq_cov) )
+    bins.writeBedgraph( binsFps[strand], len(rnaseq_cov) )
     
     # find gene regions
     # first, find the gene bin indices
     gene_bndry_bins = find_gene_boundaries( 
         (chrm, strand), bins, cage_cov, rnaseq_cov, jns )
-    gene_bndry_bins.writeBedgraph( 'gene_boundaries', len(rnaseq_cov) )
     
     # find cage peaks
+    refined_gene_bndry_bins = Bins( chrm, strand, [] )
     cage_peaks = Bins( chrm, strand )
     for gene_bin in gene_bndry_bins:
-        cage_peaks.extend( find_cage_peaks_in_gene( 
-                (chrm, strand), gene_bin, cage_cov, rnaseq_cov ) )
+        gene_cage_peaks = find_cage_peaks_in_gene( 
+                (chrm, strand), gene_bin, cage_cov, rnaseq_cov )
+        cage_peaks.extend( gene_cage_peaks )
+        if len( gene_cage_peaks ) > 0:
+            start, stop = gene_bin.start, gene_bin.stop
+            start = gene_cage_peaks[0].start
+            refined_gene_bndry_bins.append( 
+                Bin( start, stop, 
+                     gene_bin.left_label, gene_bin.right_label, "GENE") )
     
-    cage_peaks.writeBedgraph( 'cage_peaks', len(rnaseq_cov) )
+    cage_peaks.writeBedgraph( cagePeaksFps[strand], len(rnaseq_cov) )
+    refined_gene_bndry_bins.writeBedgraph( 
+        geneBoundariesFps[strand], len(rnaseq_cov) )
     
     return
 
@@ -434,6 +480,26 @@ def parse_arguments():
         fps.append(open("%s.%s.gff" % (args.out_file_prefix, field_name), "w"))
     ofps = OrderedDict( zip( ofps_prefixes, fps ) )
     
+    # prepare the intermediate output objects
+    global binsFps, geneBoundariesFps, cagePeaksFps
+    binsFps = { "+": ThreadSafeFile( 
+            args.out_file_prefix + "bins.plus.gff", "w", "bins_plus" ),
+                "-": ThreadSafeFile( 
+            args.out_file_prefix + "bins.minus.gff", "w", "bins_minus" ) }
+    geneBoundariesFps = { 
+        "+": ThreadSafeFile( 
+            args.out_file_prefix + "gene_boundaries.plus.gff", "w", "gene_bndrys_plus" ),
+        "-": ThreadSafeFile( 
+            args.out_file_prefix + "gene_boundaries.minus.gff", "w", "gene_bndrys_minus" ) 
+    }
+    cagePeaksFps = { 
+        "+": ThreadSafeFile( 
+            args.out_file_prefix + "cage_peaks.plus.gff", "w", "cage_peaks_plus" ),
+        "-": ThreadSafeFile(
+            args.out_file_prefix + "cage_peaks.minus.gff", "w", "cage_peaks_minus" ) 
+    }
+
+
     # set flag args
     global VERBOSE
     VERBOSE = args.verbose
@@ -447,51 +513,71 @@ def parse_arguments():
     rd2_minus_wigs = [ fp for fp in args.wigs 
                       if fp.name.endswith("rd2.minus.bedGraph") ]
     
-    grpd_wigs = [ rd1_plus_wigs, rd1_minus_wigs, rd2_plus_wigs, rd2_minus_wigs ]
+    rnaseq_grpd_wigs = [ rd1_plus_wigs, rd1_minus_wigs, rd2_plus_wigs, rd2_minus_wigs ]
     
-    return grpd_wigs, args.junctions, args.chrm_sizes_fname, \
-        args.cage_wigs, args.polya_candidate_sites, ofps
+    cage_plus_wigs = [ fp for fp in args.cage_wigs 
+                      if fp.name.endswith("+.bedGraph") ]
+    cage_minus_wigs = [ fp for fp in args.cage_wigs 
+                      if fp.name.endswith("-.bedGraph") ]
+    cage_grpd_wigs = [ cage_plus_wigs, cage_minus_wigs ]
+    
+    return rnaseq_grpd_wigs, args.junctions, args.chrm_sizes_fname, \
+        cage_grpd_wigs, args.polya_candidate_sites, ofps
 
 
 def main():
     wigs, jns_fp, chrm_sizes_fp, cage_wigs, polya_candidate_sites_fps, out_fps \
         = parse_arguments()
     
+    group_id_starts = [ GroupIdCntr(1) for fp in out_fps ]
+    
     # set up all of the file processing calls
-    p = multiprocessing.Pool( processes=num_threads )
+    worker_pool = multiprocessing.BoundedSemaphore( num_threads )
+    ps = []
     
     if VERBOSE: print >> sys.stderr,  'Loading merged read pair wiggles'    
     fnames =[wigs[0][0].name, wigs[1][0].name, wigs[2][0].name, wigs[3][0].name]
-    rd_cov_proc = p.apply_async( load_wiggle,
-        [ chrm_sizes_fp.name, fnames, ['+', '-', '+', '-'] ] )
+    strands = ["+", "-", "+", "-"]
+    read_cov, new_ps = load_wiggle_asynchronously( 
+        chrm_sizes_fp.name, fnames, strands, worker_pool )
+    ps.extend( new_ps )    
     
     if VERBOSE: print >> sys.stderr,  'Loading CAGE.'
-    cage_cov_proc = p.apply_async( 
-        load_wiggle, [ chrm_sizes_fp.name, [x.name for x in cage_wigs] ] )
-    
-    if VERBOSE: print >> sys.stderr,  'Loading junctions.'
-    jns_proc = p.apply_async( 
-        parse_jn_gff, [ jns_fp.name, ] )
-    
+    assert all( len(fps) == 1 for fps in cage_wigs )
+    cage_cov, new_ps = load_wiggle_asynchronously( 
+        chrm_sizes_fp.name, [fps[0].name for fps in cage_wigs], ["+", "-"], worker_pool)
+    ps.extend( new_ps )
+            
     if VERBOSE: print >> sys.stderr,  'Loading candidate polyA sites'
-    polya_sites_proc = p.apply_async( 
-        find_polya_sites,  [[x.name for x in polya_candidate_sites_fps],] )
-    
-    # now, all of the async calls have been made so we collect the results    
-    polya_sites = polya_sites_proc.get()
+    polya_sites = find_polya_sites([x.name for x in polya_candidate_sites_fps])
     for fp in polya_candidate_sites_fps: fp.close()
     if VERBOSE: print >> sys.stderr, 'Finished loading candidate polyA sites'
 
-    read_cov = rd_cov_proc.get()
-    if VERBOSE: print >> sys.stderr, 'Finished loading merged read pair wiggles'
-        
-    # open the cage data
-    cage_cov = cage_cov_proc.get()
-    for cage_fp in cage_wigs: cage_fp.close()
-    if VERBOSE: print >> sys.stderr, 'Finished loading CAGE data'
+    if VERBOSE: print >> sys.stderr,  'Loading junctions.'
+    jns = Junctions( parse_jn_gff( jns_fp.name ) )
     
-    jns = Junctions( jns_proc.get() )
-    if VERBOSE: print >> sys.stderr,  'Finished loading junctions.'
+    for p in ps:
+        if VERBOSE:
+            print "Joining process: ", p
+        p.join()
+        if VERBOSE:
+            print "Joined process: ", p
+    
+    assert all( x.min() >= 0 and x.max() >= 0 for x in cage_cov.values() )
+    assert all( x.min() >= 0 and x.max() >= 0 for x in read_cov.values() )
+
+    ##### join all of the wiggle processes
+    
+    # get the joined read data, and calculate stats
+    if VERBOSE: print >> sys.stderr, 'Finished loading merged read pair wiggles'
+    
+    # join the cage data, and calculate statistics
+    for cage_fps in cage_wigs: [ cage_fp.close() for cage_fp in cage_fps ]
+    if VERBOSE: print >> sys.stderr, 'Finished loading CAGE data'
+
+    if VERBOSE: print >> sys.stderr, 'Finished loading read pair 1 wiggles'
+
+    if VERBOSE: print >> sys.stderr, 'Finished loading read pair 2 wiggles'
     
     keys = sorted( set( jns ) )
     for chrm, strand in keys:        
@@ -504,6 +590,11 @@ def main():
            jns[ (chrm, strand) ],
            cage_cov[ (chrm, strand) ], 
            polya_sites[ (chrm, strand) ] )        
+
+
+    for fps_dict in (binsFps, geneBoundariesFps, cagePeaksFps):
+        for fp in fps_dict.values():
+            fp.close()
     
     return
         
