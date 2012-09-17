@@ -9,6 +9,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../", 'file_types'))
 from wiggle import Wiggle, load_wiggle_asynchronously, guess_strand_from_fname
 from junctions_file import parse_jn_gff, Junctions
 
+EXON_EXT_CVG_RATIO_THRESH = 4
+RETAINED_INTRON_CVG_RATIO = 4
+
 class ThreadSafeFile( file ):
     def __init__( self, fname, mode, trackname=None ):
         file.__init__( self, fname, mode )
@@ -87,7 +90,7 @@ class Bins( list ):
         self._bed_template = "\t".join( ["chr"+chrm, '{start}', '{stop}', '{name}', 
                                          '1000', strand, '{start}', '{stop}', 
                                          '{color}']  ) + "\n"
-    
+        
     def reverse_strand( self, contig_len ):
         rev_bins = Bins( self.chrm, self.strand )
         for bin in reversed(self):
@@ -132,6 +135,9 @@ class Bin( object ):
         self.right_label = right_label
         self.type = bin_type
     
+    def mean_cov( self, cov_array ):
+        return cov_array[self.start:self.stop].mean()
+    
     def reverse_strand(self, contig_len):
         return Bin(contig_len-self.stop, contig_len-self.start, 
                    self.right_label, self.left_label, self.type)
@@ -141,15 +147,17 @@ class Bin( object ):
             return "%i-%i\t%s\t%s" % ( self.start, self.stop, self.left_label,
                                        self.right_label )
 
-        return "%i-%i\t%s" % ( self.start, self.stop, self.type )
+        return "%s:%i-%i" % ( self.type, self.start, self.stop )
     
     _bndry_color_mapping = {
         'CONTIG_BNDRY': '0,0,0',
         
         'POLYA': '255,255,0',
+
+        'CAGE_PEAK': '0,255,0',
         
         'D_JN': '173,255,47',
-        'R_JN': '0,255,0',
+        'R_JN': '0,0,255'
     }
     
     def find_bndry_color( self, bndry ):
@@ -161,6 +169,16 @@ class Bin( object ):
                 return '0,0,0'
             if self.type =='CAGE_PEAK':
                 return '0,0,0'
+            if self.type =='EXON':
+                return '0,0,0'
+            if self.type =='EXON_EXT':
+                return '0,0,255'
+            if self.type =='RETAINED_INTRON':
+                return '255,255,0'
+            if self.type =='TES_EXON':
+                return '255,0,0'
+            if self.type =='TSS_EXON':
+                return '0,255,0'
 
         if strand == '+':
             left_label, right_label = self.left_label, self.right_label
@@ -271,12 +289,40 @@ def find_gene_boundaries( (chrm, strand), bins, cage_cov, rnaseq_cov, jns ):
         joined_bins_mapping[bin_i] = max( 
             bin_i+end_bin_i-1, joined_bins_mapping[bin_i] )
     
-    for start_bin, stop_bin in reversed(sorted(joined_bins_mapping.iteritems())):
-        gene_bndry_bins[start_bin].stop = gene_bndry_bins[stop_bin].stop
-        for x in xrange( start_bin+1, stop_bin+1 ):
-            del gene_bndry_bins[x]
     
-    return gene_bndry_bins
+    for start_bin, stop_bin in reversed(sorted(joined_bins_mapping.iteritems())):
+        try:
+            assert stop_bin > start_bin
+        except:
+            print "ERRRORR========================================================================================================================================================="
+            print start_bin, stop_bin
+            print "ERRRORR========================================================================================================================================================="
+            continue
+        
+        gene_bndry_bins[start_bin].stop = gene_bndry_bins[stop_bin].stop
+        del gene_bndry_bins[start_bin+1:stop_bin+1]
+    
+    # finally, find cage peaks to refine the gene boundaries
+    # find cage peaks
+    refined_gene_bndry_bins = Bins( chrm, strand, [] )
+    cage_peaks = Bins( chrm, strand )
+    for gene_bin in gene_bndry_bins:
+        gene_cage_peaks = find_cage_peaks_in_gene( 
+                (chrm, strand), gene_bin, cage_cov, rnaseq_cov )
+        cage_peaks.extend( gene_cage_peaks )
+        # refine the gene boundaries, now that we know where the promoters are
+        if len( gene_cage_peaks ) > 0:
+            refined_gene_bndry_bins.append( 
+                Bin( min( peak.start for peak in gene_cage_peaks ), 
+                     gene_bin.stop, 
+                     gene_bin.left_label, gene_bin.right_label, "GENE") )
+        else:
+            refined_gene_bndry_bins.append( 
+                Bin( gene_bin.start, gene_bin.stop, 
+                     gene_bin.left_label, gene_bin.right_label, "GENE") )
+
+    
+    return refined_gene_bndry_bins
 
 def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
     cumsum_cvg_array = \
@@ -389,6 +435,155 @@ def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
                                 "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK") )
     return cage_peaks
 
+def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
+    internal_exons = []
+    ee_indices = []
+    start_bin_cvg = start_bin.mean_cov( rnaseq_cov )
+    for i in xrange( start_index-1, 0, -1 ):
+        bin = gene_bins[i]
+
+        # break at canonical exons
+        if bin.left_label == 'R_JN' and bin.right_label == 'D_JN':
+            break
+        
+        # if we've reached a canonical intron, break
+        if bin.left_label == 'D_JN' and bin.right_label == 'R_JN':
+            break
+        
+        # make sure the average coverage is high enough
+        bin_cvg = rnaseq_cov[bin.start:bin.stop].mean()
+        if start_bin_cvg/(bin_cvg+1) >EXON_EXT_CVG_RATIO_THRESH:
+            break
+
+        # update the bin coverage. In cases where the coverage increases from
+        # the canonical exon, we know that the increase is due to inhomogeneity
+        # so we take the conservative choice
+        start_bin_cvg = max( start_bin_cvg, bin_cvg )
+        
+        ee_indices.append( i )
+        internal_exons.append( Bin( bin.start, bin.stop, 
+                                    bin.left_label, bin.right_label, 
+                                    "EXON_EXT"  ) )
+    
+    return internal_exons
+
+def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
+    exons = []
+    ee_indices = []
+    start_bin_cvg = start_bin.mean_cov( rnaseq_cov )
+    for i in xrange( start_index+1, len(gene_bins) ):
+        bin = gene_bins[i]
+
+        # if we've reached a canonical exon, break
+        if bin.left_label == 'R_JN' and bin.right_label == 'D_JN':
+            break
+                         
+        # if we've reached a canonical intron, break
+        if bin.left_label == 'D_JN' and bin.right_label == 'R_JN':
+            break
+        
+        # make sure the average coverage is high enough
+        bin_cvg = rnaseq_cov[bin.start:bin.stop].mean()
+        if start_bin_cvg/(bin_cvg+1) >EXON_EXT_CVG_RATIO_THRESH:
+            break
+        
+        # update the bin coverage. In cases where the coverage increases from
+        # the canonical exon, we know that the increase is due to inhomogeneity
+        # so we take the conservative choice
+        start_bin_cvg = max( start_bin_cvg, bin_cvg )
+
+        ee_indices.append( i )
+                
+        exons.append( Bin( bin.start, bin.stop, 
+                                    bin.left_label, bin.right_label, 
+                                    "EXON_EXT"  ) )
+    
+    return exons
+
+def find_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks ):
+    exons = []
+    
+    
+    # find tss exons
+        # overlaps a cage peak, then 
+    # find exon starts pseudo exons ( spliced_to, ... )
+    canonical_exon_starts = [ i for i, bin in enumerate( gene_bins )
+                              if bin.left_label == 'R_JN' 
+                              and bin.right_label == 'D_JN' ]
+    for ce_i in canonical_exon_starts:
+        canonical_bin = gene_bins[ce_i]
+        
+        exons.append( Bin( canonical_bin.start, canonical_bin.stop,
+                                    canonical_bin.left_label, 
+                                    canonical_bin.right_label, 
+                                    "EXON"  ) )
+        
+        exons.extend( find_left_exon_extensions(
+                ce_i, canonical_bin, gene_bins, rnaseq_cov))
+        
+        exons.extend( find_right_exon_extensions(
+                ce_i, canonical_bin, gene_bins, rnaseq_cov))
+    
+    canonical_introns = [ i for i, bin in enumerate( gene_bins )
+                          if bin.left_label == 'D_JN' 
+                          and bin.right_label == 'R_JN' ]
+
+    for ci_i in reversed(canonical_introns):
+        # an intron should never be the first or last bin
+        try:
+            assert ci_i > 0 and ci_i < len( gene_bins )-1
+        except:
+            print gene_bins
+            continue
+            raise
+
+        bin = gene_bins[ci_i]
+        bin_score = gene_bins[ci_i].mean_cov(rnaseq_cov)
+        l_score = gene_bins[ci_i-1].mean_cov(rnaseq_cov)
+        r_score = gene_bins[ci_i+1].mean_cov(rnaseq_cov)
+        if r_score/(bin_score+1) < RETAINED_INTRON_CVG_RATIO \
+                and l_score/(bin_score+1) < RETAINED_INTRON_CVG_RATIO:
+            # print l_score, bin_score, r_score, bin_score/r_score, bin_score/l_score
+            exons.append( Bin( bin.start, bin.stop, 
+                                        bin.left_label, bin.right_label, 
+                                        "RETAINED_INTRON"  ) )
+    
+    cage_peak_bin_indices = []
+    for peak in cage_peaks:
+        # find the first donor junction right of the cage peaks
+        for bin_i, bin in enumerate(gene_bins):
+            if bin.stop < peak.stop: continue
+            if bin.right_label in ('D_JN', 'POLYA') : break
+        
+        cage_peak_bin_indices.append( bin_i )
+        exons.append( Bin( peak.start, bin.stop,
+                                    "CAGE_PEAK", 
+                                    bin.right_label, 
+                                    "TSS_EXON"  ) )
+        
+    for cage_peak_i in cage_peak_bin_indices:
+        bin = gene_bins[cage_peak_i]
+        exons.extend( find_right_exon_extensions(
+                cage_peak_i, bin, gene_bins, rnaseq_cov))
+    
+    # find tes exons
+    tes_exons = [ i for i, bin in enumerate( gene_bins )
+                    if bin.right_label == 'POLYA' 
+                    and bin.start < gene.stop ]
+
+    for tes_exon_i in tes_exons:
+        bin = gene_bins[tes_exon_i]
+        
+        exons.append( Bin( bin.start, bin.stop,
+                                    bin.left_label, 
+                                    bin.right_label, 
+                                    "TES_EXON"  ) )
+        
+        exons.extend( find_left_exon_extensions(
+                tes_exon_i, bin, gene_bins, rnaseq_cov))
+
+    return exons
+
 
 def find_bins_in_contig( ( chrm, strand ), rnaseq_cov, jns, cage_cov, polya_sites ):
     if strand == '-':
@@ -418,24 +613,49 @@ def find_bins_in_contig( ( chrm, strand ), rnaseq_cov, jns, cage_cov, polya_site
     gene_bndry_bins = find_gene_boundaries( 
         (chrm, strand), bins, cage_cov, rnaseq_cov, jns )
     
-    # find cage peaks
-    refined_gene_bndry_bins = Bins( chrm, strand, [] )
-    cage_peaks = Bins( chrm, strand )
-    for gene_bin in gene_bndry_bins:
-        gene_cage_peaks = find_cage_peaks_in_gene( 
-                (chrm, strand), gene_bin, cage_cov, rnaseq_cov )
-        cage_peaks.extend( gene_cage_peaks )
-        if len( gene_cage_peaks ) > 0:
-            start, stop = gene_bin.start, gene_bin.stop
-            start = gene_cage_peaks[0].start
-            refined_gene_bndry_bins.append( 
-                Bin( start, stop, 
-                     gene_bin.left_label, gene_bin.right_label, "GENE") )
-    
-    cage_peaks.writeBedgraph( cagePeaksFps[strand], len(rnaseq_cov) )
-    refined_gene_bndry_bins.writeBedgraph( 
+    gene_bndry_bins.writeBedgraph( 
         geneBoundariesFps[strand], len(rnaseq_cov) )
     
+    # find exons inside of a gene
+    all_gene_bins = []
+    all_cage_peaks = []
+    for gene in gene_bndry_bins:
+        # find the cage peaks in this gene
+        gene_cage_peaks = find_cage_peaks_in_gene( 
+            (chrm, strand), gene, cage_cov, rnaseq_cov )
+        all_cage_peaks.append( gene_cage_peaks )
+        
+        gene_bins = []
+        # find the bins inside of this gene
+        for bin in bins:
+            if bin.start > gene.stop:
+                break
+            
+            if bin.stop > gene.start:
+                if bin.start >= gene.start:
+                    gene_bins.append( bin )
+                else:
+                    gene_bins.append( 
+                        Bin(gene.start, bin.stop, "TSS", bin.right_label) )
+        
+        all_gene_bins.append( gene_bins )
+    
+    cage_peaks = Bins( chrm, strand, zip(*all_cage_peaks) )
+    cage_peaks.writeBedgraph( cagePeaksFps[strand], len(rnaseq_cov) )
+    
+    # find all exons
+    exons = Bins( chrm, strand, [] )
+    for gene, gene_bins, cage_peaks in izip(
+            gene_bndry_bins, all_gene_bins, all_cage_peaks ):
+        gene_exons = find_exons_in_gene( 
+            gene, gene_bins, rnaseq_cov, cage_peaks )
+        exons.extend( gene_exons )
+        print gene
+        for exon in gene_exons:
+            print exon
+        
+    exons.writeBedgraph( internalExonsFps[strand], len(rnaseq_cov) )
+        
     return
 
 
@@ -481,22 +701,28 @@ def parse_arguments():
     ofps = OrderedDict( zip( ofps_prefixes, fps ) )
     
     # prepare the intermediate output objects
-    global binsFps, geneBoundariesFps, cagePeaksFps
+    global binsFps, geneBoundariesFps, cagePeaksFps, internalExonsFps
     binsFps = { "+": ThreadSafeFile( 
-            args.out_file_prefix + "bins.plus.gff", "w", "bins_plus" ),
+            args.out_file_prefix + ".bins.plus.gff", "w", "bins_plus" ),
                 "-": ThreadSafeFile( 
-            args.out_file_prefix + "bins.minus.gff", "w", "bins_minus" ) }
+            args.out_file_prefix + ".bins.minus.gff", "w", "bins_minus" ) }
     geneBoundariesFps = { 
         "+": ThreadSafeFile( 
-            args.out_file_prefix + "gene_boundaries.plus.gff", "w", "gene_bndrys_plus" ),
+            args.out_file_prefix + ".gene_boundaries.plus.gff", "w", "gene_bndrys_plus" ),
         "-": ThreadSafeFile( 
-            args.out_file_prefix + "gene_boundaries.minus.gff", "w", "gene_bndrys_minus" ) 
+            args.out_file_prefix + ".gene_boundaries.minus.gff", "w", "gene_bndrys_minus" ) 
     }
     cagePeaksFps = { 
         "+": ThreadSafeFile( 
-            args.out_file_prefix + "cage_peaks.plus.gff", "w", "cage_peaks_plus" ),
+            args.out_file_prefix + ".cage_peaks.plus.gff", "w", "cage_peaks_plus" ),
         "-": ThreadSafeFile(
-            args.out_file_prefix + "cage_peaks.minus.gff", "w", "cage_peaks_minus" ) 
+            args.out_file_prefix + ".cage_peaks.minus.gff", "w", "cage_peaks_minus" ) 
+    }
+    internalExonsFps = { 
+        "+": ThreadSafeFile( 
+            args.out_file_prefix + ".internal_exons.plus.gff", "w", "internal_exons_plus" ),
+        "-": ThreadSafeFile(
+            args.out_file_prefix + ".internal_exons.minus.gff", "w", "internal_exons_minus" ) 
     }
 
 
@@ -516,9 +742,11 @@ def parse_arguments():
     rnaseq_grpd_wigs = [ rd1_plus_wigs, rd1_minus_wigs, rd2_plus_wigs, rd2_minus_wigs ]
     
     cage_plus_wigs = [ fp for fp in args.cage_wigs 
-                      if fp.name.endswith("+.bedGraph") ]
+                      if fp.name.lower().endswith("+.bedgraph")
+                       or fp.name.lower().endswith("plus.bedgraph")]
     cage_minus_wigs = [ fp for fp in args.cage_wigs 
-                      if fp.name.endswith("-.bedGraph") ]
+                      if fp.name.lower().endswith("-.bedgraph")
+                        or fp.name.lower().endswith("minus.bedgraph") ]
     cage_grpd_wigs = [ cage_plus_wigs, cage_minus_wigs ]
     
     return rnaseq_grpd_wigs, args.junctions, args.chrm_sizes_fname, \
