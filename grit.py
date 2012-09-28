@@ -62,7 +62,7 @@ BUILD_READ_CVG_CMD = os.path.join( os.path.dirname( __file__ ),
                              "./elements/", "build_read_coverage_bedgraph.py" )
 
 FIND_EXONS_CMD = os.path.join( os.path.dirname( __file__ ), 
-                                "./elements/exons/", "discover_exons.py" )
+                                "./elements/", "find_exons.py" )
 
 MERGE_EXONS_CMD = os.path.join( os.path.dirname( __file__ ), 
                                 "./elements/exons/", "merge_exons.py" )
