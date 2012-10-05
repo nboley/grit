@@ -12,7 +12,7 @@ from pygraph.algorithms.accessibility import connected_components
 sys.path.append(os.path.join(os.path.dirname(__file__), "../", 'file_types'))
 from wiggle import Wiggle, load_wiggle_asynchronously, guess_strand_from_fname
 from junctions_file import parse_jn_gff, Junctions
-from gtf_file import parse_gff_line, iter_gff_lines, GenomicInterval
+from gtf_file import parse_gff_line, create_gff_line, GenomicInterval
 
 
 EXON_EXT_CVG_RATIO_THRESH = 4
@@ -135,6 +135,26 @@ class Bins( list ):
                 ofp.write( op )
         
         return
+
+    def writeGff( self, ofp, contig_len, filter=None ):
+        """
+            chr7    127471196  127472363  Pos1  0  +  127471196  127472363  255,0,0
+        """
+        if self.strand == '-':
+            writetable_bins = self.reverse_strand( contig_len )
+        else:
+            writetable_bins = self
+        
+        for bin in writetable_bins:
+            if filter != None and bin.type != filter:
+                continue
+            region = GenomicInterval(self.chrm, self.strand, 
+                                     bin.start, bin.stop)
+            grp_id = "%s_%s_%i_%i" % region
+            ofp.write( create_gff_line(region, grp_id) + "\n" )
+        
+        return
+
 
 class Bin( object ):
     def __init__( self, start, stop, left_label, right_label, bin_type=None ):
@@ -751,7 +771,8 @@ def find_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
         tss_exons, internal_exons, tes_exons
 
 
-def find_exons_in_contig( ( chrm, strand ), rnaseq_cov, jns, cage_cov, polya_sites ):
+def find_exons_in_contig( ( chrm, strand ), 
+                          rnaseq_cov, jns, cage_cov, polya_sites ):
     if strand == '-':
         rnaseq_cov, jns, cage_cov, polya_sites = reverse_contig_data( 
             rnaseq_cov, jns, cage_cov, polya_sites )
@@ -771,7 +792,8 @@ def find_exons_in_contig( ( chrm, strand ), rnaseq_cov, jns, cage_cov, polya_sit
             enumerate(izip(poss[:-1], poss[1:])):
         bins.append( Bin(start, stop, left_label, right_label) )
     
-    bins.append( Bin( poss[-1][0], len(rnaseq_cov)-1, poss[-1][1], "CONTIG_BNDRY" ) )
+    bins.append( Bin( poss[-1][0], len(rnaseq_cov)-1, 
+                      poss[-1][1], "CONTIG_BNDRY" ) )
     bins.writeBed( binsFps[strand], len(rnaseq_cov) )
     
     # find gene regions
@@ -828,7 +850,7 @@ def find_exons_in_contig( ( chrm, strand ), rnaseq_cov, jns, cage_cov, polya_sit
     all_exons = Bins(chrm, strand, chain(tss_exons, internal_exons, tes_exons))
     all_exons.writeBed( allExonsFps[strand], len(rnaseq_cov) )
     ps_exons.writeBed( psExonsFps[strand], len(rnaseq_cov) )
-        
+    
     return all_exons
 
 
@@ -948,7 +970,9 @@ def main():
     if VERBOSE: print >> sys.stderr,  'Loading CAGE.'
     assert all( len(fps) == 1 for fps in cage_wigs )
     cage_cov, new_ps = load_wiggle_asynchronously( 
-        chrm_sizes_fp.name, [fps[0].name for fps in cage_wigs], ["+", "-"], worker_pool)
+        chrm_sizes_fp.name, [fps[0].name for fps in cage_wigs], 
+        ["+", "-"], worker_pool)
+    
     ps.extend( new_ps )
             
     if VERBOSE: print >> sys.stderr,  'Loading candidate polyA sites'
@@ -961,10 +985,10 @@ def main():
     
     for p in ps:
         if VERBOSE:
-            print "Joining process: ", p
+            print >> sys.stderr, "Joining process: ", p
         p.join()
         if VERBOSE:
-            print "Joined process: ", p
+            print >> sys.stderr, "Joined process: ", p
     
     assert all( x.min() >= 0 and x.max() >= 0 for x in cage_cov.values() )
     assert all( x.min() >= 0 and x.max() >= 0 for x in read_cov.values() )
@@ -989,32 +1013,28 @@ def main():
     
     output_exons = dict( (x,[]) for x in ofps_prefixes )
     
+    out_fps["internal_exons"].write("track name=\"internal_exons\"\n")
+    out_fps["tss_exons"].write("track name=\"tss_exons\"\n")
+    out_fps["tes_exons"].write("track name=\"tes_exons\"\n")
+    
     keys = sorted( set( jns ) )
     for chrm, strand in keys:        
         if VERBOSE: print >> sys.stderr, \
                 'Processing chromosome %s strand %s.' % ( chrm, strand )
         
-        new_exons = find_exons_in_contig( \
+        contig_len = len( read_cov[ (chrm, strand) ] )
+        
+        all_exons = find_exons_in_contig( \
            ( chrm, strand ),
            read_cov[ (chrm, strand) ],
            jns[ (chrm, strand) ],
            cage_cov[ (chrm, strand) ], 
            polya_sites[ (chrm, strand) ] )
         
-        output_exons['tss_exons'].extend( 
-            GenomicInterval( chrm, strand, bin.start, bin.stop)
-            for bin in new_exons if bin.type == 'TSS_EXON' )
-        output_exons['tes_exons'].extend( 
-            GenomicInterval( chrm, strand, bin.start, bin.stop)
-            for bin in new_exons if bin.type == 'TES_EXON' )
-        output_exons['internal_exons'].extend( 
-            GenomicInterval( chrm, strand, bin.start, bin.stop)
-            for bin in new_exons if bin.type == 'EXON' )
-    
-    for ofp_prefix, ofp in out_fps.iteritems():
-        ofp.write( "\n".join(iter_gff_lines( 
-                    sorted(output_exons[ofp_prefix]) )) + "\n")
-    
+        all_exons.writeGff(out_fps["internal_exons"], contig_len, filter='EXON')
+        all_exons.writeGff(out_fps["tss_exons"], contig_len, filter='TSS_EXON' )
+        all_exons.writeGff(out_fps["tes_exons"], contig_len, filter='TES_EXON' )
+
     for fps_dict in (binsFps, geneBoundariesFps, cagePeaksFps, \
                      allExonsFps, psExonsFps):
         for fp in fps_dict.values():

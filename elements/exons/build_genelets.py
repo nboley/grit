@@ -12,7 +12,7 @@ from operator import itemgetter
 # import slide modules
 sys.path.append( os.path.join(os.path.dirname(__file__), "../../file_types") )
 from exons_file import parse_exons_file
-from junctions_file import parse_junctions_file
+from junctions_file import parse_jn_gff
 sys.path.append( os.path.join(os.path.dirname(__file__), "../") )
 from extract_elements_from_transcripts import get_elements_from_gene, load_gtf
 
@@ -221,7 +221,7 @@ def main():
         exons = parse_exons_file( exons_fp )
         exons_fp.close()
         
-        jns = parse_junctions_file( jns_fp )
+        jns = parse_jn_gff( jns_fp )
         jns_fp.close()
     
     if VERBOSE:

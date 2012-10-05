@@ -159,7 +159,7 @@ def parse_jn_gffs( gff_fnames, num_threads=1 ):
         for fname in gff_fnames:
             if VERBOSE:
                 print >> sys.stderr, "Parsing '%s'" % fname
-            jns.append( parse_jn_gff( fname ) )
+            jns.extend( parse_jn_gff( fname ) )
         return jns                
     else:
         from multiprocessing import Process, Queue, Lock, Manager

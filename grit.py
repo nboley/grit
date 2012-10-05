@@ -1392,6 +1392,7 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         
         max_res = min(Resource(8), Resource(pserver.max_available_resources))
         pserver.add_process( cmd, Resource(1), max_res )
+        print cmd
         return
 
     ress = elements.get_elements_from_db( exon_input_type )
