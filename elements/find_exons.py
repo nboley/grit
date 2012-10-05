@@ -168,7 +168,7 @@ class Bin( object ):
         return cov_array[self.start:self.stop].mean()
     
     def reverse_strand(self, contig_len):
-        return Bin(contig_len-self.stop, contig_len-self.start, 
+        return Bin(contig_len-self.stop-1, contig_len-self.start-1, 
                    self.right_label, self.left_label, self.type)
     
     def __repr__( self ):
