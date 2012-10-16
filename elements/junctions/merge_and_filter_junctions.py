@@ -18,11 +18,13 @@ THRESHHOLD_BY_UNIQ = False
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../", "file_types"))
 import junctions_file
-from junctions_file import parse_jn_gffs, Junction, GenomicInterval, get_jn_type
+from junctions_file import parse_jn_gff, Junction, GenomicInterval, get_jn_type
 
 
 def merge_jns( gff_fnames, num_threads=1 ):
-    all_jns = parse_jn_gffs( gff_fnames, min( num_threads, len( gff_fnames ) ) )
+    all_jns = []
+    for gff_fname in gff_fnames:
+        all_jns.append( parse_jn_gff( gff_fname ) )
     
     grpd_jns = defaultdict( lambda: defaultdict( list ) )
     for sample_id, jns in enumerate(all_jns):
