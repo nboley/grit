@@ -16,6 +16,7 @@ from junctions_file import parse_jn_gff, Junctions
 from gtf_file import parse_gff_line, create_gff_line, GenomicInterval
 
 from bisect import bisect
+from copy import copy
 
 EXON_EXT_CVG_RATIO_THRESH = 4
 RETAINED_INTRON_CVG_RATIO = 4
@@ -223,6 +224,8 @@ class Bin( object ):
                 return '255,0,0'
             if self.type =='TSS_EXON':
                 return '0,255,0'
+            if self.type =='SE_GENE':
+                return '255,255,0'
 
         if strand == '+':
             left_label, right_label = self.left_label, self.right_label
@@ -768,7 +771,7 @@ def find_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
         print "============================================= NO EXONS IN REGION"
         print gene
         return list(chain(tss_pseudo_exons, pseudo_exons, tes_pseudo_exons)), \
-            [], [], []
+            [], [], [], []
 
 
     internal_exons = []
@@ -799,6 +802,13 @@ def find_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
             
             tss_exons.extend( find_tss_exons_from_pseudo_exons( 
                     tss_exon, pe_grp ) )
+
+    single_exon_genes = set()
+    for exon in tss_exons:
+        if exon.right_label == 'POLYA':
+            se_gene = copy(exon)
+            se_gene.type = 'SE_GENE'
+            single_exon_genes.add( se_gene )
     
     tes_exons = []
     for tes_exon in tes_pseudo_exons:
@@ -837,8 +847,8 @@ def find_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
                          tes_exon.right_label, "TES_EXON" )
                     )
         
-    return chain(tss_pseudo_exons, pseudo_exons, tes_pseudo_exons), \
-        tss_exons, internal_exons, tes_exons
+    return chain(tss_pseudo_exons, pseudo_exons, tes_pseudo_exons, single_exon_genes), \
+        tss_exons, internal_exons, tes_exons, single_exon_genes
 
 
 def find_empty_regions( cov, thresh=1 ):
@@ -1002,19 +1012,21 @@ def find_exons_in_contig( ( chrm, strand ),
     tss_exons = Bins( chrm, strand, [] )
     internal_exons = Bins( chrm, strand, [] )
     tes_exons = Bins( chrm, strand, [] )
+    se_genes = Bins( chrm, strand, [] )
     
     for gene, gene_bins, cage_peaks in izip(
             gene_bndry_bins, all_gene_bins, all_cage_peaks ):
         
-        gene_ps_exons, gene_tss_exons, gene_internal_exons, gene_tes_exons = \
+        gene_ps_exons, gene_tss_exons, gene_internal_exons, gene_tes_exons, gene_se_genes = \
             find_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns )
         
         ps_exons.extend( gene_ps_exons )
         internal_exons.extend( gene_internal_exons )
         tss_exons.extend( gene_tss_exons )
         tes_exons.extend( filter_tes_exons(gene_tes_exons, rnaseq_cov) )
+        se_genes.extend( gene_se_genes )
     
-    all_exons = Bins(chrm, strand, chain(tss_exons, internal_exons, tes_exons))
+    all_exons = Bins(chrm, strand, chain(tss_exons, internal_exons, tes_exons, se_genes))
     all_exons.writeBed( allExonsFps[strand], len(rnaseq_cov) )
     ps_exons.writeBed( psExonsFps[strand], len(rnaseq_cov) )
     
@@ -1201,6 +1213,7 @@ def main():
         all_exons.writeGff(out_fps["internal_exons"], contig_len, filter='EXON')
         all_exons.writeGff(out_fps["tss_exons"], contig_len, filter='TSS_EXON' )
         all_exons.writeGff(out_fps["tes_exons"], contig_len, filter='TES_EXON' )
+        all_exons.writeGff(out_fps["single_exon_genes"], contig_len, filter='SE_GENE' )
 
     for fps_dict in (binsFps, geneBoundariesFps, cagePeaksFps, \
                      allExonsFps, psExonsFps):

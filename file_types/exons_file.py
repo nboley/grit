@@ -16,7 +16,7 @@ def _load_regions( exons_fp ):
     return all_exons
 
 def _convert_into_sorted_numpy_array( all_exons ):
-    sorted_exons = {}
+    sorted_exons = defaultdict( lambda: numpy.array((), dtype=int) )
     for key, exons in all_exons.iteritems():
         sorted_exons[key] = numpy.array( sorted( exons ) )
     
