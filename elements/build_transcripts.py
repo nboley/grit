@@ -1,6 +1,6 @@
 # Copyright (c) 2011-2012 Nathan Boley
 
-MAX_NUM_TRANSCRIPTS = 50000
+MAX_NUM_TRANSCRIPTS = 20
 MIN_INTRON_CNT_FRAC = 0.001
 VERBOSE = False
 MIN_VERBOSE = False
@@ -112,10 +112,10 @@ def build_transcripts( exons, jns, strand ):
     for tss in exons.TSS:
         for tes in exons.TES:
             for i,transcript in enumerate(nx.all_simple_paths(graph, tss, tes)):
-                if i > 200: 
+                if i > MAX_NUM_TRANSCRIPTS: 
                     print >> sys.stderr, "TOO COMPLEX"
                     print >> sys.stderr, exons
-                    return [] #transcripts
+                    return transcripts # []
                 transcripts.append( transcript )
     
     return transcripts

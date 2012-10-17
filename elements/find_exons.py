@@ -15,6 +15,7 @@ from wiggle import Wiggle, load_wiggle_asynchronously, guess_strand_from_fname
 from junctions_file import parse_jn_gff, Junctions
 from gtf_file import parse_gff_line, create_gff_line, GenomicInterval
 
+from bisect import bisect
 
 EXON_EXT_CVG_RATIO_THRESH = 4
 RETAINED_INTRON_CVG_RATIO = 4
@@ -59,6 +60,10 @@ class GroupIdCntr( object ):
         self._lock.release()
         return rv
 
+def multi_delete( l, is_to_remove ):
+    for i in sorted( is_to_remove, reverse=True ):
+        l.pop( i )
+    return
 
 def build_empty_array():
     return numpy.array(())
@@ -121,7 +126,7 @@ class Bins( list ):
             colors = bin._find_colors( self.strand )
             if isinstance( colors, str ):
                 op = self._bed_template.format(
-                    start=bin.start,stop=bin.stop-1,color=colors, 
+                    start=bin.start-1,stop=bin.stop,color=colors, 
                     name="%s_%s"%(bin.left_label, bin.right_label) )
                 ofp.write( op )
             else:
@@ -507,7 +512,8 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
         
         # make sure the average coverage is high enough
         bin_cvg = rnaseq_cov[bin.start:bin.stop].mean()
-        if start_bin_cvg/(bin_cvg+1) >EXON_EXT_CVG_RATIO_THRESH:
+        if bin.stop - bin.start > 20 and \
+                start_bin_cvg/(bin_cvg+1) >EXON_EXT_CVG_RATIO_THRESH:
             break
 
         # update the bin coverage. In cases where the coverage increases from
@@ -539,7 +545,8 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
         
         # make sure the average coverage is high enough
         bin_cvg = rnaseq_cov[bin.start:bin.stop].mean()
-        if start_bin_cvg/(bin_cvg+1) >EXON_EXT_CVG_RATIO_THRESH:
+        if bin.stop - bin.start > 20 and \
+                start_bin_cvg/(bin_cvg+1) >EXON_EXT_CVG_RATIO_THRESH:
             break
         
         # update the bin coverage. In cases where the coverage increases from
@@ -678,7 +685,7 @@ def find_pseudo_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
         
         pseudo_exons.append( tes_exons[-1] )
         pseudo_exons.extend( find_left_exon_extensions(
-                tes_exon_i, bin, gene_bins, rnaseq_cov))
+                tes_exon_i, bin, gene_bins, rnaseq_cov ))
 
     # build exons from the pseudo exon set
     pseudo_exons = list( set( pseudo_exons ) )
@@ -689,6 +696,54 @@ def find_pseudo_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
 def find_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
     tss_pseudo_exons, pseudo_exons, tes_pseudo_exons=find_pseudo_exons_in_gene(
         gene, gene_bins, rnaseq_cov, cage_peaks, jns )
+    
+    """
+    # make labels
+    ls = []
+    bs = []
+    for bin in gene_bins:
+        ls.append( bin.left_label )
+        bs.append( bin.start )
+    
+    for cage_peak in cage_peaks:
+        peak_pos = cage_peak.start
+        insert_pos = bisect( bs, peak_pos )
+        # account for equality
+        while bs[insert_pos-1] == peak_pos:
+            peak_pos += 1
+            insert_pos = bisect( bs, peak_pos )
+        
+        bs.insert( insert_pos, cage_peak.start )
+        ls.insert( insert_pos, 'TSS' )
+
+    print ls
+    print bs
+    
+    # remove anything covered by empty regions
+    indices_to_remove = set()
+
+    # remove anything before the first ESTOP
+    try:
+        first_estop = ls.index( 'ESTOP' )
+        if 'ESTART' not in ls or ls.index( 'ESTART' ) > first_estop:
+            indices_to_remove.update( range( first_estop+1 ) )
+    except ValueError:
+        pass
+
+    empty_starts = [i for i, l in enumerate(ls) if l == 'ESTART' ]
+    for start in empty_starts:
+        for i in xrange( start+1, len(ls) ):
+            if ls[i] == 'ESTOP': break
+            indices_to_remove.add( i )
+    
+    multi_delete( ls, indices_to_remove )
+    multi_delete( bs, indices_to_remove )
+    
+    # remove anything after the last ESTART
+    if ls[-1] == 'ESTART':
+        ls.pop()
+        bs.pop()
+    """
     
     # find the contiguous set of adjoining exons
     slices = [[0,],]
@@ -728,12 +783,13 @@ def find_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
         elif tss_exon.right_label == 'POLYA':
             tss_exons.append( tss_exon )
         else:
-            try:
-                assert tss_exon.stop >= gpd_pseudo_exons[0][0].start
-            except:
-                print tss_exon
-                print gpd_pseudo_exons[0][0]
-                raise
+            pass
+            #try:
+            #    assert tss_exon.stop >= gpd_pseudo_exons[0][0].start
+            #except:
+            #    print tss_exon
+            #    print gpd_pseudo_exons[0][0]
+            #    raise
         
         for pe_grp in gpd_pseudo_exons:
             if pe_grp[0].start > tss_exon.stop:  
@@ -743,7 +799,7 @@ def find_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
             
             tss_exons.extend( find_tss_exons_from_pseudo_exons( 
                     tss_exon, pe_grp ) )
-            
+    
     tes_exons = []
     for tes_exon in tes_pseudo_exons:
         if tes_exon.left_label == 'R_JN':
@@ -769,15 +825,18 @@ def find_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
             # find the psuedo exon that shares a boundary
             last_pe_i = max( i for i, pe in enumerate( pe_grp ) 
                              if pe.stop == tes_exon.start )
-            for pe in pe_grp[:last_pe_i]:
-                if pe.left_label != 'R_JN':
-                    continue
+
+            for pe in pe_grp[:last_pe_i+1]:
+                # we had this earlier, buyt I think we want tes exons to
+                # extend into real exons ( although this gives us fragments )
+                #if pe.left_label != 'R_JN':
+                #    continue
 
                 tes_exons.append( 
                     Bin( pe.start, tes_exon.stop, pe.left_label, 
                          tes_exon.right_label, "TES_EXON" )
                     )
-    
+        
     return chain(tss_pseudo_exons, pseudo_exons, tes_pseudo_exons), \
         tss_exons, internal_exons, tes_exons
 
@@ -862,7 +921,7 @@ def filter_tes_exons(tes_exons,rnaseq_cov,global_thresh=0.1,ratio_thresh=0.01):
             if score[1]/mx_lower < ratio_thresh: continue
         else:
             pass # note that this could mean there are no good 3UTRs at this locus
-        if score[2]/mx_upper < ratio_thresh: 
+        if score[2]/(mx_upper+1e-6) < ratio_thresh: 
             continue
         
         yield tes_exon
@@ -946,10 +1005,10 @@ def find_exons_in_contig( ( chrm, strand ),
     
     for gene, gene_bins, cage_peaks in izip(
             gene_bndry_bins, all_gene_bins, all_cage_peaks ):
+        
         gene_ps_exons, gene_tss_exons, gene_internal_exons, gene_tes_exons = \
             find_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns )
         
-        tes_exons,rnaseq_cov
         ps_exons.extend( gene_ps_exons )
         internal_exons.extend( gene_internal_exons )
         tss_exons.extend( gene_tss_exons )
