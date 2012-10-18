@@ -851,7 +851,7 @@ def find_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
         tss_exons, internal_exons, tes_exons, single_exon_genes
 
 
-def find_empty_regions( cov, thresh=1 ):
+def find_empty_regions( cov, thresh=0.01 ):
     x = numpy.diff( numpy.asarray( cov >= thresh, dtype=int ) )
     return zip(numpy.nonzero(x==1)[0],numpy.nonzero(x==-1)[0])
 
@@ -953,7 +953,9 @@ def find_exons_in_contig( ( chrm, strand ),
         locs[stop+1] = "R_JN"
 
     for start, stop in find_empty_regions( rnaseq_cov ):
-        if stop - start < 100: continue
+        if stop - start < 400: continue
+        if start in locs or stop in locs:
+            continue
         locs[start] = "ESTART"
         locs[stop] = "ESTOP"
     
