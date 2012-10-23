@@ -19,7 +19,7 @@ from bisect import bisect
 from copy import copy
 
 EXON_EXT_CVG_RATIO_THRESH = 4
-RETAINED_INTRON_CVG_RATIO = 4
+MIN_EXON_BPKM = 10
 
 ofps_prefixes = [ "single_exon_genes", 
                   "tss_exons", "internal_exons", "tes_exons" ]
@@ -167,6 +167,7 @@ class Bin( object ):
     def __init__( self, start, stop, left_label, right_label, bin_type=None ):
         self.start = start
         self.stop = stop
+        assert stop - start > 0
         self.left_label = left_label
         self.right_label = right_label
         self.type = bin_type
@@ -280,7 +281,37 @@ def check_for_se_gene( start, stop, cage_cov, rnaseq_cov ):
  
     return False
 
-def find_gene_boundaries( (chrm, strand), bins, cage_cov, rnaseq_cov, jns ):
+def find_gene_boundaries( (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns):
+    locs = {}
+    for polya in polya_sites:
+        locs[ polya ] = "POLYA"
+    
+    for start, stop in jns:
+        locs[start-1] = "D_JN"
+        locs[stop+1] = "R_JN"
+    
+    for start, stop in find_empty_regions( rnaseq_cov ):
+        if stop - start < 400: continue
+        if start in locs or stop in locs:
+            continue
+        locs[start] = "ESTART"
+        locs[stop] = "ESTOP"
+    
+    # merge together empty bins
+    # build all of the bins
+    poss = sorted( locs.iteritems() )
+    poss = merge_empty_labels( poss )
+        
+    bins = Bins( chrm, strand, [ Bin(1, poss[0][0], "CONTIG_BNDRY", poss[0][1]), ])
+    for index, ((start, left_label), (stop, right_label)) in \
+            enumerate(izip(poss[:-1], poss[1:])):
+        bins.append( Bin(start, stop, left_label, right_label) )
+    
+    bins.append( Bin( poss[-1][0], len(rnaseq_cov)-1, 
+                      poss[-1][1], "CONTIG_BNDRY" ) )
+    
+    bins.writeBed( binsFps[strand], len(rnaseq_cov) )
+    
     # find regions that end with a polya, and look like genic regions
     # ( ie, they are a double polya that looks like a single exon gene, or
     # they start after a polya leading into a donor exon
@@ -384,6 +415,19 @@ def find_gene_boundaries( (chrm, strand), bins, cage_cov, rnaseq_cov, jns ):
                      
     return refined_gene_bndry_bins
 
+def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
+     raw_peaks = find_peaks( cage_cov[gene.start:gene.stop+1], 
+                             window_len=20, min_score=20, 
+                             max_score_frac=0.05, max_num_peaks=20 )
+     if len( raw_peaks ) == 0:
+         return []
+     
+     cage_peaks = Bins( chrm, strand )
+     for peak_st, peak_sp in raw_peaks:
+         cage_peaks.append( Bin( peak_st+gene.start, peak_sp+gene.start+1,
+                                 "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK") )
+     return cage_peaks
+
 def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
     cumsum_cvg_array = \
         numpy.append(0, numpy.cumsum( cov ))
@@ -483,21 +527,6 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
                  if score/max_score > max_score_frac ]
 
 
-def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
-    raw_peaks = find_peaks( cage_cov[gene.start:gene.stop+1], 
-                            window_len=20, min_score=20, 
-                            max_score_frac=0.10, max_num_peaks=20 )
-    if len( raw_peaks ) == 0:
-        #print >> sys.stderr, "WARNING: Can't find peak in region %s:%i-%i" % \
-        #    ( chrm, gene.start, gene.stop )
-        return []
-    
-    cage_peaks = Bins( chrm, strand )
-    for peak_st, peak_sp in raw_peaks:
-        cage_peaks.append( Bin( peak_st+gene.start, peak_sp+gene.start+1,
-                                "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK") )
-    return cage_peaks
-
 def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
     internal_exons = []
     ee_indices = []
@@ -509,12 +538,12 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
         if bin.left_label == 'R_JN' and bin.right_label == 'D_JN':
             break
         
-        # if we've reached a canonical intron, break
-        if bin.left_label == 'D_JN' and bin.right_label == 'R_JN':
-            break
-        
         # make sure the average coverage is high enough
         bin_cvg = rnaseq_cov[bin.start:bin.stop].mean()
+
+        if bin_cvg < MIN_EXON_BPKM:
+            break
+        
         if bin.stop - bin.start > 20 and \
                 start_bin_cvg/(bin_cvg+1) >EXON_EXT_CVG_RATIO_THRESH:
             break
@@ -541,13 +570,12 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
         # if we've reached a canonical exon, break
         if bin.left_label == 'R_JN' and bin.right_label == 'D_JN':
             break
-                         
-        # if we've reached a canonical intron, break
-        if bin.left_label == 'D_JN' and bin.right_label in ('R_JN', 'ESTART'):
-            break
         
         # make sure the average coverage is high enough
         bin_cvg = rnaseq_cov[bin.start:bin.stop].mean()
+        if bin_cvg < MIN_EXON_BPKM:
+            break
+        
         if bin.stop - bin.start > 20 and \
                 start_bin_cvg/(bin_cvg+1) >EXON_EXT_CVG_RATIO_THRESH:
             break
@@ -606,8 +634,64 @@ def find_tss_exons_from_pseudo_exons( tss_exon, pseudo_exons ):
     
     return tss_exons
 
-def find_pseudo_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
+def find_pseudo_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, polya_sites, jns ):
+    # filter the jns
+    max_jn_cnt = 0
+    donor_cnts = defaultdict( int )
+    receiver_cnts = defaultdict( int )
+    
+    for start, stop, cnt in jns:
+        if cnt == 0: continue
+        # if this is not in the gene, filter it 
+        if start < gene.start or stop > gene.stop:
+            continue
+        max_jn_cnt = max( max_jn_cnt, cnt )
+        donor_cnts[ start ] = max( cnt, donor_cnts[ start ] )
+        receiver_cnts[ stop ] = max( cnt, receiver_cnts[ stop ] )
+
+    jns =  [ (start, stop, cnt) for (start, stop, cnt) in jns \
+             if (start >= gene.start and stop <= gene.stop)
+             and cnt > 5
+             and float(cnt)/max_jn_cnt > 0.001
+             and float(cnt)/donor_cnts[start] > 0.05
+             and float(cnt)/receiver_cnts[stop] > 0.05 ]
+    
     pseudo_exons = []
+    polya_sites = [ polya for polya in polya_sites 
+                    if not (polya <= gene.start or polya > gene.stop) ]
+    cage_peaks = find_cage_peaks_in_gene( 
+        ( chrm, strand ), gene, cage_cov, rnaseq_cov )
+    
+    locs = {}
+    for polya in polya_sites:
+        locs[ polya ] = "POLYA"
+    
+    for start, stop, cnt in jns:
+        locs[start-1] = "D_JN"
+        locs[stop+1] = "R_JN"
+
+    for start, stop in find_empty_regions( rnaseq_cov[gene.start:gene.stop+1] ):
+        if stop - start < 400: continue
+        if start in locs or stop in locs:
+            continue
+        locs[start+gene.start] = "ESTART"
+        locs[stop+gene.start] = "ESTOP"
+    
+    # build all of the bins
+    poss = sorted( locs.iteritems() )
+    poss = merge_empty_labels( poss )
+    if len( poss ) == 0:
+        return [], [], []
+
+    gene_bins = []
+    if gene.start < poss[0][0]:
+         gene_bins.append( Bin(gene.start, poss[0][0], "TSS", poss[0][1]) )
+    for index, ((start, left_label), (stop, right_label)) in \
+            enumerate(izip(poss[:-1], poss[1:])):
+        gene_bins.append( Bin(start, stop, left_label, right_label) )
+
+    if gene.stop != poss[-1][0]:
+        gene_bins.append( Bin(poss[-1][0], gene.stop, poss[-1][1], "TES") )
     
     # find tss exons
         # overlaps a cage peak, then 
@@ -617,6 +701,8 @@ def find_pseudo_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
                               and bin.right_label == 'D_JN' ]
     for ce_i in canonical_exon_starts:
         canonical_bin = gene_bins[ce_i]
+        if canonical_bin.mean_cov(rnaseq_cov) < MIN_EXON_BPKM:
+            continue
         
         pseudo_exons.append( Bin( canonical_bin.start, canonical_bin.stop,
                                     canonical_bin.left_label, 
@@ -628,31 +714,7 @@ def find_pseudo_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
         
         pseudo_exons.extend( find_right_exon_extensions(
                 ce_i, canonical_bin, gene_bins, rnaseq_cov))
-    
-    canonical_introns = [ i for i, bin in enumerate( gene_bins )
-                          if bin.left_label == 'D_JN' 
-                          and bin.right_label == 'R_JN' ]
-
-    for ci_i in reversed(canonical_introns):
-        # an intron should never be the first or last bin
-        try:
-            assert ci_i > 0 and ci_i < len( gene_bins )-1
-        except:
-            print gene_bins
-            continue
-            raise
-
-        bin = gene_bins[ci_i]
-        bin_score = gene_bins[ci_i].mean_cov(rnaseq_cov)
-        l_score = gene_bins[ci_i-1].mean_cov(rnaseq_cov)
-        r_score = gene_bins[ci_i+1].mean_cov(rnaseq_cov)
-        if r_score/(bin_score+1) < RETAINED_INTRON_CVG_RATIO \
-                and l_score/(bin_score+1) < RETAINED_INTRON_CVG_RATIO:
-            # print l_score, bin_score, r_score, bin_score/r_score, bin_score/l_score
-            pseudo_exons.append( Bin( bin.start, bin.stop, 
-                                        bin.left_label, bin.right_label, 
-                                        "RETAINED_INTRON"  ) )
-    
+        
     cage_peak_bin_indices = []
     tss_exons = []
     for peak in cage_peaks:
@@ -693,60 +755,12 @@ def find_pseudo_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
     # build exons from the pseudo exon set
     pseudo_exons = list( set( pseudo_exons ) )
     pseudo_exons.sort( key=lambda x: (x.start, x.stop ) )
-
+    
     return tss_exons, pseudo_exons, tes_exons
 
-def find_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
+def find_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, polya_sites, jns ):
     tss_pseudo_exons, pseudo_exons, tes_pseudo_exons=find_pseudo_exons_in_gene(
-        gene, gene_bins, rnaseq_cov, cage_peaks, jns )
-    
-    """
-    # make labels
-    ls = []
-    bs = []
-    for bin in gene_bins:
-        ls.append( bin.left_label )
-        bs.append( bin.start )
-    
-    for cage_peak in cage_peaks:
-        peak_pos = cage_peak.start
-        insert_pos = bisect( bs, peak_pos )
-        # account for equality
-        while bs[insert_pos-1] == peak_pos:
-            peak_pos += 1
-            insert_pos = bisect( bs, peak_pos )
-        
-        bs.insert( insert_pos, cage_peak.start )
-        ls.insert( insert_pos, 'TSS' )
-
-    print ls
-    print bs
-    
-    # remove anything covered by empty regions
-    indices_to_remove = set()
-
-    # remove anything before the first ESTOP
-    try:
-        first_estop = ls.index( 'ESTOP' )
-        if 'ESTART' not in ls or ls.index( 'ESTART' ) > first_estop:
-            indices_to_remove.update( range( first_estop+1 ) )
-    except ValueError:
-        pass
-
-    empty_starts = [i for i, l in enumerate(ls) if l == 'ESTART' ]
-    for start in empty_starts:
-        for i in xrange( start+1, len(ls) ):
-            if ls[i] == 'ESTOP': break
-            indices_to_remove.add( i )
-    
-    multi_delete( ls, indices_to_remove )
-    multi_delete( bs, indices_to_remove )
-    
-    # remove anything after the last ESTART
-    if ls[-1] == 'ESTART':
-        ls.pop()
-        bs.pop()
-    """
+        ( chrm, strand ), gene, rnaseq_cov, cage_cov, polya_sites, jns )
     
     # find the contiguous set of adjoining exons
     slices = [[0,],]
@@ -851,7 +865,7 @@ def find_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns ):
         tss_exons, internal_exons, tes_exons, single_exon_genes
 
 
-def find_empty_regions( cov, thresh=0.01 ):
+def find_empty_regions( cov, thresh=1 ):
     x = numpy.diff( numpy.asarray( cov >= thresh, dtype=int ) )
     return zip(numpy.nonzero(x==1)[0],numpy.nonzero(x==-1)[0])
 
@@ -876,24 +890,70 @@ def merge_empty_labels( poss ):
 
     return poss
 
-def filter_tes_exons(tes_exons,rnaseq_cov,global_thresh=0.1,ratio_thresh=0.01):
-    def get_qrange_long( np, w_step, w_window ):
-        L = len(np)-w_window
-        if L < 2:
-           nm, nx = get_qrange_short( np )
-           return nm, nx
-        Q = []
-        for pos in xrange(0, L, w_step):
-            Q.append( np[pos:pos+w_window].mean() )
-        Q = numpy.asarray(Q)
-        lower = stats.stats.scoreatpercentile(Q, 10)
-        upper = stats.stats.scoreatpercentile(Q, 90)
-        return lower, upper
+def get_qrange_long( np, w_step, w_window ):
+    L = len(np)-w_window
+    if L < 2:
+       nm, nx = get_qrange_short( np )
+       return nm, nx
+    Q = []
+    for pos in xrange(0, L, w_step):
+        Q.append( np[pos:pos+w_window].mean() )
+    Q = numpy.asarray(Q)
+    lower = stats.stats.scoreatpercentile(Q, 10)
+    upper = stats.stats.scoreatpercentile(Q, 90)
+    return lower, upper
 
-    def get_qrange_short( np ):
-        L = len(np)
-        return np.min(), np.max()
+def get_qrange_short( np ):
+    L = len(np)
+    return np.min(), np.max()
+
+def filter_exon( exon, wig, min_avg_cvg=0.01, 
+                 min_short_cvg=1.0, short_exon_length=400,
+                 min_long_cvg=10 ):
+    '''Find all the exons that are sufficiently homogenous and expressed.
     
+    '''
+    start = exon.start
+    end = exon.stop
+    vals = wig[start:end+1]
+    mean_cvg = vals.mean()
+    
+    # if virtually off, forget it
+    if mean_cvg < min_avg_cvg: 
+        return True
+    
+    # if its short, just make sure it's covered to at least an average of 1X 
+    if end-start < short_exon_length: 
+        if mean_cvg > min_short_cvg:
+            return False
+        else:
+            return True
+    
+    # get the interquartile range
+    low, high = get_qrange_long( vals, 50, 300 ) 
+    # if the lower quartile is 0, ditch it
+    if low == 0 or high < min_long_cvg: 
+        return True
+    
+    IQ_ratio = high / max(low, min_avg_cvg)
+    # if the IQ range is < 100, chalk it up to inhomogeneity and accept it
+    if IQ_ratio < 100:
+        return False
+    
+    # if the IQ range is "boarder line", but the low is high, keep it, what the hell
+    if IQ_ratio >= 100 and IQ_ratio < 500 and low > 50:
+        return False
+    
+    return True
+
+def filter_exons( exons, rnaseq_cov ):
+    for exon in exons:
+        if not filter_exon( exon, rnaseq_cov ):
+            yield exon
+    
+    return
+
+def filter_tes_exons(tes_exons,rnaseq_cov,global_thresh=0.1,ratio_thresh=0.01):    
     scores = []
     mx_mean = 0
     mx_lower = 0
@@ -944,70 +1004,14 @@ def find_exons_in_contig( ( chrm, strand ),
         rnaseq_cov, jns, cage_cov, polya_sites = reverse_contig_data( 
             rnaseq_cov, jns, cage_cov, polya_sites )
         
-    locs = {}
-    for polya in polya_sites:
-        locs[ polya ] = "POLYA"
-    
-    for start, stop in jns:
-        locs[start-1] = "D_JN"
-        locs[stop+1] = "R_JN"
-
-    for start, stop in find_empty_regions( rnaseq_cov ):
-        if stop - start < 400: continue
-        if start in locs or stop in locs:
-            continue
-        locs[start] = "ESTART"
-        locs[stop] = "ESTOP"
-    
-    # merge together empty bins
-    # build all of the bins
-    poss = sorted( locs.iteritems() )
-    poss = merge_empty_labels( poss )
-        
-    bins = Bins( chrm, strand, [ Bin(1, poss[0][0], "CONTIG_BNDRY", poss[0][1]), ])
-    for index, ((start, left_label), (stop, right_label)) in \
-            enumerate(izip(poss[:-1], poss[1:])):
-        bins.append( Bin(start, stop, left_label, right_label) )
-    
-    bins.append( Bin( poss[-1][0], len(rnaseq_cov)-1, 
-                      poss[-1][1], "CONTIG_BNDRY" ) )
-    
-    bins.writeBed( binsFps[strand], len(rnaseq_cov) )
-    
     # find gene regions
     # first, find the gene bin indices
     gene_bndry_bins = find_gene_boundaries( 
-        (chrm, strand), bins, cage_cov, rnaseq_cov, jns )
+        (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns )
     
     gene_bndry_bins.writeBed( 
         geneBoundariesFps[strand], len(rnaseq_cov) )
     
-    # find exons inside of a gene
-    all_gene_bins = []
-    all_cage_peaks = []
-    for gene in gene_bndry_bins:
-        # find the cage peaks in this gene
-        gene_cage_peaks = find_cage_peaks_in_gene( 
-            (chrm, strand), gene, cage_cov, rnaseq_cov )
-        all_cage_peaks.append( gene_cage_peaks )
-        
-        gene_bins = []
-        # find the bins inside of this gene
-        for bin in bins:
-            if bin.start > gene.stop:
-                break
-            
-            if bin.stop > gene.start:
-                if bin.start >= gene.start:
-                    gene_bins.append( bin )
-                else:
-                    gene_bins.append( 
-                        Bin(gene.start, bin.stop, "TSS", bin.right_label) )
-        
-        all_gene_bins.append( gene_bins )
-    
-    cage_peaks = Bins( chrm, strand, chain(*all_cage_peaks) )
-    cage_peaks.writeBed( cagePeaksFps[strand], len(rnaseq_cov) )
     
     # find all exons
     ps_exons = Bins( chrm, strand, [] )
@@ -1016,17 +1020,31 @@ def find_exons_in_contig( ( chrm, strand ),
     tes_exons = Bins( chrm, strand, [] )
     se_genes = Bins( chrm, strand, [] )
     
-    for gene, gene_bins, cage_peaks in izip(
-            gene_bndry_bins, all_gene_bins, all_cage_peaks ):
+    
+    sorted_jns = sorted( jns.iteritems() )
+    jn_starts = [ i[0][0] for i in sorted_jns ]
+    jn_stops = [ i[0][1] for i in sorted_jns ]
+    jn_values = [ i[1] for i in sorted_jns ]
+    
+    for gene in gene_bndry_bins:
+        # find the junctions associated with this gene
+        gj_sa = bisect( jn_stops, gene.start )
+        gj_so = bisect( jn_starts, gene.stop )
+        gene_jns = zip( jn_starts[gj_sa:gj_so], jn_stops[gj_sa:gj_so], jn_values[gj_sa:gj_so] )
+        
+        # find the polyas associated with this gene
+        gene_polya_sa_i = polya_sites.searchsorted( gene.start )
+        gene_polya_so_i = polya_sites.searchsorted( gene.stop, side='right' )
+        gene_polyas = polya_sites[gene_polya_sa_i:gene_polya_so_i]
         
         gene_ps_exons, gene_tss_exons, gene_internal_exons, gene_tes_exons, gene_se_genes = \
-            find_exons_in_gene( gene, gene_bins, rnaseq_cov, cage_peaks, jns )
+            find_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, polya_sites, gene_jns )
         
         ps_exons.extend( gene_ps_exons )
-        internal_exons.extend( gene_internal_exons )
-        tss_exons.extend( gene_tss_exons )
-        tes_exons.extend( filter_tes_exons(gene_tes_exons, rnaseq_cov) )
-        se_genes.extend( gene_se_genes )
+        internal_exons.extend( filter_exons( gene_internal_exons, rnaseq_cov ) )
+        tss_exons.extend( filter_exons( gene_tss_exons, rnaseq_cov ) )
+        tes_exons.extend( filter_exons( gene_tes_exons, rnaseq_cov ) )
+        se_genes.extend( filter_exons( gene_se_genes, rnaseq_cov ) )
     
     all_exons = Bins(chrm, strand, chain(tss_exons, internal_exons, tes_exons, se_genes))
     all_exons.writeBed( allExonsFps[strand], len(rnaseq_cov) )

@@ -8,10 +8,10 @@ example command:
 python filter_bam_by_region.py `ls /media/scratch/RNAseq/all_samples/ | grep -P '^Ad|^L3_|^WPP_'`
 """
 
-region_chr = "4"
+region_chr = "X"
 start = 1
-stop = 1351858
-base_dir = "/media/scratch/dros_trans_v3/chr4/DATA/"
+stop = 20000000
+base_dir = "/media/scratch/dros_trans_v3/chrX/DATA/"
 
 EXTRACT_WIG_CMD = os.path.join( os.path.dirname( __file__ ), "extract_region_from_wiggle.py" )
 EXTRACT_GFF_CMD = os.path.join( os.path.dirname( __file__ ), "extract_region_from_gff.py" )
@@ -63,7 +63,7 @@ def build_extract_g_f_cmd( fname ):
     #        os.path.basename(fname).split(".")[:-1]) \
     #        + ".%s_%i_%i.bam" % (  region_chr, start, stop ) )
     new_fname = os.path.join(base_dir, os.path.basename(fname)
-                             + global_region_str + fname.split(".")[-1] )
+                             + global_region_str + "." + fname.split(".")[-1] )
 
     region_str = "%s:%s:%i-%i" % ( region_chr, '.', start, stop )
     
