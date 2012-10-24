@@ -291,7 +291,7 @@ def find_gene_boundaries( (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns
         locs[stop+1] = "R_JN"
     
     for start, stop in find_empty_regions( rnaseq_cov ):
-        if stop - start < 400: continue
+        if stop - start < 40: continue
         if start in locs or stop in locs:
             continue
         locs[start] = "ESTART"
@@ -302,13 +302,16 @@ def find_gene_boundaries( (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns
     poss = sorted( locs.iteritems() )
     poss = merge_empty_labels( poss )
         
-    bins = Bins( chrm, strand, [ Bin(1, poss[0][0], "CONTIG_BNDRY", poss[0][1]), ])
+    bins = Bins( chrm, strand, [] )
+    if poss[0][0] > 1:
+        bins.append( Bin(1, poss[0][0], "CONTIG_BNDRY", poss[0][1]) )
     for index, ((start, left_label), (stop, right_label)) in \
             enumerate(izip(poss[:-1], poss[1:])):
         bins.append( Bin(start, stop, left_label, right_label) )
     
-    bins.append( Bin( poss[-1][0], len(rnaseq_cov)-1, 
-                      poss[-1][1], "CONTIG_BNDRY" ) )
+    if poss[-1][0] < len(rnaseq_cov)-1:
+        bins.append( Bin( poss[-1][0], len(rnaseq_cov)-1, 
+                          poss[-1][1], "CONTIG_BNDRY" ) )
     
     bins.writeBed( binsFps[strand], len(rnaseq_cov) )
     
@@ -625,9 +628,9 @@ def find_tss_exons_from_pseudo_exons( tss_exon, pseudo_exons ):
     tss_exons = []
     # find the first pseudo exon that the tss exon connects to
     for i, pse in enumerate( pseudo_exons ):
-        if pse.start == tss_exon.stop: break
-        assert i < len( pseudo_exons )
-        
+        if pse.start == tss_exon.stop: 
+            break
+    
     for pse in pseudo_exons[i:]:
         tss_exons.append( Bin(tss_exon.start, pse.stop,
                               tss_exon.left_label, pse.right_label, "TSS_EXON"))
@@ -651,10 +654,10 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, pol
 
     jns =  [ (start, stop, cnt) for (start, stop, cnt) in jns \
              if (start >= gene.start and stop <= gene.stop)
-             and cnt > 5
-             and float(cnt)/max_jn_cnt > 0.001
              and float(cnt)/donor_cnts[start] > 0.05
              and float(cnt)/receiver_cnts[stop] > 0.05 ]
+    
+    jns_hash = dict( ((start, stop), cnt) for (start, stop, cnt) in jns )
     
     pseudo_exons = []
     polya_sites = [ polya for polya in polya_sites 
@@ -671,7 +674,7 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, pol
         locs[stop+1] = "R_JN"
 
     for start, stop in find_empty_regions( rnaseq_cov[gene.start:gene.stop+1] ):
-        if stop - start < 400: continue
+        if stop - start < 40: continue
         if start in locs or stop in locs:
             continue
         locs[start+gene.start] = "ESTART"
@@ -714,7 +717,22 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, pol
         
         pseudo_exons.extend( find_right_exon_extensions(
                 ce_i, canonical_bin, gene_bins, rnaseq_cov))
+
+    """
+    # filter out bullshit introns
+    filtered_pseudo_exons = []
+    for i, pseudo_exon in enumerate(pseudo_exons):
+        # if this is a canonical exon
+        if pseudo_exon.left_label == 'D_JN' \
+                and pseudo_exon.right_label == 'R_JN' \
+                and (pseudo_exon.start+1, pseudo_exon.stop-1) in jns_hash:
+            cnt = jns_hash[(pseudo_exon.start+1, pseudo_exon.stop-1)]
+            if cnt/max_jn_cnt < 0.05: continue
         
+        filtered_pseudo_exons.append( pseudo_exon )
+    pseudo_exons = filtered_pseudo_exons
+    """
+    
     cage_peak_bin_indices = []
     tss_exons = []
     for peak in cage_peaks:
@@ -811,7 +829,7 @@ def find_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, polya_site
         for pe_grp in gpd_pseudo_exons:
             if pe_grp[0].start > tss_exon.stop:  
                 continue
-            if pe_grp[-1].stop < tss_exon.start:
+            if pe_grp[-1].stop <= tss_exon.start:
                 break
             
             tss_exons.extend( find_tss_exons_from_pseudo_exons( 
