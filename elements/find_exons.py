@@ -291,7 +291,7 @@ def find_gene_boundaries( (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns
         locs[stop+1] = "R_JN"
     
     for start, stop in find_empty_regions( rnaseq_cov ):
-        if stop - start < 40: continue
+        if stop - start < 100: continue
         if start in locs or stop in locs:
             continue
         locs[start] = "ESTART"
@@ -654,6 +654,7 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, pol
 
     jns =  [ (start, stop, cnt) for (start, stop, cnt) in jns \
              if (start >= gene.start and stop <= gene.stop)
+             and float(cnt)/max_jn_cnt > 0.005
              and float(cnt)/donor_cnts[start] > 0.05
              and float(cnt)/receiver_cnts[stop] > 0.05 ]
     
@@ -674,7 +675,7 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, pol
         locs[stop+1] = "R_JN"
 
     for start, stop in find_empty_regions( rnaseq_cov[gene.start:gene.stop+1] ):
-        if stop - start < 40: continue
+        if stop - start < 100: continue
         if start in locs or stop in locs:
             continue
         locs[start+gene.start] = "ESTART"
@@ -717,21 +718,6 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, pol
         
         pseudo_exons.extend( find_right_exon_extensions(
                 ce_i, canonical_bin, gene_bins, rnaseq_cov))
-
-    """
-    # filter out bullshit introns
-    filtered_pseudo_exons = []
-    for i, pseudo_exon in enumerate(pseudo_exons):
-        # if this is a canonical exon
-        if pseudo_exon.left_label == 'D_JN' \
-                and pseudo_exon.right_label == 'R_JN' \
-                and (pseudo_exon.start+1, pseudo_exon.stop-1) in jns_hash:
-            cnt = jns_hash[(pseudo_exon.start+1, pseudo_exon.stop-1)]
-            if cnt/max_jn_cnt < 0.05: continue
-        
-        filtered_pseudo_exons.append( pseudo_exon )
-    pseudo_exons = filtered_pseudo_exons
-    """
     
     cage_peak_bin_indices = []
     tss_exons = []
