@@ -43,7 +43,7 @@ def write_all_transcripts( clustered_trans, ofp, sources_fp, transcript_maps ):
     # iterate through unique transcripts, and write them to the output file
     for (chrm, strand), genes in clustered_trans.iteritems():
         for gene_id, transcripts in genes.iteritems():
-            gene_name = "merged_cluster_%i" % gene_id
+            gene_name = "merged_cluster_%s" % gene_id
             for trans_id, exons in enumerate( transcripts ):
                 trans_name = gene_name + "_%i" % trans_id
                 
@@ -250,6 +250,7 @@ def get_exon_clusters( transcript_maps, cluster_by_conn ):
 def cluster_transcripts( transcript_maps, cluster_by_conn ):
     # cluster all exons from transcripts
     exons_map = get_exon_clusters( transcript_maps, cluster_by_conn )
+    se_id = 1
     
     # identify cluster which each transcript belongs
     clustered_trans = defaultdict( lambda: defaultdict( list ) )
@@ -258,14 +259,14 @@ def cluster_transcripts( transcript_maps, cluster_by_conn ):
             try:
                 # try to get cluster id from exons map
                 key = (chrm, strand, tuple(exons[:2]))
-                gene_id = exons_map[ key ]
+                gene_id = str( exons_map[ key ] )
             # if the key does not exist then this must be a single exon gene
             except KeyError:
                 # give single exon genes their own cluster regardless of 
                 # possible overlap
                 assert len( exons ) == 2
-                gene_id = c_id
-                c_id += 1
+                gene_id = "SE%i" % se_id
+                se_id += 1
             
             # add the gene_id to the transcripts meta_data
             clustered_trans[(chrm, strand)][gene_id].append( exons )
@@ -320,23 +321,25 @@ def cluster_ends( ends_and_sources ):
 def build_unique_transcripts( transcriptomes, gtf_fnames ):
     # build the sets of transcripts
     tmp_transcript_maps = defaultdict( lambda: defaultdict( list ) )
-    single_exon_sources = defaultdict( list )
+    transcript_maps = defaultdict( lambda: defaultdict( list ) )
     
     for source, transcriptome in izip( gtf_fnames, transcriptomes ):
         for cluster_id, chrm, strand, start, stop, transcripts in transcriptome:
             for trans_id, exons in transcripts:
                 assert len( exons ) % 2 == 0
                 # skip single  exon transcripts and transcripts that 
-                # have an odd number of boundaries
+                # have an odd number of boundaries. We put single exon
+                # genes into the final transcript maps struct because we 
+                # don't want to do any boundary extension
                 if len( exons ) == 2:
-                    single_exon_sources[ tuple(exons) ].append( source )
+                    transcript_maps[(chrm, strand)][tuple(exons)].append( 
+                        source )
                 else:
                     tmp_transcript_maps[ ( chrm, strand ) ][ \
                         tuple( exons[1:-1] ) ].append( \
                         (exons[0], exons[-1], source) )
     
     # get the longest external coordinate for each internal structure
-    transcript_maps = defaultdict( lambda: defaultdict( list ) )
     for key, transcripts in tmp_transcript_maps.iteritems():
         for internal_exons, ends_and_sources in transcripts.iteritems():
             if MERGE_DISTAL_ENDS:

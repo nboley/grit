@@ -8,10 +8,10 @@ example command:
 python filter_bam_by_region.py `ls /media/scratch/RNAseq/all_samples/ | grep -P '^Ad|^L3_|^WPP_'`
 """
 
-region_chr = "X"
+region_chr = "4"
 start = 1
-stop = 20000000
-base_dir = "/media/scratch/dros_trans_v3/chrX/DATA/"
+stop = 1351857
+base_dir = "/media/scratch/dros_trans_v4/chr4/DATA/"
 
 EXTRACT_WIG_CMD = os.path.join( os.path.dirname( __file__ ), "extract_region_from_wiggle.py" )
 EXTRACT_GFF_CMD = os.path.join( os.path.dirname( __file__ ), "extract_region_from_gff.py" )
@@ -89,10 +89,14 @@ def get_cmds_from_input_file( fp ):
     new_lines = []
     cmds = []
     for line_num, line in enumerate(fp):
+        line = line.strip()
+        
         # skip commented out lines
         if line.startswith( "#" ):
             new_lines.append( line.strip() )
             continue
+        
+        if line == "": continue
         
         try:
             datatype, sample_type, sample_id, strand, fname = line.split()

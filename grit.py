@@ -995,20 +995,23 @@ def merged_cage_wiggles( elements, process_server, derived_output_dir ):
         cmd = Cmd( cmd_str, output_element_types, \
                    output_fnames, dependency_fnames )
         
-        print cmd_str
-        
         process_server.add_process( cmd, Resource(1) )
     
     # build the merge sample type wiggles    
     cov_fnames = defaultdict( list )
+    all_cov_fnames = { '+': [], '-': []}
     res = elements.get_elements_from_db( "cage_cov_wig" )
     if len( res ) > 0:
         for entry in res:
             cov_fnames[(entry.sample_type, entry.strand)].append( entry.fname )
+            all_cov_fnames[ entry.strand ].append( entry.fname )
     
     for (sample_type, strand), fnames in cov_fnames.iteritems():
         add_merge_cmd( sample_type, strand, fnames )
     
+    add_merge_cmd( "*", "+", all_cov_fnames['+'] )
+    add_merge_cmd( "*", "-", all_cov_fnames['-'] )
+
     """
     # comments this out because we no longer usee the merged RNAseq covergae,
     # but we may wish to in the future.
@@ -1297,8 +1300,8 @@ def build_all_exon_files( elements, pserver, output_prefix ):
                 "cage_cov_wig", "*" , "*" )
         
         if len( ress ) != 2:
-            raise ValueError, "Expected exactly 2 cage coverage files " \
-                + "( + & - strand ). Found %i." % len( ress )
+            raise ValueError, "Expected exactly 2 cage coverage files for " \
+                + "sample %s. Found %i." % (sample_type, len( ress ))
         assert len( ress ) == 2
         cage_wig_fnames = [ res.fname for res in ress ]
         
@@ -1340,7 +1343,7 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         dependency_fnames = [ jns_fname ]
         dependency_fnames.extend( bedgraph_fnames )
         dependency_fnames.extend( cage_wig_fnames )
-        print call
+        
         cmd = Cmd(call, output_element_types, output_fnames, dependency_fnames)
         pserver.add_process( cmd, Resource(1), Resource(6) )
 
@@ -2138,8 +2141,7 @@ def main():
     pserver = ProcessServer( elements, Resource( num_threads )  )
 
     merged_cage_wiggles( elements, pserver, base_dir + "cage_wiggles/" )
-    sys.exit()
-
+    
     build_all_cov_wiggles( elements, pserver, base_dir + "read_cov_bedgraphs" )
     
     extract_all_junctions( elements, pserver, base_dir + "junctions/" )
@@ -2156,11 +2158,11 @@ def main():
     
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
     
+    call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
+    
     pserver.process_queue()    
     return
 
-    call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
-    
     # sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
     
     # DO PROTEIN FILTERING ( need to write this... )

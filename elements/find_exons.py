@@ -420,7 +420,7 @@ def find_gene_boundaries( (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns
 
 def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
      raw_peaks = find_peaks( cage_cov[gene.start:gene.stop+1], 
-                             window_len=20, min_score=20, 
+                             window_len=20, min_score=15,
                              max_score_frac=0.05, max_num_peaks=20 )
      if len( raw_peaks ) == 0:
          return []
@@ -653,11 +653,7 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, pol
         receiver_cnts[ stop ] = max( cnt, receiver_cnts[ stop ] )
 
     jns =  [ (start, stop, cnt) for (start, stop, cnt) in jns \
-             if (start >= gene.start and stop <= gene.stop)
-             and float(cnt)/max_jn_cnt > 0.005
-             and float(cnt)/donor_cnts[start] > 0.05
-             and float(cnt)/receiver_cnts[stop] > 0.05 ]
-    
+             if (start >= gene.start and stop <= gene.stop) ]    
     jns_hash = dict( ((start, stop), cnt) for (start, stop, cnt) in jns )
     
     pseudo_exons = []
