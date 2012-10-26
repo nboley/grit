@@ -38,7 +38,7 @@ USE_SAMPLE_SPECIFIC_CAGE = True and BUILD_SAMPLE_SPECIFIC_EXONS
 USE_MERGED_RNASEQ_FOR_EXONS = True and BUILD_SAMPLE_SPECIFIC_EXONS
 
 USE_MERGED_JNS_FOR_EXONS = False
-USE_MERGED_CAGE_SIGNAL_FOR_EXONS = True
+USE_MERGED_CAGE_SIGNAL_FOR_EXONS = False
 USE_MERGED_POLYA_SIGNAL_FOR_EXONS = True
 
 USE_MERGED_EXONS_FOR_TRANSCRIPTS = False
@@ -194,8 +194,12 @@ def calc_chksum( fname, blocksize=8*1024*1024 ):
 class Elements( object ):    
     def _iter_elements_from_fp( self, elements_fp ):
         for line in elements_fp:
+            line = line.strip()
+            # skip empty lines
+            if len( line ) == 0: continue
             # skip comment lines
             if line.startswith( "#" ): continue
+            
             data = line.split()
             data.append( "finished" )
             yield Element( *data )
@@ -939,6 +943,89 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
     
     return 
 
+def merged_cage_wiggles( elements, process_server, derived_output_dir ):
+    # create the output directory
+    try:
+        os.makedirs( derived_output_dir )
+    except OSError:
+        # assume that the directory already exists, and continue
+        pass
+    
+    # add the wiggle merger process
+    def add_merge_cmd( sample_type, strand, cov_fnames ):
+        if sample_type == "*": 
+            base_name = "cage_cov"
+        else:
+            base_name =  "cage_cov." + sample_type
+        
+        assert strand in '+-'
+        if strand == '+':
+            base_name += ".plus"
+        else:
+            base_name += ".minus"
+        ofname = base_name + ".bedGraph"
+            
+        #### Get the subprocess command info together
+            
+        # choose with chromosome because the input wiggles are always have a chr
+        # ( to make them easier to visualize in UCSC ), and so we want to choose
+        # a chrm sizes with chr as well
+        chrm_sizes_fname = elements.chr_sizes.get_tmp_fname( with_chr = True )
+        
+        # get the output filename
+        ofname = os.path.join( derived_output_dir, ofname )
+        
+        # get the track name
+        track_name = base_name
+        
+        cmd_str_template = "python {0} {1} --out-fname {2} "
+        
+        ##### get the output data types
+        output_fnames = [ ofname, ]
+        
+        output_element_types = [ 
+            ElementType( "cage_cov_wig", sample_type, "*", strand ),  \
+        ]
+        
+        dependency_fnames = cov_fnames
+        
+        cmd_str = cmd_str_template.format( \
+            MERGE_BEDGRAPHS_CMD, " ".join(cov_fnames), ofname )
+        
+        cmd = Cmd( cmd_str, output_element_types, \
+                   output_fnames, dependency_fnames )
+        
+        print cmd_str
+        
+        process_server.add_process( cmd, Resource(1) )
+    
+    # build the merge sample type wiggles    
+    cov_fnames = defaultdict( list )
+    res = elements.get_elements_from_db( "cage_cov_wig" )
+    if len( res ) > 0:
+        for entry in res:
+            cov_fnames[(entry.sample_type, entry.strand)].append( entry.fname )
+    
+    for (sample_type, strand), fnames in cov_fnames.iteritems():
+        add_merge_cmd( sample_type, strand, fnames )
+    
+    """
+    # comments this out because we no longer usee the merged RNAseq covergae,
+    # but we may wish to in the future.
+    
+    res = elements.get_elements_from_db( "rnaseq_cov_bedgraph" )
+    if len( res ) > 0:
+        rd_cov_fnames = defaultdict( list )
+        for entry in res:
+            rd_cov_fnames[entry.sample_type].append( entry.fname )
+        for sample_type, fnames in rd_cov_fnames.iteritems():
+            add_merge_cmd( sample_type, fnames, None )
+        add_merge_cmd("*", list( itertools.chain(*rd_cov_fnames.values() ) ), None)
+    """
+    
+    return 
+
+
 def extract_all_junctions( elements, pserver, output_prefix ):
     try:
         os.makedirs( output_prefix )
@@ -1209,6 +1296,9 @@ def build_all_exon_files( elements, pserver, output_prefix ):
             ress = elements.get_elements_from_db( \
                 "cage_cov_wig", "*" , "*" )
         
+        if len( ress ) != 2:
+            raise ValueError, "Expected exactly 2 cage coverage files " \
+                + "( + & - strand ). Found %i." % len( ress )
         assert len( ress ) == 2
         cage_wig_fnames = [ res.fname for res in ress ]
         
@@ -2046,6 +2136,10 @@ def main():
         elements = Elements( fp )
     
     pserver = ProcessServer( elements, Resource( num_threads )  )
+
+    merged_cage_wiggles( elements, pserver, base_dir + "cage_wiggles/" )
+    sys.exit()
+
     build_all_cov_wiggles( elements, pserver, base_dir + "read_cov_bedgraphs" )
     
     extract_all_junctions( elements, pserver, base_dir + "junctions/" )
@@ -2054,7 +2148,6 @@ def main():
     merge_sample_type_junctions( elements, pserver, base_dir + "junctions/" )
         
     build_all_exon_files( elements, pserver, base_dir + "exons" )
-    
     # estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
     
     build_transcripts( elements, pserver, base_dir + "transcripts" )

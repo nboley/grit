@@ -110,10 +110,6 @@ def main():
     wiggles, out_fname_prefix, chrm_sizes_fp, track_name_prefix, filter_region \
         = parse_arguments()
     
-    fast_merge_bedgraphs( wiggles )
-    
-    return
-    
     merged_wiggle = Wiggle( chrm_sizes_fp )
 
     for input_wiggle_fp in wiggles:

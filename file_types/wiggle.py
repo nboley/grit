@@ -516,7 +516,6 @@ class Wiggle( dict ):
             fname = wig_fp.name
             Wiggle.add_cvg_from_bedgraph( self, fname, strand )
         else:
-            assert not self.async
             self.add_cvg_from_wiggle( wig_fp, strand )
         
         Wiggle.reset_intervals( self )
