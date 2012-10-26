@@ -45,6 +45,7 @@ PRINT_NON_ORF_TRANS = True
 PRINT_ORF_EXONS = False
 PRINT_CODONS = False
 PRINT_UTRS = True
+ONLY_USE_LONGEST_ORF = False
 
 VERBOSE = False
 MIN_VERBOSE = False
@@ -218,7 +219,16 @@ def find_cds_for_gene( gene, fasta ):
             annotated_transcripts.append( trans )
             continue
         
-        for orf_id, (start, stop) in enumerate( orfs ):
+        filtered_orfs = []
+        if ONLY_USE_LONGEST_ORF:
+            max_orf_length = max( stop - start + 1 for start, stop in orfs )
+            for start, stop in orfs:
+                if stop - start + 1 == max_orf_length:
+                    filtered_orfs.append( (start, stop) )
+        else:
+            filtered_orfs = orfs
+        
+        for orf_id, (start, stop) in enumerate( filtered_orfs ):
             if gene.strand == '-':
                 start = len( trans_seq ) - start
                 stop = len( trans_seq ) - stop
@@ -298,6 +308,7 @@ def parse_arguments():
     global MIN_AAS_PER_ORF
     global OUTPUT_PROTEINS
     global VERBOSE
+    global ONLY_USE_LONGEST_ORF
     import argparse
     
     parser = argparse.ArgumentParser(
@@ -313,6 +324,10 @@ def parse_arguments():
         '--min-aas', '-m', type=int,
         help='Number of amino acids to require for an open read frame. ' +
         '(default: {0:d})'.format( MIN_AAS_PER_ORF ))
+
+    parser.add_argument(
+        '--only-longest-orf', default=False, action='store_true',
+        help='If this is set, only report the longest ORF per transcript. ' )
     
     parser.add_argument(
         '--threads', '-t', type=int, default=1,
@@ -337,6 +352,7 @@ def parse_arguments():
 
     # set flag args
     VERBOSE = args.verbose
+    ONLY_USE_LONGEST_ORF = args.only_longest_orf
     
     return args.gtf, args.fasta, args.threads, ofp
 

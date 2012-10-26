@@ -1807,7 +1807,7 @@ def call_orfs( elements, pserver, output_prefix ):
         if basename.endswith( '.gtf' ): basename = basename[:-4]
         op_fname = os.path.join( output_prefix, basename + ".CDS.gtf")
         
-        call = "python %s {0} {1} --output-filename {2}" % FIND_ORFS_CMD
+        call = "python %s {0} {1} --only-longest-orf --output-filename {2}" % FIND_ORFS_CMD
         call = call.format( merged_trans_fname, fasta_fn, op_fname )
         call += " --threads {threads}"
         
@@ -2159,6 +2159,8 @@ def main():
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
     
     call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
+
+    produce_final_annotation( elements, pserver, base_dir + "final_ann" )
     
     pserver.process_queue()    
     return

@@ -1136,13 +1136,19 @@ def parse_arguments():
                       if fp.name.endswith("rd2.minus.bedGraph") ]
     
     rnaseq_grpd_wigs = [ rd1_plus_wigs, rd1_minus_wigs, rd2_plus_wigs, rd2_minus_wigs ]
-    
+        
     cage_plus_wigs = [ fp for fp in args.cage_wigs 
                       if fp.name.lower().endswith("+.bedgraph")
-                       or fp.name.lower().endswith("plus.bedgraph")]
+                       or fp.name.lower().endswith("plus.bedgraph")
+                       or fp.name.lower().endswith("+.wig")
+                       or fp.name.lower().endswith("plus.wig")]
+
     cage_minus_wigs = [ fp for fp in args.cage_wigs 
                       if fp.name.lower().endswith("-.bedgraph")
-                        or fp.name.lower().endswith("minus.bedgraph") ]
+                        or fp.name.lower().endswith("minus.bedgraph")
+                        or fp.name.lower().endswith("-.wig")
+                        or fp.name.lower().endswith("minus.wig") ]
+
     cage_grpd_wigs = [ cage_plus_wigs, cage_minus_wigs ]
     
     return rnaseq_grpd_wigs, args.junctions, args.chrm_sizes_fname, \
