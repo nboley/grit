@@ -86,6 +86,8 @@ def get_exons_w_shared_coords( exons, key ):
          stop coord with the current group. grp_conn_exons are dumped and the
          grp_starts and grp_stops dicts are reset.
     """
+    if len( exons ) == 0: return {}
+
     # sort exons by start coord
     exons = exons[ exons[:,0].argsort() ]
     
@@ -231,26 +233,23 @@ def create_exons_map( exon_groups ):
     
     return exons_map
 
-def get_exon_clusters( transcript_maps, cluster_by_conn ):
+def get_exon_clusters( transcript_maps ):
     # get all unique exons and junctions from all transcripts
     all_exons, all_jns = get_exons_and_junctions( transcript_maps )
     
-    if cluster_by_conn:
-        # get the exons connected by junctions *but NOT by overlapping coords*
-        exon_groups = get_connected_components( all_exons, all_jns )
-    else:
-        # get exons connected by overlap *OR* connected components
-        exon_groups = cluster_all_exons( all_exons, all_jns )
+    # actually cluster the exons
+    exon_groups = cluster_all_exons( all_exons, all_jns )
     
     # convert maps dict
     exons_map = create_exons_map( exon_groups )
     
     return exons_map
 
-def cluster_transcripts( transcript_maps, cluster_by_conn ):
+def cluster_transcripts( transcript_maps ):
     # cluster all exons from transcripts
-    exons_map = get_exon_clusters( transcript_maps, cluster_by_conn )
-    se_id = 1
+    exons_map = get_exon_clusters( transcript_maps )
+    for key, item in sorted(exons_map.iteritems()):
+        print key, item
     
     # identify cluster which each transcript belongs
     clustered_trans = defaultdict( lambda: defaultdict( list ) )
@@ -262,11 +261,8 @@ def cluster_transcripts( transcript_maps, cluster_by_conn ):
                 gene_id = str( exons_map[ key ] )
             # if the key does not exist then this must be a single exon gene
             except KeyError:
-                # give single exon genes their own cluster regardless of 
-                # possible overlap
-                assert len( exons ) == 2
-                gene_id = "SE%i" % se_id
-                se_id += 1
+                print exons
+                raise
             
             # add the gene_id to the transcripts meta_data
             clustered_trans[(chrm, strand)][gene_id].append( exons )
@@ -392,11 +388,6 @@ def parse_arguments():
         help='Output file. default: stdout')
     
     parser.add_argument(
-        '--cluster-by-overlap', default=True, action='store_false', 
-        dest='cluster_by_conn',
-        help='Whether or not to print status information.')
-    
-    parser.add_argument(
         '--verbose', '-v', default=False, action='store_true',
         help='Whether or not to print status information.')
  
@@ -410,10 +401,10 @@ def parse_arguments():
     VERBOSE = args.verbose
     
     return args.gtfs, args.out_fname, args.sources_fname, \
-        args.cluster_by_conn, args.threads
+        args.threads
 
 def main():
-    gtf_fnames, ofp, sources_fp, cluster_by_conn, n_threads = parse_arguments()
+    gtf_fnames, ofp, sources_fp, n_threads = parse_arguments()
     
     # load all transcripts file and store corresponding data
     transcriptomes = load_gtfs( gtf_fnames, n_threads )
@@ -422,7 +413,7 @@ def main():
     transcript_maps = build_unique_transcripts( transcriptomes, gtf_fnames )
     
     # use clustered exons to recluster transcripts
-    clustered_trans = cluster_transcripts( transcript_maps, cluster_by_conn )
+    clustered_trans = cluster_transcripts( transcript_maps )
     
     write_all_transcripts( clustered_trans, ofp, sources_fp, transcript_maps )
     

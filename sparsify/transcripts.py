@@ -268,12 +268,10 @@ class TranscriptsFile( file ):
                 "visibility=full\n")
     
     @staticmethod
-    def _build_exon_gtf_line( exon_gene_index, exon_trans_index, \
-                                  gene, transcript_id, feature_type='exon', \
-                                  region=None, score='.', frame='.', \
-                                  lasso_lambda=None, freq=None, \
-                                  source_file=None, readcnt=None, orf_id=None,\
-                                  orf_classes=None):
+    def _build_exon_gtf_line( exon_gene_index, exon_trans_index, 
+                              gene, transcript_id, feature_type='exon', 
+                              region=None, score='.', frame='.', 
+                              freq=None, source_file=None, readcnt=None ):
         """
         seqname - The name of the sequence. Must be a chromosome or scaffold.
         source  - The program that generated this feature.
@@ -319,26 +317,16 @@ class TranscriptsFile( file ):
         gtf_line.append( gene.strand )
         gtf_line.append( str(frame) )
         
-        if orf_id != None:
-            transcript_id += "_" + str(orf_id)
         meta_info_pat = \
             'gene_id "{0:s}"; transcript_id "{1:s}"; exon_number "{2:d}"'
         meta_info = meta_info_pat.format( \
             gene.name, transcript_id, exon_trans_index )
-        if lasso_lambda != None:
-            meta_info += '; lasso_lambda "{0:.7f}"'.format( lasso_lambda )
         if freq != None:
             meta_info += '; freq "{0:.7f}"'.format( freq )
         if source_file != None:
             meta_info += '; source "{0:s}"'.format( source_file )
         if readcnt != None:
             meta_info += '; readcnt "{0:d}"'.format( readcnt )
-        #if orf_id != None:
-        #    meta_info += '; orf_id "{0:d}"'.format( orf_id )
-        if orf_classes != None:
-            orf_classes = '|'.join( ( ':'.join( map( str, item) ) for \
-                                          item in orf_classes if item != None ))
-            meta_info += '; orf_class "{0}"'.format( orf_classes )
         gtf_line.append( meta_info )
         
         return '\t'.join( gtf_line )
@@ -353,7 +341,7 @@ class TranscriptsFile( file ):
         all_transcript_lines = []
         for trans_index, (trans, md) \
             in enumerate(transcripts.iter_transcripts_and_metadata()):
-
+            
             trans_id = gene.name + "_" + trans.get_str_identifier()
             if len( trans_id ) > 200:
                 # make sure the transcript ids aren't too long
@@ -367,15 +355,15 @@ class TranscriptsFile( file ):
             for exon_trans_index, exon_gene_index in enumerate( trans ):
                 # for the merged form, we want to include meta data
                 if include_meta_data:
-                    all_transcript_lines.append( \
-                        self._build_exon_gtf_line( \
-                            exon_gene_index, exon_trans_index+1, transcripts.gene, \
-                                trans_id, lasso_lambda=md.lasso_lambda, freq=md.freq, \
-                                source_file=md.sourcefile, readcnt=readcnt ) )
+                    all_transcript_lines.append( 
+                        self._build_exon_gtf_line( 
+                            exon_gene_index, exon_trans_index+1, 
+                            transcripts.gene, trans_id, freq=md.freq,
+                            source_file=md.sourcefile, readcnt=readcnt ) )
                 else:
                     all_transcript_lines.append( 
-                        self._build_exon_gtf_line( \
-                            exon_gene_index, exon_trans_index+1, gene, trans_id ) )
+                        self._build_exon_gtf_line( 
+                           exon_gene_index, exon_trans_index+1, gene, trans_id))
 
         self.write_lock.acquire()
         for line in all_transcript_lines:

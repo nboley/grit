@@ -110,23 +110,27 @@ def calc_long_read_expected_cnt_given_bin( bin, exon_lens, fl_dist ):
         if fl_dist.fl_min > exon_lens[0]:
             return 0.0
         
-        # if the fragment is longer than the exon, then it can't have come from this exon.
+        # if the fragment is longer than the exon, then it can't have come 
+        # from this exon.
         upper_fl_bnd = min( fl_dist.fl_max, exon_lens[0] )
             
         # this is all just algebra on 'faster way'
-        density += ( exon_lens[0] + 1 )*fl_dist.fl_density_cumsum[ upper_fl_bnd - fl_dist.fl_min ]
-        density -= fl_dist.fl_density_weighted_cumsum[ upper_fl_bnd - fl_dist.fl_min ]
-            
+        density += ( exon_lens[0] + 1 )*fl_dist.fl_density_cumsum[ 
+            upper_fl_bnd - fl_dist.fl_min ]
+        density -= fl_dist.fl_density_weighted_cumsum[ 
+            upper_fl_bnd - fl_dist.fl_min ]
+        
         return density
     
     gap = sum( exon_lens[1:-1] )
     for x in xrange( 0, exon_lens[0] ):
         # below, we use an inner loop to look at all possible fragment lengths.
-        # of course, this isnt even close to necessary because we have precalcualted
-        # the cumsum. So, we really only need the minimum fragment length, which is
-        # just max( exon_lens[0] - x + gap + 0, fl_dist.fl_min ) and the maximum
-        # fragment length, min( exon_lens[0] - x + gap + exon_lens[-1], fl_dist.fl_max )
-        ## slow ( but correct ) old code
+        # of course, this isnt even close to necessary because we have 
+        # precalcualted the cumsum. So, we really only need the minimum 
+        # fragment length, which is just max( exon_lens[0] - x + gap + 0, 
+        # fl_dist.fl_min ) and the maximum fragment length, 
+        # min( exon_lens[0] - x + gap + exon_lens[-1], fl_dist.fl_max )
+        # slow ( but correct ) old code
         """
         for y in xrange( 0, exon_lens[-1] + 1 ):
             f_size = exon_lens[0] - x + gap + y
@@ -147,8 +151,8 @@ def calc_long_read_expected_cnt_given_bin( bin, exon_lens, fl_dist ):
     
     return density
 
-def find_short_read_bins_from_fragment_bin( \
-    bin, exon_lens, read_len, min_num_mappable_bases ):
+def find_short_read_bins_from_fragment_bin(
+        bin, exon_lens, read_len, min_num_mappable_bases ):
     # one of the end positions of a fragment must be
     # in the short read's bin, so the question is how many
     # junctions each end are able to cross. The general rule is 
@@ -170,7 +174,7 @@ def find_short_read_bins_from_fragment_bin( \
             # calculate all of the exon lens. If they are too short, then
             # continue ( to add more exons ). We can't just add the beginning
             # and final exons to internal exons because of the single exon case
-            # ( although we can get around this, but, premature optimization... )
+            # ( although we can get around this, but, premature optimization...)
             if sum( exon_lens[i] for i in new_bin ) < read_len:
                 continue
 
@@ -241,8 +245,9 @@ def find_possible_read_bins( transcript, exon_lens, fl_dist, \
     
     return full_fragment_bins, paired_read_bins, single_end_read_bins
 
-def estimate_num_paired_reads_from_bin( bin, transcript, exon_lens, \
-                                        fl_dist, read_len, min_num_mappable_bases=1 ):
+def estimate_num_paired_reads_from_bin( 
+        bin, transcript, exon_lens,
+        fl_dist, read_len, min_num_mappable_bases=1 ):
     """
 
     """
@@ -325,27 +330,29 @@ def build_f_matrix( transcripts, binned_reads, gene, fl_dists, \
                     max_num_unmappable_bases=MAX_NUM_UNMAPPABLE_BASES ):    
     num_trans = len( transcripts )
 
-    # store all counts, and count vectors. Indexed by ( read_group, read_len, bin )
+    # store all counts, and count vectors. Indexed by ( 
+    # read_group, read_len, bin )
     f_mat_entries = {}
 
     # for each candidate trasncript
     for transcript_index, transcript in enumerate( transcripts ):
-        # build the transcript composed of pseudo ( non overlapping ) exons. This means
-        # splitting the overlapping parts into new 'exons'
-        nonoverlapping_transcript = transcript.build_nonoverlapping_transcript( gene )
+        # build the transcript composed of pseudo ( non overlapping ) exons. 
+        # This means splitting the overlapping parts into new 'exons'
+        nonoverlapping_transcript = \
+            transcript.build_nonoverlapping_transcript( gene )
         nonoverlapping_exon_lens = numpy.array( gene.nonoverlapping_exon_lens )
-        
+
         # loop through each read type - seperated by fl dist and read length
         for read_len, fl_group in binned_reads.read_groups:
             fl_dist = fl_dists[ fl_group ]
             
-            # get the number of reads for this read type. Note that this isn't precisely
-            # correct - we should be scaling by the experiment cnts, but it should be
-            # pretty close
+            # get the number of reads for this read type. Note that this isn't 
+            # precisely correct - we should be scaling by the experiment cnts, 
+            # but it should be pretty close
             num_reads = binned_reads.read_group_cnts[ ( read_len, fl_group ) ]
             
-            # find all of the possible read bins for transcript given this fl_dist 
-            # and read length
+            # find all of the possible read bins for transcript given this 
+            # fl_dist and read length
             full, pair, single =  \
                 find_possible_read_bins( nonoverlapping_transcript, \
                                          nonoverlapping_exon_lens, fl_dist, \
@@ -358,16 +365,18 @@ def build_f_matrix( transcripts, binned_reads, gene, fl_dists, \
                 if key in cached_f_mat_entries:
                     pseudo_cnt = cached_f_mat_entries[ key ]
                 else:
-                    pseudo_cnt = estimate_num_paired_reads_from_bin( \
-                        bin, nonoverlapping_transcript, nonoverlapping_exon_lens, fl_dist, \
-                            read_len, max_num_unmappable_bases )
+                    pseudo_cnt = estimate_num_paired_reads_from_bin(
+                        bin, nonoverlapping_transcript, 
+                        nonoverlapping_exon_lens, fl_dist,
+                        read_len, max_num_unmappable_bases )
+                    
                     cached_f_mat_entries[ key ] = pseudo_cnt
 
-                # scale the count by the number of reads. If there are twice as many
-                # reads in experiment 1 as 2, then the expected ratio of reads is 2:1
-                # even if the expression levels are identical
+                # scale the count by the number of reads. If there are twice as 
+                # many reads in experiment 1 as 2, then the expected ratio of 
+                # reads is 2:1 even if the expression levels are identical
                 pseudo_cnts.append( pseudo_cnt*num_reads )
-                
+            
             total_pseudo_cnts = float(sum(pseudo_cnts))
             
             for bin, pseudo_cnt in zip(pair, pseudo_cnts):
@@ -379,15 +388,21 @@ def build_f_matrix( transcripts, binned_reads, gene, fl_dists, \
             
 
     # associate the read counts with each key    
+    new_f_mat = {}
     for key in f_mat_entries:
         read_len, read_group, bin = key
         try:
-            read_cnts = binned_reads.binned_reads[ ( read_len, read_group, bin ) ]
+            read_cnts = binned_reads.binned_reads[ (read_len, read_group, bin) ]
         except KeyError:
             read_cnts = 0
-        f_mat_entries[ key ]= [ f_mat_entries[key], read_cnts ]
+        
+        # dont allow unexplainable reads
+        if sum(f_mat_entries[key]) == 0:
+            continue
+        
+        new_f_mat[key] = [ f_mat_entries[key], read_cnts ]
     
-    return f_mat_entries
+    return new_f_mat
 
 def convert_f_matrices_into_arrays( f_mats ):
     expected_cnts = []
@@ -409,7 +424,7 @@ def tests( ):
     from transcripts import Transcript
     
     exon_lens = [ 500, 500, 5, 5, 5, 100, 200, 1000]
-    transcript = Transcript((0,), (len(exon_lens)-1,), range(1,len(exon_lens)-1) )
+    transcript = Transcript((0,),(len(exon_lens)-1,), range(1,len(exon_lens)-1))
     fl_dist = frag_len.build_uniform_density( 110, 600 )
     read_len = 100
     
@@ -420,9 +435,10 @@ def tests( ):
         print "Fr Bin:", bin
     
     bins = sorted( full )
-    bin_counts = simulate_reads_from_exons( 10000, fl_dist, None, 0, exon_lens  )
+    bin_counts = simulate_reads_from_exons(10000, fl_dist, None, 0, exon_lens)
     total_cnt = float(sum(bin_counts.values()))
-    simulated_freqs = dict((bin, cnt/total_cnt) for bin, cnt in bin_counts.iteritems())
+    simulated_freqs = dict((bin, cnt/total_cnt) 
+                           for bin, cnt in bin_counts.iteritems())
     
     analytical_cnts = dict( ( bin, calc_long_read_expected_cnt_given_bin( \
                                        bin, exon_lens, fl_dist ) ) \
@@ -434,7 +450,7 @@ def tests( ):
 
     for bin in bins:
         sim = simulated_freqs[bin] if bin in simulated_freqs else 0.000
-        print str(bin).ljust( 30 ), round(analytical_freqs[bin],3 ), round(sim,3 )
+        print str(bin).ljust( 30 ), round(analytical_freqs[bin],3 ),round(sim,3)
 
     print "SHORT READ SIMS:"    
 
@@ -442,7 +458,7 @@ def tests( ):
     exon_lens = [ 500, 500, 50, 5, 5, 500, 500 ]
     read_len = 100
     max_num_unmappable_bases = 1
-    transcript = Transcript( (0,), (len(exon_lens)-1,), range(1,len(exon_lens)-1) )
+    transcript = Transcript((0,), (len(exon_lens)-1,),range(1,len(exon_lens)-1))
     
     print transcript
     print exon_lens
@@ -452,7 +468,8 @@ def tests( ):
         transcript, exon_lens, fl_dist, read_len )    
     bins = sorted( paired )
     
-    bin_counts = simulate_reads_from_exons( 10000, fl_dist, read_len, 0, exon_lens  )
+    bin_counts = simulate_reads_from_exons( 
+        10000, fl_dist, read_len, 0, exon_lens  )
     total_cnt = float(sum(bin_counts.values()))
     simulated_freqs = dict( ( bin, cnt/total_cnt ) \
                             for bin, cnt in bin_counts.iteritems() )
@@ -465,7 +482,7 @@ def tests( ):
     total_cnt = sum( analytical_cnts.values() )
     analytical_freqs = dict( ( bin, float(cnt)/total_cnt ) \
                              for bin, cnt in analytical_cnts.iteritems() )
-
+    
     for bin in bins:
         sim = simulated_freqs[bin] if bin in simulated_freqs else 0.000
         print str(bin).ljust( 40 ), \
@@ -481,8 +498,8 @@ def tests( ):
                     read_len, max_num_unmappable_bases ) ) \
                             for bin in bins )
 
-    import cProfile    
-    cProfile.run("foo()")
+    #import cProfile    
+    #cProfile.run("foo()")
     
     return
         

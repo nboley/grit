@@ -9,6 +9,7 @@ import sys
 from collections import defaultdict
 import copy
 import pickle
+import random
 
 import os
 
@@ -22,6 +23,10 @@ from gene_models import GeneBoundaries, GenomicInterval
 
 VERBOSE = False
 MIN_FLS_FOR_FL_DIST = 100
+
+# we stop collecting fragments after this many. We also make sure that we 
+# have observed at least MAX_NUM_FRAGMENTS/10 exons
+MAX_NUM_FRAGMENTS = 1000000
 
 class FlDist( object ):
     """Store a fragment length dist.
@@ -289,12 +294,15 @@ def find_fragments_in_exon( reads, exon ):
 
 def find_fragments( reads, exons ):
     fragment_sizes = []
-    for exon in exons:
+    for exon_i, exon in enumerate(exons):
         if (exon.stop - exon.start + 1) < 700:
             continue
         
         fragment_sizes.extend( find_fragments_in_exon( reads, exon ) )
-        
+        if len( fragment_sizes ) > MAX_NUM_FRAGMENTS \
+                and exon_i > MAX_NUM_FRAGMENTS/10:
+            break
+    
     return fragment_sizes
 
 def build_robust_fl_dist_with_stats( fragment_lengths ):
@@ -322,13 +330,15 @@ def build_robust_fl_dist_with_stats( fragment_lengths ):
     else:
         lower_bnd = sorted_fls[0]
         upper_bnd = sorted_fls[-1]
-
+    
     new_fls = sorted_fls[ (sorted_fls > lower_bnd) & (sorted_fls < upper_bnd) ]
     if len( new_fls ) == 0:
         print sorted_fls
         print lower_bnd
         print upper_bnd
-        raise
+        print >> sys.stderr, "WARNING: There aren't any fragments after filtering."
+        new_fls = sorted_fls
+    
     lower_bnd = new_fls[0]
     upper_bnd = new_fls[-1]
 
@@ -521,7 +531,9 @@ def main():
     for line in gff_fp:
         gff_line = parse_gff_line( line )
         if gff_line != None: exons.append( gff_line[0] )
-    
+
+    # randomly shuffle the exons so that they aren't biased 
+    random.shuffle(exons)
     gff_fp.close()
 
     # load the bam file
@@ -542,7 +554,10 @@ def main():
     fl_dists, fragments = estimate_fl_dists( reads, exons )
     
     if analyze:
-        analyze_fl_dists( fragments, ofname + ".pdf" )
+        try:
+            analyze_fl_dists( fragments, ofname + ".pdf" )
+        except:
+            pass
     
     with open( ofname, "w" ) as ofp:
         pickle.dump( fl_dists, ofp )

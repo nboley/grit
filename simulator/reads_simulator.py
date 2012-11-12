@@ -15,7 +15,7 @@ NUM_NORM_SDS = 4
 FREQ_GTF_STRINGS = [ 'freq', 'frac' ]
 
 # add slide dir to sys.path and import frag_len mod
-sys.path.append(os.path.join(os.path.dirname(sys.argv[0]), ".." ))
+sys.path.append(os.path.join(os.path.dirname(sys.argv[0]), "../sparsify/" ))
 import frag_len
 
 def calc_genomic_offset( transcript, offset ):

@@ -5,9 +5,6 @@
 import sys
 import os
 
-sys.path.append( os.path.join( os.path.dirname(__file__), "..", "scikit-learn" ) )
-from sklearn import linear_model
-
 import subprocess
 import shutil
 import re
@@ -40,6 +37,7 @@ MINIMAL_VERBOSE = False
 DEBUG = False
 DEBUG_VERBOSE = False
 WRITE_META_DATA = False
+LOG_ERRORS = False
 
 # when debugging, we sometimes want to do everything from 
 # the main thread. This builds all of the output, and then
@@ -56,7 +54,7 @@ MINIMUM_INTRON_SIZE = 20
 LONG_SINGLE_EXON_GENES_FNAME = "high_read_depth_exons.gtf"
 
 
-import reads
+import old_reads as reads
 reads.PRINT_READ_PAIRS = PRINT_READ_PAIRS
 reads.DEBUG_VERBOSE = DEBUG_VERBOSE
 reads.MINIMUM_INTRON_SIZE = MINIMUM_INTRON_SIZE
@@ -66,9 +64,18 @@ transcripts.VERBOSE = VERBOSE
 
 from frag_len import build_normal_density, load_fl_dists
 from old_reads import Reads, BinnedReads
+sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), 
+                                  "../file_types/fast_gtf_parser/" ) )
+from gtf import load_gtf 
 from gene_models import parse_gff_line, GeneBoundaries
 from transcripts import *
+
+# from gene_models import parse_gff_line, GeneBoundaries
+# from transcripts import *
 from f_matrix import *
+
+from cvxpy import maximize, minimize, geq, eq, variable, matrix, program, log, \
+    sum, quad_form, square
 
 class ThreadSafeFile( file ):
     def __init__( *args ):
@@ -86,277 +93,29 @@ def get_memory_usage( pid ):
     process = subprocess.Popen( cmd, shell=True, stdout=subprocess.PIPE )
     return float( process.communicate()[0].strip() )
 
-def get_tracking_filename( bam_fn, gene_name ):
-    # strip off the last four characters to get rid of the .bam
-    assert bam_fn[-4:] == '.bam'
-    source = os.path.basename( bam_fn )[:-4]
-    return os.path.join( "./tracking_files", source, \
-                             source + "." + gene_name + ".tracking" )
 
+def find_identifiable_transcript_indices( expected_cnts ):
+    import numpy
+    # split the array into rows
+    rows = numpy.hsplit( expected_cnts, expected_cnts.shape[1] )
+    for remove_i in xrange( expected_cnts.shape[1] ):
+        predicted = rows[remove_i]
+        others = numpy.hstack( x for i, x in enumerate(rows) if i != remove_i )
 
-def estimate_freqs_with_nnls( expected_cnts, observed_cnts, indices ):
-    """re-estimate using unbiased estimator
+        Y = matrix(predicted)
+        theta = variable( expected_cnts.shape[1]-1 )
+        X = matrix(others)
+        p = program( minimize( sum(square(Y - X*theta)) ), 
+                     [eq( sum(theta), 1), geq( theta, 0 )] )
+        p.solve()
+        #print theta.value
+        print (Y - X*theta.value).sum()
     
-    """
-    filtered_expected_cnts = expected_cnts[ :, indices ]
+    sys.exit()
     
-    coefs, residuals = optimize.nnls( filtered_expected_cnts, observed_cnts )
-    if not any( coefs ):
-        raise ValueError
-    dp = numpy.dot( filtered_expected_cnts, coefs )
-    assert abs(  numpy.sqrt(( ( observed_cnts - dp )**2 ).sum()) -  residuals ) < 1e-6
-    freqs = list( coefs/coefs.sum() )
-    # insert the 0 freqs where appropriate
-    freqs_mapping = dict( zip( indices, freqs ) )
-    freqs = []
-    for transcript_index in xrange( expected_cnts.shape[1] ):
-        if transcript_index in freqs_mapping:
-            freqs.append( freqs_mapping[ transcript_index ] )
-        else:
-            freqs.append( 0.0 )
-    
-    return numpy.array( freqs ), residuals
-
-def choose_lambda_via_cv( expected_cnts, observed_cnts, lambdas ):
-    """Perform k-fold CV on the lasso path.
-
-    """
-    # find the bin prbs
-    num_obs = observed_cnts.sum()
-    bin_freqs = numpy.array( observed_cnts, dtype=float )/num_obs
-    
-    def decide_to_stop( mses ):
-        """Returns the minimum acceptable lambda index if one exists, None otherwise.
-        
-        """
-        # we need at least three values of lambda
-        if len( mses ) < 3: return None
-        # return lambda if the MSE increases for 2 consecutive steps 
-        if mses[-1] > mses[-3] and mses[-2] > mses[-3]:
-            return mses.index( min( mses ) )
-        else:
-            return None
-        assert False
-    
-    def bootstrap_freqs( indices ):    
-        training_size = int(num_obs)/2
-        training_set = numpy.random.multinomial( training_size, bin_freqs )
-        test_set = observed_cnts - training_set
-        freqs, residuals = estimate_freqs_with_nnls( \
-            expected_cnts, training_set, indices )
-        freq_scale = num_obs - training_size
-        MSE = sqrt( \
-            ( ( test_set - numpy.dot( expected_cnts, freqs*freq_scale ) )**2 ).sum() )
-        MSE_training = sqrt( \
-            ( ( training_set - \
-                    numpy.dot( expected_cnts, freqs*freq_scale ) )**2 ).sum() )
-        return freqs, ( MSE, MSE_training, residuals )
-
-    ordered_lambdas = sorted( lambdas, reverse=True )
-    
-    mse_path = []
-    
-    if VERBOSE:
-        print "\nEstimating Optimal Lambda via Cross Validation:"
-        print "Lambda".ljust(20), "MSE ( min, mean, max )"
-
-    prev_lambda = -1.0
-    min_mse = 1e100
-    # remove zeros from ordered_lambdas
-    if 0 in ordered_lambdas:
-        first_zero_index = ordered_lambdas.index(0)
-        ordered_lambdas = ordered_lambdas[:first_zero_index]
-    for last_lambda in ordered_lambdas:
-        if  (1 - last_lambda/prev_lambda) < 1e-2:
-            continue
-        
-        prev_lambda = last_lambda
-        
-        indices = (lambdas >= last_lambda).nonzero()[0]
-        
-        NUM_SAMPLES = 5
-        mses = []
-        try:
-            for sample_num in xrange( NUM_SAMPLES ):
-                quals = bootstrap_freqs( indices )[1]
-                mses.append( quals[0] )
-        except ValueError:
-            if last_lambda == ordered_lambdas[-1]:
-                raise ValueError, 'Cannot estimate frequencies when all ' + \
-                    'coefficients are zero.'
-
-            continue
-        mses = numpy.array( mses )
-        min_mse = min( min_mse, mses.mean() )                       
-        mse_path.append( ( mses.mean() - mses.std(), mses.mean(), \
-                           mses.mean() + mses.std() ) )
-        if VERBOSE:
-            print ("%e" % last_lambda).ljust( 20 ), \
-                  "[ %e, %e, %e ]" % \
-                  ( mses.mean() - 1.0*mses.std(), mses.mean(), \
-                    mses.mean() + 1.0*mses.std() )
-        
-        # add an early stop condition
-        if mses.mean() > 1.5*min_mse: break
-
-    # typically we would choose the min mean MSE as the value of the 
-    # lambda cutoff, however, because there is significant noise in 
-    # the MSE estiamtes and we prefer a larger transcript set than a 
-    # smaller one ( due to downstream filtering ) we expand the mse to 
-    # include any transcripts that are within a std of the min.
-    min_mean_mse = min( item[1] for item in mse_path )
-    min_mean_mse_index = max( index for index, mse in enumerate( mse_path ) \
-                              if mse[1] == min_mean_mse )
-    
-    min_mean_mse_max_value = mse_path[ min_mean_mse_index ][2]
-    for min_mse, mean_mse, max_mse in mse_path[min_mean_mse_index+1:]:
-        if min_mse < min_mean_mse_max_value:
-            min_mean_mse_index += 1
-        else: break
-    
-    
-    if VERBOSE:
-        print "Chose the optimal lamda: %e" % ordered_lambdas[ min_mean_mse_index ]
-    
-    return ordered_lambdas[ min_mean_mse_index ]
-
-def build_lars_path( expected_cnts, observed_cnts ):
-    lasso_lambdas, added_predictors, coefs = linear_model.lars_path( \
-        expected_cnts, observed_cnts, \
-        non_negative=True, verbose=VERBOSE )
-
-    ### reorder the lambdas so that they correspond with the trasncripts' order
-    # we do this to keep track of the transcripts with lambda 0.
-    lambda_mapping = dict( zip( added_predictors, lasso_lambdas )  )
-    lasso_lambdas = []
-    for transcript_index in xrange( expected_cnts.shape[1] ):
-        if transcript_index in lambda_mapping:
-            lasso_lambdas.append( lambda_mapping[ transcript_index ] )
-        else:
-            lasso_lambdas.append( 0.0 )
-    
-    return numpy.array( lasso_lambdas )
-    
-
-def estimate_stability( expected_cnts, observed_cnts, lasso_lambda, num_samples=100 ):
-    all_change_points = [ [] for loop in xrange( expected_cnts.shape[1] ) ]
-    cnts = numpy.zeros( expected_cnts.shape[1]  )
-    for loop in xrange( num_samples ):
-        num_obs = observed_cnts.sum()
-        bin_freqs = numpy.array( observed_cnts, dtype=float )/num_obs
-        training_set = numpy.random.multinomial( num_obs, bin_freqs )
-
-        """
-        lambdas = build_lars_path( expected_cnts, training_set )
-        for index in xrange(len(lambdas)):
-            all_change_points[ index ].append( lambdas )
-        """
-
-        clf = linear_model.Lasso( alpha=lasso_lambda, fit_intercept=False )
-        clf.fit( expected_cnts, training_set )
-        cnts += numpy.array( clf.coef_, dtype=bool )
-
-    """
-    for index in xrange(len(all_change_points)):
-        all_change_points[index] = numpy.array( all_change_points[index] )
-        #print all_change_points[index]
-    """
-
-    return cnts/num_samples
-
-def calc_improbability( f_mats, candidate_transcripts, freqs = None ):
-    freqs = None
-    if freqs == None:
-        freqs = numpy.array([FREQ_FILTER]*len(candidate_transcripts))
-    
-    #### do more filtering
-    # find the expected number of reads for each transcript
-    single_bins_fmats = reads.build_nonoverlapping_bin_observations( f_mats )
-    
-    expected_cnts, observed_cnts = convert_f_matrices_into_arrays( single_bins_fmats )
-    
-    weights = expected_cnts.sum(0)
-    weights = numpy.dot( weights, FREQ_FILTER )
-    weights = weights/weights.sum()
-
-    expected_read_cnts = weights*observed_cnts.sum()
-    
-    improbability_measure = []
-    for transcript_index in xrange( expected_cnts.shape[1] ):
-        exp_bin_fracs = expected_cnts[ :, transcript_index ] \
-                        /expected_cnts[ :, transcript_index ].sum() 
-
-        exp_num_reads = expected_read_cnts[ transcript_index ]
-        log_prbs = [ 0, ]
-        for cnt, exp_frac in zip( observed_cnts, exp_bin_fracs ):
-            if cnt > 0: continue
-            if exp_frac == 0.0 or exp_frac == 1.0: continue
-            # calculate the probability of observing 0 reads 
-            log_prb = exp_num_reads*log( 1 - exp_frac )
-            log_prbs.append( log_prb )
-        
-        improbability_measure.append( exp(min(log_prbs)) )
-    
-    return improbability_measure
-    
-    # filter the transcripts by their metadata
-    good_indices = set([ i for i in xrange(len(improbability_measure)) \
-                             if improbability_measure[i] > FREQ_FILTER_THRESH ])
-    improbabilites = [ x for x in improbability_measure if x > FREQ_FILTER_THRESH ]
-    trans = list( candidate_transcripts.iter_transcripts_and_metadata() )
-    new_trans = [ trans for index, trans in enumerate( trans ) if index in good_indices ]
-    return Transcripts( candidate_transcripts.gene, new_trans ), improbabilites
-
-def perform_optimization( f_mats, gene, binned_reads, candidate_transcripts ):
-    """
-
-    """
-    expected_cnts, observed_cnts = convert_f_matrices_into_arrays( f_mats )
-    if observed_cnts.sum() == 0:
-        raise GeneProcessingError( gene, binned_reads.reads, "No observations." )
-    
-    #### filter transcripts    
-    lasso_lambdas = build_lars_path( expected_cnts, observed_cnts )    
-    optimal_lambda = choose_lambda_via_cv( expected_cnts, observed_cnts, lasso_lambdas )
-    
-    if False and FILTER_BY_IMPROBABILITY:
-        good_indices = numpy.array([ i for i in xrange(len(lasso_lambdas)) \
-                                 if lasso_lambdas[i] >= ( optimal_lambda - 1e-12)\
-                                    and improbabilities[i] > FREQ_FILTER_THRESH ])
-    else:
-        good_indices = numpy.array([ i for i in xrange(len(lasso_lambdas)) \
-                                 if lasso_lambdas[i] >= ( optimal_lambda - 1e-12)])
-
-    
-    if VERBOSE:
-        print "\nRe-estimating frequencies on filtered transcripts using " + \
-            "an unbiased procedure..."  
-    
-    assert len( good_indices ) > 0
-    freqs, residuals = estimate_freqs_with_nnls( \
-        expected_cnts, observed_cnts, good_indices )    
-    
-    improbabilities = numpy.array( calc_improbability( \
-            f_mats, candidate_transcripts, freqs ) )
-    
-    if False and FILTER_BY_IMPROBABILITY:
-        good_indices = (improbabilities > FREQ_FILTER_THRESH).nonzero()[0]
-
-    transcripts = Transcripts( gene )
-    for index, ( transcript, lasso_lambda, freq, log_prb ) \
-            in enumerate( zip( candidate_transcripts, lasso_lambdas, \
-                                   freqs, improbabilities ) ):
-        transcripts.add_transcript( transcript, binned_reads.sourcefile, \
-                                        lasso_lambda, freq, log_prb=log_prb )
-    
-    transcripts.sort(order='freq')
-    
-    return transcripts, {"good_indices": good_indices,     \
-                             "optimal_lambda": optimal_lambda, \
-                             'improbs': improbabilities }
-
-def estimate_gene_expression( gene, candidate_transcripts, binned_reads, fl_dists, \
-                                  read_group_mappings ):
+def estimate_gene_expression( gene, candidate_transcripts, 
+                              binned_reads, fl_dists, 
+                              read_group_mappings ):
     """ as we filter out the different transcripts, append the objects
     to this list. The first entry is always the un lasso fit transcripts:
     ie, they are only fit using the filtering heuristics. Then we start 
@@ -371,31 +130,59 @@ def estimate_gene_expression( gene, candidate_transcripts, binned_reads, fl_dist
     assert len( gene.exon_bndrys ) > 0
     if len( binned_reads.binned_reads.keys() ) == 0:
         raise GeneProcessingError( gene, binned_reads.reads, "Zero valid bins.")
-
+    
+    candidate_transcripts = set(candidate_transcripts)
+    if len( candidate_transcripts ) > 100:
+        raise GeneProcessingError( gene, binned_reads.reads, "Too many transcripts.")
+    
     ### Estimate transcript freqs
     # build the f matrix
-    f_mats = build_f_matrix(candidate_transcripts, binned_reads, gene, fl_dists)
+    f_mats = build_f_matrix(candidate_transcripts, binned_reads, gene, fl_dists)    
+    expected_cnts, observed_cnts = convert_f_matrices_into_arrays( f_mats )
     
-    transcripts, meta_data = perform_optimization( \
-        f_mats, gene, binned_reads, candidate_transcripts )
+    # normalize the expected counts
+    expected_cnts = expected_cnts/expected_cnts.sum(0)
     
-    # build the new transcripts object
+    assert observed_cnts[ expected_cnts.sum(1) == 0 ].sum() == 0
+    
+    # make sure that the design matrix is full rank
+    import numpy.linalg
+    # print numpy.linalg.svd( expected_cnts, compute_uv=False )
+    #assert min( numpy.linalg.svd( expected_cnts, compute_uv=False ) > 1e-4 )
+    
+    if len( candidate_transcripts ) == 1:
+        thetas_values = [1.0,]
+    else:
+        # find_identifiable_transcript_indices( expected_cnts )
+        
+        print candidate_transcripts
+        ps = matrix(expected_cnts)
+        thetas = variable( len(candidate_transcripts) )
+        Xs = matrix( observed_cnts )
+        #ridge_lambda = Xs.sum()/10
+        #-ridge_lambda*quad_form(thetas,1)
+        p = program( maximize( Xs*log(ps*thetas) ), 
+                     [eq( sum(thetas), 1), geq( thetas, 0 )] )
+        p.options['maxiters']  = 500
+        
+        p.solve()
+        thetas_values = thetas.value
+        
+    new_transcripts = Transcripts( gene )
     if VERBOSE:
         print str("\nTranscript:").ljust( 50 ), \
-              str(" Lambda:").ljust(15), \
-              " Freq:".ljust(15), \
-              " Improb:"
-        
-        for transcript, md in transcripts.iter_transcripts_and_metadata():
-            print str(transcript).ljust( 50 ), \
-                  ("%e" % md.lasso_lambda).ljust(15), \
-                  ( "%s" % md.freq ).ljust( 15 ), \
-                  md.improbability
+              str(" Freq:").ljust(15)
     
-    if VERBOSE:
-        print "Finished estimating transcript frequencies for", gene.name
+    max_freq = max( thetas_values )
+    for transcript, freq in zip( candidate_transcripts, thetas_values ):    
+        if VERBOSE:
+            print str(transcript).ljust( 50 ), ("%e" % freq ).ljust(15)
         
-    return transcripts, meta_data
+        if freq/max_freq < 0.001: continue
+        
+        new_transcripts.add_transcript( transcript, freq=float(freq) )
+    
+    return new_transcripts
 
 def build_reads_objs( bam_fns, fl_dists, read_grp_mappings ):
     def some_reads_are_paired(reads):
@@ -418,7 +205,7 @@ def build_reads_objs( bam_fns, fl_dists, read_grp_mappings ):
             continue
         
         if not some_reads_are_paired( reads ):
-            print "Warning: SLIDE is not compatible with single end reads."
+            print "Warning: GRIT is not compatible with single end reads."
             print "Skipping: ", bam_fn
             continue
         
@@ -486,9 +273,11 @@ def process_gene_and_reads( gene, candidate_transcripts, reads, op_transcripts):
     read_group_mappings = reads.read_group_mappings
     
     try:
-        transcripts, meta_data = estimate_gene_expression( \
-            gene, candidate_transcripts, binned_reads, fl_dists, read_group_mappings )
+        transcripts = estimate_gene_expression( \
+            gene, candidate_transcripts, binned_reads, 
+            fl_dists, read_group_mappings )
     except Exception, inst:
+        #if not LOG_ERRORS: raise
         return make_error_log_string( gene, reads.filename, inst )
     
     op_transcripts.add_transcripts( transcripts, gene, WRITE_META_DATA )
@@ -639,9 +428,10 @@ def estimate_genes_expression( genes, gene_transcripts, bam_fns, \
         for index, process in enumerate( processes ):
             memory_used = get_memory_usage( process.pid )
             
+            
             if memory_used > 100.0/len( processes ):
-                print "WARNING: terminating process for using {0:.2%} memory".format( \
-                    memory_used/100 )
+                temp = "WARNING: terminating process for using {0:.2%} memory"
+                print temp.format( memory_used/100 )
                 os.kill( process.pid, signal.SIGUSR1 )
                 p = multiprocessing.Process(\
                     target=estimate_genes_expression_worker, args=args)
@@ -827,11 +617,9 @@ def parse_arguments():
 
 if __name__ == "__main__":
     # Get file objects from command line
-    gtf_fp, bam_fns, ofname, fl_dist_fns, fl_dist_norm, threads=parse_arguments()
-    
-    # build objects from file objects
+    gtf_fp, bam_fns, ofname, fl_dist_fns, fl_dist_norm,threads=parse_arguments()
     genes, gene_transcripts = build_objects( gtf_fp )
-    
+                 
     if fl_dist_norm:
         mean, sd = fl_dist_norm
         fl_min = max( 0, mean - (4 * sd) )

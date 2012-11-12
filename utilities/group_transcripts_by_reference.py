@@ -367,6 +367,7 @@ def main():
             if trans.id not in observed_reference_trans:
                 unobserved_trans_ids.add( trans.id )
     
+    """
     for gene in ref_genes:
         for trans in gene[-1]:
             if trans.id in unobserved_trans_ids:
@@ -375,6 +376,7 @@ def main():
                     { 'gene_type': 'gene', 'transcript_type': 'mRNA' },
                                               source="reference")
                 ofp.write( lines + "\n" )
+    """
     
     ofp.close()
     

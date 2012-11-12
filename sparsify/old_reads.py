@@ -60,6 +60,12 @@ class Reads( pysam.Samfile ):
         # whether or not the gene is on the positive strand
         gene_strnd_is_rev = ( gene_bndry.strand == '-' )
         
+        if gene_bndry.chr == 'M':
+            gene_bndry = GenomicInterval(
+                'dmel_mitochondrion_genome', gene_bndry.strand, 
+                gene_bndry.start, gene_bndry.stop )
+                                         
+        
         # get all of the first pairs
         def iter_pair1_reads():
             for read in self.fetch( \
@@ -70,7 +76,7 @@ class Reads( pysam.Samfile ):
         
         # index the pair 2 reads
         reads_pair2 = {}
-        for read in self.fetch( gene_bndry.chr, gene_bndry.start, gene_bndry.stop  ):
+        for read in self.fetch(gene_bndry.chr,gene_bndry.start,gene_bndry.stop):
             if not read.is_read1 \
                 and read.is_reverse != gene_strnd_is_rev:
                 reads_pair2[ read.qname ] = read
@@ -91,7 +97,8 @@ class Reads( pysam.Samfile ):
                    or ( len( read2.cigar ) > 1 )
             
             if read1.qlen != read2.qlen:
-                print( "ERROR: unequal read lengths %i and %i\n", read1.qlen, read2.qlen )
+                print( "ERROR: unequal read lengths %i and %i\n", \
+                       read1.qlen, read2.qlen )
                 continue
             
             yield read1, read2

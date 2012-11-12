@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 import sys
-sys.path.append( "../scikit-learn" )
+sys.path.insert( 0, "../scikit-learn" )
 from sklearn import linear_model
 from sklearn import datasets
 

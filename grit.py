@@ -42,10 +42,11 @@ USE_MERGED_CAGE_SIGNAL_FOR_EXONS = False
 USE_MERGED_POLYA_SIGNAL_FOR_EXONS = True
 
 USE_MERGED_EXONS_FOR_TRANSCRIPTS = False
+USE_HEURISTIC_FILTERING = False
 
 # whether or not to include the merged_input transripts
 # in the final merged file
-USE_MERGED_INPUT=False
+USE_MERGED_INPUT=True
 
 VERBOSE = True
 STRESS_TEST_DEP_FINDER = False
@@ -1612,7 +1613,7 @@ def estimate_fl_dists( elements, pserver, output_prefix ):
         # get the exons file ( we always use distal exons, because reads that 
         # fall entirely within them are necessarily full length
         ress = elements.get_elements_from_db( \
-            "cage_tss_exons_gff", sample_type, sample_id )
+            "cage_tss_exons_gff", sample_type, "*" )
         assert len( ress ) == 1
         exons_fname = ress[0].fname
         
@@ -1620,7 +1621,7 @@ def estimate_fl_dists( elements, pserver, output_prefix ):
         op_fname = os.path.join( output_prefix, sample_type + "." \
                                      + sample_id + ".fldist.obj" )
         
-        cmd_str_template = "python %s {0} {1} {2} " % BUILD_FL_DIST_CMD
+        cmd_str_template = "python %s --analyze {0} {1} {2} " % BUILD_FL_DIST_CMD
         call = cmd_str_template.format( exons_fname, bam_fname, op_fname )
         
         op_element_types = [ \
@@ -1669,7 +1670,7 @@ def sparsify_transcripts( elements, pserver, output_prefix ):
     ress = elements.get_elements_from_db( "fl_dist" )
     fldist_fnames = [ res.fname for res in ress ]
     
-    ress = elements.get_elements_from_db( "transcripts_gtf", "M", "M" )
+    ress = elements.get_elements_from_db( "transcripts_gtf", "*", "M" )
     assert( len(ress) == 1 )
     merged_transcript_fname = ress[0].fname
     
@@ -1691,6 +1692,7 @@ def sparsify_transcripts( elements, pserver, output_prefix ):
     dependencies.extend( fldist_fnames )
 
     cmd = Cmd( call, op_element_types, op_fnames, dependencies )
+    print cmd
     pserver.add_process( cmd,  Resource(pserver.max_available_resources) )
         
     return
@@ -1901,6 +1903,7 @@ def produce_final_annotation( elements, pserver, output_prefix ):
     
     """
     def add_heur_filter_transcripts_cmd( sample_type, sample_id  ):
+        assert False
         # get the merged transcripts from the database
         res = elements.get_elements_from_db(
             "CDS_transcripts_gtf", sample_type, sample_id)
@@ -1997,12 +2000,14 @@ def produce_final_annotation( elements, pserver, output_prefix ):
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
         pserver.add_process( cmd, Resource(1) )
 
-    add_heur_filter_transcripts_cmd( "*", "M" )
-    add_rename_transcripts_cmd( "*", "M", True )
-    add_rename_transcripts_cmd( "*", "M", False )
+    if USE_HEURISTIC_FILTERING:
+        add_heur_filter_transcripts_cmd( "*", "M" )
+        add_rename_transcripts_cmd( "*", "M", True )
+        add_heur_filter_transcripts_cmd( "*", "*" )
+        add_rename_transcripts_cmd( "*", "*", True )
 
-    add_heur_filter_transcripts_cmd( "*", "*" )
-    add_rename_transcripts_cmd( "*", "*", True )
+    
+    add_rename_transcripts_cmd( "*", "M", False )
     add_rename_transcripts_cmd( "*", "*", False )
     
     return
@@ -2114,19 +2119,23 @@ def calc_expression_scores( elements, pserver, output_prefix ):
         add_calc_exon_expression_cmd(sample_type, sample_id, 
                                      "CDS_renamed_transcripts_gtf", "*", "*", 
                                      "CDS", "CDS_expression_gff")
-        add_calc_exon_expression_cmd(sample_type, sample_id, 
-                                     "heur_filtered_renamed_transcripts_gtf", 
-                                     "*", "*", 
-                                     "heur_filtered",
-                                     "heur_filtered_expression_gff")
+        if USE_HEURISTIC_FILTERING:
+            add_calc_exon_expression_cmd(
+                sample_type, sample_id, 
+                "heur_filtered_renamed_transcripts_gtf", 
+                "*", "*", 
+                "heur_filtered",
+                "heur_filtered_expression_gff")
     
     # add build csv command
     add_build_csv_cmd( "intron" )
-    add_build_csv_cmd( "exon", True )
     add_build_csv_cmd( "exon", False )
-    add_build_csv_cmd( "gene", True )
     add_build_csv_cmd( "gene", False )
-
+    
+    if USE_HEURISTIC_FILTERING:
+        add_build_csv_cmd( "exon", True )
+        add_build_csv_cmd( "gene", True )
+        
     return
 
 
@@ -2150,33 +2159,23 @@ def main():
     merge_sample_type_junctions( elements, pserver, base_dir + "junctions/" )
         
     build_all_exon_files( elements, pserver, base_dir + "exons" )
-    # estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
+    estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
     
     build_transcripts( elements, pserver, base_dir + "transcripts" )
 
     merge_transcripts( elements, pserver, base_dir + "transcripts" )
     
-    run_all_slide_compares( elements, pserver, base_dir + "stats" )
-    
     call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
 
     produce_final_annotation( elements, pserver, base_dir + "final_ann" )
-    
-    pserver.process_queue()    
-    return
 
-    # sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
-    
-    # DO PROTEIN FILTERING ( need to write this... )
-    produce_final_annotation( elements, pserver, base_dir + "final_ann" )
-        
-    # CALCULATE EXPRESSION SCORES
-    # include, build expression csv
     calc_expression_scores( elements, pserver, base_dir + "expression" )
     
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
     
-    pserver.process_queue()    
+    sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
+    
+    pserver.process_queue()                
     return
 
 main()
