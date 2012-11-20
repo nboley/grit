@@ -21,7 +21,8 @@ def get_introns_by_gene_name( genes ):
     
     for ( gene_name, chrm, strand, start, stop, transcripts ) in genes:
         for trans in transcripts:
-            trans_to_ref_name[(chrm, strand)][trans.IB_key()].add(
+            equiv_key = trans.IB_key(error_on_SE_genes=False)
+            trans_to_ref_name[(chrm, strand)][equiv_key].add(
                 (trans.id, gene_name ))
             if trans.is_protein_coding:
                 cds_bnds_to_gene_name[(chrm, strand)][trans.cds_region].add(

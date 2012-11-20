@@ -5,19 +5,15 @@ import sys, os
 import numpy
 from collections import defaultdict, OrderedDict
 from itertools import izip, repeat
+import networkx as nx
 
 sys.path.append( os.path.join( os.path.dirname( __file__ ),
                                "..", "..", "file_types", "fast_gtf_parser" ) )
 from gtf import load_gtfs
 
-sys.path.append( os.path.join( os.path.dirname( __file__ ), 
-                               "..", "..", "file_types" ) )
-from gtf_file import iter_gtf_lines
-from genomic_intervals import GenomicInterval
+sys.path.append( os.path.join( os.path.dirname( __file__ ), ".."  ) )
+from cluster_exons import find_overlapping_exons
 
-sys.path.append( os.path.join( os.path.dirname( __file__ ), "..", "exons" ) )
-from build_genelets import build_edges_hash_table, \
-    build_genelets_from_exons_and_edges, cluster_all_exons
 
 VERBOSE = True
 MERGE_DISTAL_ENDS = False
@@ -39,7 +35,7 @@ def build_gtf_lines( chrm, strand, gene_name, trans_name, exon_bndries ):
     return iter_gtf_lines( regions_iter, gene_name_iter, trans_name_iter,
                            feature=feature, source=source )
 
-def write_all_transcripts( clustered_trans, ofp, sources_fp, transcript_maps ):
+def write_all_transcripts( clustered_trans, ofp, sources_fp ):
     # iterate through unique transcripts, and write them to the output file
     for (chrm, strand), genes in clustered_trans.iteritems():
         for gene_id, transcripts in genes.iteritems():
@@ -65,209 +61,6 @@ def write_all_transcripts( clustered_trans, ofp, sources_fp, transcript_maps ):
     
     return
 
-def get_exons_w_shared_coords( exons, key ):
-    """Group exons by those that contain the same start or stop coordinate
-    This is single linkage clustering
-    
-    Hueristic:
-    For each set of overlapping exons
-    Base) Store the first exon in the first index of grp_conn_exons and track
-          the index at which it is stored in separate start and stop coordinate.
-    Recursion)
-        1) If an exon's start and stop coords are not in the grp_starts and 
-           grp_stops dicts, resp'ly, append the exon to grp_conn_exons.
-        2) Add exons to the group in which they belong by searching grp_starts
-           and grp_stops dictionaries and adjust appropriate dicts accordingly.
-        3) If the start and stop coords of an exon point to different groups
-           then those groups must be merged and the grp_starts and grp_stops 
-           dicts must be updated for each exon in the moved group.
-    End) Exons are sorted by start coord so when an exon does not overlap the
-         current group it and any exon after it can no longer share a start or
-         stop coord with the current group. grp_conn_exons are dumped and the
-         grp_starts and grp_stops dicts are reset.
-    """
-    if len( exons ) == 0: return {}
-
-    # sort exons by start coord
-    exons = exons[ exons[:,0].argsort() ]
-    
-    # structures for tracking the current group of exons
-    # when exons can not longer share a coord these structs are reset
-    # in order to avoid large dict key lookups
-    grp_conn_exons = []
-    # key == coord; value == current grp_conn_exons array index
-    coord_to_group = {}
-    
-    def add_exon_to_grp( start, stop ):
-        def merge_exon_groups():
-            # add exon to the stop indexed position
-            grp_conn_exons[ coord_to_group[stop] ].append( (start, stop) )
-            
-            # add all exons from the start indexed group
-            grp_conn_exons[ coord_to_group[stop] ].extend( 
-                grp_conn_exons[ coord_to_group[start] ] )
-            
-            # remember the start group index as it will change in next loop
-            start_grp_index = coord_to_group[start]
-            
-            # point all coords that were just moved to the stop indexed 
-            # array to the appropriate grp_conn_exons array index
-            for exon in grp_conn_exons[ coord_to_group[start] ]:
-                coord_to_group[ exon[0] ] = coord_to_group[stop]
-                coord_to_group[ exon[1] ] = coord_to_group[stop]
-            
-            # remove contents of the start list *cleaned it up later*
-            # can't delete as list indices must be maintained
-            grp_conn_exons[ start_grp_index ] = []
-            
-            return
-        
-        # if start coord has been seen previously
-        if start in coord_to_group:
-            # both start and stop coords have been seen previously
-            if stop in coord_to_group:
-                # if the start and stop coord groups are already the same
-                if coord_to_group[start] == coord_to_group[stop]:
-                    grp_conn_exons[ coord_to_group[start] ].append( (start, stop) )
-                # start and stop groups are different and must be merged
-                else:
-                    merge_exon_groups()
-            # only start coord has been seen previously
-            else:
-                grp_conn_exons[ coord_to_group[start] ].append( (start, stop) )
-                coord_to_group[ stop ] = coord_to_group[ start ]
-        # if the stop coord, but not the start coord, has been seen previously
-        elif stop in coord_to_group:
-            grp_conn_exons[ coord_to_group[stop] ].append( (start, stop) )
-            coord_to_group[ start ] = coord_to_group[ stop ]
-        # if neither the start or stop coord have been seen yet
-        else:
-            coord_to_group[start] = len(grp_conn_exons)
-            coord_to_group[stop] = len(grp_conn_exons)
-            grp_conn_exons.append( [ (start, stop), ] )
-        
-        return
-    
-    
-    # check when we can reset the grp structs
-    grp_max_stop = -1
-    # store all groups of connected exons
-    all_connected_exons = []
-    for start, stop in exons:
-        # if this exon is past the last stop of the current group
-        if grp_max_stop < start:
-            # dump all exon groups that are not empty
-            all_connected_exons.extend(
-                [ exons for exons in grp_conn_exons if len( exons ) > 0 ] )
-            # reset all values when starting a new group
-            grp_conn_exons = []
-            coord_to_group = {}
-        
-        # add exon information to the current group of exons
-        add_exon_to_grp( start, stop )
-        # adjust grp_max_stop to maintian current grp max position
-        grp_max_stop = max( grp_max_stop, stop )
-    
-    # add final exon groups that are not empty
-    all_connected_exons.extend( 
-        [ exons for exons in grp_conn_exons if len( exons ) > 0 ] )
-    
-    # return a dict of a group id pointing to a group of exons
-    return dict( zip( range(len(all_connected_exons)), all_connected_exons ) )
-
-def get_connected_components( exons, jns ):
-    all_connected_exons = {}
-    keys = set( exons ).intersection( jns )
-    for key in sorted( keys ):
-        
-        key_jns = numpy.array( jns[key] )
-        
-        # filtered_exons = filter_exons( exons[key], key_jns )
-        filtered_exons = numpy.array( exons[ key ] )
-        
-        exons_w_shared_coords = get_exons_w_shared_coords( filtered_exons, key )
-        
-        if len(exons_w_shared_coords) > 0:
-            # find the hash table of exons ( nodes ) and junctions ( edges )
-            edges = build_edges_hash_table( exons_w_shared_coords, key_jns )
-            
-            # build the genelets by connected components
-            genelets = build_genelets_from_exons_and_edges( 
-                exons_w_shared_coords, edges )
-            
-            all_connected_exons[key] = genelets
-    
-    return all_connected_exons
-
-def get_exons_and_junctions( transcript_maps ):
-    # extract unique exons and jns sets from transcripts for clustering
-    all_exons = {}
-    all_jns = {}
-    for (chrm, strand), transcripts in transcript_maps.iteritems():
-        key_exons = set()
-        key_jns = set()
-        for exons in transcripts:
-            # skip single exon genes as they will not cluster
-            if len(exons) <= 2: continue
-            
-            key_exons.update( izip( exons[::2], exons[1::2] ) )
-            key_jns.update( [(start+1, stop-1) for start, stop in 
-                                 izip( exons[1::2], exons[2::2] ) ] )
-        
-        # convert sets to list for clustering
-        all_exons[ (chrm, strand) ] = list( key_exons )
-        all_jns[ (chrm, strand) ] = list( key_jns )
-    
-    return all_exons, all_jns
-
-def create_exons_map( exon_groups ):
-    # reverse exon groups so that an exon points to a unique id
-    exons_map = {}
-    # cluster id (gene_id)
-    c_id = 1
-    for (chrm, strand), key_exon_groups in exon_groups.iteritems():
-        for exons in key_exon_groups:
-            for exon in exons:
-                exons_map[ (chrm, strand, exon) ] = c_id
-            c_id += 1
-    
-    return exons_map
-
-def get_exon_clusters( transcript_maps ):
-    # get all unique exons and junctions from all transcripts
-    all_exons, all_jns = get_exons_and_junctions( transcript_maps )
-    
-    # actually cluster the exons
-    exon_groups = cluster_all_exons( all_exons, all_jns )
-    
-    # convert maps dict
-    exons_map = create_exons_map( exon_groups )
-    
-    return exons_map
-
-def cluster_transcripts( transcript_maps ):
-    # cluster all exons from transcripts
-    exons_map = get_exon_clusters( transcript_maps )
-    for key, item in sorted(exons_map.iteritems()):
-        print key, item
-    
-    # identify cluster which each transcript belongs
-    clustered_trans = defaultdict( lambda: defaultdict( list ) )
-    for (chrm, strand), all_trans_exons in transcript_maps.iteritems():
-        for exons in all_trans_exons.iterkeys():
-            try:
-                # try to get cluster id from exons map
-                key = (chrm, strand, tuple(exons[:2]))
-                gene_id = str( exons_map[ key ] )
-            # if the key does not exist then this must be a single exon gene
-            except KeyError:
-                print exons
-                raise
-            
-            # add the gene_id to the transcripts meta_data
-            clustered_trans[(chrm, strand)][gene_id].append( exons )
-    
-    return clustered_trans
 
 def cluster_ends( ends_and_sources ):
     def create_cluster_map( coords, map_to_index ):
@@ -314,62 +107,6 @@ def cluster_ends( ends_and_sources ):
     
     return clustered_ends_and_sources
 
-def build_unique_transcripts( transcriptomes, gtf_fnames ):
-    # build the sets of transcripts
-    tmp_transcript_maps = defaultdict( lambda: defaultdict( list ) )
-    transcript_maps = defaultdict( lambda: defaultdict( list ) )
-    
-    for source, transcriptome in izip( gtf_fnames, transcriptomes ):
-        for cluster_id, chrm, strand, start, stop, transcripts in transcriptome:
-            for trans_id, exons in transcripts:
-                assert len( exons ) % 2 == 0
-                # skip single  exon transcripts and transcripts that 
-                # have an odd number of boundaries. We put single exon
-                # genes into the final transcript maps struct because we 
-                # don't want to do any boundary extension
-                if len( exons ) == 2:
-                    transcript_maps[(chrm, strand)][tuple(exons)].append( 
-                        source )
-                else:
-                    tmp_transcript_maps[ ( chrm, strand ) ][ \
-                        tuple( exons[1:-1] ) ].append( \
-                        (exons[0], exons[-1], source) )
-    
-    # get the longest external coordinate for each internal structure
-    for key, transcripts in tmp_transcript_maps.iteritems():
-        for internal_exons, ends_and_sources in transcripts.iteritems():
-            if MERGE_DISTAL_ENDS:
-                start_coord = min( zip( *ends_and_sources )[0] )
-                stop_coord = max( zip( *ends_and_sources )[1] )
-                exons = tuple(
-                    [start_coord,] + list( internal_exons ) + [stop_coord,])
-                # uniquify the list of sources
-                transcript_maps[ key ][ exons ] = \
-                    list(set(zip( *ends_and_sources )[2]))
-            elif SINGLE_LINKAGE_CLUSTER:
-                clustered_ends_and_sources = cluster_ends( ends_and_sources )
-                for start, stop, sources in clustered_ends_and_sources:
-                    exons = tuple(
-                        [start,] + list( internal_exons ) + [stop,])
-                    
-                    transcript_maps[key][exons] = sources
-            else:
-                for start, stop, source in ends_and_sources:
-                    exons = tuple(
-                        [start,] + list( internal_exons ) + [stop,])
-                    transcript_maps[ key ][ exons ].append( source )
-                # BUG
-                transcript_maps[key][exons] = set(transcript_maps[key][exons])
-                try:
-                    assert len( transcript_maps[ key ][ exons ] ) == \
-                        len( set( transcript_maps[ key ][ exons ] ) )
-                except:
-                    print exons
-                    print transcript_maps[ key ][ exons ]
-                    raise
-    
-    return transcript_maps
-
 def parse_arguments():
     import argparse
     desc = 'Merge transcripts.'
@@ -403,21 +140,132 @@ def parse_arguments():
     return args.gtfs, args.out_fname, args.sources_fname, \
         args.threads
 
+def build_exon_to_transcripts_map( transcripts, source_fnames ):
+    exon_to_transcripts_map = defaultdict( lambda: defaultdict(list) )
+    for source, source_transcripts in izip( source_fnames, transcripts ):
+        for cluster_id, chrm, strand, start, stop, transcripts in source_transcripts:
+            for transcript in transcripts:
+                for exon in transcript.exons:
+                    exon_to_transcripts_map[(chrm, strand)][exon].append( 
+                        (transcript, source) )
+    
+    return exon_to_transcripts_map
+
+def cluster_transcripts( transcripts, sources ):
+    """Two transcripts overlap if they share overlapping exons So, we  
+    use the following algorithm:
+    
+    1) build a mapping from exons to transcripts
+    2) build a mapping from transcripts to exons
+    3) cluster exons
+    4) build edges through exons
+
+    """
+    exons_to_transcripts = defaultdict( lambda: defaultdict(list) )
+    transcripts_to_exons = defaultdict( lambda: defaultdict(list) )
+    for source_genes, source in izip( transcripts, sources ):
+        for gene in source_genes:
+            for transcript in gene[-1]:
+                contig = ( transcript.chrm, transcript.strand )
+                for exon in transcript.exons:
+                    exons_to_transcripts[contig][exon].append((transcript, source))
+                    transcripts_to_exons[contig][(transcript, source)].append(exon)
+    
+    clustered_transcripts = {}
+    for contig, exons in exons_to_transcripts.iteritems():
+        transcripts_graph = nx.Graph()
+        # add all of the transcripts
+        transcripts_graph.add_nodes_from( 
+            transcripts_to_exons[contig].iterkeys() )
+        
+        sorted_exons = sorted(exons.keys())
+        clustered_exons = find_overlapping_exons( sorted_exons )
+        for exon_cluster in clustered_exons:
+            connected_transcripts = []
+            for exon_i in exon_cluster:
+                connected_transcripts.extend( 
+                    exons_to_transcripts[contig][sorted_exons[exon_i]] )
+            
+            transcripts_graph.add_edges_from( 
+                zip(connected_transcripts[:-1], connected_transcripts[1:] ) )
+            
+            
+        clustered_transcripts[contig] = nx.connected_components(
+            transcripts_graph )
+    
+    return clustered_transcripts
+
+def reduce_internal_clustered_transcripts( internal_grpd_transcripts ):
+    """Take a set of clustered transcripts and reduce them into 
+    a set of canonical transcripts, and associated sources.
+    
+    """
+    reduced_transcripts = defaultdict( list )
+    for grpd_transcripts in internal_grpd_transcripts:
+        for transcript, source in grpd_transcripts:
+            reduced_transcripts[transcript].append( source )
+    
+    return sorted( reduced_transcripts.iteritems() )
+
+def reduce_single_exon_transcripts(se_transcripts):
+    reduced_transcripts = defaultdict( list )
+    for transcript, source in se_transcripts:
+        transcripts[transcript].append( source )
+    
+    return sorted( reduced_transcripts.iteritems() )
+
+def reduce_clustered_transcripts(clustered_transcripts):
+    reduced_transcripts = []
+    gene_id_cntr = 1
+    for (chr, strand), contig_transcripts in clustered_transcripts.iteritems():
+        for gene_transcripts in contig_transcripts:
+            gene_id = "GENE_%i" % gene_id_cntr
+            
+            # group transcript by their internal structure
+            internal_clustered_transcripts = defaultdict( list )
+            single_exon_transcripts = []
+            for transcript, source in gene_transcripts:
+                IB_key = transcript.IB_key(error_on_SE_genes=False)
+                if IB_key[0] == 'SE_GENE':
+                    single_exon_transcripts.append( (transcript, source) )
+                else:
+                    internal_clustered_transcripts[IB_key].append(
+                        (transcript, source))
+
+            # reduce the non single exon genes
+            for transcript, sources in reduce_internal_clustered_transcripts( 
+                    internal_clustered_transcripts.values() ):
+                reduced_transcripts.append( (transcript, gene_id, sources) )
+
+            # reduce the single exon genes
+            for transcript, sources in reduce_single_exon_transcripts( 
+                    single_exon_transcripts ):
+                reduced_transcripts.append( (transcript, gene_id, sources) )
+            
+            gene_id_cntr += 1
+    
+    return reduced_transcripts
+
 def main():
     gtf_fnames, ofp, sources_fp, n_threads = parse_arguments()
     
     # load all transcripts file and store corresponding data
     transcriptomes = load_gtfs( gtf_fnames, n_threads )
     
-    # build maps from unique transcripts to a list of sources (gtf file names)
-    transcript_maps = build_unique_transcripts( transcriptomes, gtf_fnames )
+    # cluster transcripts by shared overlapping exons
+    clustered_transcripts = cluster_transcripts( transcriptomes, gtf_fnames )
     
-    # use clustered exons to recluster transcripts
-    clustered_trans = cluster_transcripts( transcript_maps )
+    # group transcripts by matching internal boundaries
+    reduced_transcripts = reduce_clustered_transcripts( clustered_transcripts )
     
-    write_all_transcripts( clustered_trans, ofp, sources_fp, transcript_maps )
+    transcript_ids = defaultdict( lambda: 1 )
+    for transcript, gene_id, sources in reduced_transcripts:
+        transcript.id = "%s_%i" % ( gene_id, transcript_ids[gene_id] )
+        transcript_ids[gene_id] += 1        
+        ofp.write(transcript.build_gtf_lines(gene_id, {}, source="grit")+"\n")
+        sources_fp.write("\t".join((gene_id, transcript.id, ",".join(sources)))+"\n")
     
-    return
+    return 
 
 if __name__ == "__main__":
     main()

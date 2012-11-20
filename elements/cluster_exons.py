@@ -2,18 +2,19 @@ from collections import defaultdict
 from itertools import product
 
 def find_paths(g, n, m, path=[]):
-  "Find paths from node index n to m using adjacency list a."
-  path = path + [n]
-  if n == m:
-      return [path]
-  
-  paths = []
-  for child in g.successors( n ):
+    "Find paths from node index n to m using adjacency list a."
+    path = path + [n]
+    if n == m:
+         return [path]
+    
+    paths = []
+    for child in g.successors( n ):
       if child not in path:
-          child_paths = find_paths(g, child, m, path)
-          for child_path in child_paths:
-              paths.append(child_path)
-  return paths
+        child_paths = find_paths(g, child, m, path)
+        for child_path in child_paths:
+          paths.append(child_path)
+    
+    return paths
 
 def find_overlapping_exons(exons):
     overlapping_exons_mapping = set()
@@ -22,7 +23,7 @@ def find_overlapping_exons(exons):
             if i_i >= o_i: break
             if not (i_stop < o_start or i_start > o_stop):
                 overlapping_exons_mapping.add( (min(i_i, o_i), max(i_i, o_i)) )
-
+    
     return overlapping_exons_mapping
 
 

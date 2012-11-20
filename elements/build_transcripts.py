@@ -109,13 +109,15 @@ def build_transcripts( exons, jns, strand ):
     graph.add_edges_from( edges  )
     
     transcripts = []
+    num_transcripts = 0
     for tss in exons.TSS:
         for tes in exons.TES:
-            for i,transcript in enumerate(nx.all_simple_paths(graph, tss, tes)):
-                if i > MAX_NUM_TRANSCRIPTS: 
+            for transcript in nx.all_simple_paths(graph, tss, tes):
+                num_transcripts += 1
+                if num_transcripts > MAX_NUM_TRANSCRIPTS: 
                     print >> sys.stderr, "TOO COMPLEX"
-                    # print >> sys.stderr, exons
-                    return transcripts # []
+                    return []
+
                 transcripts.append( transcript )
     
     return transcripts

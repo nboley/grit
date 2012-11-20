@@ -116,15 +116,24 @@ class Transcript( list ):
     
     def __hash__( self ):
         if self.cds_region != None:
-            return hash( (self.exons, tuple(self.cds_region)) )
+            return hash(( self.chrm, self.strand, 
+                          self.exons, tuple(self.cds_region) ))
         else:
-            return hash( self.exons )
+            return hash( (self.chrm, self.strand, self.exons, None) )
     
-    def IB_key( self ):
+    def IB_key( self, error_on_SE_genes=True ):
         """Return a key for matching transcripts on their external bounds.
-
+        
+        Unless this is specifically overridden, error when this is called on a 
+        single exon gene. We do this to avoid the situation where the  
         """
-        return (tuple(self.exon_bnds[1:-1]), self.cds_region)
+        if len( self.exon_bnds ) == 2:
+            if error_on_SE_genes:
+                raise ValueError, "Can't build a key for a single exon gene."
+            else:
+                return ( self.chrm, self.strand, "SE_GENE", self.cds_region )
+        
+        return (self.chrm, self.strand, tuple(self.exon_bnds[1:-1]), self.cds_region)
     
     def build_gtf_lines( self, gene_id, meta_data, score='.', source='.'):
         ret_lines = []

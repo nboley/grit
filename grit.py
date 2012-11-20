@@ -1486,7 +1486,6 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         
         max_res = min(Resource(8), Resource(pserver.max_available_resources))
         pserver.add_process( cmd, Resource(1), max_res )
-        print cmd
         return
 
     ress = elements.get_elements_from_db( exon_input_type )
@@ -1542,7 +1541,8 @@ def merge_transcripts( elements, pserver, output_prefix, \
         dependencies = input_fnames
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-
+        print cmd
+        
         res = min(pserver.max_available_resources, 16, len(input_fnames) )
         pserver.add_process( cmd, Resource( res ) )
     
@@ -1692,7 +1692,6 @@ def sparsify_transcripts( elements, pserver, output_prefix ):
     dependencies.extend( fldist_fnames )
 
     cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-    print cmd
     pserver.add_process( cmd,  Resource(pserver.max_available_resources) )
         
     return
@@ -2172,8 +2171,8 @@ def main():
     calc_expression_scores( elements, pserver, base_dir + "expression" )
     
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
-    
-    sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
+    return
+    #sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
     
     pserver.process_queue()                
     return
