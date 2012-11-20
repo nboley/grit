@@ -2171,7 +2171,7 @@ def main():
     calc_expression_scores( elements, pserver, base_dir + "expression" )
     
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
-    return
+    
     #sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
     
     pserver.process_queue()                

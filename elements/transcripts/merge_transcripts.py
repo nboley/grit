@@ -9,57 +9,18 @@ import networkx as nx
 
 sys.path.append( os.path.join( os.path.dirname( __file__ ),
                                "..", "..", "file_types", "fast_gtf_parser" ) )
-from gtf import load_gtfs
+from gtf import load_gtfs, Transcript
 
 sys.path.append( os.path.join( os.path.dirname( __file__ ), ".."  ) )
 from cluster_exons import find_overlapping_exons
 
+from scipy.cluster.hierarchy import fclusterdata
 
 VERBOSE = True
 MERGE_DISTAL_ENDS = False
 SINGLE_LINKAGE_CLUSTER = True
 LINKAGE_CLUSTER_GAP = 50
 LINKAGE_CLUSTER_MAX_DIFF = 200
-
-def build_gtf_lines( chrm, strand, gene_name, trans_name, exon_bndries ):
-    feature="exon"
-    source="merge_transcripts"
-    gene_name_iter = repeat( gene_name )
-    trans_name_iter = repeat( trans_name )
-    
-    # create an iterator over every exon
-    exons_iter = enumerate( izip( exon_bndries[0::2], exon_bndries[1::2] ) )
-    regions_iter = ( GenomicInterval( chrm, strand, start, stop )
-                     for exon_num, (start, stop) in exons_iter )
-    
-    return iter_gtf_lines( regions_iter, gene_name_iter, trans_name_iter,
-                           feature=feature, source=source )
-
-def write_all_transcripts( clustered_trans, ofp, sources_fp ):
-    # iterate through unique transcripts, and write them to the output file
-    for (chrm, strand), genes in clustered_trans.iteritems():
-        for gene_id, transcripts in genes.iteritems():
-            gene_name = "merged_cluster_%s" % gene_id
-            for trans_id, exons in enumerate( transcripts ):
-                trans_name = gene_name + "_%i" % trans_id
-                
-                if sources_fp != None:
-                    sources = [ os.path.basename(source) for source in
-                                transcript_maps[ ( chrm, strand ) ][ exons ] ]
-                    source_str = ",".join( sources )
-                    sources_fp.write( '\t'.join(
-                            (gene_name, trans_name, source_str ) ) + '\n' )
-                
-                gtf_lines = build_gtf_lines(
-                    chrm, strand, gene_name, trans_name, exons )
-                
-                ofp.write( "\n".join( gtf_lines ) + "\n" )
-    
-    ofp.close()
-    if sources_fp != None:
-        sources_fp.close()
-    
-    return
 
 
 def cluster_ends( ends_and_sources ):
@@ -200,19 +161,51 @@ def reduce_internal_clustered_transcripts( internal_grpd_transcripts ):
     a set of canonical transcripts, and associated sources.
     
     """
-    reduced_transcripts = defaultdict( list )
-    for grpd_transcripts in internal_grpd_transcripts:
-        for transcript, source in grpd_transcripts:
-            reduced_transcripts[transcript].append( source )
-    
-    return sorted( reduced_transcripts.iteritems() )
+    # if there is only a single trnascript, clustering doesnt make sense
+    if len( internal_grpd_transcripts ) == 1: 
+        yield internal_grpd_transcripts[0]
+        return
 
-def reduce_single_exon_transcripts(se_transcripts):
-    reduced_transcripts = defaultdict( list )
-    for transcript, source in se_transcripts:
-        transcripts[transcript].append( source )
+    # 2 transcripts are in the same cluster if both their 5' and 3' ends
+    # are within 50 bp's of each other. Use the scipy cluster machinery 
+    # to do this for us
+    transcript_ends = numpy.array( [(t.exons[0][0], t.exons[-1][1])
+                                    for t, s in internal_grpd_transcripts])    
+    cluster_indices = fclusterdata( transcript_ends, t=LINKAGE_CLUSTER_GAP,
+                                    criterion='distance', metric='chebyshev' )
     
-    return sorted( reduced_transcripts.iteritems() )
+    # convert the incdices returned by flclusterdata into lists of transcript
+    # source pairs
+    clustered_transcript_grps = defaultdict( list )
+    clustered_transcript_grp_sources = defaultdict( list )
+    for cluster_index, ( trans, src ) in \
+            izip(cluster_indices, internal_grpd_transcripts):
+        clustered_transcript_grps[cluster_index].append( trans )
+        clustered_transcript_grp_sources[cluster_index].append( src )
+    
+    # finally, decide upon the 'canonical' transcript for each cluster, and 
+    # add it and it's sources
+    for cluster_index, clustered_transcripts in \
+            clustered_transcript_grps.iteritems():
+        start, stop = 1e20, 0
+        for transcript in clustered_transcripts:
+            start = min( start, transcript.exons[0][0] )
+            stop = max( stop, transcript.exons[-1][-1] )
+        
+        # choose a tempalte transcript, and make sure that all of the 
+        # clustered transcripts have the same internal structure (
+        # this should be guaranteed by the calling function )
+        bt = clustered_transcripts[0]
+        assert all( t.IB_key() == bt.IB_key() for t in clustered_transcripts )
+        new_trans_id = "_".join( t.id for t in clustered_transcripts )
+        new_exon_bnds = bt.exon_bnds
+        new_exon_bnds[0] = start
+        new_exon_bnds[-1] = stop
+        yield ( Transcript( new_trans_id, bt.chrm, bt.strand, 
+                            new_exon_bnds, bt.cds_region ), 
+                clustered_transcript_grp_sources[cluster_index] )
+    
+    return
 
 def reduce_clustered_transcripts(clustered_transcripts):
     reduced_transcripts = []
@@ -222,25 +215,18 @@ def reduce_clustered_transcripts(clustered_transcripts):
             gene_id = "GENE_%i" % gene_id_cntr
             
             # group transcript by their internal structure
-            internal_clustered_transcripts = defaultdict( list )
-            single_exon_transcripts = []
+            internal_clustered_transcript_groups = defaultdict( list )
             for transcript, source in gene_transcripts:
-                IB_key = transcript.IB_key(error_on_SE_genes=False)
-                if IB_key[0] == 'SE_GENE':
-                    single_exon_transcripts.append( (transcript, source) )
-                else:
-                    internal_clustered_transcripts[IB_key].append(
-                        (transcript, source))
+                IB_key = transcript.IB_key()
+                internal_clustered_transcript_groups[IB_key].append(
+                    (transcript, source))
 
             # reduce the non single exon genes
-            for transcript, sources in reduce_internal_clustered_transcripts( 
-                    internal_clustered_transcripts.values() ):
-                reduced_transcripts.append( (transcript, gene_id, sources) )
-
-            # reduce the single exon genes
-            for transcript, sources in reduce_single_exon_transcripts( 
-                    single_exon_transcripts ):
-                reduced_transcripts.append( (transcript, gene_id, sources) )
+            for internal_clustered_transcripts in \
+                    internal_clustered_transcript_groups.values():
+                for transcript, sources in reduce_internal_clustered_transcripts( 
+                        internal_clustered_transcripts ):
+                    reduced_transcripts.append( (transcript, gene_id, sources) )
             
             gene_id_cntr += 1
     
@@ -263,7 +249,8 @@ def main():
         transcript.id = "%s_%i" % ( gene_id, transcript_ids[gene_id] )
         transcript_ids[gene_id] += 1        
         ofp.write(transcript.build_gtf_lines(gene_id, {}, source="grit")+"\n")
-        sources_fp.write("\t".join((gene_id, transcript.id, ",".join(sources)))+"\n")
+        line = "\t".join((gene_id, transcript.id, ",".join(sources)))
+        sources_fp.write(line+"\n")
     
     return 
 
