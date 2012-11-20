@@ -163,7 +163,7 @@ def reduce_internal_clustered_transcripts( internal_grpd_transcripts ):
     """
     # if there is only a single trnascript, clustering doesnt make sense
     if len( internal_grpd_transcripts ) == 1: 
-        yield internal_grpd_transcripts[0]
+        yield internal_grpd_transcripts[0][0],[internal_grpd_transcripts[0][1],]
         return
 
     # 2 transcripts are in the same cluster if both their 5' and 3' ends
