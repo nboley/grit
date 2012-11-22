@@ -8,9 +8,16 @@ sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
                                       "../sparsify/" ) )
 from sparsify_transcripts import build_reads_objs
 from gene_models import GeneBoundaries
-from reads import BinnedReads
+from old_reads import BinnedReads
+
+def usage():
+    print "build_gene_cnts.py input.gtf input.bam"
 
 def main():
+    if len( sys.argv ) != 3:
+        usage()
+        sys.exit()
+    
     genes_fname = sys.argv[1]
     gtf_fp = open( genes_fname )
     genes = GeneBoundaries( gtf_fp )
