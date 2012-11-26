@@ -101,7 +101,7 @@ HEURISTIC_FILTER_TRANS_CMD = os.path.join(
 
 RENAME_TRANS_CMD = os.path.join( 
     os.path.dirname( __file__ ), "./utilities/", 
-    "group_transcripts_by_reference.py" )
+    "rename_transcripts.py" )
 
 EST_EXON_EXP_CMD = os.path.join( 
     os.path.dirname( __file__ ), "expression", 
@@ -123,6 +123,7 @@ RnaSeqDataTypes = [ "rnaseq_polyaplus_bam",
                     "rnaseq_polyaplus_unstranded_bam",
                     "rnaseq_total_bam",
                     "annotation_gtf",
+                    "CDS_annotation_gtf",
                     "gene_merges_white_list",
                     "rnaseq_cov_pair1_bedgraph",
                     "rnaseq_cov_pair2_bedgraph",
@@ -217,6 +218,7 @@ class Elements( object ):
                   ( ?, ?, ?, ?, ?, ?)
             """
         data = list(element)
+
         c.execute( q, data )
         
         q = """INSERT INTO dependencies
@@ -1946,13 +1948,12 @@ def produce_final_annotation( elements, pserver, output_prefix ):
         pserver.add_process( cmd, Resource(1) )
 
     """
-        python ~/Desktop/grit/utilities/group_transcripts_by_reference.py 
-        final_ann/heuristic_filtered/MI.MI.transcripts.cds.heur_filt.gtf 
-        ../chr4_test_data/raw_data/chr4_flybase.gtf 
-        --output-file tmp.renamed.gtf 
-        --good-gene-merges ../chr4_test_data/good_gene_merges.txt 
-        --tss-exons exons/discovered_exons.tss_exons.gff
-
+        python ~/grit/utilities/rename_transcripts.py 
+               DATA/flybase_mRNA.r5_32.gtf4_1_1351857.CDS.gtf 
+               CDS_transcripts/merged.transcripts.CDS.gtf 
+               --output-prefix tmp 
+               --verbose 
+               --sources-fname transcripts/merged.sources
     """
     def add_rename_transcripts_cmd( 
             sample_type, sample_id, use_heuristic_filtered  ):
@@ -1971,40 +1972,30 @@ def produce_final_annotation( elements, pserver, output_prefix ):
         trans_fname = res[0].fname
         
         # get the CODING annotation file 
-        res = elements.get_elements_from_db( "annotation_gtf" )
+        res = elements.get_elements_from_db( "CDS_annotation_gtf" )
         assert len( res ) == 1
         ann_fname = res[0].fname
-        
-        op_fname = os.path.join( output_prefix, "%s.%s.%s.renamed.gtf" %(
-            GSTN(sample_type), GSTN(sample_id), op_element_type_prefix ) )
-        
-        # get the tss exons
-        res = elements.get_elements_from_db( "cage_tss_exons_gff", sample_type )
+
+        # get the sources file 
+        res = elements.get_elements_from_db( 
+            "transcript_sources", sample_type, sample_id )
         assert len( res ) == 1
-        tss_exons_fname = res[0].fname
-
-        res = elements.get_elements_from_db( "gene_merges_white_list" )
-        assert len( res ) in ( 0, 1 )
-        good_gene_merges_fname = res[0].fname if len(res) == 1 else None
+        sources_fname = res[0].fname
         
+        op_fname_prefix = os.path.join( output_prefix, "%s.%s.%s.renamed" %(
+            GSTN(sample_type), GSTN(sample_id), op_element_type_prefix ) )
+                
         call  = "python {0} {1} {2}".format( 
-            RENAME_TRANS_CMD, trans_fname, ann_fname  )
-        call += " --output-file {0}".format( op_fname )
-        dependencies = [ trans_fname, ann_fname ]
-
-        if good_gene_merges_fname != None:
-            call += " --good-gene-merges {0}".format( good_gene_merges_fname )
-            dependencies.append( good_gene_merges_fname )
-        
-        if tss_exons_fname != None:
-            call += " --tss-exons {0}".format( tss_exons_fname )
-            dependencies.append( tss_exons_fname )
+            RENAME_TRANS_CMD, ann_fname, trans_fname  )
+        call += " --output-prefix {0}".format( op_fname_prefix )
+        call += " --sources-fname {0}".format( sources_fname )
+        dependencies = [ trans_fname, ann_fname, sources_fname ]
         
         op_element_types = [ 
             ElementType( op_element_type_prefix + "_renamed_transcripts_gtf", 
                          sample_type, sample_id, "." ), ]
 
-        op_fnames = [ op_fname,  ]
+        op_fnames = [ op_fname_prefix  + ".gtf", op_fname_prefix + ".sources" ]
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
         pserver.add_process( cmd, Resource(1) )
@@ -2017,7 +2008,6 @@ def produce_final_annotation( elements, pserver, output_prefix ):
 
     
     add_rename_transcripts_cmd( "*", "M", False )
-    add_rename_transcripts_cmd( "*", "*", False )
     
     return
 
