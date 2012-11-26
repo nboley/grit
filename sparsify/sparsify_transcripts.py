@@ -359,7 +359,7 @@ def process_output_queue( output_queue, log_fp, num_sources ):
 
 def estimate_genes_expression( genes, gene_transcripts, bam_fns, \
                                fl_dists, read_group_mappings, \
-                               num_threads, ofname ):
+                               num_threads, ofp ):
     """
 
     """
@@ -639,4 +639,4 @@ if __name__ == "__main__":
         cProfile.run('foo()')
     else:
         foo()
-        
+

@@ -1346,7 +1346,7 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         dependency_fnames.extend( cage_wig_fnames )
         
         cmd = Cmd(call, output_element_types, output_fnames, dependency_fnames)
-        pserver.add_process( cmd, Resource(1), Resource(6) )
+        pserver.add_process( cmd, Resource(1), Resource(1) )
 
     # build the merged sample exons
     build_find_exons_cmds( "*", "*" )
@@ -1484,8 +1484,8 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
         
-        max_res = min(Resource(8), Resource(pserver.max_available_resources))
-        pserver.add_process( cmd, Resource(1), max_res )
+        #max_res = min(Resource(8), Resource(pserver.max_available_resources))
+        pserver.add_process( cmd, Resource(1) )
         return
 
     ress = elements.get_elements_from_db( exon_input_type )
@@ -1541,7 +1541,6 @@ def merge_transcripts( elements, pserver, output_prefix, \
         dependencies = input_fnames
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-        print cmd
         
         res = min(pserver.max_available_resources, 16, len(input_fnames) )
         pserver.add_process( cmd, Resource( res ) )
@@ -1662,37 +1661,48 @@ def sparsify_transcripts( elements, pserver, output_prefix ):
     --threads=3 
     -m
     """
-    
-    # get all of the bam files
-    ress = elements.get_elements_from_db( "rnaseq_polyaplus_bam" )
-    bam_fnames = [ res.fname for res in ress ]
-    
-    ress = elements.get_elements_from_db( "fl_dist" )
-    fldist_fnames = [ res.fname for res in ress ]
-    
+
     ress = elements.get_elements_from_db( "transcripts_gtf", "*", "M" )
     assert( len(ress) == 1 )
     merged_transcript_fname = ress[0].fname
     
-    op_fname = os.path.join( output_prefix, "merged.sparse.transcripts.gtf" )
-
-    cmd_str_template  = "python %s %s %s %s --fl-dists %s -m "   \
-        % ( SPARSIFY_TRANSCRIPTS_CMD,                            \
-            op_fname, merged_transcript_fname,                    \
-            " ".join(bam_fnames), " ".join( fldist_fnames)  )
-    cmd_str_template += "--threads={threads}"
-    call = cmd_str_template
+    def add_sparsify_command( sample_type, sample_id):
+        # get all of the bam files
+        ress = elements.get_elements_from_db( 
+            "rnaseq_polyaplus_bam", sample_type, sample_id )
+        assert len( ress ) == 1
+        bam_fname = ress[0].fname
+        
+        ress = elements.get_elements_from_db("fl_dist", sample_type, sample_id)
+        assert len( ress ) == 1
+        fldist_fname = ress[0].fname
+        
+        op_fname = os.path.join(
+            output_prefix, "%s.%s.sparse.transcripts.gtf" % (sample_type, sample_id))
+        
+        cmd_str_template  = "python %s %s %s %s --fl-dists %s -m "   \
+            % ( SPARSIFY_TRANSCRIPTS_CMD,                            \
+                op_fname, merged_transcript_fname,                    \
+                bam_fname, fldist_fname  )
+        cmd_str_template += "--threads={threads}"
+        call = cmd_str_template
+        
+        op_element_types = [ \
+            ElementType( "sparse_transcripts_gtf", sample_type, sample_id, "." ),]
+        op_fnames = [ op_fname,]
+        
+        dependencies = [ merged_transcript_fname, bam_fname, fldist_fname ]
+        
+        cmd = Cmd( call, op_element_types, op_fnames, dependencies )
+        print cmd
+        pserver.add_process( cmd,  Resource(1), Resource(8) )
     
-    op_element_types = [ \
-        ElementType( "sparse_transcripts_gtf", "M", "M", "." ),]
-    op_fnames = [ op_fname,]
     
-    dependencies = [ merged_transcript_fname, ]
-    dependencies.extend( bam_fnames )
-    dependencies.extend( fldist_fnames )
+    # get all of the bam files
+    ress = elements.get_elements_from_db( "rnaseq_polyaplus_bam" )
+    for res in ress:
+        add_sparsify_command( res.sample_type, res.sample_id )
 
-    cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-    pserver.add_process( cmd,  Resource(pserver.max_available_resources) )
         
     return
 
@@ -2164,11 +2174,11 @@ def main():
 
     merge_transcripts( elements, pserver, base_dir + "transcripts" )
     
-    call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
+    #call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
 
-    produce_final_annotation( elements, pserver, base_dir + "final_ann" )
+    #produce_final_annotation( elements, pserver, base_dir + "final_ann" )
 
-    calc_expression_scores( elements, pserver, base_dir + "expression" )
+    #calc_expression_scores( elements, pserver, base_dir + "expression" )
     
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
     

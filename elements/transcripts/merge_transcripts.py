@@ -22,85 +22,6 @@ SINGLE_LINKAGE_CLUSTER = True
 LINKAGE_CLUSTER_GAP = 50
 LINKAGE_CLUSTER_MAX_DIFF = 200
 
-
-def cluster_ends( ends_and_sources ):
-    def create_cluster_map( coords, map_to_index ):
-        coords = sorted( coords )
-        
-        coord_map = {}
-        coord_range = [coords[0], coords[0]]
-        cluster_coords = set()
-        
-        for coord in coords:
-            if coord < coord_range[0] - LINKAGE_CLUSTER_GAP or \
-                    coord > coord_range[1] + LINKAGE_CLUSTER_GAP:    
-                for i_coord in cluster_coords:
-                    coord_map[i_coord] = coord_range[ map_to_index ]
-                
-                coord_range = [coord, coord]
-                cluster_coords = set( (coord,) )
-            else:
-                coord_range[0] = min( coord_range[0], coord )
-                coord_range[1] = max( coord_range[1], coord )
-                cluster_coords.add( coord )
-        
-        for i_coord in cluster_coords:
-            coord_map[i_coord] = coord_range[ map_to_index ]
-        
-        return coord_map
-    
-    starts_map = create_cluster_map( zip( *ends_and_sources )[0], 0 )
-    stops_map = create_cluster_map( zip( *ends_and_sources )[1], 1 )
-    
-    clustered_ends_and_sources = []
-    clusters_map = defaultdict( set )
-    for start, stop, source in ends_and_sources:
-        if start > starts_map[start] + LINKAGE_CLUSTER_MAX_DIFF or \
-                stop < stops_map[stop] - LINKAGE_CLUSTER_MAX_DIFF:
-            # should really add these to a new list and recluster 
-            # to avoid wierd regions near long linkage chains
-            clustered_ends_and_sources.append( (start, stop, source) )
-        else:
-            clusters_map[ (starts_map[start], stops_map[stop] ) ].add( source )
-    
-    for (start, stop), sources in clusters_map.iteritems():
-        clustered_ends_and_sources.append( (start, stop, sources) )
-    
-    return clustered_ends_and_sources
-
-def parse_arguments():
-    import argparse
-    desc = 'Merge transcripts.'
-    parser = argparse.ArgumentParser(description=desc)    
-    parser.add_argument(
-        "gtfs", type=str, nargs="+",
-        help='GTF file contraining transcripts. (i.e. from build_transcripts)' )
-    
-    parser.add_argument(
-        '--sources-fname', type=argparse.FileType( 'w' ),
-        help='File name to write the sources for each transcript. '
-        + 'Default: Do not write out sources map.')
-    
-    parser.add_argument(
-        '--out-fname', '-o', type=argparse.FileType('w'), default=sys.stdout,
-        help='Output file. default: stdout')
-    
-    parser.add_argument(
-        '--verbose', '-v', default=False, action='store_true',
-        help='Whether or not to print status information.')
- 
-    parser.add_argument(
-        '--threads', '-t', type=int, default=1,
-        help='The number of threads to use.')
-   
-    args = parser.parse_args()
-    
-    global VERBOSE
-    VERBOSE = args.verbose
-    
-    return args.gtfs, args.out_fname, args.sources_fname, \
-        args.threads
-
 def build_exon_to_transcripts_map( transcripts, source_fnames ):
     exon_to_transcripts_map = defaultdict( lambda: defaultdict(list) )
     for source, source_transcripts in izip( source_fnames, transcripts ):
@@ -139,6 +60,7 @@ def cluster_transcripts( transcripts, sources ):
         transcripts_graph.add_nodes_from( 
             transcripts_to_exons[contig].iterkeys() )
         
+        # cluster overlapping exons
         sorted_exons = sorted(exons.keys())
         clustered_exons = find_overlapping_exons( sorted_exons )
         for exon_cluster in clustered_exons:
@@ -147,10 +69,11 @@ def cluster_transcripts( transcripts, sources ):
                 connected_transcripts.extend( 
                     exons_to_transcripts[contig][sorted_exons[exon_i]] )
             
+            # add edges between transcripts that contain overlapping exons
             transcripts_graph.add_edges_from( 
-                zip(connected_transcripts[:-1], connected_transcripts[1:] ) )
-            
-            
+                izip(connected_transcripts[:-1], connected_transcripts[1:] ) )
+        
+        # finally, find all of the overlapping components
         clustered_transcripts[contig] = nx.connected_components(
             transcripts_graph )
     
@@ -231,6 +154,39 @@ def reduce_clustered_transcripts(clustered_transcripts):
             gene_id_cntr += 1
     
     return reduced_transcripts
+
+def parse_arguments():
+    import argparse
+    desc = 'Merge transcripts.'
+    parser = argparse.ArgumentParser(description=desc)    
+    parser.add_argument(
+        "gtfs", type=str, nargs="+",
+        help='GTF file contraining transcripts. (i.e. from build_transcripts)' )
+    
+    parser.add_argument(
+        '--sources-fname', type=argparse.FileType( 'w' ),
+        help='File name to write the sources for each transcript. '
+        + 'Default: Do not write out sources map.')
+    
+    parser.add_argument(
+        '--out-fname', '-o', type=argparse.FileType('w'), default=sys.stdout,
+        help='Output file. default: stdout')
+    
+    parser.add_argument(
+        '--verbose', '-v', default=False, action='store_true',
+        help='Whether or not to print status information.')
+ 
+    parser.add_argument(
+        '--threads', '-t', type=int, default=1,
+        help='The number of threads to use.')
+   
+    args = parser.parse_args()
+    
+    global VERBOSE
+    VERBOSE = args.verbose
+    
+    return args.gtfs, args.out_fname, args.sources_fname, \
+        args.threads
 
 def main():
     gtf_fnames, ofp, sources_fp, n_threads = parse_arguments()

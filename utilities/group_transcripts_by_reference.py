@@ -10,7 +10,7 @@ sys.path.append( os.path.join( os.path.dirname( __file__),
 from gtf import load_gtfs, Transcript
 
 sys.path.append( os.path.join( os.path.dirname( __file__), "../file_types/" ) )
-from gtf_file import create_gff_line, parse_gff_line, GenomicInterval
+from gtf_file import parse_gff_line
 
 # bijective hexavijezimal
 
@@ -119,6 +119,101 @@ def init_counters():
     
     return Cntrs( NOVEL_GENE, NOVEL_TRANS, IDENT, GENE_MERGE, ALTERNATE_SPLICE)
 
+def find_names_for_multiexon_transcripts(
+        trans, gene, cntrs,
+        intron_to_gene_name, trans_to_ref_name, 
+        cds_bnds_to_gene_name, observed_reference_trans,
+        novel_gene_names_set,
+        good_gene_merges, blacklist_genes):
+    
+    fully_assoc_genes, assoc_genes = find_associated_genes(
+        trans, intron_to_gene_name[(gene.chrm, gene.strand)])
+        
+    # if this intersects with any blacklist gene, then
+    # skip this transcript
+    if blacklist_genes != None \
+            and any( x in blacklist_genes for x in assoc_genes ):
+        return
+
+    # if this is a completely novel transcript
+    if len( assoc_genes ) == 0:
+        if gene.id not in novel_gene_names_set:
+            cntrs.NOVEL_GENE.increment()
+            novel_gene_names_set.add( gene.id )
+
+        new_gene_name = "mgn%s" % str(cntrs.NOVEL_GENE).zfill( 5 )
+        if new_gene_name not in cntrs.NOVEL_TRANS:
+            cntrs.NOVEL_TRANS[ new_gene_name ].increment()
+        cntrs.NOVEL_TRANS[ new_gene_name ].increment()
+
+        new_trans_name = new_gene_name + '.' + \
+            str( cntrs.NOVEL_TRANS[ new_gene_name ] )
+
+        return ( new_gene_name, new_trans_name )
+    # if there is only 1 corresponding ref gene
+    elif len(fully_assoc_genes) > 0 or len( assoc_genes ) == 1:
+        # check to see if this is an exact match
+        if trans.IB_key() in trans_to_ref_name[(gene.chrm, gene.strand)]:
+            i_assoc_transripts = trans_to_ref_name[
+                (gene.chrm, gene.strand)][trans.IB_key()]
+
+            i_trans_name, best_gene_name = \
+                next(iter(i_assoc_transripts))
+
+            observed_reference_trans.update( 
+                x[0] for x in i_assoc_transripts )
+
+            if cntrs.IDENT[ i_trans_name ].value > 0:
+                new_i_trans_name = i_trans_name + ".%s" \
+                    % (cntrs.IDENT[ i_trans_name ])
+            else:
+                cntrs.IDENT[ i_trans_name ].increment()
+                new_i_trans_name = i_trans_name
+
+            cntrs.IDENT[ i_trans_name ].increment()
+
+            return ( best_gene_name, new_i_trans_name )
+        # if it's not, it must be a partial match
+        else:
+            # try to find the best gene name
+            # first search in CDS matched genes
+            cds_gene_names = cds_bnds_to_gene_name[
+                (gene.chrm, gene.strand)][trans.cds_region]
+            if len( cds_gene_names ) > 0:
+                fully_assoc_cds_gene_names = cds_gene_names.intersection(
+                    fully_assoc_genes)
+                if len( fully_assoc_cds_gene_names ) > 0:
+                    best_gene_name = next(iter(fully_assoc_cds_gene_names))
+                else:
+                    best_gene_name = next(iter(cds_gene_names))
+            # if there are no matching CDS genes, then prefer fully 
+            # matching genes, 
+            else:
+                if len( fully_assoc_genes ) > 0:
+                    best_gene_name = fully_assoc_genes[0]
+                else:
+                    best_gene_name = assoc_genes[0]
+
+            if best_gene_name not in cntrs.ALTERNATE_SPLICE:
+                cntrs.ALTERNATE_SPLICE[ best_gene_name ].increment()
+            cntrs.ALTERNATE_SPLICE[ best_gene_name ].increment()
+            i_trans_name = "%s.%s" % ( 
+                best_gene_name, cntrs.ALTERNATE_SPLICE[ best_gene_name ])
+            return ( best_gene_name, i_trans_name )
+    # if this is a gene merge
+    elif len( assoc_genes ) > 1:
+        assert len( fully_assoc_genes ) == 0
+        # make sure that it's white listed
+        if good_gene_merges != None \
+                and assoc_genes not in good_gene_merges:
+            return
+        
+        i_gene_name = "/".join( assoc_genes )
+        cntrs.ALTERNATE_SPLICE[ i_gene_name ].increment()
+        i_trans_name = "%s.%s" % ( 
+            i_gene_name, cntrs.ALTERNATE_SPLICE[ i_gene_name ] )
+        return ( i_gene_name, i_trans_name )
+
 def build_gtf_lines_for_gene( gene, cntrs, 
                               intron_to_gene_name, trans_to_ref_name, 
                               cds_bnds_to_gene_name, observed_reference_trans,
@@ -129,100 +224,25 @@ def build_gtf_lines_for_gene( gene, cntrs,
     trans_id_to_names = {}
     
     for trans in gene.transcripts:
-        fully_assoc_genes, assoc_genes = find_associated_genes(
-            trans, intron_to_gene_name[(gene.chrm, gene.strand)])
-
-        # if this intersects with any blacklist gene, then
-        # skip this transcript
-        if blacklist_genes != None \
-                and any( x in blacklist_genes for x in assoc_genes ):
+        #if len( trans.exons) != 1: 
+        #    continue
+        
+        res = find_names_for_multiexon_transcripts( 
+            trans, gene, cntrs,
+            intron_to_gene_name, trans_to_ref_name, 
+            cds_bnds_to_gene_name, observed_reference_trans,
+            novel_gene_names_set,
+            good_gene_merges, blacklist_genes)
+        
+        if None == res: 
             continue
-
-        # if this is a completely novel transcript
-        if len( assoc_genes ) == 0:
-            if gene.id not in novel_gene_names_set:
-                cntrs.NOVEL_GENE.increment()
-                novel_gene_names_set.add( gene.id )
-
-            new_gene_name = "mgn%s" % str(cntrs.NOVEL_GENE).zfill( 5 )
-            if new_gene_name not in cntrs.NOVEL_TRANS:
-                cntrs.NOVEL_TRANS[ new_gene_name ].increment()
-            cntrs.NOVEL_TRANS[ new_gene_name ].increment()
-
-            new_trans_name = new_gene_name + '.' + \
-                str( cntrs.NOVEL_TRANS[ new_gene_name ] )
-            trans_id_to_names[trans.id] = ( new_gene_name, new_trans_name )
-        # if there is only 1 corresponding ref gene
-        elif len(fully_assoc_genes) > 0 or len( assoc_genes ) == 1:
-            # check to see if this is an exact match
-            if trans.IB_key() in trans_to_ref_name[(gene.chrm, gene.strand)]:
-                i_assoc_transripts = trans_to_ref_name[
-                    (gene.chrm, gene.strand)][trans.IB_key()]
-
-                i_trans_name, best_gene_name = \
-                    next(iter(i_assoc_transripts))
-
-                observed_reference_trans.update( 
-                    x[0] for x in i_assoc_transripts )
-
-                if cntrs.IDENT[ i_trans_name ].value > 0:
-                    new_i_trans_name = i_trans_name + ".%s" \
-                        % (cntrs.IDENT[ i_trans_name ])
-                else:
-                    cntrs.IDENT[ i_trans_name ].increment()
-                    new_i_trans_name = i_trans_name
-
-                cntrs.IDENT[ i_trans_name ].increment()
-
-                trans_id_to_names[ trans.id ] = ( 
-                    best_gene_name, new_i_trans_name )
-            # if it's not, it must be a partial match
-            else:
-                # try to find the best gene name
-                # first search in CDS matched genes
-                cds_gene_names = cds_bnds_to_gene_name[
-                    (gene.chrm, gene.strand)][trans.cds_region]
-                if len( cds_gene_names ) > 0:
-                    fully_assoc_cds_gene_names = cds_gene_names.intersection(
-                        fully_assoc_genes)
-                    if len( fully_assoc_cds_gene_names ) > 0:
-                        best_gene_name = next(iter(fully_assoc_cds_gene_names))
-                    else:
-                        best_gene_name = next(iter(cds_gene_names))
-                # if there are no matching CDS genes, then prefer fully 
-                # matching genes, 
-                else:
-                    if len( fully_assoc_genes ) > 0:
-                        best_gene_name = fully_assoc_genes[0]
-                    else:
-                        best_gene_name = assoc_genes[0]
-
-                if best_gene_name not in cntrs.ALTERNATE_SPLICE:
-                    cntrs.ALTERNATE_SPLICE[ best_gene_name ].increment()
-                cntrs.ALTERNATE_SPLICE[ best_gene_name ].increment()
-                i_trans_name = "%s.%s" % ( 
-                    best_gene_name, cntrs.ALTERNATE_SPLICE[ best_gene_name ])
-                trans_id_to_names[ trans.id ] = ( 
-                    best_gene_name, i_trans_name )
-        # if this is a gene merge
-        elif len( assoc_genes ) > 1:
-            assert len( fully_assoc_genes ) == 0
-            # make sure that it's white listed
-            if good_gene_merges != None \
-                    and assoc_genes not in good_gene_merges:
-                continue
-            i_gene_name = "/".join( assoc_genes )
-            cntrs.ALTERNATE_SPLICE[ i_gene_name ].increment()
-            i_trans_name = "%s.%s" % ( 
-                i_gene_name, cntrs.ALTERNATE_SPLICE[ i_gene_name ] )
-            trans_id_to_names[ trans.id ] = ( i_gene_name, i_trans_name )
-
-        new_gene_name, new_trans_name = trans_id_to_names[ trans.id ]
-
-        trans.id = new_trans_name
-        gtf_lines = trans.build_gtf_lines( new_gene_name,
+        
+        trans.id = res[1]
+        gtf_lines = trans.build_gtf_lines( res[0],
             {'gene_type': 'gene', 'transcript_type': 'mRNA'}, source='grit' )
 
+        print gtf_lines
+        raw_input()
         lines.append( gtf_lines )
     
     return lines 
@@ -244,6 +264,7 @@ def filter_and_rename_transcripts( ref_genes, novel_genes, ann_ofp,
             cds_bnds_to_gene_name, observed_reference_trans, 
             novel_gene_names_set,
             good_gene_merges, blacklist_genes )
+        
         ann_ofp.write( "\n".join( lines ) + '\n' )
     
     return observed_reference_trans
@@ -325,6 +346,11 @@ def parse_arguments():
     parser.add_argument(
         '--output-file', 
         help='File to write renamed and filtered transcripts to.' )
+
+    parser.add_argument(
+        '--merge-in-missed-transcripts', action='store_true', default=False,
+        help='If this is set, merge missed transcripts from the annotation file'
+            + ' into the output.' )
     
     parser.add_argument(
         '--good-gene-merges', type=file,
@@ -346,11 +372,12 @@ def parse_arguments():
     
     return args.annotation, args.reference, ofp, \
         args.good_gene_merges, args.blacklist_genes, \
-        args.tss_exons
+        args.tss_exons, args.merge_in_missed_transcripts
 
 def main():
     ann_fp, ref_fp, ofp, \
-        ggm_fp, blg_fp, tss_exons_fp = parse_arguments()
+        ggm_fp, blg_fp, \
+        tss_exons_fp, merge_in_missed_transcripts = parse_arguments()
         
     ggm = get_good_gene_merges( ggm_fp ) if ggm_fp != None else None
     bl_genes = get_blacklist_genes(blg_fp) if blg_fp != None else None
@@ -368,16 +395,15 @@ def main():
             if trans.id not in observed_reference_trans:
                 unobserved_trans_ids.add( trans.id )
     
-    """
-    for gene in ref_genes:
-        for trans in gene[-1]:
-            if trans.id in unobserved_trans_ids:
-                trans = fix_5p_bnd( trans, tss_exons_mapping )
-                lines = trans.build_gtf_lines(gene[0], 
-                    { 'gene_type': 'gene', 'transcript_type': 'mRNA' },
-                                              source="reference")
-                ofp.write( lines + "\n" )
-    """
+    if merge_in_missed_transcripts:
+        for gene in ref_genes:
+            for trans in gene[-1]:
+                if trans.id in unobserved_trans_ids:
+                    trans = fix_5p_bnd( trans, tss_exons_mapping )
+                    lines = trans.build_gtf_lines(gene[0], 
+                        { 'gene_type': 'gene', 'transcript_type': 'mRNA' },
+                                                  source="reference")
+                    ofp.write( lines + "\n" )
     
     ofp.close()
     

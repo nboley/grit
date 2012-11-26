@@ -263,9 +263,9 @@ class TranscriptsFile( file ):
         args.insert( 0, self )
         file.__init__( *args )
         self.write_lock = multiprocessing.Lock()
-        self.write(\
-            "track name='GRIT Transcripts' description='GRIT Transcripts' " +\
-                "visibility=full\n")
+        #self.write(\
+        #    "track name='GRIT Transcripts' description='GRIT Transcripts' " +\
+        #        "visibility=full\n")
     
     @staticmethod
     def _build_exon_gtf_line( exon_gene_index, exon_trans_index, 
@@ -339,6 +339,10 @@ class TranscriptsFile( file ):
         readcnt = 1
         
         all_transcript_lines = []
+        if include_meta_data:
+            max_freq = max( md.freq for trans, md in 
+                            transcripts.iter_transcripts_and_metadata() )
+        
         for trans_index, (trans, md) \
             in enumerate(transcripts.iter_transcripts_and_metadata()):
             
@@ -359,7 +363,8 @@ class TranscriptsFile( file ):
                         self._build_exon_gtf_line( 
                             exon_gene_index, exon_trans_index+1, 
                             transcripts.gene, trans_id, freq=md.freq,
-                            source_file=md.sourcefile, readcnt=readcnt ) )
+                            source_file=md.sourcefile, readcnt=readcnt,
+                            score=int(1000*(md.freq/max_freq)) ) )
                 else:
                     all_transcript_lines.append( 
                         self._build_exon_gtf_line( 
