@@ -264,13 +264,14 @@ def estimate_num_paired_reads_from_bin(
         print pre_sr_exon_lens
     
     # loop through the possible start indices for the first bin to be satisifed
-    # basically, after removing the spliced introns, we need at least min_num_ma..
-    # in the first exon, and in the last exon. This puts a lower bound on the read start
-    # at position ( relative to the transcript ) of 0 ( the read can start at the first 
-    # position in exon 1 ) *or* last_exon_start + 1 - read_len 
-    min_start = max( 0, sum( fr_exon_lens[:-1] ) + min_num_mappable_bases - read_len )
-    # make sure that there is enough room for the second read to start in sr_exon[0]
-    # given the fragment length constraints
+    # basically, after removing the spliced introns, we need at least min_num_ma
+    # in the first exon, and in the last exon. This puts a lower bound on the 
+    # read start at position ( relative to the transcript ) of 0 ( the read can 
+    # start at the first position in exon 1 ) *or* last_exon_start + 1-read_len 
+    min_start = max( 0, sum( fr_exon_lens[:-1] ) \
+                         + min_num_mappable_bases - read_len )
+    # make sure that there is enough room for the second read to start in 
+    # sr_exon[0] given the fragment length constraints
     min_start = max( min_start, pre_sr_exon_lens + read_len - fl_dist.fl_max )
 
     max_start = fr_exon_lens[0] - min_num_mappable_bases
@@ -284,24 +285,25 @@ def estimate_num_paired_reads_from_bin(
     # first, the minimum stop is always at least the first base of the first 
     # exon in the second read bin
     min_stop = pre_sr_exon_lens + read_len
-    # second, we know that at least min_num_mappable_bases are in the last exon of 
-    # second read, because we assume that this read is possible. 
+    # second, we know that at least min_num_mappable_bases are in the last exon
+    # of the second read, because we assume that this read is possible. 
     min_stop = max( min_stop, pre_sr_exon_lens \
                               + sum( sr_exon_lens[:-1] ) \
                               + min_num_mappable_bases )
 
     # max stop can never be greater than the transcript length
     max_stop = pre_sr_exon_lens + sum( sr_exon_lens )
-    # all but min_num_mappable_bases basepair is in the first exon of second read
+    # all but min_num_mappable_bases basepair is in the first exon of second rd
     # again, we assume that at least min_num_mappable_bases bases are in the
-    # last exon because the read is possible. However, it could be that this extends 
-    # *past* the last exon, which we account for on the line after.x
+    # last exon because the read is possible. However, it could be that this 
+    # extends *past* the last exon, which we account for on the line after.x
     max_stop = min( max_stop, \
                     pre_sr_exon_lens + sr_exon_lens[0] \
                     - min_num_mappable_bases + read_len )
-    # all basepairs of the last exon in the second read are in the fragment. Make sure
-    # the previous calculation doesnt extend past the last exon.
-    max_stop = min( max_stop, min_stop - min_num_mappable_bases + sr_exon_lens[-1] )
+    # all basepairs of the last exon in the second read are in the fragment. 
+    # Make sure the previous calculation doesnt extend past the last exon.
+    max_stop = min( max_stop, 
+                    min_stop - min_num_mappable_bases + sr_exon_lens[-1] )
     
     # ensure that the min_stop is at least 1 read length from the min start
     min_stop = max( min_stop, min_start + read_len )
@@ -318,7 +320,7 @@ def estimate_num_paired_reads_from_bin(
 
             density += fl_dist.fl_density_cumsum[ max_fl - fl_dist.fl_min ]
             if min_fl > fl_dist.fl_min:
-                density -= fl_dist.fl_density_cumsum[ min_fl - fl_dist.fl_min - 1 ]
+                density -= fl_dist.fl_density_cumsum[min_fl - fl_dist.fl_min-1]
         return density
     
     density = do()
