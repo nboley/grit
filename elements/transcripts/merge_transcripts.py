@@ -25,7 +25,8 @@ LINKAGE_CLUSTER_MAX_DIFF = 200
 def build_exon_to_transcripts_map( transcripts, source_fnames ):
     exon_to_transcripts_map = defaultdict( lambda: defaultdict(list) )
     for source, source_transcripts in izip( source_fnames, transcripts ):
-        for cluster_id, chrm, strand, start, stop, transcripts in source_transcripts:
+        for cluster_id, chrm, strand, start, stop, transcripts \
+                in source_transcripts:
             for transcript in transcripts:
                 for exon in transcript.exons:
                     exon_to_transcripts_map[(chrm, strand)][exon].append( 
@@ -33,7 +34,7 @@ def build_exon_to_transcripts_map( transcripts, source_fnames ):
     
     return exon_to_transcripts_map
 
-def cluster_transcripts( transcripts, sources ):
+def cluster_transcripts( genes, sources ):
     """Two transcripts overlap if they share overlapping exons So, we  
     use the following algorithm:
     
@@ -45,7 +46,7 @@ def cluster_transcripts( transcripts, sources ):
     """
     exons_to_transcripts = defaultdict( lambda: defaultdict(list) )
     transcripts_to_exons = defaultdict( lambda: defaultdict(list) )
-    for source_genes, source in izip( transcripts, sources ):
+    for source_genes, source in izip( genes, sources ):
         for gene in source_genes:
             for transcript in gene[-1]:
                 contig = ( transcript.chrm, transcript.strand )

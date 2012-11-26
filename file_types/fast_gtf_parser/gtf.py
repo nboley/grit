@@ -60,7 +60,9 @@ struct gene {
                ]
 
 class Transcript( list ):
-    def __init__(self, trans_id, chrm, strand, exon_bnds, cds_region ):
+    def __init__(self, trans_id, chrm, strand, 
+                 exon_bnds, cds_region, gene_id=None ):
+        self.gene_id = gene_id
         self.id = trans_id
         self.chrm = chrm
         self.strand = strand
@@ -124,8 +126,6 @@ class Transcript( list ):
     def IB_key( self ):
         """Return a key for matching transcripts on their external bounds.
         
-        Unless this is specifically overridden, error when this is called on a 
-        single exon gene. We do this to avoid the situation where the  
         """
         if len( self.exon_bnds ) == 2:
             return ( self.chrm, self.strand, "SE_GENE", self.cds_region )
@@ -211,7 +211,9 @@ def load_gtf( fname ):
             else:
                 cds_region = ( cds_start, cds_stop )
             transcripts.append( 
-                Transcript(trans_id, chrm, g.strand, exon_bnds, cds_region) )
+                Transcript(trans_id, chrm, g.strand, 
+                           exon_bnds, cds_region, g.gene_id) 
+                )
         
         gene =  Gene( g.gene_id, chrm, g.strand, 
                       g.min_loc, g.max_loc, transcripts )

@@ -64,7 +64,8 @@ def load_bedgraph( fname ):
         
         if 0 == size:
             print >> sys.stderr, \
-                "WARNING: found a 0 length chrm '%s'. Skipping it." % name
+                "WARNING: found a 0 length chrm '%s' in '%s'. Skipping it." \
+                % ( name, fname )
             continue
         
         array = numpy.ctypeslib.as_array( values, (size,))
