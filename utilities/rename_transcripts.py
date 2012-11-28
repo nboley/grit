@@ -120,11 +120,11 @@ def build_trans_to_name_mapping( matched_transcript_clusters ):
                 new_gene_id = match.gene_id
                 if trans.IB_key() == match.IB_key():
                     new_trans_id = "%s.%s" % (
-                        match.id, MODIFIED_TRANS_IDS[new_gene_id] )
+                        match.id, MODIFIED_TRANS_IDS[match.id] )
                     MODIFIED_TRANS_IDS[match.id].increment()
                 else:
                     new_trans_id = "%s.%s" % (
-                        match.gene_id, NOVEL_TRANS_IDS[new_gene_id] )
+                        new_gene_id, NOVEL_TRANS_IDS[new_gene_id] )
                     NOVEL_TRANS_IDS[new_gene_id].increment()
             
             trans_to_name_mapping[trans] = ( new_gene_id, new_trans_id )
