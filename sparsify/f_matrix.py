@@ -67,10 +67,10 @@ def simulate_reads_from_exons( n, fl_dist, \
                 #       56 ( 0 Indexed )
                 start_exon = get_bin( read_start )
                 
-                # find what bin these correspond to. For basically, we just need 
+                # find what bin these correspond to. For basically, we just need
                 # to check if this crosses a junction.
                 loop = 0
-                while read_start + read_len > exon_lens_cum[ start_exon + loop ]:
+                while read_start + read_len > exon_lens_cum[start_exon + loop]:
                     loop += 1
                 return tuple(range( start_exon, start_exon + loop ))
             

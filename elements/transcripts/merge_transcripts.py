@@ -73,16 +73,6 @@ def cluster_transcripts( genes, sources ):
             # add edges between transcripts that contain overlapping exons
             transcripts_graph.add_edges_from( 
                 izip(connected_transcripts[:-1], connected_transcripts[1:] ) )
-
-        # we also need to add exons that aren't clustered, because we could
-        # have two identical transcripts that share the same exons exactly
-        for exon in sorted_exons:
-            connected_transcripts.extend( 
-                exons_to_transcripts[contig][exon] )
-        
-        transcripts_graph.add_edges_from( 
-            izip(connected_transcripts[:-1], connected_transcripts[1:] ) )
-            
         
         # finally, find all of the overlapping components
         clustered_transcripts[contig] = nx.connected_components(

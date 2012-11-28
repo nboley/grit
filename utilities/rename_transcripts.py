@@ -44,8 +44,9 @@ def match_clustered_transcripts( transcripts, distance_fn ):
     return matches
 
 class HexavijezimalCntr( object ):
-    def __init__( self ):
+    def __init__( self, upper_case=False ):
         self.value = 2
+        self._upper_case = upper_case
     
     _char_mapping = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.lower()
     
@@ -59,7 +60,10 @@ class HexavijezimalCntr( object ):
             return_chars.append( self._char_mapping[remainder] )
             tmp_val =  (tmp_val + 1 - remainder)/26
         
-        return "".join( reversed(return_chars) )
+        if self._upper_case:
+            return "".join( reversed(return_chars) ).upper()
+        else:
+            return "".join( reversed(return_chars) )
     
     def increment( self ):
         self.value += 1
@@ -102,7 +106,8 @@ def build_trans_to_name_mapping( matched_transcript_clusters ):
     # with the same internal structure
     NOVEL_TRANS_IDS = defaultdict( HexavijezimalCntr )
     # transcripts that have the same internal structure as a reference trans
-    MODIFIED_TRANS_IDS = defaultdict( HexavijezimalCntr )
+    # we use upper case to distinguish between potential name collisions
+    MODIFIED_TRANS_IDS = defaultdict(lambda: HexavijezimalCntr(upper_case=True))
     
     trans_to_name_mapping = {}
     for cluster in matched_transcript_clusters:
@@ -226,6 +231,7 @@ def main():
                     (trans.gene_id, get_non_cds_trans_name(trans.id))]
                 new_data = ( new_gene_id, new_trans_id, new_sources )
                 sources_ofp.write( "\t".join(new_data) + "\n" )
+            
             # finally, rename the transcript and write ou tthe gtf lines
             trans.id = new_trans_id
             trans.gene_id =  new_gene_id

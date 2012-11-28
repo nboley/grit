@@ -1543,7 +1543,6 @@ def merge_transcripts( elements, pserver, output_prefix, \
         dependencies = input_fnames
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-        
         res = min(pserver.max_available_resources, 16, len(input_fnames) )
         pserver.add_process( cmd, Resource( res ) )
     

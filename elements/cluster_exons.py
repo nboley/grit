@@ -20,7 +20,7 @@ def find_overlapping_exons(exons):
     overlapping_exons_mapping = set()
     for o_i, (o_start, o_stop) in enumerate(exons):
         for i_i, (i_start, i_stop) in enumerate(exons):
-            if i_i >= o_i: break
+            if i_i > o_i: break
             if not (i_stop < o_start or i_start > o_stop):
                 overlapping_exons_mapping.add( (min(i_i, o_i), max(i_i, o_i)) )
     

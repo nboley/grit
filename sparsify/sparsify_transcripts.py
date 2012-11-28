@@ -22,7 +22,7 @@ from collections import defaultdict
 
 from frag_len import FlDist
 
-MAX_NUM_EXONS = 100
+MAX_NUM_TRANSCRIPTS = 500
 
 FILTER_BY_IMPROBABILITY = False
 FREQ_FILTER = 0.01
@@ -132,15 +132,18 @@ def estimate_gene_expression( gene, candidate_transcripts,
         raise GeneProcessingError( gene, binned_reads.reads, "Zero valid bins.")
     
     candidate_transcripts = set(candidate_transcripts)
-    if len( candidate_transcripts ) > 100:
-        raise GeneProcessingError( gene, binned_reads.reads, "Too many transcripts.")
+    if len( candidate_transcripts ) > MAX_NUM_TRANSCRIPTS:
+        raise GeneProcessingError( gene, binned_reads.reads, 
+                                   "Too many transcripts.")
     
     ### Estimate transcript freqs
     # build the f matrix
-    f_mats = build_f_matrix(candidate_transcripts, binned_reads, gene, fl_dists)    
+    f_mats = build_f_matrix(candidate_transcripts, binned_reads, gene, fl_dists)
     expected_cnts, observed_cnts = convert_f_matrices_into_arrays( f_mats )
     
     # normalize the expected counts
+    if any( expected_cnts.sum(0) == 0 ):
+        print expected_cnts.sum(0)
     expected_cnts = expected_cnts/expected_cnts.sum(0)
     
     assert observed_cnts[ expected_cnts.sum(1) == 0 ].sum() == 0
@@ -154,12 +157,10 @@ def estimate_gene_expression( gene, candidate_transcripts,
         thetas_values = [1.0,]
     else:
         # find_identifiable_transcript_indices( expected_cnts )
-        
-        print candidate_transcripts
         ps = matrix(expected_cnts)
         thetas = variable( len(candidate_transcripts) )
         Xs = matrix( observed_cnts )
-        #ridge_lambda = Xs.sum()/10
+        # ridge_lambda = Xs.sum()/10
         #-ridge_lambda*quad_form(thetas,1)
         p = program( maximize( Xs*log(ps*thetas) ), 
                      [eq( sum(thetas), 1), geq( thetas, 0 )] )
@@ -200,7 +201,8 @@ def build_reads_objs( bam_fns, fl_dists, read_grp_mappings ):
         try:
             reads.fetch("X", 0, 1)
         except ValueError:
-            print "Warning: %s does not have associated bam index [*.bai] file." % bam_fn
+            print "Warning: %s does not have associated bam index [*.bai] file"\
+                % bam_fn
             print "Skipping: ", bam_fn
             continue
         
@@ -277,6 +279,7 @@ def process_gene_and_reads( gene, candidate_transcripts, reads, op_transcripts):
             gene, candidate_transcripts, binned_reads, 
             fl_dists, read_group_mappings )
     except Exception, inst:
+        print >> sys.stderr, make_error_log_string( gene, reads.filename, inst )
         #if not LOG_ERRORS: raise
         return make_error_log_string( gene, reads.filename, inst )
     
@@ -440,7 +443,7 @@ def estimate_genes_expression( genes, gene_transcripts, bam_fns, \
         
         num_genes_processed += num_new_genes_processed
         if num_new_genes_processed > 0 :
-            print '{0:.0%} of genes completed ({1:d}/{2:d})'.format( \
+            print >> sys.stderr, '{0:.0%} of genes completed ({1:d}/{2:d})'.format( \
                 num_genes_processed / float( len(bam_fns) * len(genes) ), \
                     num_genes_processed, ( len(bam_fns) * len(genes) ) )
         time.sleep( 0.1 )
@@ -448,7 +451,7 @@ def estimate_genes_expression( genes, gene_transcripts, bam_fns, \
     # get any remaining entries in the ouput queue
     num_genes_processed += process_output_queue( \
         output_queue, log_fp, len(bam_fns) )
-    print "100%% of genes completed ({0:d}/{1:d})".format( \
+    print >> sys.stderr, "100%% of genes completed ({0:d}/{1:d})".format( \
         num_genes_processed, num_genes_processed )
     
     log_fp.close()
