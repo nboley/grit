@@ -414,8 +414,8 @@ def find_gene_boundaries( (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns
                 Bin( gene_bin.start, gene_bin.stop, 
                      gene_bin.left_label, gene_bin.right_label, "GENE") )
 
-
-                     
+    cage_peaks.writeBed( cagePeaksFps[strand], len(rnaseq_cov) )
+    
     return refined_gene_bndry_bins
 
 def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
