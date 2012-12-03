@@ -14,7 +14,7 @@ def main():
             if line.startswith( "#" ): continue
             data = line.split()
             try:
-                if data[2] == 'mRNA':
+                if data[2].endswith( 'RNA' ):
                     mRNAs.add( meta_data( data[8] )['ID'] )
                 elif data[2] == 'protein':
                     cds_transcripts.add( meta_data( data[8] )['Derives_from'] )
@@ -29,10 +29,10 @@ def main():
         for transcript_id, exons in transcripts.iteritems():
             if transcript_id not in mRNAs:
                 continue
-            strands = [ exon.split()[6] for exon in exons ]
-            if len( set( strands ) ) > 1: continue
-            #if transcript_id in cds_transcripts:
-            #    continue
+            if len( set( exon.split()[6] for exon in exons ) ) > 1: 
+                continue
+            if transcript_id in cds_transcripts:
+                continue
             for line in exons:
                 if line.startswith( "dmel_mitochondrion_genome" ):
                     continue
