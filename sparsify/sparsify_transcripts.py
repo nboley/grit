@@ -75,7 +75,7 @@ from transcripts import *
 from f_matrix import *
 
 from cvxpy import maximize, minimize, geq, eq, variable, matrix, program, log, \
-    sum, quad_form, square
+    sum, quad_form, square, quad_over_lin
 
 class ThreadSafeFile( file ):
     def __init__( *args ):
@@ -131,44 +131,52 @@ def estimate_gene_expression( gene, candidate_transcripts,
     if len( binned_reads.binned_reads.keys() ) == 0:
         raise GeneProcessingError( gene, binned_reads.reads, "Zero valid bins.")
     
-    candidate_transcripts = set(candidate_transcripts)
+    candidate_transcripts = list(set(candidate_transcripts))
     if len( candidate_transcripts ) > MAX_NUM_TRANSCRIPTS:
         raise GeneProcessingError( gene, binned_reads.reads, 
                                    "Too many transcripts.")
-    
-    ### Estimate transcript freqs
-    # build the f matrix
-    f_mats = build_f_matrix(candidate_transcripts, binned_reads, gene, fl_dists)
-    expected_cnts, observed_cnts = convert_f_matrices_into_arrays( f_mats )
-    
-    # normalize the expected counts
-    if any( expected_cnts.sum(0) == 0 ):
-        print expected_cnts.sum(0)
-    expected_cnts = expected_cnts/expected_cnts.sum(0)
-    
-    assert observed_cnts[ expected_cnts.sum(1) == 0 ].sum() == 0
-    
-    # make sure that the design matrix is full rank
-    import numpy.linalg
-    # print numpy.linalg.svd( expected_cnts, compute_uv=False )
-    #assert min( numpy.linalg.svd( expected_cnts, compute_uv=False ) > 1e-4 )
-    
+        
     if len( candidate_transcripts ) == 1:
         thetas_values = [1.0,]
     else:
+        ### Estimate transcript freqs
+        # build the f matrix
+        f_mats = build_f_matrix(candidate_transcripts, binned_reads, gene, fl_dists)
+        expected_cnts, observed_cnts, bad_transcript_indices \
+            = convert_f_matrices_into_arrays( f_mats, normalize=True )
+        
+        for bad_trans_i in bad_transcript_indices:
+            print >> sys.stderr, "WARNING: transcript with 0 expected counts observed."
+            print >> sys.stderr, candidate_transcripts[bad_trans_i]
+        
         # find_identifiable_transcript_indices( expected_cnts )
         ps = matrix(expected_cnts)
-        thetas = variable( len(candidate_transcripts) )
+        thetas = variable( expected_cnts.shape[1] )
         Xs = matrix( observed_cnts )
-        # ridge_lambda = Xs.sum()/10
-        #-ridge_lambda*quad_form(thetas,1)
+        # ridge_lambda = Xs.sum()/100
+        # -ridge_lambda*quad_form(thetas,1)
         p = program( maximize( Xs*log(ps*thetas) ), 
                      [eq( sum(thetas), 1), geq( thetas, 0 )] )
+        # +1*quad_over_lin(1,thetas[1, 0]) ), 
+        # p = program( minimize( -Xs*log(ps*thetas) ),
+        #             [eq( sum(thetas), 1), geq( thetas, 0 )] )
+
         p.options['maxiters']  = 500
         
         p.solve()
         thetas_values = thetas.value
         
+        # add in the theta values with 0 expected counts
+        new_thetas_values = []
+        i = 0
+        excluded_indices = set( bad_transcript_indices )
+        for theta in thetas_values:
+            while i in excluded_indices:
+                new_thetas_values.append( 0 )
+                i += 1
+            new_thetas_values.append( theta )
+            i += 1
+    
     new_transcripts = Transcripts( gene )
     if VERBOSE:
         print str("\nTranscript:").ljust( 50 ), \
