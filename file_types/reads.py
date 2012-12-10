@@ -1,5 +1,7 @@
 import sys, os
 
+DEBUG_VERBOSE = False
+
 def clean_chr_name( chrm ):
     if chrm.startswith( "chr" ):
         chrm = chrm[3:]
@@ -111,3 +113,54 @@ def iter_coverage_regions_for_read(
 
     return
 
+try:
+    import pysam
+
+    class Reads( pysam.Samfile ):
+        """Subclass the samfile object to include a method that returns reads 
+           and their pairs.
+
+
+        """
+        def iter_paired_reads( self, chrm, strand, start, stop ):
+            # whether or not the gene is on the positive strand
+            gene_strnd_is_rev = ( strand == '-' )
+            chrm = clean_chr_name( chrm )
+
+            # get all of the first pairs
+            def iter_pair1_reads():
+                for read in self.fetch( chrm, start, stop  ):
+                    if get_strand( read, False, False ) == strand:
+                        yield read
+
+            # index the pair 2 reads
+            reads_pair2 = {}
+            for read in self.fetch( chrm, start, stop ):
+                if get_strand( read, False, False ) != strand:
+                    reads_pair2[ read.qname ] = read
+
+            # iterate through the read pairs
+            for read1 in iter_pair1_reads():
+                try:
+                    read2 = reads_pair2[ read1.qname ]
+                # if there is no mate, skip this read
+                except KeyError:
+                    if DEBUG_VERBOSE:
+                        print "No mate: ", read1.pos, read1.aend, read1.qname
+                    continue
+
+                assert ( read1.qlen == read1.aend - read1.pos ) \
+                       or ( len( read1.cigar ) > 1 )
+                assert ( read2.qlen == read2.aend - read2.pos ) \
+                       or ( len( read2.cigar ) > 1 )
+
+                if read1.qlen != read2.qlen:
+                    print( "ERROR: unequal read lengths %i and %i\n", \
+                           read1.qlen, read2.qlen )
+                    continue
+
+                yield read1, read2
+
+            return
+except ImportError:
+    pass
