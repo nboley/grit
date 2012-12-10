@@ -1695,7 +1695,6 @@ def sparsify_transcripts( elements, pserver, output_prefix ):
         dependencies = [ merged_transcript_fname, bam_fname, fldist_fname ]
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-        print cmd
         pserver.add_process( cmd,  Resource(1), Resource(8) )
     
     
@@ -2114,6 +2113,7 @@ def calc_expression_scores( elements, pserver, output_prefix ):
         get_merged=True )
     
     for sample_type, sample_id in sample_types_and_ids:
+        # TODO change this is CDS_renamed
         add_calc_exon_expression_cmd(sample_type, sample_id, 
                                      "CDS_renamed_transcripts_gtf", "*", "*", 
                                      "CDS", "CDS_expression_gff")
@@ -2167,11 +2167,11 @@ def main():
 
     produce_final_annotation( elements, pserver, base_dir + "final_ann" )
 
-    #calc_expression_scores( elements, pserver, base_dir + "expression" )
+    calc_expression_scores( elements, pserver, base_dir + "expression" )
     
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
     
-    #sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
+    sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
     
     pserver.process_queue()                
     return
