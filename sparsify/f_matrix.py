@@ -1,5 +1,7 @@
 # Copyright (c) 2011-2012 Nathan Boley
 
+import sys
+
 import numpy
 MAX_NUM_UNMAPPABLE_BASES = 0
 RUN_INLINE_TESTS = False
@@ -406,10 +408,11 @@ def build_f_matrix( transcripts, binned_reads, gene, fl_dists, \
     
     return new_f_mat
 
-def convert_f_matrices_into_arrays( f_mats ):
+def convert_f_matrices_into_arrays( f_mats, normalize=True ):
     expected_cnts = []
     observed_cnts = []
-        
+    zero_entries = []
+    
     for key, (expected, observed) in f_mats.iteritems():
         expected_cnts.append( expected )
         observed_cnts.append( observed )
@@ -417,9 +420,22 @@ def convert_f_matrices_into_arrays( f_mats ):
     # normalize the expected counts to be fraction of the highest
     # read depth isoform
     expected_cnts = numpy.array( expected_cnts )
-    expected_cnts = expected_cnts/expected_cnts.sum(0).max()
     
-    return expected_cnts, numpy.array( observed_cnts )
+    zero_entries =  ( expected_cnts.sum(0) == 0 ).nonzero()[0]
+    
+    if zero_entries.shape[0] > 0:
+        expected_cnts = expected_cnts[:, expected_cnts.sum(0) > 0 ]
+
+    if normalize:
+        assert expected_cnts.sum(0).min() > 0
+        expected_cnts = expected_cnts/expected_cnts.sum(0)
+    
+    observed_cnts = numpy.array( observed_cnts )
+    
+    assert expected_cnts.sum(0).min() > 0
+    assert  expected_cnts.sum(1).min() > 0
+    
+    return expected_cnts, observed_cnts, zero_entries.tolist()
 
 
 def tests( ):
