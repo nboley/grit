@@ -64,7 +64,7 @@ struct gene {
 
 class Transcript( list ):
     def __init__(self, trans_id, chrm, strand, 
-                 exon_bnds, cds_region, gene_id=None, score='.' ):
+                 exon_bnds, cds_region, gene_id=None, score=None ):
         self.gene_id = gene_id
         self.id = trans_id
         self.chrm = chrm
@@ -137,10 +137,11 @@ class Transcript( list ):
             return (self.chrm, self.strand, 
                     tuple(self.exon_bnds[1:-1]), self.cds_region)
     
-    def build_gtf_lines( self, gene_id, meta_data, score='.', source='.'):
+    def build_gtf_lines( self, gene_id, meta_data, source='.'):
         ret_lines = []
         def build_lines_for_feature( exons, feature, is_CDS=False ):
             current_frame = 0
+            score = str(self.score) if self.score != None else '.'
             for start, stop in exons:
                 region = GenomicInterval( self.chrm, self.strand, start, stop )
                 frame = current_frame if is_CDS else '.'
@@ -207,8 +208,8 @@ def load_gtf( fname ):
             trans_id = g.transcripts[j].contents.trans_id
             cds_start = g.transcripts[j].contents.cds_start
             cds_stop = g.transcripts[j].contents.cds_stop
-            score = '.' if g.transcripts[j].contents.score == -1 \
-                else str(g.transcripts[j].contents.score)
+            score = None if g.transcripts[j].contents.score == -1 \
+                else int(g.transcripts[j].contents.score)
             num_exon_bnds = g.transcripts[j].contents.num_exon_bnds
             exon_bnds = g.transcripts[j].contents.exon_bnds[:num_exon_bnds]
             if cds_start == -1 or cds_stop == -1:
