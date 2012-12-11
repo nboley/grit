@@ -24,6 +24,7 @@ struct transcript {
     int cds_stop;
     int num_exon_bnds;
     int* exon_bnds;
+    int score;
 };
 """
     _fields_ = [("trans_id", c_char_p),
@@ -32,7 +33,9 @@ struct transcript {
                 ("cds_stop", c_int),
                 
                 ("num_exon_bnds", c_int),
-                ("exon_bnds", POINTER(c_int))
+                ("exon_bnds", POINTER(c_int)),
+
+                ("score", c_int)
                ]
 
 class c_gene_t(Structure):
@@ -61,11 +64,12 @@ struct gene {
 
 class Transcript( list ):
     def __init__(self, trans_id, chrm, strand, 
-                 exon_bnds, cds_region, gene_id=None ):
+                 exon_bnds, cds_region, gene_id=None, score='.' ):
         self.gene_id = gene_id
         self.id = trans_id
         self.chrm = chrm
         self.strand = strand
+        self.score = score
         
         self.exon_bnds = exon_bnds
         
@@ -203,6 +207,8 @@ def load_gtf( fname ):
             trans_id = g.transcripts[j].contents.trans_id
             cds_start = g.transcripts[j].contents.cds_start
             cds_stop = g.transcripts[j].contents.cds_stop
+            score = '.' if g.transcripts[j].contents.score == -1 \
+                else str(g.transcripts[j].contents.score)
             num_exon_bnds = g.transcripts[j].contents.num_exon_bnds
             exon_bnds = g.transcripts[j].contents.exon_bnds[:num_exon_bnds]
             if cds_start == -1 or cds_stop == -1:
@@ -212,7 +218,7 @@ def load_gtf( fname ):
                 cds_region = ( cds_start, cds_stop )
             transcripts.append( 
                 Transcript(trans_id, chrm, g.strand, 
-                           exon_bnds, cds_region, g.gene_id) 
+                           exon_bnds, cds_region, g.gene_id, score ) 
                 )
         
         gene =  Gene( g.gene_id, chrm, g.strand, 
@@ -293,6 +299,7 @@ if __name__ == "__main__":
                 print trans.fp_utr_exons
                 print trans.cds_exons
                 print trans.tp_utr_exons
+                print trans.score
                 print
                 print trans.exons
                 print trans.introns
