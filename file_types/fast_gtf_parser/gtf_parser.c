@@ -27,6 +27,8 @@ struct gtf_line {
     char strand;
     enum ELEMENT_TYPE element_type;
     int score;
+    double rpkm;
+    double rpk;
     char* gene_id;
     char* trans_id;
 };
@@ -171,6 +173,34 @@ get_line_info( char* line ) {
         free( curr_line );
         return NULL;
     }
+
+
+    char* char_rpkm;
+    get_id_ptr( line, "rpkm", &(char_rpkm) );
+    if( NULL == char_rpkm ) {
+        curr_line->rpkm = -1;
+    } else {
+        curr_line->rpkm = strtod( char_rpkm, NULL );
+        free( char_rpkm );
+        
+        //fprintf( stderr, "INVALID GTF LINE: no transcript id\n" );
+        //free( curr_line );
+        //return NULL;
+    }
+
+    char* char_rpk;
+    get_id_ptr( line, "rpk ", &(char_rpk) );
+    if( NULL == char_rpk ) {
+        curr_line->rpk = -1;
+    } else {
+        curr_line->rpk = strtod( char_rpk, NULL );
+        free( char_rpk );
+        
+        //fprintf( stderr, "INVALID GTF LINE: no transcript id\n" );
+        //free( curr_line );
+        //return NULL;
+    }
+
     
     return curr_line;
 }
@@ -249,6 +279,8 @@ struct transcript {
     int num_exon_bnds;
     int* exon_bnds;
     int score;
+    double rpkm;
+    double rpk;
 };
 
 struct gene {
@@ -269,7 +301,7 @@ add_transcript( struct transcript*** transcripts,
                 char* trans_id, 
                 int num_exons, int* exon_bnds,
                 int cds_start, int cds_stop,
-                int score )
+                int score, double rpkm, double rpk )
 {
     if( *num_transcripts >= *num_allcd_trans ) {
         *num_allcd_trans += TRANS_ALLOC_SIZE;
@@ -295,6 +327,8 @@ add_transcript( struct transcript*** transcripts,
     (*transcripts)[ *num_transcripts ]->cds_stop = cds_stop;
     
     (*transcripts)[ *num_transcripts ]->score = score;
+    (*transcripts)[ *num_transcripts ]->rpkm = rpkm;
+    (*transcripts)[ *num_transcripts ]->rpk = rpk;
     
     (*num_transcripts)++;
     
@@ -372,6 +406,8 @@ parse_gtf_data( struct gtf_line** gtf_lines, int num_lines,
     int curr_min_loc = (1 >> 30);
     
     int curr_score = -1;
+    double curr_rpkm = -1;
+    double curr_rpk = -1;
     
     int i;
     for( i = 1; i < num_lines; i++ )
@@ -385,7 +421,8 @@ parse_gtf_data( struct gtf_line** gtf_lines, int num_lines,
             add_transcript( 
                 &transcripts, &num_transcripts, &num_allcd_trans,
                 prev_trans_id, curr_trans_num_exons, curr_trans_exons,
-                curr_trans_CDS_start, curr_trans_CDS_stop, curr_score );
+                curr_trans_CDS_start, curr_trans_CDS_stop, 
+                curr_score, curr_rpkm, curr_rpk );
             
             // Move onto the next transcript
             prev_trans_id = line->trans_id;
@@ -437,6 +474,8 @@ parse_gtf_data( struct gtf_line** gtf_lines, int num_lines,
 
         /* finally, add the exons and update the bounds */
         curr_score = line->score;
+        curr_rpkm = line->rpkm;
+        curr_rpk = line->rpk;
         curr_min_loc = MIN( curr_min_loc, line->start );
         curr_max_loc = MAX( curr_max_loc, line->stop );
         curr_trans_exons[ curr_trans_num_exons ] = line->start;
@@ -449,8 +488,8 @@ parse_gtf_data( struct gtf_line** gtf_lines, int num_lines,
     /* Add the final transcript */
     add_transcript( &transcripts, &num_transcripts, &num_allcd_trans,
                     prev_trans_id, curr_trans_num_exons, curr_trans_exons,
-                    curr_trans_CDS_start, curr_trans_CDS_stop, curr_score
-        );
+                    curr_trans_CDS_start, curr_trans_CDS_stop, 
+                    curr_score, curr_rpkm, curr_rpk );
     num_trans_in_curr_gene++;
     
     struct transcript** curr_transcripts  = 

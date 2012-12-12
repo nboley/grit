@@ -25,6 +25,8 @@ struct transcript {
     int num_exon_bnds;
     int* exon_bnds;
     int score;
+    int rpkm;
+    int rpk;
 };
 """
     _fields_ = [("trans_id", c_char_p),
@@ -35,7 +37,9 @@ struct transcript {
                 ("num_exon_bnds", c_int),
                 ("exon_bnds", POINTER(c_int)),
 
-                ("score", c_int)
+                ("score", c_int),
+                ("rpkm", c_double),
+                ("rpk", c_double)
                ]
 
 class c_gene_t(Structure):
@@ -64,12 +68,15 @@ struct gene {
 
 class Transcript( list ):
     def __init__(self, trans_id, chrm, strand, 
-                 exon_bnds, cds_region, gene_id=None, score=None ):
+                 exon_bnds, cds_region, gene_id=None, score=None, rpkm=None, rpk=None ):
         self.gene_id = gene_id
         self.id = trans_id
         self.chrm = chrm
         self.strand = strand
+
         self.score = score
+        self.rpkm = rpkm
+        self.rpk = rpk
         
         self.exon_bnds = exon_bnds
         
@@ -210,6 +217,11 @@ def load_gtf( fname ):
             cds_stop = g.transcripts[j].contents.cds_stop
             score = None if g.transcripts[j].contents.score == -1 \
                 else int(g.transcripts[j].contents.score)
+            rpkm = None if g.transcripts[j].contents.rpkm < -1e-10 \
+                else float(g.transcripts[j].contents.rpkm)
+            rpk = None if g.transcripts[j].contents.rpk < -1e-10 \
+                else float(g.transcripts[j].contents.rpk)
+            
             num_exon_bnds = g.transcripts[j].contents.num_exon_bnds
             exon_bnds = g.transcripts[j].contents.exon_bnds[:num_exon_bnds]
             if cds_start == -1 or cds_stop == -1:
@@ -219,7 +231,8 @@ def load_gtf( fname ):
                 cds_region = ( cds_start, cds_stop )
             transcripts.append( 
                 Transcript(trans_id, chrm, g.strand, 
-                           exon_bnds, cds_region, g.gene_id, score ) 
+                           exon_bnds, cds_region, g.gene_id, 
+                           score=score, rpkm=rpkm, rpk=rpk ) 
                 )
         
         gene =  Gene( g.gene_id, chrm, g.strand, 
@@ -301,6 +314,8 @@ if __name__ == "__main__":
                 print trans.cds_exons
                 print trans.tp_utr_exons
                 print trans.score
+                print trans.rpkm
+                print trans.rpk
                 print
                 print trans.exons
                 print trans.introns
