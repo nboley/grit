@@ -59,7 +59,6 @@ get_id_ptr(
     int id_len;
     // find the location of the id
     id_start = strstr( line_str, key_str );
-    fprintf( stderr, "%s\t%p\n", key_str, id_start );
     if( id_start == NULL ) {
         *id = NULL;
         return;
