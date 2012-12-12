@@ -59,7 +59,9 @@ get_id_ptr(
     int id_len;
     // find the location of the id
     id_start = strstr( line_str, key_str );
+    fprintf( stderr, "%s\t%p\n", key_str, id_start );
     if( id_start == NULL ) {
+        *id = NULL;
         return;
     }
     // Move past the gene id
@@ -175,7 +177,7 @@ get_line_info( char* line ) {
     }
 
 
-    char* char_rpkm;
+    char* char_rpkm = NULL;
     get_id_ptr( line, "rpkm", &(char_rpkm) );
     if( NULL == char_rpkm ) {
         curr_line->rpkm = -1;
@@ -188,7 +190,7 @@ get_line_info( char* line ) {
         //return NULL;
     }
 
-    char* char_rpk;
+    char* char_rpk = NULL;
     get_id_ptr( line, "rpk ", &(char_rpk) );
     if( NULL == char_rpk ) {
         curr_line->rpk = -1;
