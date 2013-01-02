@@ -22,7 +22,7 @@ from collections import defaultdict
 
 from frag_len import FlDist
 
-MAX_NUM_TRANSCRIPTS = 500
+MAX_NUM_TRANSCRIPTS = 1000
 
 FILTER_BY_IMPROBABILITY = False
 FREQ_FILTER = 0.01
@@ -75,7 +75,8 @@ from transcripts import *
 from f_matrix import *
 
 from cvxpy import maximize, minimize, geq, eq, variable, matrix, program, log, \
-    sum, quad_form, square, quad_over_lin
+    sum, quad_form, square, quad_over_lin, geo_mean
+import cvxpy
 
 class ThreadSafeFile( file ):
     def __init__( *args ):
@@ -107,7 +108,7 @@ def find_identifiable_transcript_indices( expected_cnts ):
         X = matrix(others)
         p = program( minimize( sum(square(Y - X*theta)) ), 
                      [eq( sum(theta), 1), geq( theta, 0 )] )
-        p.solve()
+        p.solve(quiet=True)
         #print theta.value
         print (Y - X*theta.value).sum()
     
@@ -115,7 +116,7 @@ def find_identifiable_transcript_indices( expected_cnts ):
     
 def estimate_gene_expression( gene, candidate_transcripts, 
                               binned_reads, fl_dists, 
-                              read_group_mappings ):
+                              read_group_mappings, total_num_mapped_reads ):
     """ as we filter out the different transcripts, append the objects
     to this list. The first entry is always the un lasso fit transcripts:
     ie, they are only fit using the filtering heuristics. Then we start 
@@ -136,15 +137,17 @@ def estimate_gene_expression( gene, candidate_transcripts,
         raise GeneProcessingError( gene, binned_reads.reads, 
                                    "Too many transcripts.")
         
+    ### Estimate transcript freqs
+    # build the f matrix
+    f_mats = build_f_matrix(candidate_transcripts, binned_reads, gene, fl_dists)
+    expected_cnts, observed_cnts, bad_transcript_indices \
+        = convert_f_matrices_into_arrays( f_mats, normalize=True )
+
+
     if len( candidate_transcripts ) == 1:
         thetas_values = [1.0,]
-    else:
-        ### Estimate transcript freqs
-        # build the f matrix
-        f_mats = build_f_matrix(candidate_transcripts, binned_reads, gene, fl_dists)
-        expected_cnts, observed_cnts, bad_transcript_indices \
-            = convert_f_matrices_into_arrays( f_mats, normalize=True )
-        
+        log_lhd = 1
+    else:        
         for bad_trans_i in bad_transcript_indices:
             print >> sys.stderr, "WARNING: transcript with 0 expected counts observed."
             print >> sys.stderr, candidate_transcripts[bad_trans_i]
@@ -152,18 +155,19 @@ def estimate_gene_expression( gene, candidate_transcripts,
         # find_identifiable_transcript_indices( expected_cnts )
         ps = matrix(expected_cnts)
         thetas = variable( expected_cnts.shape[1] )
+        uniform_theta_value = 1.0/expected_cnts.shape[1]
         Xs = matrix( observed_cnts )
-        # ridge_lambda = Xs.sum()/100
+        # ridge_lambda = sqrt(Xs.sum())/100
         # -ridge_lambda*quad_form(thetas,1)
-        p = program( maximize( Xs*log(ps*thetas) ), 
-                     [eq( sum(thetas), 1), geq( thetas, 0 )] )
+        # -ridge_lambda*sum(square(thetas))),
+        p = program( maximize(Xs*log(ps*thetas) ),
+                     [eq( sum(thetas), 1), geq( thetas, 1e-6 )] )
         # +1*quad_over_lin(1,thetas[1, 0]) ), 
         # p = program( minimize( -Xs*log(ps*thetas) ),
         #             [eq( sum(thetas), 1), geq( thetas, 0 )] )
-
-        p.options['maxiters']  = 500
         
-        p.solve()
+        p.options['maxiters']  = 500
+        log_lhd = -p.solve(quiet=not VERBOSE)
         thetas_values = thetas.value
         
         # add in the theta values with 0 expected counts
@@ -176,7 +180,7 @@ def estimate_gene_expression( gene, candidate_transcripts,
                 i += 1
             new_thetas_values.append( theta )
             i += 1
-    
+        
     new_transcripts = Transcripts( gene )
     if VERBOSE:
         print str("\nTranscript:").ljust( 50 ), \
@@ -187,9 +191,14 @@ def estimate_gene_expression( gene, candidate_transcripts,
         if VERBOSE:
             print str(transcript).ljust( 50 ), ("%e" % freq ).ljust(15)
         
-        if freq/max_freq < 0.001: continue
+        if freq/max_freq < 0.01: continue
         
-        new_transcripts.add_transcript( transcript, freq=float(freq) )
+        exon_indices = [ gene.exon_lens[e] for e in iter(transcript) ]
+        trans_length_kB = sum( exon_indices )/1000.0
+        rpk = float( (freq*observed_cnts.sum()/trans_length_kB) )
+        rpkm = rpk*(total_num_mapped_reads/1000000.0)
+        new_transcripts.add_transcript(
+            transcript, freq=float(freq), rpk=rpk, rpkm=rpkm )
     
     return new_transcripts
 
@@ -278,6 +287,7 @@ def make_error_log_string( gene, reads_filename, error_inst ):
 
 def process_gene_and_reads( gene, candidate_transcripts, reads, op_transcripts):
     binned_reads = BinnedReads( gene, reads, reads.read_group_mappings )
+    num_mapped = reads.mapped 
     
     fl_dists = reads.fl_dists
     read_group_mappings = reads.read_group_mappings
@@ -285,7 +295,7 @@ def process_gene_and_reads( gene, candidate_transcripts, reads, op_transcripts):
     try:
         transcripts = estimate_gene_expression( \
             gene, candidate_transcripts, binned_reads, 
-            fl_dists, read_group_mappings )
+            fl_dists, read_group_mappings, num_mapped )
     except Exception, inst:
         print >> sys.stderr, make_error_log_string( gene, reads.filename, inst )
         #if not LOG_ERRORS: raise

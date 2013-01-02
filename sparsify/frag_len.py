@@ -83,7 +83,7 @@ class FlDist( object ):
         return self._hash_value
     
     def __repr__( self ):
-        return "<FL Dist: u=%.2f sd=%.2f>"%(self.stats[0][0], self.stats[0][1])
+        return "<FL Dist: min=%.2f max=%.2f>"%(self.fl_min, self.fl_max)
     
 def load_fl_dists( fnames ):
     all_fl_dists = {}
@@ -95,7 +95,7 @@ def load_fl_dists( fnames ):
             fl_dists = pickle.load( fp )
         for key, fl_dist in fl_dists.iteritems():
             all_fl_dists[ key ] = fl_dist
-
+    
     # clustered_read_groups = cluster_rdgrps( all_fl_dists )
     clustered_read_groups = dict( (k,k) for k in all_fl_dists )
     

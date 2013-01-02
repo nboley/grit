@@ -13,6 +13,55 @@ import frag_len
 
 from itertools import product, izip
 
+################################################################################
+#
+#
+# Code for converting transcripts into 
+#
+#
+
+def find_nonoverlapping_boundaries( transcripts ):
+    boundaries = set()
+    for transcript in transcripts:
+        for exon in transcript.exons:
+            boundaries.add( exon[0] )
+            boundaries.add( exon[1]+1 )
+    
+    return numpy.array( sorted( boundaries ) )
+
+def find_nonoverlapping_exon_indices( transcript, exon_boundaries ):
+    """Convert transcripts into lists of non-overlapping exon indices.
+    
+    """
+    non_overlapping_exon_indices = []
+    for exon in transcript.exons:
+        assert exon[0] in exon_boundaries and exon[1]+1 in exon_boundaries
+
+        start_i = exon_boundaries.searchsorted( exon[0] )
+        assert exon[0] == exon_boundaries[start_i]
+
+        stop_i = start_i + 1
+        while exon[1] > exon_boundaries[stop_i]-1:
+            stop_i += 1            
+        assert exon[1] == exon_boundaries[stop_i]-1
+
+        non_overlapping_exon_indices.extend( xrange(start_i,stop_i) )
+        #new_exon_bndrys = exon_boundaries[start_i:stop_i+1]
+        #non_overlapping_exons.extend( (x, y-1) 
+        #        for x,y in izip(new_exon_bndrys[:-1], new_exon_bndrys[1:]))
+
+    return non_overlapping_exon_indices
+
+def build_nonoverlapping_indices( transcripts, exon_boundaries ):
+    # build the transcript composed of pseudo ( non overlapping ) exons. 
+    # This means splitting the overlapping parts into new 'exons'
+    for transcript in transcripts:
+        yield find_nonoverlapping_exon_indices( transcript, exon_boundaries )
+    
+    return
+
+################################################################################
+
 def simulate_reads_from_exons( n, fl_dist, \
                                read_len, max_num_unmappable_bases, \
                                exon_lengths ):
@@ -328,89 +377,43 @@ def estimate_num_paired_reads_from_bin(
     
     return float( density )
 
-def find_nonoverlapping_boundaries( transcripts ):
-    boundaries = set()
-    for transcript in transcripts:
-        for exon in transcript.exons:
-            boundaries.add( exon[0] )
-            boundaries.add( exon[1]+1 )
-    
-    return numpy.array( sorted( boundaries ) )
-
-def find_nonoverlapping_exon_indices( transcript, exon_boundaries ):
-    """Convert transcripts into lists of non-overlapping exon indices.
-    
-    """
-    non_overlapping_exon_indices = []
-    for exon in transcript.exons:
-        assert exon[0] in exon_boundaries and exon[1]+1 in exon_boundaries
-
-        start_i = exon_boundaries.searchsorted( exon[0] )
-        assert exon[0] == exon_boundaries[start_i]
-
-        stop_i = start_i + 1
-        while exon[1] > exon_boundaries[stop_i]-1:
-            stop_i += 1            
-        assert exon[1] == exon_boundaries[stop_i]-1
-
-        non_overlapping_exon_indices.extend( xrange(start_i,stop_i) )
-        #new_exon_bndrys = exon_boundaries[start_i:stop_i+1]
-        #non_overlapping_exons.extend( (x, y-1) 
-        #        for x,y in izip(new_exon_bndrys[:-1], new_exon_bndrys[1:]))
-
-    return non_overlapping_exon_indices
-
 cached_f_mat_entries = {}
-def build_f_matrix( transcripts, fl_dist, read_len, \
-                    max_num_unmappable_bases=MAX_NUM_UNMAPPABLE_BASES ):    
+def calc_expected_cnts( exon_boundaries, transcripts, fl_dists_and_read_lens, \
+                            max_num_unmappable_bases=MAX_NUM_UNMAPPABLE_BASES ):
     # store all counts, and count vectors. Indexed by ( 
     # read_group, read_len, bin )
     f_mat_entries = {}
-
-    exon_boundaries = find_nonoverlapping_boundaries(transcripts)
+    
     nonoverlapping_exon_lens = \
         numpy.array([ stop - start for start, stop in 
                       izip(exon_boundaries[:-1], exon_boundaries[1:])])
     
     # for each candidate trasncript
-    for transcript_index, transcript in enumerate( transcripts ):
-        # build the transcript composed of pseudo ( non overlapping ) exons. 
-        # This means splitting the overlapping parts into new 'exons'
-        nonoverlapping_indices = find_nonoverlapping_exon_indices( 
-            transcript, exon_boundaries )
-        
-        # find all of the possible read bins for transcript given this 
-        # fl_dist and read length
-        full, pair, single =  \
-            find_possible_read_bins( nonoverlapping_indices, \
-                                     nonoverlapping_exon_lens, fl_dist, \
-                                     read_len, min_num_mappable_bases=1 )
+    for fl_dist, read_len in fl_dists_and_read_lens:
+        for transcript_index, nonoverlapping_indices in enumerate(transcripts):
+            # find all of the possible read bins for transcript given this 
+            # fl_dist and read length
+            full, pair, single =  \
+                find_possible_read_bins( nonoverlapping_indices, \
+                                         nonoverlapping_exon_lens, fl_dist, \
+                                         read_len, min_num_mappable_bases=1 )
             
-        # add the expected counts for paired reads
-        pseudo_cnts = []
-        for bin in pair:
-            key = (read_len, fl_dist, bin)
-            if key in cached_f_mat_entries:
-                pseudo_cnt = cached_f_mat_entries[ key ]
-            else:
-                pseudo_cnt = estimate_num_paired_reads_from_bin(
-                    bin, nonoverlapping_indices, 
-                    nonoverlapping_exon_lens, fl_dist,
-                    read_len, max_num_unmappable_bases )
-                
-                cached_f_mat_entries[ key ] = pseudo_cnt
+            # add the expected counts for paired reads
+            for bin in pair:
+                key = (read_len, fl_dist, bin)
+                if key in cached_f_mat_entries:
+                    pseudo_cnt = cached_f_mat_entries[ key ]
+                else:
+                    pseudo_cnt = estimate_num_paired_reads_from_bin(
+                        bin, nonoverlapping_indices, 
+                        nonoverlapping_exon_lens, fl_dist,
+                        read_len, max_num_unmappable_bases )
 
-                # scale the count by the number of reads. If there are twice as 
-                # many reads in experiment 1 as 2, then the expected ratio of 
-                # reads is 2:1 even if the expression levels are identical
-                pseudo_cnts.append( pseudo_cnt )
-            
-            total_pseudo_cnts = float(sum(pseudo_cnts))
-            
-            for bin, pseudo_cnt in zip(pair, pseudo_cnts):
+                    cached_f_mat_entries[ key ] = pseudo_cnt
+                
                 if not f_mat_entries.has_key( key ):
                     f_mat_entries[key]= [0]*len( transcripts )
-                
+                    
                 f_mat_entries[key][ transcript_index ] = pseudo_cnt
         
     return f_mat_entries

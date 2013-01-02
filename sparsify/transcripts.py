@@ -124,24 +124,24 @@ class Transcripts( list ):
 
     """
     MetaDataTuple = namedtuple('MetaDataTuple', \
-                               ['sourcefile', 'lasso_lambda', 'freq', \
-                                'read_coverage', 'improbability'])
+                               ['sourcefile', 'rpk', 'freq', \
+                                'rpkm', 'log_lhd'])
     
     def __init__( self, gene, iterator=() ):
         """Initialize a transcripts object.
         
         Iterator should return either: transcript objects
         or tuples of the form ( transcript, (meta_data...) )
-        where meta_data is a tuple ( sourcefile, lasso_lambda, freq )
+        where meta_data is a tuple ( sourcefile, rpk, freq )
         
         """
         self.gene = gene
         
         self.sourcefiles = []
-        self.lasso_lambdas = []
+        self.rpks = []
         self.freqs = []
-        self.read_coverages = []
-        self.improbabilities = []
+        self.rpkms = []
+        self.log_lhds = []
         
         self._frozen = False
         
@@ -160,24 +160,24 @@ class Transcripts( list ):
         raise NotImplementedError( "Use the add transcript method." )
     
     def add_transcript( self, transcript, sourcefile=None, \
-                        lasso_lambda=0.00, freq=0.00, read_coverage=0.0, log_prb=0.0 ):
+                        freq=0.00, rpkm=0.0, rpk=0.00, log_lhd=None ):
         assert not self._frozen
         if not isinstance( transcript, Transcript ):
             raise ValueError, "Transcripts can only store items of type Transcript"
         list.append( self, transcript )
         self.sourcefiles.append( sourcefile )
-        self.lasso_lambdas.append( lasso_lambda )
+        self.rpks.append( rpk )
         self.freqs.append( freq )
-        self.read_coverages.append( read_coverage )
-        self.improbabilities.append( log_prb )
+        self.rpkms.append( rpkm )
+        self.log_lhds.append( log_lhd )
         
     def add_frequencies( self, freqs ):
         assert len(self) == len(freqs)
         self.freqs = freqs
 
-    def add_read_coverages( self, read_coverages ):
-        assert len(self) == len(read_coverages)
-        self.read_coverages = read_coverages
+    def add_rpkms( self, rpkms ):
+        assert len(self) == len(rpkms)
+        self.rpkms = rpkms
     
     def iter_transcripts_and_freqs( self ):
         for t, f in zip( self, self.freqs ):
@@ -185,9 +185,9 @@ class Transcripts( list ):
         return
 
     def iter_transcripts_and_metadata( self ):
-        for t, m in zip( self, zip( self.sourcefiles, self.lasso_lambdas, \
-                                    self.freqs, self.read_coverages, \
-                                    self.improbabilities ) ):
+        for t, m in zip( self, zip( self.sourcefiles, self.rpks, \
+                                    self.freqs, self.rpkms, \
+                                    self.log_lhds ) ):
             yield t, self.MetaDataTuple( *m )
         return
 
@@ -207,25 +207,22 @@ class Transcripts( list ):
     def clear(self):
         del self[:]
         self.sourcefiles = []
-        self.lasso_lambdas = []
+        self.rpks = []
         self.freqs = []
-        self.read_coverages = []
-        self.improbabilities = []
+        self.rpkms = []
+        self.log_lhds = []
         self._frozen = False
         
-    def sort( self, order='lambda' ):
+    def sort( self, order='freq' ):
         data = list( self.iter_transcripts_and_metadata() )
         
-        if order == 'lambda':
-            data.sort( key = lambda x:x[1].freq, reverse=True )
-            data.sort( key = lambda x:x[1].lasso_lambda, reverse=True )
         # otherwise, by frequency
-        elif order == 'freq':
-            data.sort( key = lambda x:x[1].lasso_lambda, reverse=True )
+        if order == 'freq':
+            data.sort( key = lambda x:x[1].rpk, reverse=True )
             data.sort( key = lambda x:x[1].freq, reverse=True )
         else:
             raise ValueError, "Unrecognized sort order: {0} " + \
-                "( should be lambda or freq )".format( order )
+                "( should be freq )".format( order )
         
         self.clear()
 
@@ -270,8 +267,8 @@ class TranscriptsFile( file ):
     @staticmethod
     def _build_exon_gtf_line( exon_gene_index, exon_trans_index, 
                               gene, transcript_id, feature_type='exon', 
-                              region=None, score='.', frame='.', 
-                              freq=None, source_file=None, readcnt=None ):
+                              region=None, score='.', frame='.', log_lhd=None,
+                              freq=None, source_file=None, rpkm=None, rpk=None):
         """
         seqname - The name of the sequence. Must be a chromosome or scaffold.
         source  - The program that generated this feature.
@@ -325,8 +322,13 @@ class TranscriptsFile( file ):
             meta_info += '; freq "{0:.7f}"'.format( freq )
         if source_file != None:
             meta_info += '; source "{0:s}"'.format( source_file )
-        if readcnt != None:
-            meta_info += '; readcnt "{0:d}"'.format( readcnt )
+        if rpkm != None:
+            meta_info += '; rpkm "{0:e}"'.format( rpkm )
+        if rpk != None:
+            meta_info += '; rpk "{0:e}"'.format( rpk )
+        if log_lhd != None:
+            meta_info += '; log_lhd "{0:e}"'.format( log_lhd )
+
         gtf_line.append( meta_info )
         
         return '\t'.join( gtf_line )
@@ -336,8 +338,6 @@ class TranscriptsFile( file ):
         
         """
         ## FIXME BUG XXX
-        readcnt = 1
-        
         all_transcript_lines = []
         if include_meta_data:
             max_freq = max( md.freq for trans, md in 
@@ -363,7 +363,8 @@ class TranscriptsFile( file ):
                         self._build_exon_gtf_line( 
                             exon_gene_index, exon_trans_index+1, 
                             transcripts.gene, trans_id, freq=md.freq,
-                            source_file=md.sourcefile, readcnt=readcnt,
+                            source_file=md.sourcefile, rpkm=md.rpkm,
+                            rpk=md.rpk, log_lhd=md.log_lhd,
                             score=int(1000*(md.freq/max_freq)) ) )
                 else:
                     all_transcript_lines.append( 
