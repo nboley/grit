@@ -1695,7 +1695,7 @@ def sparsify_transcripts( elements, pserver, output_prefix ):
         dependencies = [ merged_transcript_fname, bam_fname, fldist_fname ]
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-        pserver.add_process( cmd,  Resource(1), Resource(8) )
+        pserver.add_process( cmd,  Resource(1), Resource(4) )
     
     
     # get all of the bam files
@@ -2167,7 +2167,7 @@ def main():
 
     produce_final_annotation( elements, pserver, base_dir + "final_ann" )
 
-    calc_expression_scores( elements, pserver, base_dir + "expression" )
+    #calc_expression_scores( elements, pserver, base_dir + "expression" )
     
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
     

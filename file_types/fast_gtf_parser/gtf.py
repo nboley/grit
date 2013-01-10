@@ -4,7 +4,7 @@ import sys, os
 import numpy
 import signal
 from ctypes import *
-from itertools import izip, repeat
+from itertools import izip, repeat, chain
 
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
                                       ".." ) )
@@ -67,8 +67,8 @@ struct gene {
                ]
 
 class Transcript( list ):
-    def __init__(self, trans_id, chrm, strand, 
-                 exon_bnds, cds_region, gene_id=None, score=None, rpkm=None, rpk=None ):
+    def __init__(self, trans_id, chrm, strand, exons, cds_region,
+                 gene_id=None, score=None, rpkm=None, rpk=None ):
         self.gene_id = gene_id
         self.id = trans_id
         self.chrm = chrm
@@ -78,7 +78,12 @@ class Transcript( list ):
         self.rpkm = rpkm
         self.rpk = rpk
         
+        exon_bnds = list( chain( *exons ) )
         self.exon_bnds = exon_bnds
+        self.exons = tuple(zip(exon_bnds[:-1:2], exon_bnds[1::2]))
+        assert list(self.exons) == list(exons)
+        self.introns = tuple([ (x+1, y-1) for x, y in 
+                               izip(exon_bnds[1:-2:2], exon_bnds[2:-1:2]) ])
         
         self.is_protein_coding = ( cds_region != None )
         self.cds_region = cds_region
@@ -118,11 +123,7 @@ class Transcript( list ):
             if cds_start_bndry_index > 0 \
                     and exon_bnds[ cds_start_bndry_index-1]+1 == cds_region[0]:
                 del exon_bnds[ cds_start_bndry_index-1:cds_start_bndry_index+1 ]
-        
-        self.exons = tuple(zip(exon_bnds[:-1:2], exon_bnds[1::2]))
-        self.introns = tuple([ (x+1, y-1) for x, y in 
-                               izip(exon_bnds[1:-2:2], exon_bnds[2:-1:2]) ])
-        
+                
         # add these for compatability
         self.append( trans_id )
         self.append( exon_bnds )        
@@ -229,9 +230,10 @@ def load_gtf( fname ):
                 cds_region = None
             else:
                 cds_region = ( cds_start, cds_stop )
+            exons = tuple(zip(exon_bnds[:-1:2], exon_bnds[1::2]))
             transcripts.append( 
                 Transcript(trans_id, chrm, g.strand, 
-                           exon_bnds, cds_region, g.gene_id, 
+                           exons, cds_region, g.gene_id, 
                            score=score, rpkm=rpkm, rpk=rpk ) 
                 )
         

@@ -34,7 +34,27 @@ def build_exon_to_transcripts_map( transcripts, source_fnames ):
     
     return exon_to_transcripts_map
 
-def cluster_transcripts( genes, sources ):
+def build_transcripts_list( genes, sources ):
+    transcripts_and_sources = []
+    for source_genes, source in izip( genes, sources ):
+        for gene in source_genes:
+            for transcript in gene[-1]:
+                transcripts_and_sources.append( (transcript, source) )
+    
+    return transcripts_and_sources
+
+def iter_filtered_transcripts_and_sources(transcripts_and_sources, min_score=0, min_rpkm=0):
+    for transcript, source in transcripts_and_sources:
+        # skip transcripts with low scores
+        if transcript.score != None and transcript.score < min_score:
+            continue
+        if transcript.rpkm != None and transcript.rpkm < min_rpkm:
+            continue
+        yield ( transcript, source )
+    
+    return
+
+def cluster_transcripts( transcripts_and_sources ):
     """Two transcripts overlap if they share overlapping exons So, we  
     use the following algorithm:
     
@@ -46,13 +66,11 @@ def cluster_transcripts( genes, sources ):
     """
     exons_to_transcripts = defaultdict( lambda: defaultdict(list) )
     transcripts_to_exons = defaultdict( lambda: defaultdict(list) )
-    for source_genes, source in izip( genes, sources ):
-        for gene in source_genes:
-            for transcript in gene[-1]:
-                contig = ( transcript.chrm, transcript.strand )
-                for exon in transcript.exons:
-                    exons_to_transcripts[contig][exon].append((transcript, source))
-                    transcripts_to_exons[contig][(transcript, source)].append(exon)
+    for transcript, source in transcripts_and_sources:
+        contig = ( transcript.chrm, transcript.strand )
+        for exon in transcript.exons:
+            exons_to_transcripts[contig][exon].append((transcript, source))
+            transcripts_to_exons[contig][(transcript, source)].append(exon)
     
     clustered_transcripts = {}
     for contig, exons in exons_to_transcripts.iteritems():
@@ -79,6 +97,28 @@ def cluster_transcripts( genes, sources ):
             transcripts_graph )
     
     return clustered_transcripts
+
+def filter_clustered_transcripts( clustered_transcripts, max_rpkm_ratio=None ):
+    filtered_transcripts = {}
+    for (chr, strand), contig_transcripts in clustered_transcripts.iteritems():
+        contig_filtered_transcripts = []
+        for gene_transcripts in contig_transcripts:
+            max_rpkm = max( trans.rpkm for trans, src in gene_transcripts )
+            contig_filtered_transcripts.append( [] )
+            for transcript, source in gene_transcripts:
+                if max_rpkm_ratio != None and \
+                        ( transcript.rpkm == None or transcript.rpkm == 0 ):
+                    continue
+                
+                if max_rpkm_ratio != None and float(max_rpkm)/transcript.rpkm > max_rpkm_ratio:
+                    continue
+                
+                contig_filtered_transcripts[-1].append( (transcript, source) )
+        
+        filtered_transcripts[(chr, strand)] = contig_filtered_transcripts
+    
+    return filtered_transcripts
+
 
 def reduce_internal_clustered_transcripts( internal_grpd_transcripts ):
     """Take a set of clustered transcripts and reduce them into 
@@ -168,6 +208,18 @@ def parse_arguments():
         '--sources-fname', type=argparse.FileType( 'w' ),
         help='File name to write the sources for each transcript. '
         + 'Default: Do not write out sources map.')
+
+    parser.add_argument(
+        '--min-score', default=0, type=int,
+        help='Filter transcripts with scores below this value.')
+
+    parser.add_argument(
+        '--min-rpkm', default=0, type=int,
+        help='Filter transcripts with rpkms below this value.')
+
+    parser.add_argument(
+        '--max-rpkm-ratio', type=int,
+        help='For each gene cluster, filter transcripts whose rpkm is this many times lower than the maximum rpkm transcript.')
     
     parser.add_argument(
         '--out-fname', '-o', type=argparse.FileType('w'), default=sys.stdout,
@@ -187,27 +239,39 @@ def parse_arguments():
     VERBOSE = args.verbose
     
     return args.gtfs, args.out_fname, args.sources_fname, \
+        args.min_score, args.min_rpkm, args.max_rpkm_ratio, \
         args.threads
 
 def main():
-    gtf_fnames, ofp, sources_fp, n_threads = parse_arguments()
+    gtf_fnames, ofp, sources_fp, min_score, min_rpkm, max_rpkm_ratio, n_threads\
+        = parse_arguments()
     
     # load all transcripts file and store corresponding data
     transcriptomes = load_gtfs( gtf_fnames, n_threads )
     
     # cluster transcripts by shared overlapping exons
-    clustered_transcripts = cluster_transcripts( transcriptomes, gtf_fnames )
+    transcripts_and_sources = build_transcripts_list(transcriptomes, gtf_fnames)
+    filtered_trans_and_sources_iter = iter_filtered_transcripts_and_sources( 
+        transcripts_and_sources, min_score, min_rpkm )
+    
+    clustered_transcripts = cluster_transcripts(filtered_trans_and_sources_iter)
+    filtered_clustered_transcripts  = filter_clustered_transcripts( 
+        clustered_transcripts, max_rpkm_ratio )
     
     # group transcripts by matching internal boundaries
-    reduced_transcripts = reduce_clustered_transcripts( clustered_transcripts )
+    reduced_transcripts = reduce_clustered_transcripts( 
+        filtered_clustered_transcripts )
     
     transcript_ids = defaultdict( lambda: 1 )
     for transcript, gene_id, sources in reduced_transcripts:
         transcript.id = "%s_%i" % ( gene_id, transcript_ids[gene_id] )
+        transcript.score = None
         transcript_ids[gene_id] += 1        
         ofp.write(transcript.build_gtf_lines(gene_id, {}, source="grit")+"\n")
         line = "\t".join((gene_id, transcript.id, ",".join(sources)))
-        sources_fp.write(line+"\n")
+        
+        if sources_fp != None:
+            sources_fp.write(line+"\n")
     
     return 
 

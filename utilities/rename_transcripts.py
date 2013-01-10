@@ -10,7 +10,7 @@ from gtf import load_gtfs, Transcript
 
 sys.path.append( os.path.join( os.path.dirname( __file__), 
                                "../elements/transcripts/" ) )
-from merge_transcripts import cluster_transcripts
+from merge_transcripts import cluster_transcripts, build_transcripts_list
 
 sys.path.append( os.path.join( os.path.dirname( __file__), 
                                "../file_types/" ) )
@@ -207,8 +207,9 @@ def main():
     # cluster transcripts by shared overlapping exons. We use the clusters
     # to reduce the space of mathcing transcripts to search. 
     if VERBOSE: print >> sys.stderr, "Clustering Transcripts..."
-    clustered_transcripts=cluster_transcripts( 
+    transcripts_and_sources = build_transcripts_list( 
         [ref_genes, input_genes], ["ref", "input"] )
+    clustered_transcripts=cluster_transcripts( transcripts_and_sources )
     
     # for each cluster, find the best match
     matched_transcript_clusters = match_transcripts( clustered_transcripts )

@@ -1,6 +1,8 @@
 import sys, os
+from itertools import chain
+from collections import defaultdict
 
-DEBUG_VERBOSE = False
+DEBUG = False
 
 def clean_chr_name( chrm ):
     if chrm.startswith( "chr" ):
@@ -33,6 +35,18 @@ def get_strand( read, reverse_read_strand, pairs_are_opp_strand ):
             strand = '+'
 
     return strand
+
+def get_read_group( r1, r2 ):        
+    r1_read_group = [ val for key, val in r1.tags if key == 'RG' ]
+    r1_read_group = r1_read_group[0] if len( r1_read_group ) == 1 else 'mean'
+    r2_read_group = [ val for key, val in r2.tags if key == 'RG' ]
+    r2_read_group = r2_read_group[0] if len( r2_read_group ) == 1 else 'mean'
+    if r1_read_group == r2_read_group:
+        return r1_read_group
+    else: 
+        print "WARNING: Read groups do not match."
+        return None
+
 
 def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=100 ):
     # keep track of which fractiona re on the sam strand
@@ -75,6 +89,8 @@ def iter_coverage_regions_for_read(
     """Find the regions covered by this read
 
     """
+    assert isinstance( bam_obj, Reads )
+
     strand = get_strand( read, reverse_read_strand, pairs_are_opp_strand )
 
     # get the chromosome, correcting for alternate chrm names
@@ -145,7 +161,7 @@ try:
                     read2 = reads_pair2[ read1.qname ]
                 # if there is no mate, skip this read
                 except KeyError:
-                    if DEBUG_VERBOSE:
+                    if DEBUG:
                         print "No mate: ", read1.pos, read1.aend, read1.qname
                     continue
 
@@ -164,3 +180,75 @@ try:
             return
 except ImportError:
     pass
+
+
+def find_nonoverlapping_exons_covered_by_segment(exon_bndrys, start, stop):
+    """Return the pseudo bins that a given segment has at least one basepair in.
+
+    """
+    bin_1 = exon_bndrys.searchsorted(start, side='right')-1
+    # if the start falls before all bins
+    if bin_1 == -1: return ()
+
+    bin_2 = exon_bndrys.searchsorted(stop, side='right')-1
+    # if the stop falls after all bins
+    if bin_2 == len( exon_bndrys ) - 1: return ()
+
+    if DEBUG:
+        assert bin_1 == -1 or start >= exon_bndrys[ bin_1  ]
+        assert stop < exon_bndrys[ bin_2 + 1  ]
+
+    return tuple(xrange( bin_1, bin_2+1 ))
+ 
+
+def bin_reads( reads, chrm, strand, exon_boundaries, 
+               reverse_read_strand, pairs_are_opp_strand ):
+    """Bin reads into non-overlapping exons.
+
+    exon_boundaries should be a numpy array that contains
+    pseudo exon starts.
+    """
+    assert isinstance( reads, Reads )
+    
+    # first get the paired reads
+    gene_start = int(exon_boundaries[0])
+    gene_stop = int(exon_boundaries[-1])
+    paired_reads = list( reads.iter_paired_reads(
+            chrm, strand, gene_start, gene_stop) )
+    
+    # find the unique subset of contiguous read sub-locations
+    read_locs = set()
+    for r in chain(*paired_reads):
+        for chrm, strand, start, stop in iter_coverage_regions_for_read( 
+                r, reads, reverse_read_strand, pairs_are_opp_strand):
+            read_locs.add( (start, stop) )
+    
+    # build a mapping from contiguous regions into the non-overlapping exons (
+    # ie, exon segments ) that they overlap
+    read_locs_into_bins = {}
+    for start, stop in read_locs:
+        read_locs_into_bins[(start, stop)] = \
+            find_nonoverlapping_exons_covered_by_segment( 
+                exon_boundaries, start, stop )
+
+    def build_bin_for_read( read ):
+        bin = set()
+        for chrm, strand, start, stop in iter_coverage_regions_for_read(
+                read, reads, reverse_read_strand, pairs_are_opp_strand):
+            bin.update( read_locs_into_bins[(start, stop)] )
+        return tuple(sorted(bin))
+    
+    # finally, aggregate the bins
+    binned_reads = defaultdict( int )
+    for r1, r2 in paired_reads:
+        if r1.rlen != r2.rlen:
+            print >> sys.stderr, "WARNING: read lengths are then same"
+            continue
+        
+        rlen = r1.rlen
+        rg = get_read_group( r1, r2 )
+        bin1 = build_bin_for_read( r1 )
+        bin2 = build_bin_for_read( r2 )
+        binned_reads[( rlen, rg, tuple(sorted((bin1,bin2))))] += 1
+    
+    return dict(binned_reads)
