@@ -1,5 +1,10 @@
 import sys, os
 import numpy
+from scipy.linalg import svd
+from scipy.stats import chi2
+
+import subprocess
+from StringIO import StringIO
 from itertools import izip
 
 from math import sqrt
@@ -77,40 +82,126 @@ def build_design_matrices( gene, bam_fname, fl_dists ):
         fl_dists_and_read_lens)
     
     observed_cnts = build_observed_cnts( binned_reads, fl_dists )
+    
     expected_array, observed_array = build_expected_and_observed_arrays( 
         expected_cnts, observed_cnts )
     
     return expected_array, observed_array
 
-def estimate_transcript_frequencies( observed_array, expected_array ):
-    ps = matrix(expected_array)
-    thetas = variable( expected_array.shape[1] )
-    uniform_theta_value = 1.0/expected_array.shape[1]
-    Xs = matrix( observed_array )
-
-    # ridge_lambda = Xs.sum()/100
-    # -ridge_lambda*quad_form(thetas,1)
-    # -ridge_lambda*sum(square(thetas))),
-    p = program( maximize(Xs*log(ps*thetas)),
-                 [eq(sum(thetas), 1), geq( thetas, 1e-10 )] )
-    # +1*quad_over_lin(1,thetas[1, 0]) ), 
-    # p = program( minimize( -Xs*log(ps*thetas) ),
-    #             [eq( sum(thetas), 1), geq( thetas, 0 )] )
-
-    p.options['maxiters']  = 500
-    log_lhd = -p.solve(quiet=not VERBOSE)
-    thetas_values = thetas.value
+def find_convex_hull( expected_array ):
+    return (0,1,2,3)
+    sys.exit()
     
-    return thetas_values.T.tolist()[0]
+    dimension = expected_array.shape[0]
+    num_points = expected_array.shape[1]
+    qconvex_input = [ str(dimension), str(num_points)]
+    for vector in expected_array.T.tolist():
+        for i in xrange( 8 ):
+            qconvex_input.append( "\t" + "\t".join( map(str, vector) ) )
+    
+    qconvex_input = "\n".join( qconvex_input )
+    fp = open( "tmp.txt", "w" )
+    fp.write(qconvex_input)
+    fp.close()
+    sys.exit()
+    p = subprocess.Popen( ["qconvex", "Fx"], stdin=subprocess.PIPE, 
+                          stderr=subprocess.STDOUT, stdout=subprocess.PIPE )
+    indices = p.communicate( input=qconvex_input  )[0]
+    
+    sys.exit()
+
+def calc_lhd( freqs, observed_array, expected_array ):
+    return float(observed_array*log( matrix( expected_array )*matrix(freqs).T ))
+
+def calc_lhd_for_subprocess( args ):
+    freqs, observed_array, expected_array = args
+    return calc_lhd( freqs, observed_array, expected_array )
+
+def estimate_transcript_frequencies( observed_array, expected_array ):
+    convex_hull_indices = find_convex_hull( expected_array )
+
+    Xs = matrix( observed_array )
+    ps = matrix( expected_array[:,convex_hull_indices] )
+    thetas = variable( ps.shape[1] )
+    
+    p = program( maximize(Xs*log(ps*thetas)), 
+                 [eq(sum(thetas), 1), geq(thetas,0)])
+    
+    p.options['maxiters']  = 1500
+    log_lhd = p.solve(quiet=not VERBOSE)
+    
+    freq_estimates = [0]*expected_array.shape[1]
+    for index, value in zip(convex_hull_indices, thetas.value.T.tolist()[0]):
+        freq_estimates[index] = value
+    
+    return log_lhd, freq_estimates
+
+def estimate_confidence_bound( observed_array, expected_array, mle_log_lhd, fixed_i, upper_bound=True, alpha=0.05 ):
+    lower_lhd_bound = mle_log_lhd - chi2.ppf( 1 - alpha, 1 )/2.
+    
+    free_indices = set(range(expected_array.shape[1])) - set((fixed_i,))
+    
+    Xs = matrix( observed_array )
+    ps = matrix( expected_array )
+    thetas = variable( ps.shape[1] )
+    
+    constraints = [ geq(Xs*log(ps*thetas), lower_lhd_bound), 
+                    eq(sum(thetas), 1), geq(thetas,0)]
+    
+    if upper_bound:
+        p = program( maximize(thetas[fixed_i,0]), constraints )    
+    else:
+        p = program( minimize(thetas[fixed_i,0]), constraints )
+    
+    p.options['maxiters']  = 1500
+    value = p.solve(quiet=not VERBOSE)
+    
+    thetas_values = thetas.value.T.tolist()[0]
+    log_lhd = calc_lhd( thetas_values, observed_array, expected_array )
+    
+    return chi2.sf( 2*(mle_log_lhd-log_lhd), 1), value
+
+def build_grid( expected_array, observed_array ):
+    grid = []
+    n = 10
+    for i in range( n+1 ):
+        for j in range( n+1 ):
+            for k in range( n+1 ):
+                entry = [i/float(n), j/float(n), k/float(n)]
+                if sum( entry ) > 1: continue
+                entry.append( round(1 - sum( entry ),1) )
+                grid.append( entry  )
+    
+    from multiprocessing import Pool
+    p = Pool( 50 )
+    res = p.map(calc_lhd, [ (x, observed_array, expected_array) for x in grid])
+
+    for entry, lhd in zip( grid, res ):
+        print "\t".join(map(str, entry)) + "\t" + str(lhd)
+    
+    sys.exit()
+
 
 def estimate_gene_expression( gene, bam_fname, fl_dists ):
     expected_array, observed_array = build_design_matrices( 
         gene, bam_fname, fl_dists )
     
-    transcript_frequencies = estimate_transcript_frequencies( 
+    log_lhd, mle_estimate = estimate_transcript_frequencies( 
         observed_array, expected_array )
     
-    return 
+    for index, mle_value in enumerate( mle_estimate ):
+        bnds = []
+        for upper in ( False, True ):
+            p_value, bnd = estimate_confidence_bound( 
+                observed_array, expected_array, log_lhd, index, upper )
+            bnds.append( round( bnd, 6 ) )
+        
+        print index, bnds
+    
+    sys.exit()
+    transcript_frequencies 
+        
+    return transcript_frequencies
 
 def parse_arguments():
     import argparse
@@ -154,7 +245,7 @@ def parse_arguments():
         mean, sd = fl_dist_norm
         fl_min = max( 0, mean - (4 * sd) )
         fl_max = mean + (4 * sd)
-        fl_dists = build_normal_density( fl_min, fl_max, mean, sd )
+        fl_dists = { 'mean': build_normal_density( fl_min, fl_max, mean, sd ) }
         read_group_mappings = []
     else:
         fl_dists, read_group_mappings = load_fl_dists( args.fl_dists )
@@ -178,38 +269,16 @@ def parse_arguments():
     
     return args.gtf, bam_fns, args.ofname, fl_dists, read_group_mappings
 
-if __name__ == "__main__":
+def main():
     # Get file objects from command line
     gtf_fp, bam_fns, ofname, fl_dists, rg_mappings = parse_arguments()
     
     genes = load_gtf( gtf_fp.name )
     for gene in genes:
         for bam_fn in bam_fns:
-            estimate_gene_expression( gene, bam_fn, fl_dists )
-    
+            print estimate_gene_expression( gene, bam_fn, fl_dists )
+                          
+    return
 
-    sys.exit()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-print "done"
+if __name__ == "__main__":
+    main()
