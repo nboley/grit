@@ -186,6 +186,10 @@ def find_nonoverlapping_exons_covered_by_segment(exon_bndrys, start, stop):
     """Return the pseudo bins that a given segment has at least one basepair in.
 
     """
+    # BUG XXX
+    start += 1
+    stop +=1 
+    
     bin_1 = exon_bndrys.searchsorted(start, side='right')-1
     # if the start falls before all bins
     if bin_1 == -1: return ()
@@ -193,7 +197,7 @@ def find_nonoverlapping_exons_covered_by_segment(exon_bndrys, start, stop):
     bin_2 = exon_bndrys.searchsorted(stop, side='right')-1
     # if the stop falls after all bins
     if bin_2 == len( exon_bndrys ) - 1: return ()
-
+    
     if DEBUG:
         assert bin_1 == -1 or start >= exon_bndrys[ bin_1  ]
         assert stop < exon_bndrys[ bin_2 + 1  ]

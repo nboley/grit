@@ -46,10 +46,7 @@ def find_nonoverlapping_exon_indices( transcript, exon_boundaries ):
         assert exon[1] == exon_boundaries[stop_i]-1
 
         non_overlapping_exon_indices.extend( xrange(start_i,stop_i) )
-        #new_exon_bndrys = exon_boundaries[start_i:stop_i+1]
-        #non_overlapping_exons.extend( (x, y-1) 
-        #        for x,y in izip(new_exon_bndrys[:-1], new_exon_bndrys[1:]))
-
+    
     return non_overlapping_exon_indices
 
 def build_nonoverlapping_indices( transcripts, exon_boundaries ):
