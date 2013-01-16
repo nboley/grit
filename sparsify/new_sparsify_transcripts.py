@@ -33,6 +33,64 @@ MIN_TRANSCRIPT_FREQ = 1e-6
 COMPARE_TO_DCP = False
 num_threads = 1
 
+DEBUG_OPTIMIZATION = False
+
+"""
+START LOCATION STUFF
+
+    def f_init_taylor(xs):
+        x_full = [ max( MIN_TRANSCRIPT_FREQ, x ) for x in xs ]
+        x_full.insert( fixed_i, MIN_TRANSCRIPT_FREQ )
+        log_lhd = calc_taylor_lhd( x_full, observed_array, expected_array )
+        if DEBUG_VERBOSE: print x_full, log_lhd
+        assert not numpy.isnan( log_lhd )
+        # we add the extra penalty to force the objective away from 0
+        positive_penalty = sum([ x-y for x,y in zip(x_bounded, xs.tolist())])
+        sum_to_one_penalty = abs(1-numpy.absolute(xs).sum())
+        return -log_lhd + 100*( positive_penalty + sum_to_one_penalty )
+
+    def f_init(xs):
+        x_bounded = [ max( MIN_TRANSCRIPT_FREQ, x ) for x in xs ]
+        x_full = x_bounded
+        x_full.insert( fixed_i, MIN_TRANSCRIPT_FREQ )
+        log_lhd = calc_lhd( x_full, observed_array, expected_array )
+        positive_penalty = sum([ x-y for x,y in zip(x_bounded, xs.tolist())])
+        sum_to_one_penalty = abs(1-numpy.absolute(xs).sum())
+        return -log_lhd + 100*( positive_penalty + sum_to_one_penalty )
+    
+
+
+        x0 = [ x+float(mle_est[fixed_i])/(len(mle_est)-1) for i, x in enumerate(mle_est) if i != fixed_i ]
+        bounds = [(MIN_TRANSCRIPT_FREQ,1)]*len(x0) 
+
+        res = fmin_slsqp( f_init, x0=x0, bounds=bounds,
+                          f_eqcons=sum_to_one_constraint, 
+                          disp=DEBUG_VERBOSE, epsilon=1e-2,
+                          full_output=True)    
+        # check the error code
+        if res[3] != 0:
+            log_warning( "Invalid Optimization Return Code From Lower Bnd X0 Search Taylor Objective. Proceeding.\n" + "\n".join( map( str,res )[-2:] ) + "\n" )
+        x0 = res[0]
+        
+        res = fmin_slsqp( f_init, x0=x0, bounds=bounds,
+                          f_eqcons=sum_to_one_constraint, 
+                          disp=DEBUG_VERBOSE, epsilon=1e-3,
+                          full_output=True)    
+        
+        # check the error code
+        if res[3] != 0:
+            log_warning( "Invalid Optimization Return Code From Lower Bnd X0 Search Objective. Proceeding.\n" + "\n".join( map( str,res )[-2:] ) + "\n" )
+        x0 = res[0]
+        
+        x0 = res[0]
+        x0.insert( fixed_i, MIN_TRANSCRIPT_FREQ )
+
+"""
+
+def log_warning(text):
+    print >> sys.stderr, text
+    return
+
 class ThreadSafeFile( file ):
     def __init__( *args ):
         file.__init__( *args )
@@ -143,12 +201,26 @@ def find_convex_hull( expected_array ):
 def calc_lhd( freqs, observed_array, expected_array ):
     return float(observed_array*numpy.log( numpy.matrix( expected_array )*numpy.matrix(freqs).T ))
 
+def calc_lhd_deriv( freqs, observed_array, expected_array ):
+    rv = numpy.zeros( expected_array.shape[1] )
+    denom = numpy.matrix( expected_array )*numpy.matrix(freqs).T
+    for i in xrange( expected_array.shape[0] ):
+        for j in xrange( expected_array.shape[1] ):
+            rv[j] += observed_array[j]*expected_array[i,j]/denom[j]
+    
+    return rv.tolist()
+
+def calc_taylor_lhd( freqs, observed_array, expected_array ):
+    bin_prbs = numpy.matrix( expected_array )*numpy.matrix(freqs).T
+    return float(observed_array*(-numpy.power(bin_prbs-1.14, 20)))
+
 def calc_lhd_for_subprocess( args ):
     freqs, observed_array, expected_array = args
     return calc_lhd( freqs, observed_array, expected_array )
 
 def estimate_transcript_frequencies_wth_dcp( observed_array, expected_array ):
-    convex_hull_indices = find_convex_hull( expected_array )
+    #convex_hull_indices = find_convex_hull( expected_array )
+    convex_hull_indices = range( expected_array.shape[1] )
     
     Xs = cvxpy.matrix( observed_array )
     ps = cvxpy.matrix( expected_array[:,convex_hull_indices] )
@@ -173,31 +245,117 @@ def estimate_transcript_frequencies_wth_dcp( observed_array, expected_array ):
         
     return log_lhd, freq_estimates
 
-def estimate_transcript_frequencies( observed_array, expected_array ):
-    def f(xs):
-        x_full = [ max( MIN_TRANSCRIPT_FREQ, x ) for x in xs ]
-        log_lhd = calc_lhd( x_full, observed_array, expected_array )
-        if DEBUG_VERBOSE: print x_full, log_lhd
-        return -log_lhd
-
-    def eq_const( x ):
-        return numpy.matrix( 1 - x.sum() )
-
-    num_transcripts = expected_array.shape[1]
+def estimate_transcript_frequencies( observed_array, expected_array, 
+                                     fixed_indices=[], fixed_values=[],
+                                     minimum_eps=1e-8, x0=None ):
+    assert len( fixed_values ) == len( fixed_indices )
+    assert sum( fixed_values ) < 1
+    
+    num_transcripts = expected_array.shape[1] - len( fixed_indices )
     bounds = [(MIN_TRANSCRIPT_FREQ,1)]*num_transcripts
-    res = fmin_slsqp( f, 
-                      x0=[1./num_transcripts]*num_transcripts, 
-                      bounds=bounds,
-                      f_eqcons=eq_const, 
-                      disp=DEBUG_VERBOSE )
+    indices_and_values = sorted(zip(fixed_indices, fixed_values))
+    eq_value = 1. - sum( fixed_values )
+    uniform_x0 = [eq_value/num_transcripts]*num_transcripts
+    
+    def adjust_estimate(x):
+        """Ensure the estimate is within the bounds
 
-    freq_estimates = res.tolist()
+        """
+        x_full = [ max( MIN_TRANSCRIPT_FREQ, x ) for x in x ]
+        x_full = [ x*(eq_value/sum(x_full)) for x in x_full ]
+        for i, val in indices_and_values:
+            x_full.insert( i, val )
+        
+        assert abs(1. - sum(x_full)) < 1e-9
+        return x_full
+        
+    def boundary_loss( xs ):
+        loss_0 = sum( int(x<MIN_TRANSCRIPT_FREQ)*(MIN_TRANSCRIPT_FREQ-x)
+                      for x in xs )
+        loss_1 = sum( int(x > 1.)*(1-x)
+                      for x in xs )
+        loss_sum = abs(1-sum(xs))
+        return 100*(loss_0 + loss_1 + loss_sum)
+    
+    def f_taylor(xs):
+        x_full = adjust_estimate( xs )
+        log_lhd = calc_taylor_lhd( x_full, observed_array, expected_array )
+        return -log_lhd + boundary_loss(xs)
+    
+    def f(xs):
+        x_full = adjust_estimate( xs )
+        log_lhd = calc_lhd( x_full, observed_array, expected_array )
+        return -log_lhd + boundary_loss(xs)
+    
+    def eq_const( x ):
+        return numpy.array( numpy.matrix( eq_value - x.sum() ) )
+    
+    def minimize( x0, f, epsilon ):
+        res = fmin_slsqp( f, x0=x0, 
+                          bounds=bounds,
+                          f_eqcons=eq_const, 
+                          disp=2*int(DEBUG_OPTIMIZATION),
+                          full_output=True, 
+                          epsilon=epsilon,
+                          iter=100)
+        
+        return res[0], res[-2]
+
+    def find_x0():
+        """Find x0 using the polynomial approximation to log.
+
+        """
+        epsilon_init = 1e-1
+        while epsilon_init > 1e-8:
+            x0, rv = minimize( uniform_x0, f_taylor, epsilon_init )
+            if rv == 0: 
+                return x0
+            epsilon_init /= 10
+        
+        return None
+
+    def find_x(x0):
+        freq_estimates = None
+        estimate_epsilon = None
+        estimate_lhd = None
+        for epsilon in [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8 ]:
+            if epsilon < minimum_eps: break
+            x0, rv = minimize( x0, f, epsilon )
+            x0_adj = adjust_estimate(x0)
+            lhd = calc_lhd( x0_adj, observed_array, expected_array )
+            if rv == 0 or lhd < estimate_lhd: 
+                freq_estimates = x0_adj
+                estimate_lhd = lhd
+                estimate_epsilon = epsilon
+
+        if freq_estimates == None:
+            raise ValueError, "Couldn't find an optimum."
+        
+        return freq_estimates
+
+    if x0 == None:
+        x0 = find_x0()
+        if x0 == None:
+            print "WARNING: Couldn't find a starting location."
+            x0 = uniform_x0
+    
+    freq_estimates = find_x( x0 )
+    
+    if abs(1 - sum(freq_estimates)) > 1e-2:
+        print freq_estimates, sum(freq_estimates)
+        raise ValueError, "Constraints not satisfied."
+    
+    freq_estimates = [ x/sum(freq_estimates) for x in freq_estimates ]
+    
     log_lhd = calc_lhd( freq_estimates, observed_array, expected_array )
-
+    
     if COMPARE_TO_DCP:
-        print freq_estimates, log_lhd, "DCP:", \
-            estimate_transcript_frequencies_wth_dcp(
-                observed_array, expected_array)
+        dcp_lhd, dcp_est = estimate_transcript_frequencies_wth_dcp(
+            observed_array, expected_array)
+
+        print "Lhd:", log_lhd, dcp_lhd
+        for x, y in zip( freq_estimates, dcp_est ):
+            print x, y
     
     return log_lhd, freq_estimates
 
@@ -205,7 +363,6 @@ def estimate_confidence_bound_wth_dcp( observed_array, expected_array,
                                        mle_log_lhd, fixed_i, upper_bound=True, 
                                        alpha=0.10 ):
     lower_lhd_bound = mle_log_lhd - chi2.ppf( 1 - alpha, 1 )/2.
-    
     free_indices = set(range(expected_array.shape[1])) - set((fixed_i,))
     
     Xs = cvxpy.matrix( observed_array )
@@ -213,7 +370,8 @@ def estimate_confidence_bound_wth_dcp( observed_array, expected_array,
     thetas = cvxpy.variable( ps.shape[1] )
     
     constraints = [ cvxpy.geq(Xs*cvxpy.log(ps*thetas), lower_lhd_bound), 
-                    cvxpy.eq(cvxpy.sum(thetas), 1), cvxpy.geq(thetas, MIN_TRANSCRIPT_FREQ) ]
+                    cvxpy.eq(cvxpy.sum(thetas), 1), 
+                    cvxpy.geq(thetas, MIN_TRANSCRIPT_FREQ) ]
     
     if upper_bound:
         p = cvxpy.program( cvxpy.maximize(thetas[fixed_i,0]), constraints )    
@@ -228,55 +386,53 @@ def estimate_confidence_bound_wth_dcp( observed_array, expected_array,
     
     return chi2.sf( 2*(mle_log_lhd-log_lhd), 1), value, thetas_values
 
-def estimate_confidence_bound( observed_array, expected_array,
-                               mle_est, mle_log_lhd, 
-                               fixed_i, upper_bound=True, 
-                               alpha=0.10 ):
-    lower_lhd_bound = mle_log_lhd - chi2.ppf( 1 - alpha, 1 )/2.
+def estimate_confidence_bound_by_bisection( observed_array, expected_array,
+                                            fixed_i, mle_est, 
+                                            bound_type,
+                                            alpha=0.10 ):
+    def etf_wrapped( x ):
+        return estimate_transcript_frequencies( 
+            observed_array, expected_array, 
+            [fixed_i,], fixed_values=[x,], 
+            minimum_eps=1e-7,
+            x0=[ x for i, x in enumerate(mle_est) if i != fixed_i] )[0]
+    
+    def bisect_for_bnd( lower_bnd, upper_bnd, MAX_ITER=100, PRECISION=1e-4 ):
+        for i in xrange( MAX_ITER ):
+            curr = (upper_bnd + lower_bnd)/2
+            curr_lhd = etf_wrapped( curr )
+            try:
+                assert curr_lhd <= mle_log_lhd
+            except:
+                print curr_lhd, mle_log_lhd
+                raise
+            
+            if DEBUG_VERBOSE:
+                print curr, curr_lhd, upper_lhd_bound-curr_lhd, \
+                    bound_type, mle_log_lhd
+            
+            if upper_bnd - lower_bnd < PRECISION:
+                return (upper_bnd + lower_bnd)/2., curr_lhd
+            
+            if curr_lhd < upper_lhd_bound:
+                if bound_type=='UPPER': upper_bnd = curr
+                else: lower_bnd = curr
+            else:
+                if bound_type=='UPPER': lower_bnd = curr
+                else: upper_bnd = curr
 
-    def f_init(xs):
-        x_full = [ max( MIN_TRANSCRIPT_FREQ, x ) for x in xs ]
-        x_full.insert( fixed_i, MIN_TRANSCRIPT_FREQ )
-        return -calc_lhd( x_full, observed_array, expected_array )
-
-    def f(xs):
-        x_full = [ max( MIN_TRANSCRIPT_FREQ, x ) for x in xs ]
-        return -1*( True == upper_bound )*x_full[fixed_i]
+        
+        raise ValueError, "Bisection failed to find confidence bound."
     
-    def lhd_ratio_constraint(xs):
-        x_full = [ max( MIN_TRANSCRIPT_FREQ, x ) for x in xs ]
-        log_lhd = calc_lhd( x_full, observed_array, expected_array )
-        if DEBUG_VERBOSE: print x_full[fixed_i],x_full,log_lhd,lower_lhd_bound
-        return numpy.array(numpy.matrix(log_lhd-lower_lhd_bound))
+    mle_bnd = mle_est[fixed_i]
+    mle_log_lhd = calc_lhd( mle_est, observed_array, expected_array )
+    upper_lhd_bound = mle_log_lhd - chi2.ppf( 1 - alpha, 1 )/2.
     
-    def sum_to_one_constraint( xs ):
-        return numpy.array(numpy.matrix(1-xs.sum()))
+    if bound_type=='UPPER': other_bnd = 1.0 - MIN_TRANSCRIPT_FREQ
+    else: other_bnd = MIN_TRANSCRIPT_FREQ
     
-    # find the initial condition. In the unidentifiable case, the lhd can be 
-    # really flat and the optimnization procedure will terminate. We avoid this
-    # by finding a starting position at the very bottom. Ie, we maximize the lhd
-    # subject tot he constraint that the lower bound is 0, and then we use this
-    # as the initial condition
-    if not upper_bound:
-        x0 = [ x for i, x in enumerate(mle_est) if i != fixed_i ]
-        bounds = [(MIN_TRANSCRIPT_FREQ,1)]*len(x0) 
-        res = fmin_slsqp( f_init, x0=x0, bounds=bounds,
-                          f_eqcons=sum_to_one_constraint, 
-                          disp=DEBUG_VERBOSE, epsilon=0.01 )    
-        x0 = res.tolist()
-        x0.insert( fixed_i, MIN_TRANSCRIPT_FREQ )
-    else:
-        x0 = mle_est
-    
-    # actually find the bound
-    res = fmin_slsqp( f, x0=x0,
-                      bounds=[(MIN_TRANSCRIPT_FREQ,1)]*expected_array.shape[1], 
-                      f_ieqcons=lhd_ratio_constraint, 
-                      f_eqcons=sum_to_one_constraint, 
-                      disp=0, epsilon=0.01 )
-
-    freq_estimates = res.tolist()
-    log_lhd = calc_lhd( freq_estimates, observed_array, expected_array )
+    lower_bnd, upper_bnd = min( mle_bnd, other_bnd ), max( mle_bnd, other_bnd )
+    bnd, log_lhd = bisect_for_bnd( lower_bnd, upper_bnd )
     
     if COMPARE_TO_DCP:
         dcp_est = estimate_confidence_bound_wth_dcp( 
@@ -284,10 +440,140 @@ def estimate_confidence_bound( observed_array, expected_array,
             mle_log_lhd, fixed_i, upper_bound, alpha )
         dcp_lhd = calc_lhd( dcp_est[2], observed_array, expected_array )
         
-        print "DCP_COMPARISON",upper_bound, freq_estimates[fixed_i], \
-            dcp_est[1], log_lhd, dcp_lhd, lower_lhd_bound
+        print "DCP_COMPARISON", upper_bound, freq_estimates[fixed_i], \
+            dcp_est[1], log_lhd, dcp_lhd, upper_lhd_bound
     
-    return chi2.sf( 2*(mle_log_lhd-log_lhd), 1), freq_estimates[fixed_i]
+    assert log_lhd >= upper_lhd_bound - 0.1
+    
+    return chi2.sf( 2*(mle_log_lhd-log_lhd), 1), bnd
+
+class MaxIterError( ValueError ):
+    pass
+
+def estimate_confidence_bounds_directly( observed_array, 
+                                         expected_array, 
+                                         fixed_index,
+                                         mle_estimate,
+                                         bound_type,
+                                         alpha = 0.025):
+    def adjust_estimate(x):
+        """Ensure the estimate is within the bounds
+
+        """
+        x_full = [ max( MIN_TRANSCRIPT_FREQ, x ) for x in x ]
+        x_full = [ x*(eq_value/sum(x_full)) for x in x_full ]
+        assert abs(1. - sum(x_full)) < 1e-9
+        return x_full
+        
+    def boundary_loss( xs ):
+        loss_0 = sum( int(x<MIN_TRANSCRIPT_FREQ)*(MIN_TRANSCRIPT_FREQ-x)
+                      for x in xs )
+        loss_1 = sum( int(x > 1.)*(1-x)
+                      for x in xs )
+        loss_sum = abs(1-sum(xs))
+        return 100*(loss_0 + loss_1 + loss_sum)
+        
+    def lhd_ratio_constraint(xs):
+        x_full = adjust_estimate( xs )
+        log_lhd = calc_lhd( x_full, observed_array, expected_array )
+        return numpy.array(numpy.matrix(log_lhd + boundary_loss(xs) - upper_lhd_bound))
+    
+    def eq_const( x ):
+        return numpy.array( numpy.matrix( eq_value - x.sum() ) )
+    
+    def f( xs ):
+        return (2*int(bound_type == "LOWER")-1)*xs[fixed_index]
+    
+    def minimize( x0, f, epsilon, maxiter ):
+        bounds = [(MIN_TRANSCRIPT_FREQ,1)]*num_transcripts
+        res = fmin_slsqp( f, x0=x0, 
+                          bounds=bounds,
+                          f_eqcons=eq_const, 
+                          f_ieqcons=lhd_ratio_constraint,
+                          disp=2*int(DEBUG_OPTIMIZATION),
+                          full_output=True, 
+                          epsilon=epsilon,
+                          iter=maxiter)
+        
+        return res[0], res[-2]
+    
+    def find_x(x0, maxiter):
+        maxiter_reached = False
+        freq_estimates = None
+        estimate_epsilon = None
+        estimate_lhd = None
+        for epsilon in [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8 ]:
+            x0, rv = minimize( x0, f, epsilon, maxiter )
+            x0_adj = adjust_estimate(x0)
+            lhd = calc_lhd( x0_adj, observed_array, expected_array )
+            if rv == 9:
+                maxiter_reached = True
+            if rv == 0: 
+                freq_estimates = x0_adj
+                estimate_lhd = lhd
+                estimate_epsilon = epsilon
+
+        if freq_estimates == None:
+            if maxiter_reached:
+                raise MaxIterError, "Couldn't find an optimum."
+            else:
+                raise ValueError, "Couldn't find an optimum."
+        
+        return freq_estimates
+
+    num_transcripts = expected_array.shape[1]
+    eq_value = 1.
+    x0 = mle_estimate
+    mle_log_lhd = calc_lhd( mle_estimate, observed_array, expected_array )
+    upper_lhd_bound = mle_log_lhd - chi2.ppf( 1 - alpha, 1 )/2.
+
+    # special case estiamtes already at the boundaries
+    if bound_type == 'LOWER' and \
+            mle_estimate[fixed_index]-MIN_TRANSCRIPT_FREQ < MIN_TRANSCRIPT_FREQ:
+        return 1, MIN_TRANSCRIPT_FREQ
+    elif bound_type == 'UPPER' and \
+            1-mle_estimate[fixed_index] < MIN_TRANSCRIPT_FREQ:
+        return 1, 1.0
+    
+    for maxiter in ( 100, 1000 ):
+        try:
+            freq_estimates = find_x( x0, maxiter )
+        except MaxIterError:
+            if DEBUG_VERBOSE:
+                print "WARNING: max iter reached. Increasing to 1000."
+            continue
+        else:
+            break
+    
+    if abs(1 - sum(freq_estimates)) > 1e-2:
+        print freq_estimates, sum(freq_estimates)
+        raise ValueError, "Constraints not satisfied."
+    
+    log_lhd = calc_lhd( freq_estimates, observed_array, expected_array )
+    estimate = freq_estimates[fixed_index]
+    
+    if DEBUG_VERBOSE:
+        print estimate, log_lhd, upper_lhd_bound - log_lhd, mle_log_lhd
+    
+    return chi2.sf( 2*(mle_log_lhd-log_lhd), 1), estimate
+
+def estimate_confidence_bound( observed_array, 
+                               expected_array, 
+                               fixed_index,
+                               mle_estimate,
+                               bound_type,
+                               alpha = 0.025):
+    try:
+        return estimate_confidence_bounds_directly( 
+            observed_array,  expected_array, fixed_index,
+            mle_estimate, bound_type, alpha )
+    except ValueError:
+        print "WARNING: Couldn't find bound for transcript %i %s directly: trying bisection." % (fixed_index+1, bound_type)
+        return estimate_confidence_bound_by_bisection( 
+            observed_array,  expected_array, fixed_index,
+            mle_estimate, bound_type )
+                    
+    pass
 
 def build_grid( expected_array, observed_array ):
     grid = []
@@ -306,32 +592,37 @@ def build_grid( expected_array, observed_array ):
 
     for entry, lhd in zip( grid, res ):
         print "\t".join(map(str, entry)) + "\t" + str(lhd)
-    
+        
     sys.exit()
 
 
-def estimate_gene_expression( gene, bam_fname, fl_dists ):
+def estimate_gene_expression( gene, bam_fname, fl_dists, estimate_confidence_bounds=False ):
     expected_array, observed_array = build_design_matrices( 
         gene, bam_fname, fl_dists )
     
     log_lhd, mle_estimate = estimate_transcript_frequencies( 
         observed_array, expected_array )
     if VERBOSE: print gene.id, log_lhd, [ "%.2e" % x for x in mle_estimate ]
-
-    bnds = []
-    for index, mle_value in enumerate( mle_estimate ):
-        bnds.append( [] )
-        for upper in ( False, True ):
-            p_value, bnd = estimate_confidence_bound( 
-                observed_array, expected_array, mle_estimate, 
-                log_lhd, index, upper )
-            bnds[-1].append( round( bnd, 6 ) )
-        if VERBOSE: 
-            print "Gene %s\tTranscript %i\tBam %s\t\tBnds %s" % (
-                gene.id, index+1, os.path.basename(bam_fname), bnds[-1])
-    
-    lower_bnds, upper_bnds = zip( *bnds )
         
+    if estimate_confidence_bounds:
+        bnds = []
+        for index, mle_value in enumerate( mle_estimate ):
+            transcript = gene.transcripts[index]
+            bnds.append( [] )
+            for bnd_type in ( "LOWER", "UPPER" ):
+                p_value, bnd = estimate_confidence_bound( 
+                    observed_array, expected_array, index, mle_estimate, bnd_type )
+                bnds[-1].append( bnd )
+            if VERBOSE: 
+                print "Gene %s\tTranscript %s (%i/%i)\tBam %s\tEst %.2e\tBnds [%.2e %.2e]" % (
+                    gene.id, transcript.id, index+1, len(gene.transcripts), 
+                    os.path.basename(bam_fname), 
+                    mle_value, bnds[-1][0], bnds[-1][1])
+
+        lower_bnds, upper_bnds = zip( *bnds )
+    else:
+        lower_bnds, upper_bnds = [None]*len(mle_estimate), [None]*len(mle_estimate)
+    
     return mle_estimate, lower_bnds, upper_bnds
 
 def parse_arguments():
@@ -355,8 +646,10 @@ def parse_arguments():
     parser.add_argument( '--threads', '-t', type=int , default=1, \
         help='Number of threads spawn for multithreading (default=1)')
 
-    parser.add_argument( '--write-meta-data', '-m', default=False, 
-        action='store_true', help='Whether or not to write out meta data.')
+    parser.add_argument( '--estimate-confidence-bounds', '-c', default=False,
+        action="store_true",
+        help='Whether or not to calculate confidence bounds ( this is slow )')
+    
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
                              help='Whether or not to print status information.')
     parser.add_argument( '--debug-verbose', default=False, action='store_true',\
@@ -399,33 +692,39 @@ def parse_arguments():
     if args.threads == 1:
         PROCESS_SEQUENTIALLY = True
     
-    global WRITE_META_DATA
-    WRITE_META_DATA = args.write_meta_data
-    
     global num_threads
     num_threads = args.threads
     
     ofps = {}
     for bam_fn in bam_fns:
         ofps[bam_fn] = ThreadSafeFile("%s.%s.gtf" % (args.ofprefix, os.path.basename(bam_fn)), "w")
-    
-    return args.gtf, bam_fns, ofps, fl_dists, read_group_mappings
+        ofps[bam_fn].write("track name=transcripts.%s useScore=1\n" % os.path.basename(bam_fn))
+        
+    return args.gtf, bam_fns, ofps, fl_dists, read_group_mappings, args.estimate_confidence_bounds
 
-def estimate_gene_expression_worker(input_queue, fl_dists, ofps):
+def estimate_gene_expression_worker(input_queue, fl_dists, ofps, 
+                                    estimate_confidence_bounds=False, 
+                                    filter_value=1e-3):
     while not input_queue.empty():
         gene, bam_fn = input_queue.get()
         if VERBOSE: print "Processing gene %s sample %s." % ( gene.id, bam_fn )
         mles, lbs, ubs = estimate_gene_expression( gene, bam_fn, fl_dists )
         for mle, lb, ub, transcript in zip(mles, lbs, ubs,gene.transcripts):
-            meta_data = { "frac": mle, "conf_lo": "%.2f" % lb, 
-                          "conf_hi" : "%.2f" % ub }
+            if mle/max( mles ) < filter_value: continue
+            meta_data = { "frac": "%.2e" % mle }
+            transcript.score = max( 1, int(1000*mle/max(mles)) )
+            if estimate_confidence_bounds:
+                meta_data["conf_lo"] = "%.2e" % lb
+                meta_data["conf_hi"] = "%.2e" % ub
+            
             ofps[bam_fn].write( transcript.build_gtf_lines(
                     gene.id, meta_data, source="grit") + "\n" )
         if VERBOSE: print "Finished gene %s sample %s." % ( gene.id, bam_fn )
 
 def main():
     # Get file objects from command line
-    gtf_fp, bam_fns, ofps, fl_dists, rg_mappings = parse_arguments()
+    gtf_fp, bam_fns, ofps, fl_dists, rg_mappings, estimate_confidence_bounds \
+        = parse_arguments()
 
     manager = multiprocessing.Manager()
     input_queue = manager.Queue()    
@@ -437,7 +736,7 @@ def main():
     ps = []
     for i in xrange( min( num_threads, len(genes)*len(bam_fns) ) ):
         p = Process(target=estimate_gene_expression_worker, 
-                    args=(input_queue, fl_dists, ofps))
+                    args=(input_queue, fl_dists, ofps, estimate_confidence_bounds))
         p.start()
         ps.append( p )
     
