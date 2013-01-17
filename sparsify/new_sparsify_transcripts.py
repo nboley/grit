@@ -1,6 +1,8 @@
 import sys, os
 import numpy
 import math
+import traceback
+
 from scipy.linalg import svd
 from scipy.stats import chi2
 from scipy.optimize import fmin_slsqp
@@ -34,58 +36,6 @@ COMPARE_TO_DCP = False
 num_threads = 1
 
 DEBUG_OPTIMIZATION = False
-
-"""
-START LOCATION STUFF
-
-    def f_init_taylor(xs):
-        x_full = [ max( MIN_TRANSCRIPT_FREQ, x ) for x in xs ]
-        x_full.insert( fixed_i, MIN_TRANSCRIPT_FREQ )
-        log_lhd = calc_taylor_lhd( x_full, observed_array, expected_array )
-        if DEBUG_VERBOSE: print x_full, log_lhd
-        assert not numpy.isnan( log_lhd )
-        # we add the extra penalty to force the objective away from 0
-        positive_penalty = sum([ x-y for x,y in zip(x_bounded, xs.tolist())])
-        sum_to_one_penalty = abs(1-numpy.absolute(xs).sum())
-        return -log_lhd + 100*( positive_penalty + sum_to_one_penalty )
-
-    def f_init(xs):
-        x_bounded = [ max( MIN_TRANSCRIPT_FREQ, x ) for x in xs ]
-        x_full = x_bounded
-        x_full.insert( fixed_i, MIN_TRANSCRIPT_FREQ )
-        log_lhd = calc_lhd( x_full, observed_array, expected_array )
-        positive_penalty = sum([ x-y for x,y in zip(x_bounded, xs.tolist())])
-        sum_to_one_penalty = abs(1-numpy.absolute(xs).sum())
-        return -log_lhd + 100*( positive_penalty + sum_to_one_penalty )
-    
-
-
-        x0 = [ x+float(mle_est[fixed_i])/(len(mle_est)-1) for i, x in enumerate(mle_est) if i != fixed_i ]
-        bounds = [(MIN_TRANSCRIPT_FREQ,1)]*len(x0) 
-
-        res = fmin_slsqp( f_init, x0=x0, bounds=bounds,
-                          f_eqcons=sum_to_one_constraint, 
-                          disp=DEBUG_VERBOSE, epsilon=1e-2,
-                          full_output=True)    
-        # check the error code
-        if res[3] != 0:
-            log_warning( "Invalid Optimization Return Code From Lower Bnd X0 Search Taylor Objective. Proceeding.\n" + "\n".join( map( str,res )[-2:] ) + "\n" )
-        x0 = res[0]
-        
-        res = fmin_slsqp( f_init, x0=x0, bounds=bounds,
-                          f_eqcons=sum_to_one_constraint, 
-                          disp=DEBUG_VERBOSE, epsilon=1e-3,
-                          full_output=True)    
-        
-        # check the error code
-        if res[3] != 0:
-            log_warning( "Invalid Optimization Return Code From Lower Bnd X0 Search Objective. Proceeding.\n" + "\n".join( map( str,res )[-2:] ) + "\n" )
-        x0 = res[0]
-        
-        x0 = res[0]
-        x0.insert( fixed_i, MIN_TRANSCRIPT_FREQ )
-
-"""
 
 def log_warning(text):
     print >> sys.stderr, text
@@ -125,11 +75,14 @@ def build_expected_and_observed_arrays( expected_cnts, observed_cnts ):
             observed_mat.append( 0 )
 
     expected_mat = numpy.array( expected_mat )
+    nonzero_entries = expected_mat.sum(0).nonzero()[0]
+    unobservable_transcripts = set(range(expected_mat.shape[1])) \
+        - set(nonzero_entries.tolist())
+    observed_mat = numpy.array( observed_mat )
+    expected_mat = expected_mat[:,nonzero_entries]
     expected_mat = expected_mat/expected_mat.sum(0)
     
-    observed_mat = numpy.array( observed_mat )
-    
-    return expected_mat, observed_mat
+    return expected_mat, observed_mat, unobservable_transcripts
 
 def build_design_matrices( gene, bam_fname, fl_dists ):
     # load the bam file
@@ -146,6 +99,9 @@ def build_design_matrices( gene, bam_fname, fl_dists ):
     binned_reads = bin_reads( 
         reads, gene.chrm, gene.strand, exon_boundaries, False, True)
     
+    if len( binned_reads ) == 0:
+        raise ValueError, "TOO FEW READS"
+    
     read_groups_and_read_lens =  { (RG, read_len) for RG, read_len, bin 
                                    in binned_reads.iterkeys() }
     
@@ -158,10 +114,10 @@ def build_design_matrices( gene, bam_fname, fl_dists ):
     
     observed_cnts = build_observed_cnts( binned_reads, fl_dists )
     
-    expected_array, observed_array = build_expected_and_observed_arrays( 
-        expected_cnts, observed_cnts )
+    expected_array, observed_array, unobservable_transcripts = \
+        build_expected_and_observed_arrays( expected_cnts, observed_cnts )
     
-    return expected_array, observed_array
+    return expected_array, observed_array, unobservable_transcripts
 
 def find_convex_hull( expected_array ):
     #expected_array = matrix( ((1,0,0.5), (0,1,0.5), (1,1,1)) )
@@ -262,7 +218,8 @@ def estimate_transcript_frequencies( observed_array, expected_array,
 
         """
         x_full = [ max( MIN_TRANSCRIPT_FREQ, x ) for x in x ]
-        x_full = [ x*(eq_value/sum(x_full)) for x in x_full ]
+        x_full_sum = sum(x_full)
+        x_full = [ x*(eq_value/x_full_sum) for x in x_full ]
         for i, val in indices_and_values:
             x_full.insert( i, val )
         
@@ -461,7 +418,8 @@ def estimate_confidence_bounds_directly( observed_array,
 
         """
         x_full = [ max( MIN_TRANSCRIPT_FREQ, x ) for x in x ]
-        x_full = [ x*(eq_value/sum(x_full)) for x in x_full ]
+        x_full_sum = sum(x_full)
+        x_full = [ x*(eq_value/x_full_sum) for x in x_full ]
         assert abs(1. - sum(x_full)) < 1e-9
         return x_full
         
@@ -597,8 +555,8 @@ def build_grid( expected_array, observed_array ):
 
 
 def estimate_gene_expression( gene, bam_fname, fl_dists, estimate_confidence_bounds=False ):
-    expected_array, observed_array = build_design_matrices( 
-        gene, bam_fname, fl_dists )
+    expected_array, observed_array, unobservable_transcripts = \
+        build_design_matrices( gene, bam_fname, fl_dists )
     
     log_lhd, mle_estimate = estimate_transcript_frequencies( 
         observed_array, expected_array )
@@ -607,6 +565,8 @@ def estimate_gene_expression( gene, bam_fname, fl_dists, estimate_confidence_bou
     if estimate_confidence_bounds:
         bnds = []
         for index, mle_value in enumerate( mle_estimate ):
+            if index in unobservable_transcripts: continue
+            
             transcript = gene.transcripts[index]
             bnds.append( [] )
             for bnd_type in ( "LOWER", "UPPER" ):
@@ -708,8 +668,20 @@ def estimate_gene_expression_worker(input_queue, fl_dists, ofps,
     while not input_queue.empty():
         gene, bam_fn = input_queue.get()
         if VERBOSE: print "Processing gene %s sample %s." % ( gene.id, bam_fn )
-        mles, lbs, ubs = estimate_gene_expression( gene, bam_fn, fl_dists )
-        for mle, lb, ub, transcript in zip(mles, lbs, ubs,gene.transcripts):
+        try:
+            mles, lbs, ubs = estimate_gene_expression( gene, bam_fn, fl_dists )
+            scores = [ int(1000*mle/max( mles )) for mle in mles ]
+        except Exception, inst:
+            #if str(inst) == 'TOO FEW READS': continue
+            print "ERROR in %s - %s: %s" % ( gene.id, bam_fn, str(inst) )
+            print traceback.print_exc( )
+            mles = [0.5]*len( gene.transcripts )
+            lbs = [0.]*len( gene.transcripts )
+            ubs = [1.]*len( gene.transcripts )
+            scores = [1]*len( gene.transcripts )
+            continue
+        
+        for mle, lb, ub, score, transcript in zip(mles, lbs, ubs, scores, gene.transcripts):
             if mle/max( mles ) < filter_value: continue
             meta_data = { "frac": "%.2e" % mle }
             transcript.score = max( 1, int(1000*mle/max(mles)) )
