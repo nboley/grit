@@ -115,20 +115,20 @@ def get_trans_seq( gene, gene_seq, trans ):
     trans_seq = []
     for start, stop in trans.exons:
         # convert the coords from genomic to gene-relative
-        gene_start = start - gene.start
-        gene_stop = stop - gene.start
+        relative_start = start - gene.start
+        relative_stop = stop - gene.start
         
         if gene.strand == '+':
             # get the portion of the gene sequence for the current exon
             # add 1 to stop since string slice is closed-open
-            trans_seq.append( gene_seq[ gene_start : gene_stop + 1 ] )
+            trans_seq.append( gene_seq[ relative_start : relative_stop + 1 ] )
         else:
             # if the gene is neg strand reverse coords as gene_seq is rev_comp
-            tmp_start = gene_start
-            gene_start = len(gene_seq) - gene_stop - 1
-            gene_stop = len(gene_seq) - tmp_start - 1
+            tmp_start = relative_start
+            relative_start = len(gene_seq) - relative_stop - 1
+            relative_stop = len(gene_seq) - _start - 1
             # add the new sequence at the beginning since seq is rev_comp
-            trans_seq.append( gene_seq[ gene_start:gene_stop+1 ] )
+            trans_seq.append( gene_seq[ relative_start:relative_stop+1 ] )
     
     if gene.strand == '-':
         return "".join( reversed( trans_seq ) )
@@ -177,8 +177,7 @@ def find_orfs( sequence ):
             if start > stop:
                 assert len( stops ) == 0
                 break
-            if (stop - start) >= (MIN_AAS_PER_ORF * 3):
-                # add 3 so that we include the stop codon
+            if (stop - start + 1) >= (MIN_AAS_PER_ORF * 3):
                 yield ( start, stop-1 )
             prev_stop = stop
 
@@ -237,6 +236,9 @@ def find_cds_for_gene( gene, fasta ):
             start = convert_to_genomic( start, trans.exons )
             stop = convert_to_genomic( stop, trans.exons )
             start, stop = sorted((start, stop))
+            # I don't know why, but there's an off by 1 bug if not
+            stop += 1
+            
             # update the exon bounds to include the cds boundaries
             exon_bnds = list( trans.exon_bnds )
             if start not in exon_bnds:
@@ -245,11 +247,12 @@ def find_cds_for_gene( gene, fasta ):
                 exon_bnds.extend( (stop, stop+1 ) )
             
             exon_bnds = sorted( exon_bnds )
-            
+            exons = tuple(zip(exon_bnds[:-1:2], exon_bnds[1::2]))
             trans_id = trans.id + "_CDS%i" % (orf_id+1) \
                 if len( orfs ) > 1 else trans.id
+            
             new_trans = Transcript( 
-                trans_id, trans.chrm, trans.strand, exon_bnds, (start, stop) )
+                trans_id, trans.chrm, trans.strand, exons, (start, stop) )
             
             annotated_transcripts.append( new_trans )
     
