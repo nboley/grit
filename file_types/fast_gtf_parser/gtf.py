@@ -174,9 +174,8 @@ class Transcript( list ):
                     us_exons, us_label, False ) )
 
             ret_lines.extend( build_lines_for_feature( 
-                    #self.cds_exons, 'exon'.ljust(15), False ) )
                     self.cds_exons, 'CDS', True ) )
-
+            
             ret_lines.extend( build_lines_for_feature( 
                     ds_exons, ds_label, False ) )
         

@@ -2,6 +2,7 @@ import sys, os
 import numpy
 import math
 import traceback
+import time
 
 from scipy.linalg import svd
 from scipy.stats import chi2
@@ -554,15 +555,11 @@ def build_grid( expected_array, observed_array ):
     sys.exit()
 
 
-def estimate_gene_expression( gene, bam_fname, fl_dists, estimate_confidence_bounds=False ):
-    expected_array, observed_array, unobservable_transcripts = \
-        build_design_matrices( gene, bam_fname, fl_dists )
-    
+def estimate_gene_expression( expected_array, observed_array, unobservable_transcripts ):
     log_lhd, mle_estimate = estimate_transcript_frequencies( 
         observed_array, expected_array )
-    if VERBOSE: print gene.id, log_lhd, [ "%.2e" % x for x in mle_estimate ]
         
-    if estimate_confidence_bounds:
+    if False and estimate_confidence_bounds:
         bnds = []
         for index, mle_value in enumerate( mle_estimate ):
             if index in unobservable_transcripts: continue
@@ -584,6 +581,179 @@ def estimate_gene_expression( gene, bam_fname, fl_dists, estimate_confidence_bou
         lower_bnds, upper_bnds = [None]*len(mle_estimate), [None]*len(mle_estimate)
     
     return mle_estimate, lower_bnds, upper_bnds
+
+def build_mle_estimate( observed_array, expected_array ):
+    log_lhd, mle_estimate = estimate_transcript_frequencies( 
+        observed_array, expected_array )
+
+def build_bound(observed_array, expected_array, mle_estimate, index, bnd_type):
+    p_value, bnd = estimate_confidence_bound( 
+        observed_array, expected_array, index, mle_estimate, bnd_type )
+
+def write_gene_to_gtf( ofp, gene, mles, lbs=None, ubs=None, filter_value=0 ):
+    scores = [ int(1000*mle/max( mles )) for mle in mles ]
+    
+    for index, (mle, transcript) in enumerate(izip(mles, gene.transcripts)):
+        if mle/max( mles ) < filter_value: continue
+        meta_data = { "frac": "%.2e" % mle }
+        transcript.score = max( 1, int(1000*mle/max(mles)) )
+        if lbs != None:
+            meta_data["conf_lo"] = "%.2e" % lbs[index]
+        if ubs != None:
+            meta_data["conf_hi"] = "%.2e" % ubs[index]
+        
+        ofp.write( transcript.build_gtf_lines(
+                gene.id, meta_data, source="grit") + "\n" )
+    
+    return
+
+def estimate_gene_expression_worker( ip_lock, input_queue, 
+                                     op_lock, output, 
+                                     estimate_confidence_bounds=False, 
+                                     filter_value=1e-3):
+    while True:
+        op_lock.acquire()
+        if 0 == len( output ):
+            op_lock.release()
+            return
+        op_lock.release()
+        
+        ip_lock.acquire()
+        try:
+            work_type, ( gene_id, bam_fn, trans_index ) = input_queue.pop()
+        except IndexError:
+            ip_lock.release()
+            time.sleep(0.5)
+            continue
+        ip_lock.release()
+        
+        
+        
+        if work_type == 'design_matrices':
+            op_lock.acquire()
+            gene = output[(gene_id, bam_fn)]['gene']
+            fl_dists = output[(gene_id, bam_fn)]['fl_dists']
+            op_lock.release()
+                        
+            expected_array, observed_array, unobservable_transcripts \
+                = build_design_matrices( gene, bam_fn, fl_dists )
+            if VERBOSE: print "FINISHED DESIGN MATRICES %s\t%s" % ( 
+                gene_id, bam_fn )
+            
+            op_lock.acquire()
+            gene_data = output[(gene_id, bam_fn)]
+            gene_data['design_matrices'] = \
+                (observed_array, expected_array, unobservable_transcripts)
+            output[(gene_id, bam_fn)] = gene_data
+            op_lock.release()
+
+            ip_lock.acquire()
+            input_queue.append( ('mle', (gene.id, bam_fn, None)) )
+            ip_lock.release()
+        elif work_type == 'mle':
+            op_lock.acquire()
+            observed_array, expected_array, unobservable_transcripts = \
+                output[(gene_id, bam_fn)]['design_matrices']
+            op_lock.release()
+
+            log_lhd, mle_estimate = \
+                estimate_transcript_frequencies( observed_array, expected_array)
+            if VERBOSE: print "FINISHED MLE %s\t%s\t%.2e\t%s" % ( 
+                gene_id, bam_fn, log_lhd, ["%.2e" % x for x in mle_estimate] )
+            
+            op_lock.acquire()
+            gene_data = output[(gene_id, bam_fn)]
+            gene_data['mle'] = mle_estimate
+            output[(gene_id, bam_fn)] = gene_data
+            op_lock.release()
+            
+            if estimate_confidence_bounds:
+                ip_lock.acquire()
+                for i in xrange(expected_array.shape[1]):
+                    input_queue.append( ('lb', (gene_id, bam_fn, i)) )
+                    input_queue.append( ('ub', (gene_id, bam_fn, i)) )
+                ip_lock.release()
+        
+        elif work_type in ('lb', 'ub'):
+            op_lock.acquire()
+            observed_array, expected_array, unobservable_transcripts = \
+                output[(gene_id, bam_fn)]['design_matrices']
+            mle_estimate = output[(gene_id, bam_fn)]['mle']
+            op_lock.release()
+            
+            bnd_type = 'LOWER' if work_type == 'lb' else 'UPPER'
+            
+            p_value, bnd = estimate_confidence_bound( 
+                observed_array, expected_array, 
+                trans_index, mle_estimate, bnd_type )
+            if VERBOSE: print "FINISHED %s BOUND %s\t%s\t%i\t%.2e\t%.2e" % ( 
+                bnd_type, gene_id, bam_fn, trans_index, bnd, p_value )
+            
+            op_lock.acquire()
+            gene_data = output[(gene_id, bam_fn)]
+            bnds = gene_data[work_type + 's']
+            bnds[trans_index] = bnd
+            gene_data[work_type + 's'] = bnds
+            output[(gene_id, bam_fn)] = gene_data
+            op_lock.release()
+
+class WorkQueue():
+    def __init__(self):
+        pass
+
+def gene_is_finished( gene_data, compute_confidence_bounds ):
+    if gene_data['mle'] == None:
+        return False
+    
+    if not compute_confidence_bounds:
+        return True
+    
+    observed_array, expected_array, unobservable_transcripts \
+        = gene_data['design_matrices']
+    
+    n_transcripts = expected_array.shape[1]
+    assert n_transcripts == len( gene_data['gene'].transcripts ) \
+        - len( unobservable_transcripts )
+    if n_transcripts != len(gene_data['ubs']):
+        return False
+    if n_transcripts != len(gene_data['lbs']):
+        return False
+    
+    return True
+
+def write_finished_genes_to_gtf( output_dict, output_dict_lock, ofps,
+                                 compute_confidence_bounds=True, 
+                                 filter_value=0.0 ):
+    while True:
+        output_dict_lock.acquire()
+        if len( output_dict ) == 0: 
+            output_dict_lock.release()
+            return
+        output_dict_lock.release()
+        
+        for key in output_dict.keys():
+            if gene_is_finished( output_dict[key], compute_confidence_bounds ):
+                output_dict_lock.acquire()
+                assert gene_is_finished( 
+                    output_dict[key], compute_confidence_bounds )
+                if VERBOSE: print "Finished processing", key
+
+                gene = output_dict[key]['gene']
+                mles = output_dict[key]['mle']
+                lbs = output_dict[key]['lbs'] if compute_confidence_bounds else None
+                ubs = output_dict[key]['ubs'] if compute_confidence_bounds else None
+
+                write_gene_to_gtf( ofps[key[1]], gene, mles, 
+                                   lbs, ubs, filter_value)
+                
+                del output_dict[key]
+                output_dict_lock.release()
+
+        if DEBUG_VERBOSE:
+            print "%i unfinished genes" % len( output_dict )
+        time.sleep(math.log(len(output_dict)+1)*2.0)
+    
+    return
 
 def parse_arguments():
     import argparse
@@ -661,56 +831,51 @@ def parse_arguments():
         ofps[bam_fn].write("track name=transcripts.%s useScore=1\n" % os.path.basename(bam_fn))
         
     return args.gtf, bam_fns, ofps, fl_dists, read_group_mappings, args.estimate_confidence_bounds
-
-def estimate_gene_expression_worker(input_queue, fl_dists, ofps, 
-                                    estimate_confidence_bounds=False, 
-                                    filter_value=1e-3):
-    while not input_queue.empty():
-        gene, bam_fn = input_queue.get()
-        if VERBOSE: print "Processing gene %s sample %s." % ( gene.id, bam_fn )
-        try:
-            mles, lbs, ubs = estimate_gene_expression( gene, bam_fn, fl_dists )
-            scores = [ int(1000*mle/max( mles )) for mle in mles ]
-        except Exception, inst:
-            #if str(inst) == 'TOO FEW READS': continue
-            print "ERROR in %s - %s: %s" % ( gene.id, bam_fn, str(inst) )
-            print traceback.print_exc( )
-            mles = [0.5]*len( gene.transcripts )
-            lbs = [0.]*len( gene.transcripts )
-            ubs = [1.]*len( gene.transcripts )
-            scores = [1]*len( gene.transcripts )
-            continue
-        
-        for mle, lb, ub, score, transcript in zip(mles, lbs, ubs, scores, gene.transcripts):
-            if mle/max( mles ) < filter_value: continue
-            meta_data = { "frac": "%.2e" % mle }
-            transcript.score = max( 1, int(1000*mle/max(mles)) )
-            if estimate_confidence_bounds:
-                meta_data["conf_lo"] = "%.2e" % lb
-                meta_data["conf_hi"] = "%.2e" % ub
-            
-            ofps[bam_fn].write( transcript.build_gtf_lines(
-                    gene.id, meta_data, source="grit") + "\n" )
-        if VERBOSE: print "Finished gene %s sample %s." % ( gene.id, bam_fn )
-
+    
 def main():
     # Get file objects from command line
     gtf_fp, bam_fns, ofps, fl_dists, rg_mappings, estimate_confidence_bounds \
         = parse_arguments()
-
-    manager = multiprocessing.Manager()
-    input_queue = manager.Queue()    
-    genes = load_gtf( gtf_fp.name )
-    for gene in genes:
-        for bam_fn in bam_fns:
-            input_queue.put( (gene, bam_fn) )
+    filter_value = 0.01
     
+    manager = multiprocessing.Manager()
+
+    input_queue_lock = manager.Lock()
+    input_queue = manager.list()
+
+    output_dict_lock = manager.Lock()    
+    output_dict = manager.dict()
+    
+    # add all the genes, in order of longest first. 
+    genes = load_gtf( gtf_fp.name )
+    for gene in sorted( genes, key=lambda x: -len(x.transcripts) ):
+        for bam_fn in bam_fns:
+            input_queue.append(('design_matrices', (gene.id, bam_fn, None)))
+            gene_data = manager.dict()
+            gene_data[ 'gene' ] = gene
+            gene_data[ 'fl_dists' ] = fl_dists
+            gene_data[ 'lbs' ] = {}
+            gene_data[ 'ubs' ] = {}
+            gene_data[ 'mle' ] = None
+            gene_data[ 'design_matrices' ] = None
+            output_dict[ (gene.id, bam_fn) ] = gene_data
+        
     ps = []
-    for i in xrange( min( num_threads, len(genes)*len(bam_fns) ) ):
+    for i in xrange( num_threads ):
         p = Process(target=estimate_gene_expression_worker, 
-                    args=(input_queue, fl_dists, ofps, estimate_confidence_bounds))
+                    args=( input_queue_lock, input_queue, 
+                           output_dict_lock, output_dict, 
+                           estimate_confidence_bounds,
+                           filter_value ) )
         p.start()
-        ps.append( p )
+        ps.append( p )    
+    
+    write_p = Process(target=write_finished_genes_to_gtf, args=(
+            output_dict, output_dict_lock, ofps,
+            estimate_confidence_bounds, filter_value)  )
+    
+    write_p.start()
+    write_p.join()
     
     for p in ps:
         p.join()
