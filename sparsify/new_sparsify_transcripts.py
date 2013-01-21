@@ -827,10 +827,13 @@ def parse_arguments():
     
     ofps = {}
     for bam_fn in bam_fns:
-        ofps[bam_fn] = ThreadSafeFile("%s.%s.gtf" % (args.ofprefix, os.path.basename(bam_fn)), "w")
-        ofps[bam_fn].write("track name=transcripts.%s useScore=1\n" % os.path.basename(bam_fn))
+        ofps[bam_fn] = ThreadSafeFile(
+            "%s.%s.gtf" % (args.ofprefix, os.path.basename(bam_fn)), "w")
+        ofps[bam_fn].write(
+            "track name=transcripts.%s useScore=1\n" % os.path.basename(bam_fn))
         
-    return args.gtf, bam_fns, ofps, fl_dists, read_group_mappings, args.estimate_confidence_bounds
+    return args.gtf, bam_fns, ofps, fl_dists, read_group_mappings, \
+        args.estimate_confidence_bounds
     
 def main():
     # Get file objects from command line

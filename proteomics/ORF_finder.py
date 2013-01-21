@@ -99,7 +99,7 @@ def get_gene_seq( fasta, chrm, strand, gene_start, gene_stop ):
     # get the raw sequence from the gene object and the fasta file
     # subtract one from start since fasta is 0-based closed-open
     gene_seq = fasta.fetch(
-        chrm, gene_start, gene_stop+1 )
+        chrm, gene_start-1, gene_stop-1+1 )
     
     # convert the sequence to upper case
     gene_seq = gene_seq.upper()
@@ -236,8 +236,6 @@ def find_cds_for_gene( gene, fasta ):
             start = convert_to_genomic( start, trans.exons )
             stop = convert_to_genomic( stop, trans.exons )
             start, stop = sorted((start, stop))
-            # I don't know why, but there's an off by 1 bug if not
-            stop += 1
             
             # update the exon bounds to include the cds boundaries
             exon_bnds = list( trans.exon_bnds )

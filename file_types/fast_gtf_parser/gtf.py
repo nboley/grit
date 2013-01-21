@@ -235,9 +235,10 @@ def load_gtf( fname ):
                            exons, cds_region, g.gene_id, 
                            score=score, rpkm=rpkm, rpk=rpk ) 
                 )
-        
+
+        min_loc = min( min(t.exon_bnds) for t in transcripts )
         gene =  Gene( g.gene_id, chrm, g.strand, 
-                      g.min_loc, g.max_loc, transcripts )
+                      min_loc, g.max_loc, transcripts )
         genes.append( gene )
     
     gtf_o.free_gtf_data( c_genes_p, num_genes )    
