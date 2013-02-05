@@ -36,93 +36,14 @@ import cvxpy
 import cvxopt
 from cvxopt import solvers, matrix, spdiag, log, div, sqrt
 
-MIN_TRANSCRIPT_FREQ = 1e-16
+MIN_TRANSCRIPT_FREQ = 1e-12
 # finite differences step size
 FD_SS = 1e-10
 COMPARE_TO_DCP = False
 num_threads = 1
 CONV_EPS = 1e-2
 NUM_ITER_FOR_CONV = 50
-
-
-
 DEBUG_OPTIMIZATION = True
-
-"""
-            # otherwise the max step size is *not* the maximum. So we need to 
-            # search for the max
-            optimal_step_size = calc_optimal_step_size( x, gradient )
-            optimal_step_lhd = f_lhd( x + optimal_step_size*gradient )
-            if optimal_step_size <= max_feasible_step_size - 1e-10 \
-                    and optimal_step_lhd > step_lhd:
-                print "Optimal step max greater than max", \
-                    optimal_step_lhd - step_lhd, \
-                    optimal_step_lhd - lhd, optimal_step_size
-                max_feasible_step_size = optimal_step_size
-                break
-            
-            if lhd > step_lhd:
-                print "LHD greater than max step size and optimal_step_size"
-                break
-                        
-            #print "MADE IT!!!", raw_input()
-            max_feasible_step_size, max_index = \
-                calc_max_feasible_step_size_and_limiting_index( x, gradient )
-
-
-
-        step_size = max_feasible_step_size
-        step_lhd = f_lhd( x + step_size*gradient )
-        while lhd > step_lhd:
-            print "Step changed to:", step_size/2.
-            step_size /= 2
-            step_lhd = f_lhd( x + step_size*gradient )
-            if step_size < 1e-12:
-                print "Found step size:", step_size, "vs", max_feasible_step_size
-                break
-
-
-
-
-        # make sure that the small step size increases the likelihood
-        start_lhd = f_lhd( project_onto_simplex(x) )
-        while True:
-            if f_lhd( project_onto_simplex(x+step_size*gradient) ) < start_lhd:
-                if step_size < 1e-16:
-                    step_size = 1e-6
-                    N = 50
-                    for loop in xrange( N ):
-                        print loop, (loop/float(N))*step_size,  f_lhd(project_onto_simplex(x+(loop/float(N))*step_size*gradient)) - start_lhd
-                    raw_input()
-
-                    return 0
-                print "DECREASING STEP SIZE", step_size/2, f_lhd( project_onto_simplex(x+step_size*gradient) ) - start_lhd
-                step_size /= 2
-            else:
-                break
-        
-        big_step_lhd = f_lhd( project_onto_simplex(x+2*step_size*gradient) )
-        if  big_step_lhd > start_lhd and \
-                big_step_lhd <f_lhd(project_onto_simplex(x+step_size*gradient)):
-            print "INCREASING STEP SIZE", step_size*2
-            step_size *= 2
-        
-        x_new = project_onto_simplex(x + step_size*gradient)
-        lhd = f_lhd(x_new)
-        
-        print "Step Size: %e - %e %e" % ( step_size, 
-                                          f_lhd(x) - lhd,
-                                          f_lhd(x_new) - lhd)
-
-        if lhd < f_lhd( x ):
-            print "WARNING: F MIN BOUND DIDNT WORK", lhd, f_lhd(x)
-            N = 50
-            for loop in xrange( N ):
-                print loop,  (loop/float(N))*step_size,  f_lhd( project_onto_simplex(x + (loop/float(N))*step_size*gradient) )
-            raw_input()
-
-
-"""
 
 def log_warning(text):
     print >> sys.stderr, text
@@ -161,11 +82,11 @@ def build_expected_and_observed_arrays( expected_cnts, observed_cnts ):
         except KeyError:
             observed_mat.append( 0 )
 
-    expected_mat = numpy.array( expected_mat )
+    expected_mat = numpy.array( expected_mat, dtype=numpy.double )
     nonzero_entries = expected_mat.sum(0).nonzero()[0]
     unobservable_transcripts = set(range(expected_mat.shape[1])) \
         - set(nonzero_entries.tolist())
-    observed_mat = numpy.array( observed_mat )
+    observed_mat = numpy.array( observed_mat, dtype=numpy.int )
     expected_mat = expected_mat[:,nonzero_entries]
     expected_mat = expected_mat/expected_mat.sum(0)
     
@@ -241,15 +162,18 @@ def build_design_matrices( gene, bam_fname, fl_dists ):
     
     return expected_array, observed_array, unobservable_transcripts
 
+try:
+    from sparsify_support_fns import calc_lhd, calc_lhd_deriv
+except ImportError:
+    raise
+    def calc_lhd( freqs, observed_array, expected_array ):
+        return float(observed_array*numpy.log( 
+                numpy.matrix( expected_array )*numpy.matrix(freqs).T ))
 
-def calc_lhd( freqs, observed_array, expected_array ):
-    return float(observed_array*numpy.log( 
-            numpy.matrix( expected_array )*numpy.matrix(freqs).T ))
-
-def calc_lhd_deriv( freqs, observed_array, expected_array ):
-    denom = numpy.matrix( expected_array )*numpy.matrix(freqs).T
-    rv = (((expected_array.T)*observed_array))*(1.0/denom)
-    return -numpy.array(rv)[:,0]
+    def calc_lhd_deriv( freqs, observed_array, expected_array ):
+        denom = numpy.matrix( expected_array )*numpy.matrix(freqs).T
+        rv = (((expected_array.T)*observed_array))*(1.0/denom)
+        return -numpy.array(rv)[:,0]
 
 def calc_taylor_lhd( freqs, observed_array, expected_array ):
     observed_prbs = (observed_array + MIN_TRANSCRIPT_FREQ)/observed_array.sum()
@@ -262,15 +186,6 @@ def calc_taylor_lhd( freqs, observed_array, expected_array ):
 def estimate_transcript_frequencies(  
         observed_array, expected_array,
         fixed_indices=[], fixed_values=[] ):
-    def adjust_estimate(x):
-        """Ensure the estimate is within the bounds
-
-        """
-        x_full = [ max( MIN_TRANSCRIPT_FREQ, x ) for x in x ]
-        x_full_sum = sum(x_full)
-        x_full = [ x/x_full_sum for x in x_full ]
-        return x_full
-    
     def f_lhd(x):
         log_lhd = calc_lhd(x, observed_array, expected_array)
         return log_lhd
