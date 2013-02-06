@@ -33,7 +33,7 @@ def calc_lhd( np.ndarray[np.double_t, ndim=1] freqs not None,
 
 @cython.boundscheck(False)
 @cython.cdivision(True)
-def calc_lhd_deriv( np.ndarray[np.double_t, ndim=1] freqs not None, 
+def calc_gradient( np.ndarray[np.double_t, ndim=1] freqs not None, 
                     np.ndarray[np.int_t, ndim=1] observed_array not None, 
                     np.ndarray[np.double_t, ndim=2] expected_array not None ):
     cdef int num_transcripts = freqs.shape[0]
@@ -59,3 +59,37 @@ def calc_lhd_deriv( np.ndarray[np.double_t, ndim=1] freqs not None,
         gradient[i] = curr_grad_value
     
     return -gradient
+
+
+@cython.boundscheck(False)
+@cython.cdivision(True)
+def calc_hessian( np.ndarray[np.double_t, ndim=1] freqs not None, 
+                  np.ndarray[np.int_t, ndim=1] observed_array not None, 
+                  np.ndarray[np.double_t, ndim=2] expected_array not None ):
+    cdef int num_transcripts = freqs.shape[0]
+    cdef int num_bins = expected_array.shape[0]
+
+    cdef int i = 0
+    cdef int j = 0
+    cdef int k = 0
+    
+    cdef double* weights = <double *>calloc( num_bins, sizeof( double ) )
+    cdef double freq
+    for i in range(num_bins):
+        # calculate this bin's frequency
+        freq = 0
+        for j in range(num_transcripts):
+            freq += freqs[j]*expected_array[i,j]
+        weights[i] = observed_array[i]/(freq*freq)
+    
+    hessian = np.zeros( (num_transcripts, num_transcripts), dtype=np.double )
+    cdef double curr_hessian_value
+    for i in range(num_transcripts):
+        for j in range(num_transcripts):
+            curr_hessian_value = 0
+            for k in range(num_bins):
+                curr_hessian_value += \
+                    weights[k]*expected_array[k,i]*expected_array[k,j]
+            hessian[i,j] = curr_hessian_value
+    
+    return hessian

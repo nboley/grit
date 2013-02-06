@@ -5,9 +5,9 @@ import traceback
 import time
 import copy
 
-from scipy.linalg import svd
+from scipy.linalg import svd, inv
 from scipy.stats import chi2
-from scipy.optimize import fminbound, brentq, bisect
+from scipy.optimize import fminbound, brentq, bisect, line_search
 from scipy.io import savemat
 
 from StringIO import StringIO
@@ -32,7 +32,6 @@ from f_matrix import calc_expected_cnts, find_nonoverlapping_boundaries, \
 
 from frag_len import load_fl_dists, FlDist, build_normal_density
 
-import cvxpy
 import cvxopt
 from cvxopt import solvers, matrix, spdiag, log, div, sqrt
 
@@ -41,9 +40,10 @@ MIN_TRANSCRIPT_FREQ = 1e-12
 FD_SS = 1e-10
 COMPARE_TO_DCP = False
 num_threads = 1
-CONV_EPS = 1e-2
-NUM_ITER_FOR_CONV = 50
+CONV_EPS = 1e-8
+NUM_ITER_FOR_CONV = 5
 DEBUG_OPTIMIZATION = True
+USE_HESSIAN = False
 
 def log_warning(text):
     print >> sys.stderr, text
@@ -130,6 +130,56 @@ def nnls( X, Y, fixed_indices_and_values={} ):
     
     return x
 
+def solve_trust_region_sub_problem( gradient, hessian ):
+    """
+    minimize gradient*p + (1/2)p'*hessian*p
+    
+    st sum(p) == 1 and p > 0
+    """
+    from cvxpy import maximize, minimize, geq, eq, variable, matrix, program, \
+        log, sum, quad_form, square, quad_over_lin, geo_mean, leq, norm2, \
+        cvxpy_second_order_cone, belongs
+    import cvxpy
+    # belongs(x, cvxpy_second_order_cone())
+    n = len( gradient )
+    x = variable( n )
+    # eq( sum(x), 1), geq( x, 1e-6 ), leq(norm2(x), 0.7)
+    solvers.options['show_progress'] = False
+    p = program( minimize( -matrix(gradient)*x + 0.5*quad_form(x, matrix(hessian))),
+                 [ eq( sum(x), 1), geq( x, MIN_TRANSCRIPT_FREQ )] )
+    # +1*quad_over_lin(1,thetas[1, 0]) ), 
+    # p = program( minimize( -Xs*log(ps*thetas) ),
+    #             [eq( sum(thetas), 1), geq( thetas, 0 )] )
+
+    p.options['maxiters']  = 500
+    p.options['show_progress']  = False
+    #res = p.solve(quiet=not VERBOSE)
+    res = p.solve(quiet=True)
+    
+    """
+    G = matrix(0.0, (n,n))
+    G[::n+1] = -1.0
+    h = matrix(MIN_TRANSCRIPT_FREQ, (n,1))
+
+    # Add the equality constraints
+    A=matrix(0., (1,n))
+    b=matrix(0., (1,1))
+
+    # Add the sum to one constraint
+    A[0,:] = 1.
+    b[0,0] = 1.
+    
+    solvers.options['show_progress'] = DEBUG_OPTIMIZATION
+    res = solvers.qp(P=-matrix(hessian), q=-matrix(gradient), G=-G, h=-h, A=A, b=b )
+    #res = solvers.qp(P=-matrix(hessian), q=-matrix(gradient), G=G, h=h, A=A, b=b)
+    print res
+    return res
+    x = numpy.array(res['x']).T[0,]
+    rss = ((numpy.array(X*res['x'] - Y)[0,])**2).sum()
+    """
+    return numpy.array( x.value.T )[0,:]
+
+
 def build_design_matrices( gene, bam_fname, fl_dists ):
     # load the bam file
     reads = Reads(bam_fname)
@@ -163,7 +213,7 @@ def build_design_matrices( gene, bam_fname, fl_dists ):
     return expected_array, observed_array, unobservable_transcripts
 
 try:
-    from sparsify_support_fns import calc_lhd, calc_lhd_deriv
+    from sparsify_support_fns import calc_lhd, calc_gradient, calc_hessian
 except ImportError:
     raise
     def calc_lhd( freqs, observed_array, expected_array ):
@@ -183,6 +233,38 @@ def calc_taylor_lhd( freqs, observed_array, expected_array ):
         - numpy.power(fo_taylor_penalty, 2)/2
     return float( observed_array.dot( taylor_penalty ).sum() )
 
+def project_onto_simplex( x, debug=False ):
+    sorted_x = numpy.sort(x)[::-1]
+    if debug: print "sorted x:", sorted_x
+    n = len(sorted_x)
+    if debug: print "cumsum:", sorted_x.cumsum()
+    if debug: print "arange:", numpy.arange(1,n+1)
+    rhos = sorted_x - (1./numpy.arange(1,n+1))*( sorted_x.cumsum() - 1 )
+    if debug: print "rhos:", rhos
+    rho = (rhos > 0).nonzero()[0].max() + 1
+    if debug: print "rho:", rho
+    theta = (1./rho)*( sorted_x[:rho].sum()-1)
+    if debug: print "theta:", theta
+    x_minus_theta = x - theta
+    if debug: print "x - theta:", x_minus_theta
+    x_minus_theta[ x_minus_theta < 0 ] = MIN_TRANSCRIPT_FREQ
+    return x_minus_theta
+
+
+def estimate_transcript_frequencies_trust_region(observed_array, expected_array):
+    num_transcripts = expected_array.shape[1]
+    x = numpy.ones(num_transcripts)/float(num_transcripts)
+    for loop in xrange( 100 ):
+        print "STEP", loop, calc_lhd( x, observed_array, expected_array )
+        print x
+        gradient = calc_gradient( x, observed_array, expected_array)
+        hessian = calc_hessian( x, observed_array, expected_array)
+        x = solve_trust_region_sub_problem( -gradient, hessian )
+        x = project_onto_simplex( x )
+        print calc_lhd( x, observed_array, expected_array )
+    pass
+
+
 def estimate_transcript_frequencies(  
         observed_array, expected_array,
         fixed_indices=[], fixed_values=[] ):
@@ -191,10 +273,9 @@ def estimate_transcript_frequencies(
         return log_lhd
     
     def f_gradient(x):
-        deriv = calc_lhd_deriv( x, observed_array, expected_array )
-        return deriv/deriv.sum()
+        return calc_gradient( x, observed_array, expected_array )
     
-    def project_onto_simplex_fast( x, debug=False ):
+    def project_onto_simplex( x, debug=False ):
         sorted_x = numpy.sort(x)[::-1]
         if debug: print "sorted x:", sorted_x
         n = len(sorted_x)
@@ -210,28 +291,6 @@ def estimate_transcript_frequencies(
         if debug: print "x - theta:", x_minus_theta
         x_minus_theta[ x_minus_theta < 0 ] = MIN_TRANSCRIPT_FREQ
         return x_minus_theta
-
-
-    def project_onto_simplex_generator(n, debug=False ):
-        I = cvxopt.matrix(0.0, (n,n))
-        I[::n+1] = 1.0
-    
-        G = cvxopt.matrix(0.0, (n,n))
-        G[::n+1] = -1.0
-        h = cvxopt.matrix(-MIN_TRANSCRIPT_FREQ, (n,1))
-    
-        A=matrix(1., (1,n))
-        b=matrix(1., (1,1))
-        cvxopt.solvers.options['show_progress'] = False
-        
-        def f(X):
-            x = cvxopt.solvers.qp(P=I, q=-cvxopt.matrix(X), 
-                                  G=G, h=h, A=A, b=b)['x']
-            return numpy.array(x)[:,0]
-        
-        return f
-
-    project_onto_simplex = project_onto_simplex_fast # project_onto_simplex_generator(expected_array.shape[1])
     
     def calc_max_feasible_step_size_and_limiting_index( x0, gradient ):
         """Calculate the maximum step size to stay in the feasible region.
@@ -243,30 +302,27 @@ def estimate_transcript_frequencies(
         steps = (x0-MIN_TRANSCRIPT_FREQ)/gradient
         step_size = -steps[ steps < 0 ].max()
         step_size_i = ( steps == -step_size ).nonzero()
-        #print "DEBUG", x0[ step_size_i ] + step_size*gradient[ step_size_i ], \
-        #    step_size_i, x0[step_size_i], gradient[step_size_i]
         return step_size, step_size_i
     
-    def calc_search_direction( x ):
+    def calc_projected_gradient( x ):
         gradient = f_gradient( x )
+        gradient = gradient/gradient.sum()
         x_next = project_onto_simplex( x + gradient )
         gradient = (x_next - x)
-        return gradient/numpy.absolute(gradient).sum()
-
-    def calc_optimal_step_size( x, gradient, ss=1e-4 ):
-        # find the gradient
-        d_l_1 = ( f_lhd( x ) - f_lhd( x + ss*gradient ) )/ss
-        d_l_2 = ( f_lhd( x ) - f_lhd( x + 2*ss*gradient ) )/(2*ss)
-        dd_l = (d_l_1 - d_l_2)/ss
-        return d_l_1/dd_l
-
- 
-    def find_next_step( x, gradient ):
+        return gradient
+    
+    def find_next_step( x ):
         # zero out indices until the max step isnt optimal anymore.
         while True:
+            gradient = calc_projected_gradient( x )
+            gradient = gradient/numpy.absolute(gradient).sum()
             # find the maximum step size
-            max_feasible_step_size, max_index = \
-                calc_max_feasible_step_size_and_limiting_index( x, gradient )
+            try:
+                max_feasible_step_size, max_index = \
+                    calc_max_feasible_step_size_and_limiting_index(x, gradient)
+            except ValueError:
+                return x
+            
             # check to see if the maximum is sub-optimal
             if max_feasible_step_size > FD_SS and \
                     f_lhd( x + (max_feasible_step_size-FD_SS)*gradient ) \
@@ -275,8 +331,11 @@ def estimate_transcript_frequencies(
             
             # if it is optimal, zero out that gradient entry and continue
             x += max_feasible_step_size*gradient
+            continue
+
             print "Zeroing ", max_index[0][0], gradient.sum()
             gradient[max_index] = 0
+            
             # if the gradient norm has decreased too much, re-project it
             # onto the simplex
             if abs( gradient.sum() ) > 1e-3:
@@ -284,13 +343,7 @@ def estimate_transcript_frequencies(
                 x_next = project_onto_simplex( x + gradient )
                 gradient = (x_next - x)
                 gradient = gradient/numpy.absolute(gradient).sum()
-            
-            if f_lhd( x + FD_SS*gradient ) - f_lhd( x ) <= 0:
-                gradient = calc_search_direction( x_prev )
-            
-            if ( gradient >= 0 ).all():
-                gradient = calc_search_direction( x_prev )
-
+        
         # now, do a line search
         def brentq_fmin(alpha):
             return f_lhd(x + (alpha+FD_SS)*gradient) \
@@ -306,6 +359,16 @@ def estimate_transcript_frequencies(
             while step_size > 1e-16 and lhd > f_lhd( x+step_size*gradient ):
                 print "Setting step size to", step_size
                 step_size /= 2
+            
+        
+        """
+        print f_lhd, f_gradient, x, gradient
+        print f_lhd(x), f_gradient(x)
+        res = line_search( f=f_lhd, myfprime=f_gradient, xk=x, pk=gradient, gfk=f_gradient(x) )
+        print res
+        raw_input()
+        step_size = res[0]
+        """
         
         print "Found step size:", step_size, "vs", max_feasible_step_size
 
@@ -326,28 +389,46 @@ def estimate_transcript_frequencies(
     x = numpy.ones(num_transcripts)/float(num_transcripts)
     lhds = [ -1e10 ]*NUM_ITER_FOR_CONV
     for i in xrange( 5000 ):
-        x_prev = x
         # find the projected gradient
-        gradient = calc_search_direction( x_prev )
-        # calculate the next step
-        x = find_next_step( x_prev, gradient )
+        gradient = calc_projected_gradient( x )
+        lhd = f_lhd( x )
+        lhds.append( lhd )
+        
+        if (gradient**2).sum()/sqrt(num_transcripts) < CONV_EPS \
+                or all(lhd <= x for x in lhds[-NUM_ITER_FOR_CONV:]):
+            print "Found Stop Condition:", (gradient**2).sum()/sqrt(num_transcripts)
+            break
+        
+        if DEBUG_OPTIMIZATION:
+            print "%i\t%.2f\t%.6e\t%.6e" % ( 
+                i, lhd, lhd - lhds[-2],
+                (gradient**2).sum()/sqrt(num_transcripts) )
+        
+        # calculate the next step using a line search
+        x_LS = find_next_step( x )
+        ls_lhd = f_lhd(x_LS)
+
+        # calcualt ethe next step using a quadratic approximation
+        """
+        gradient = calc_gradient( x, observed_array, expected_array)
+        hessian = calc_hessian( x, observed_array, expected_array)
+        x_TR = solve_trust_region_sub_problem( -gradient, hessian )
+        tr_lhd = f_lhd(x_TR)
+        print "%s\tTR lhd: %e\t\tLS lhd: %e" % ( tr_lhd>ls_lhd, tr_lhd, ls_lhd )
+        if ls_lhd > tr_lhd:
+            x = x_new
+        else:
+            x = x_TR
+        """
+        x = x_LS
+        
         # sometimes the current estimate will wander from the simplex, so
         # we need to project it back into the simplex
         if abs( 1-x.sum() ) > 1e-6:
             x = project_onto_simplex(x)
             print "RE-PROJECTING"
             continue
-        
-        # stop conditions
-        lhd = f_lhd( x )
-        if lhd - min(lhds[-NUM_ITER_FOR_CONV:]) < CONV_EPS:
-            break
-        lhds.append( lhd )
-
-        if DEBUG_OPTIMIZATION:
-            print "%i\t%.2f\t%.2e\t%.2e" % ( 
-                i, lhd, lhd - lhds[-2], lhd - min(lhds[-NUM_ITER_FOR_CONV:]) )
-        
+                
         #raw_input()
         
     log_lhd = calc_lhd( x, observed_array, expected_array )
@@ -546,9 +627,8 @@ def estimate_gene_expression_worker( ip_lock, input_queue,
             mle_estimate = \
                 estimate_transcript_frequencies( observed_array, expected_array)
             log_lhd = calc_lhd( mle_estimate, observed_array, expected_array)
-            taylor_log_lhd = calc_taylor_lhd( mle_estimate, observed_array, expected_array)
-            if VERBOSE: print "FINISHED MLE %s\t%s\t%.2e\t%.2e\n%s" % ( 
-                gene_id, bam_fn, log_lhd, taylor_log_lhd, 
+            if VERBOSE: print "FINISHED MLE %s\t%s\t%.2f\n%s" % ( 
+                gene_id, bam_fn, log_lhd, 
                 ["%.2e" % x for x in mle_estimate] )
             
             op_lock.acquire()
