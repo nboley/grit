@@ -1,8 +1,16 @@
 import numpy
+numpy.seterr(all='ignore')
+
 import sys, os
 import math
 import traceback
 import time
+def make_time_str(et):
+    hours = et//3600
+    mins = et//60 - 60*hours
+    secs = et - 3660*hours - 60*mins
+    return "%i:%i:%.4f" % ( hours, mins, secs )
+
 import copy
 
 from scipy.linalg import svd, inv
@@ -409,7 +417,9 @@ def estimate_transcript_frequencies(
     x = numpy.array([1./n]*n)
     #x = nnls( full_expected_array, observed_array )
     eps = 10.
-    for i in xrange( 1000 ):
+    start_time = time.time()
+    print "Iteration\tlog lhd\t\tchange lhd\tn iter\ttollerance\ttime (hr:min:sec)"
+    for i in xrange( 100 ):
         prev_x = x.copy()
         
         x, lhds = estimate_transcript_frequencies_line_search(  
@@ -421,27 +431,35 @@ def estimate_transcript_frequencies(
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
         if DEBUG_VERBOSE:
-            print "%i\t\t%.2f\t%.2e\t%i\t%e" % ( 
-                i, lhd, lhd - prev_lhd, len(lhds ), eps )
+            print "Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
+                i, lhd, lhd - prev_lhd, len(lhds ), eps, 
+                make_time_str(time.time()-start_time) )
+            
+        start_time = time.time()
         
         if lhd - prev_lhd < eps \
                 or (numpy.array(lhds[1:])-numpy.array(lhds[:-1])).max() < eps:
             eps /= 5
         if eps < abs_tol:
             break
-        
     
-    x, lhds = estimate_transcript_frequencies_line_search(  
-        observed_array, full_expected_array, x, dont_zero=True, abs_tol=abs_tol)
-    for lhd in lhds: fp.write( "%e\n" % (lhd - prev_lhd) )
-    fp.flush()
-    fp.close()
-    lhd = calc_lhd( x, observed_array, full_expected_array )
-    prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
-    if DEBUG_VERBOSE:
-        print "Non-Zeroing\t%.2f\t%.2e\t%i\t%e" % ( 
-            lhd, lhd - prev_lhd, len(lhds ), eps )
     
+    for i in xrange( 10 ):
+        x, lhds = estimate_transcript_frequencies_line_search(  
+            observed_array, full_expected_array, x, 
+            dont_zero=True, abs_tol=abs_tol)
+        for lhd in lhds: fp.write( "%e\n" % (lhd - prev_lhd) )
+        fp.flush()
+        lhd = calc_lhd( x, observed_array, full_expected_array )
+        prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
+        if DEBUG_VERBOSE:
+            print "Non-Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
+                i, lhd, lhd - prev_lhd, len(lhds ), eps,
+                make_time_str(time.time()-start_time))
+        start_time = time.time()
+        if len( lhds ) < 500: break
+
+    fp.close()    
     return x
 
 def estimate_confidence_bound_by_bisection( 
