@@ -23,7 +23,7 @@ def calc_lhd( np.ndarray[np.double_t, ndim=1] freqs not None,
     cdef int j = 0
     for i in range(num_bins):
         # calculate this bin's frequency
-        freq = 0
+        freq = 1e-16
         for j in range(num_transcripts):
             freq += freqs[j]*expected_array[i,j]
         
@@ -45,7 +45,7 @@ def calc_gradient( np.ndarray[np.double_t, ndim=1] freqs not None,
     cdef double freq
     for i in range(num_bins):
         # calculate this bin's frequency
-        freq = 0
+        freq = 1e-16
         for j in range(num_transcripts):
             freq += freqs[j]*expected_array[i,j]
         weights[i] = observed_array[i]/freq
