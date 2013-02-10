@@ -67,7 +67,7 @@ class FlDist( object ):
     def __eq__( self, other ):
         if self.fl_min == other.fl_min \
             and self.fl_max == other.fl_max \
-            and self.fl_density == other.fl_density:
+            and (self.fl_density == other.fl_density).all():
             return True
         else:
             return False

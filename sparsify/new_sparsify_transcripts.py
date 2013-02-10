@@ -90,6 +90,9 @@ def build_expected_and_observed_arrays( expected_cnts, observed_cnts ):
         except KeyError:
             observed_mat.append( 0 )
 
+    if len( expected_mat ) == 0:
+        raise ValueError, "No expected reads."
+    
     expected_mat = numpy.array( expected_mat, dtype=numpy.double )
     nonzero_entries = expected_mat.sum(0).nonzero()[0]
     unobservable_transcripts = set(range(expected_mat.shape[1])) \
@@ -414,6 +417,9 @@ def estimate_transcript_frequencies(
     fp = open( "lhd_change.txt", "w" )
     
     n = full_expected_array.shape[1]
+    if n == 1:
+        return numpy.ones( 1, dtype=float )
+    
     x = numpy.array([1./n]*n)
     #x = nnls( full_expected_array, observed_array )
     eps = 10.
@@ -611,8 +617,13 @@ def estimate_gene_expression_worker( ip_lock, input_queue,
             fl_dists = output[(gene_id, bam_fn)]['fl_dists']
             op_lock.release()
                         
-            expected_array, observed_array, unobservable_transcripts \
-                = build_design_matrices( gene, bam_fn, fl_dists )
+            try:
+                expected_array, observed_array, unobservable_transcripts \
+                    = build_design_matrices( gene, bam_fn, fl_dists )
+            except ValueError:
+                print "Skipping %s: Too Few Reads" % gene.id
+                continue
+            
             if VERBOSE: print "FINISHED DESIGN MATRICES %s\t%s" % ( 
                 gene_id, bam_fn )
             
