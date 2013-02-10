@@ -346,7 +346,7 @@ def estimate_transcript_frequencies_line_search(
     lhds = []
     zeros = set()
     zeros_counter = 0
-    for i in xrange( 2500 ):
+    for i in xrange( 500 ):
         # calculate the gradient and the maximum feasible step size
         gradient = calc_projected_gradient( x )
         gradient /= numpy.absolute(gradient).sum()
@@ -371,7 +371,7 @@ def estimate_transcript_frequencies_line_search(
      
         if alpha == 0 or f_lhd(x) - prev_lhd < abs_tol:
             zeros_counter += 1
-            if zeros_counter > 10:
+            if zeros_counter > 30:
                 break            
         else:
             zeros_counter = 0
@@ -402,7 +402,7 @@ def estimate_transcript_frequencies_line_search(
     return final_x, lhds
 
 def estimate_transcript_frequencies(  
-        observed_array, full_expected_array, abs_tol=1e-4 ):
+        observed_array, full_expected_array, abs_tol=1e-5 ):
     fp = open( "lhd_change.txt", "w" )
     
     n = full_expected_array.shape[1]
@@ -421,10 +421,11 @@ def estimate_transcript_frequencies(
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
         if DEBUG_VERBOSE:
-            print "%i\t%.2f\t%.2e\t%i\t%e" % ( 
+            print "%i\t\t%.2f\t%.2e\t%i\t%e" % ( 
                 i, lhd, lhd - prev_lhd, len(lhds ), eps )
         
-        if lhd - prev_lhd < eps or max(lhds[:10]) < eps:
+        if lhd - prev_lhd < eps \
+                or (numpy.array(lhds[1:])-numpy.array(lhds[:-1])).max() < eps:
             eps /= 5
         if eps < abs_tol:
             break
@@ -438,8 +439,8 @@ def estimate_transcript_frequencies(
     lhd = calc_lhd( x, observed_array, full_expected_array )
     prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
     if DEBUG_VERBOSE:
-        print "%i\t%.2f\t%.2e\t%i\t%e" % ( 
-            i, lhd, lhd - prev_lhd, len(lhds ), eps )
+        print "Non-Zeroing\t%.2f\t%.2e\t%i\t%e" % ( 
+            lhd, lhd - prev_lhd, len(lhds ), eps )
     
     return x
 
