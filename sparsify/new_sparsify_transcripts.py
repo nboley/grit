@@ -201,7 +201,8 @@ def build_design_matrices( gene, bam_fname, fl_dists ):
         fp.close()
         return expected_array, observed_array, unobservable_transcripts
     except IOError:
-        print "Couldnt load cached"
+        if DEBUG_VERBOSE: 
+            print "Couldnt load cached"
     
     # load the bam file
     reads = Reads(bam_fname)
@@ -217,8 +218,7 @@ def build_design_matrices( gene, bam_fname, fl_dists ):
         reads, gene.chrm, gene.strand, exon_boundaries, False, True)
     if len( binned_reads ) == 0:
         raise ValueError, "TOO FEW READS"
-    observed_cnts = build_observed_cnts( binned_reads, fl_dists )
-    
+    observed_cnts = build_observed_cnts( binned_reads, fl_dists )    
     read_groups_and_read_lens =  { (RG, read_len) for RG, read_len, bin 
                                    in binned_reads.iterkeys() }
     
@@ -231,6 +231,9 @@ def build_design_matrices( gene, bam_fname, fl_dists ):
         
     expected_array, observed_array, unobservable_transcripts = \
         build_expected_and_observed_arrays( expected_cnts, observed_cnts )
+
+    if observed_array.sum() == 0:
+        raise ValueError, "TOO FEW READS"
 
     fp = open( obj_name, "w" )
     cPickle.dump( (expected_array, observed_array, unobservable_transcripts), fp )
@@ -261,6 +264,7 @@ def calc_taylor_lhd( freqs, observed_array, expected_array ):
     return float( observed_array.dot( taylor_penalty ).sum() )
 
 def project_onto_simplex( x, debug=False ):
+    if ( x >= MIN_TRANSCRIPT_FREQ ).all() and abs( 1-x.sum()  ) < 1e-6: return x
     sorted_x = numpy.sort(x)[::-1]
     if debug: print "sorted x:", sorted_x
     n = len(sorted_x)
@@ -377,7 +381,6 @@ def estimate_transcript_frequencies_line_search(
         
         if abs( 1-x.sum() ) > 1e-6:
             x = project_onto_simplex(x)
-            print "RE-PROJECTING"
             continue
      
         if alpha == 0 or f_lhd(x) - prev_lhd < abs_tol:
@@ -415,7 +418,8 @@ def estimate_transcript_frequencies_line_search(
 def estimate_transcript_frequencies(  
         observed_array, full_expected_array, abs_tol=1e-5 ):
     fp = open( "lhd_change.txt", "w" )
-    
+    if observed_array.sum() == 0:
+        raise ValueError, "Too few reads."
     n = full_expected_array.shape[1]
     if n == 1:
         return numpy.ones( 1, dtype=float )
@@ -424,7 +428,8 @@ def estimate_transcript_frequencies(
     #x = nnls( full_expected_array, observed_array )
     eps = 10.
     start_time = time.time()
-    print "Iteration\tlog lhd\t\tchange lhd\tn iter\ttollerance\ttime (hr:min:sec)"
+    if DEBUG_VERBOSE:
+        print "Iteration\tlog lhd\t\tchange lhd\tn iter\ttollerance\ttime (hr:min:sec)"
     for i in xrange( 100 ):
         prev_x = x.copy()
         
@@ -643,8 +648,12 @@ def estimate_gene_expression_worker( ip_lock, input_queue,
                 output[(gene_id, bam_fn)]['design_matrices']
             op_lock.release()
 
-            mle_estimate = \
-                estimate_transcript_frequencies( observed_array, expected_array)
+            try:
+                mle_estimate = estimate_transcript_frequencies( 
+                    observed_array, expected_array)
+            except ValueError:
+                print "Skipping %s: Too Few Reads" % gene.id
+                continue
             log_lhd = calc_lhd( mle_estimate, observed_array, expected_array)
             if VERBOSE: print "FINISHED MLE %s\t%s\t%.2f\n%s" % ( 
                 gene_id, bam_fn, log_lhd, 
@@ -729,9 +738,9 @@ def write_finished_data_to_disk( output_dict, output_dict_lock, ofps,
                     and None != output_dict[key]['design_matrices']:
                 observed, expected, missed = output_dict[key]['design_matrices']
                 ofname = "./%s_%s.mat" % ( key[0], os.path.basename(key[1]) )
-                print "Writing mat to '%s'" % ofname
+                if DEBUG_VERBOSE: print "Writing mat to '%s'" % ofname
                 savemat( ofname, {'observed': observed, 'expected': expected} )
-                print "Finished writing mat to '%s'" % ofname
+                if DEBUG_VERBOSE: print "Finished writing mat to '%s'" % ofname
                           
                 written_design_matrices.add( key )
                 
@@ -892,7 +901,7 @@ def main():
 
         write_p = Process(target=write_finished_data_to_disk, args=(
                 output_dict, output_dict_lock, ofps,
-                estimate_confidence_bounds,
+                estimate_confidence_bounds, write_design_matrices,
                 filter_value)  )
 
         write_p.start()
