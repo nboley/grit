@@ -509,12 +509,12 @@ def estimate_transcript_frequencies(
         return numpy.ones( 1, dtype=float )
     
     x = numpy.array([1./n]*n)
-    #x = nnls( full_expected_array, observed_array )
+    #x = project_onto_simplex( nnls( full_expected_array, observed_array ) )
     eps = 10.
     start_time = time.time()
     if DEBUG_VERBOSE:
         print "Iteration\tlog lhd\t\tchange lhd\tn iter\ttollerance\ttime (hr:min:sec)"
-    for i in xrange( 100 ):
+    for i in xrange( 500 ):
         prev_x = x.copy()
         
         x, lhds = estimate_transcript_frequencies_line_search(  
@@ -539,7 +539,8 @@ def estimate_transcript_frequencies(
             break
     
     
-    for i in xrange( 10 ):
+    for i in xrange( 50 ):
+        prev_x = x.copy()
         x, lhds = estimate_transcript_frequencies_line_search(  
             observed_array, full_expected_array, x, 
             dont_zero=True, abs_tol=abs_tol)
