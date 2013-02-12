@@ -2163,15 +2163,15 @@ def main():
 
     merge_transcripts( elements, pserver, base_dir + "transcripts" )
     
-    call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
+    #call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
 
-    produce_final_annotation( elements, pserver, base_dir + "final_ann" )
+    #produce_final_annotation( elements, pserver, base_dir + "final_ann" )
 
     #calc_expression_scores( elements, pserver, base_dir + "expression" )
     
-    run_all_slide_compares( elements, pserver, base_dir + "stats" )
+    #run_all_slide_compares( elements, pserver, base_dir + "stats" )
     
-    sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
+    #sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
     
     pserver.process_queue()                
     return

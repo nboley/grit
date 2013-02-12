@@ -29,31 +29,33 @@ def find_nonoverlapping_boundaries( transcripts ):
     
     return numpy.array( sorted( boundaries ) )
 
-def find_nonoverlapping_exon_indices( transcript, exon_boundaries ):
-    """Convert transcripts into lists of non-overlapping exon indices.
+def find_nonoverlapping_contig_indices( contigs, contig_boundaries ):
+    """Convert transcripts into lists of non-overlapping contig indices.
     
     """
-    non_overlapping_exon_indices = []
-    for exon in transcript.exons:
-        assert exon[0] in exon_boundaries and exon[1]+1 in exon_boundaries
+    non_overlapping_contig_indices = []
+    for contig in contigs:
+        assert contig[0] in contig_boundaries \
+            and contig[1]+1 in contig_boundaries
 
-        start_i = exon_boundaries.searchsorted( exon[0] )
-        assert exon[0] == exon_boundaries[start_i]
+        start_i = contig_boundaries.searchsorted( contig[0] )
+        assert contig[0] == contig_boundaries[start_i]
 
         stop_i = start_i + 1
-        while exon[1] > exon_boundaries[stop_i]-1:
+        while contig[1] > contig_boundaries[stop_i]-1:
             stop_i += 1            
-        assert exon[1] == exon_boundaries[stop_i]-1
+        assert contig[1] == contig_boundaries[stop_i]-1
 
-        non_overlapping_exon_indices.extend( xrange(start_i,stop_i) )
+        non_overlapping_contig_indices.extend( xrange(start_i,stop_i) )
     
-    return non_overlapping_exon_indices
+    return non_overlapping_contig_indices
 
 def build_nonoverlapping_indices( transcripts, exon_boundaries ):
     # build the transcript composed of pseudo ( non overlapping ) exons. 
     # This means splitting the overlapping parts into new 'exons'
     for transcript in transcripts:
-        yield find_nonoverlapping_exon_indices( transcript, exon_boundaries )
+        yield find_nonoverlapping_contig_indices( 
+            transcript.exons, exon_boundaries )
     
     return
 

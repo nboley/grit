@@ -23,8 +23,7 @@ struct contig_t {
 """
     _fields_ = [("name", c_char_p),
                 ("size", c_int),
-                ("values", POINTER(c_double))
-               ]
+                ("values", POINTER(c_double))]
 
 class c_contigs_t(Structure):
     """

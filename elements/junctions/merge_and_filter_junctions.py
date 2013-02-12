@@ -13,7 +13,7 @@ MIN_CANONICAL_ENTROPY_SCORE = 1.1
 MIN_NON_CANONICAL_ENTROPY_SCORE = 1.6
 MIN_NUM_SAMPLES = 1
 MIN_SCORE_RATIO = 0.001
-MAX_INTRON_SIZE = 50000
+MAX_INTRON_SIZE = 100000
 THRESHHOLD_BY_UNIQ = False
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../", "file_types"))

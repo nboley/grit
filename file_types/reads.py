@@ -89,8 +89,6 @@ def iter_coverage_regions_for_read(
     """Find the regions covered by this read
 
     """
-    assert isinstance( bam_obj, Reads )
-
     strand = get_strand( read, reverse_read_strand, pairs_are_opp_strand )
 
     # get the chromosome, correcting for alternate chrm names

@@ -20,6 +20,7 @@ from scipy.io import savemat
 
 from StringIO import StringIO
 from itertools import izip
+from collections import defaultdict
 
 import subprocess
 import multiprocessing
@@ -30,13 +31,19 @@ from math import sqrt
 sys.path.append( os.path.join( os.path.dirname( __file__ ),
                                "..", "file_types", "fast_gtf_parser" ) )
 from gtf import load_gtf, Transcript
+sys.path.append( os.path.join( os.path.dirname( __file__ ),
+                               "..", "file_types", "fast_wiggle_parser" ) )
+from bedgraph import load_bedgraph
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", 'file_types'))
+from wiggle import guess_strand_from_fname, fix_chr_name
+
 
 sys.path.append( os.path.join(os.path.dirname( __file__ ), "..", "file_types" ))
                                
 from reads import Reads, bin_reads
 
 from f_matrix import calc_expected_cnts, find_nonoverlapping_boundaries, \
-    build_nonoverlapping_indices
+    build_nonoverlapping_indices, find_nonoverlapping_contig_indices
 
 from frag_len import load_fl_dists, FlDist, build_normal_density
 
@@ -52,6 +59,7 @@ CONV_EPS = 1e-12
 NUM_ITER_FOR_CONV = 5
 DEBUG_OPTIMIZATION = False
 USE_HESSIAN = False
+PROMOTER_SIZE = 50
 
 def log_warning(text):
     print >> sys.stderr, text
@@ -75,9 +83,11 @@ def build_observed_cnts( binned_reads, fl_dists ):
     
     return rv
 
-def build_expected_and_observed_arrays( expected_cnts, observed_cnts ):
+def build_expected_and_observed_arrays( 
+        expected_cnts, observed_cnts, normalize=True ):
     expected_mat = []
     observed_mat = []
+    unobservable_transcripts = set()
     
     for key, val in expected_cnts.iteritems():
         # skip bins with 0 expected reads
@@ -94,12 +104,14 @@ def build_expected_and_observed_arrays( expected_cnts, observed_cnts ):
         raise ValueError, "No expected reads."
     
     expected_mat = numpy.array( expected_mat, dtype=numpy.double )
-    nonzero_entries = expected_mat.sum(0).nonzero()[0]
-    unobservable_transcripts = set(range(expected_mat.shape[1])) \
-        - set(nonzero_entries.tolist())
-    observed_mat = numpy.array( observed_mat, dtype=numpy.int )
-    expected_mat = expected_mat[:,nonzero_entries]
-    expected_mat = expected_mat/expected_mat.sum(0)
+    
+    if normalize:
+        nonzero_entries = expected_mat.sum(0).nonzero()[0]
+        unobservable_transcripts = set(range(expected_mat.shape[1])) \
+            - set(nonzero_entries.tolist())
+        observed_mat = numpy.array( observed_mat, dtype=numpy.int )
+        expected_mat = expected_mat[:,nonzero_entries]
+        expected_mat = expected_mat/expected_mat.sum(0)
     
     return expected_mat, observed_mat, unobservable_transcripts
 
@@ -191,19 +203,7 @@ def solve_trust_region_sub_problem( gradient, hessian ):
     return numpy.array( x.value.T )[0,:]
 
 
-def build_design_matrices( gene, bam_fname, fl_dists ):
-    import cPickle
-    obj_name = gene.id + "_" + os.path.basename(bam_fname) + ".obj"
-    try:
-        fp = open( obj_name )
-        expected_array, observed_array, unobservable_transcripts = \
-            cPickle.load( fp )
-        fp.close()
-        return expected_array, observed_array, unobservable_transcripts
-    except IOError:
-        if DEBUG_VERBOSE: 
-            print "Couldnt load cached"
-    
+def build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists ):
     # load the bam file
     reads = Reads(bam_fname)
     
@@ -212,12 +212,12 @@ def build_design_matrices( gene, bam_fname, fl_dists ):
     # this representation.     
     exon_boundaries = find_nonoverlapping_boundaries(gene.transcripts)
     transcripts_non_overlapping_exon_indices = \
-        list(build_nonoverlapping_indices( gene.transcripts, exon_boundaries ))
+        list(build_nonoverlapping_indices( 
+                gene.transcripts, exon_boundaries ))
     
     binned_reads = bin_reads( 
         reads, gene.chrm, gene.strand, exon_boundaries, False, True)
-    if len( binned_reads ) == 0:
-        raise ValueError, "TOO FEW READS"
+    
     observed_cnts = build_observed_cnts( binned_reads, fl_dists )    
     read_groups_and_read_lens =  { (RG, read_len) for RG, read_len, bin 
                                    in binned_reads.iterkeys() }
@@ -228,18 +228,102 @@ def build_design_matrices( gene, bam_fname, fl_dists ):
     expected_cnts = calc_expected_cnts( 
         exon_boundaries, transcripts_non_overlapping_exon_indices, 
         fl_dists_and_read_lens)
-        
-    expected_array, observed_array, unobservable_transcripts = \
-        build_expected_and_observed_arrays( expected_cnts, observed_cnts )
+    
+    reads.close()
+    
+    return expected_cnts, observed_cnts
 
+def build_expected_and_observed_promoter_counts( gene, cage_arrays ):
+    # find the promoters
+    promoters = list()
+    for transcript in gene.transcripts:
+        if transcript.strand == '+':
+            promoter = [ transcript.exons[0][0], 
+                         min( transcript.exons[0][0] + PROMOTER_SIZE, 
+                              transcript.exons[0][1]) ]
+        else:
+            assert transcript.strand == '-'
+            promoter = [ max( transcript.exons[-1][1] - PROMOTER_SIZE, 
+                              transcript.exons[-1][0] ),
+                         transcript.exons[-1][1] ]
+        promoters.append( tuple( promoter ) )
+    
+    promoter_boundaries = set()
+    for start, stop in promoters:
+        promoter_boundaries.add( start )
+        promoter_boundaries.add( stop + 1 )
+    promoter_boundaries = numpy.array( sorted( promoter_boundaries ) )
+    pseudo_promoters = zip(promoter_boundaries[:-1], promoter_boundaries[1:])
+    
+    # build the design matrix. XXX FIXME
+    expected_cnts = defaultdict( lambda: [0.]*len(gene.transcripts) )
+    for transcript_i, promoter in enumerate(promoters):
+        nonoverlapping_indices = \
+            find_nonoverlapping_contig_indices( 
+                [promoter,], promoter_boundaries )
+        for i in xrange(len(cage_arrays)):
+            for j in nonoverlapping_indices:
+                ps_promoter = pseudo_promoters[j]
+                expected_cnts[ (i, ps_promoter) ][transcript_i] \
+                    = float(ps_promoter[1]-ps_promoter[0])\
+                      /float(promoter[1]-promoter[0]+1)
+    
+    # count the reads in each non-overlaping promoter
+    observed_cnts = {}
+    for i, (start, stop) in expected_cnts.keys():
+        observed_cnts[ (i, (start, stop)) ] \
+            = int(round(cage_arrays[i][start-gene.start:stop-gene.start].sum()))
+    
+    return expected_cnts, observed_cnts
+
+def build_design_matrices( gene, bam_fname, fl_dists, cage_arrays ):
+    import cPickle
+    # only do this if we are in debugging mode
+    if num_threads == 1:
+        obj_name = gene.id + "_" + os.path.basename(bam_fname) + ".obj"
+        try:
+            fp = open( obj_name )
+            expected_array, observed_array, unobservable_transcripts = \
+                cPickle.load( fp )
+            fp.close()
+            return expected_array, observed_array, unobservable_transcripts
+        except IOError:
+            if DEBUG_VERBOSE: 
+                print "Couldnt load cached"
+    
+    # bin the rnaseq reads
+    expected_rnaseq_cnts, observed_rnaseq_cnts = \
+        build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists )
+    expected_rnaseq_array, observed_rnaseq_array, unobservable_rnaseq_trans = \
+        build_expected_and_observed_arrays( 
+            expected_rnaseq_cnts, observed_rnaseq_cnts, True )
+
+    # bin the CAGE data
+    expected_promoter_cnts, observed_promoter_cnts = \
+        build_expected_and_observed_promoter_counts( gene, cage_arrays )
+    print expected_promoter_cnts
+    expected_prom_array, observed_prom_array, unobservable_prom_trans = \
+        build_expected_and_observed_arrays( 
+            expected_promoter_cnts, observed_promoter_cnts, False )
+    print expected_prom_array.sum(0)
+    
+    # combine the arrays
+    observed_array = numpy.hstack((observed_prom_array, observed_rnaseq_array))
     if observed_array.sum() == 0:
         raise ValueError, "TOO FEW READS"
 
-    fp = open( obj_name, "w" )
-    cPickle.dump( (expected_array, observed_array, unobservable_transcripts), fp )
-    fp.close()
-    return expected_array, observed_array, unobservable_transcripts
+    expected_array = numpy.vstack((expected_prom_array, expected_rnaseq_array))
+    print expected_array.sum(0)
     
+    unobservable_transcripts \
+        = unobservable_rnaseq_trans.union(unobservable_prom_trans)
+    
+    if num_threads == 1:
+        fp = open( obj_name, "w" )
+        cPickle.dump( (expected_array,observed_array,unobservable_transcripts),
+                      fp )
+        fp.close()
+
     return expected_array, observed_array, unobservable_transcripts
 
 try:
@@ -575,11 +659,13 @@ def build_bound(observed_array, expected_array, mle_estimate, index, bnd_type):
     p_value, bnd = estimate_confidence_bound( 
         observed_array, expected_array, index, mle_estimate, bnd_type )
 
-def write_gene_to_gtf( ofp, gene, mles, lbs=None, ubs=None, filter_value=0 ):
+def write_gene_to_gtf( ofp, gene, mles, lbs=None, ubs=None, 
+                       abs_filter_value=0, rel_filter_value=0 ):
     scores = [ int(1000*mle/max( mles )) for mle in mles ]
     
     for index, (mle, transcript) in enumerate(izip(mles, gene.transcripts)):
-        if mle/max( mles ) < filter_value: continue
+        if mle <= abs_filter_value: continue
+        if mle/max( mles ) <= rel_filter_value: continue
         meta_data = { "frac": "%.2e" % mle }
         transcript.score = max( 1, int(1000*mle/max(mles)) )
         if lbs != None:
@@ -594,8 +680,9 @@ def write_gene_to_gtf( ofp, gene, mles, lbs=None, ubs=None, filter_value=0 ):
 
 def estimate_gene_expression_worker( ip_lock, input_queue, 
                                      op_lock, output, 
-                                     estimate_confidence_bounds=False, 
-                                     filter_value=1e-3):
+                                     estimate_confidence_bounds, 
+                                     abs_filter_value,
+                                     rel_filter_value):
     while True:
         op_lock.acquire()
         if 0 == len( output ):
@@ -620,11 +707,12 @@ def estimate_gene_expression_worker( ip_lock, input_queue,
             op_lock.acquire()
             gene = output[(gene_id, bam_fn)]['gene']
             fl_dists = output[(gene_id, bam_fn)]['fl_dists']
+            cage = output[(gene_id, bam_fn)]['cage']
             op_lock.release()
                         
             try:
                 expected_array, observed_array, unobservable_transcripts \
-                    = build_design_matrices( gene, bam_fn, fl_dists )
+                    = build_design_matrices( gene, bam_fn, fl_dists, cage )
             except ValueError:
                 print "Skipping %s: Too Few Reads" % gene.id
                 continue
@@ -652,7 +740,7 @@ def estimate_gene_expression_worker( ip_lock, input_queue,
                 mle_estimate = estimate_transcript_frequencies( 
                     observed_array, expected_array)
             except ValueError:
-                print "Skipping %s: Too Few Reads" % gene.id
+                print "Skipping %s: Too Few Reads" % gene_id
                 continue
             log_lhd = calc_lhd( mle_estimate, observed_array, expected_array)
             if VERBOSE: print "FINISHED MLE %s\t%s\t%.2f\n%s" % ( 
@@ -722,7 +810,8 @@ def gene_is_finished( gene_data, compute_confidence_bounds ):
 def write_finished_data_to_disk( output_dict, output_dict_lock, ofps,
                                  compute_confidence_bounds=True, 
                                  write_design_matrices=False,
-                                 filter_value=0.0 ):
+                                 abs_filter_value=0.0,
+                                 rel_filter_value=0.0 ):
     written_design_matrices = set()
     while True:
         output_dict_lock.acquire()
@@ -756,7 +845,7 @@ def write_finished_data_to_disk( output_dict, output_dict_lock, ofps,
                 ubs = output_dict[key]['ubs'] if compute_confidence_bounds else None
 
                 write_gene_to_gtf( ofps[key[1]], gene, mles, 
-                                   lbs, ubs, filter_value)
+                                   lbs, ubs, abs_filter_value, rel_filter_value)
                 
                 del output_dict[key]
                 output_dict_lock.release()
@@ -770,20 +859,23 @@ def parse_arguments():
 
     parser = argparse.ArgumentParser(
         description='Determine valid transcripts and estimate frequencies.')
-    parser.add_argument( 'ofprefix', \
-        help='Output file name prefix. Output files will be ofprefix.bam_fn.gtf')
-    parser.add_argument( 'gtf', type=file, \
+    parser.add_argument( 'ofname', help='Output filename.')
+    parser.add_argument( 'gtf', type=file,
         help='GTF file processed for expression')
-    parser.add_argument( 'bam_fns', nargs='+', metavar='bam',\
-        help='list of bam files to for which to produce expression')
+
+    parser.add_argument( 'bam_fn', metavar='bam', type=file,
+        help='list of bam files to for which to produce expression')    
     
-    parser.add_argument( '--fl-dists', nargs='+', \
+    parser.add_argument( '--fl-dists', type=file, nargs='+', 
        help='a pickled fl_dist object(default:generate fl_dist from input bam)')
     parser.add_argument( '--fl-dist-norm', \
         help='mean and standard deviation (format "mn:sd") from which to ' \
             +'produce a fl_dist_norm (default:generate fl_dist from input bam)')
 
-    parser.add_argument( '--threads', '-t', type=int , default=1, \
+    parser.add_argument( '--cage-fns', nargs='+', type=file,
+        help='list of bedgraph files with CAGE tag counts.')
+    
+    parser.add_argument( '--threads', '-t', type=int , default=1,
         help='Number of threads spawn for multithreading (default=1)')
 
     parser.add_argument( '--estimate-confidence-bounds', '-c', default=False,
@@ -794,15 +886,15 @@ def parse_arguments():
         action="store_true",
         help='Write the design matrices out to a matlab-style matrix file.')
     
-    parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
+    parser.add_argument( '--verbose', '-v', default=False, action='store_true',
                              help='Whether or not to print status information.')
-    parser.add_argument( '--debug-verbose', default=False, action='store_true',\
+    parser.add_argument( '--debug-verbose', default=False, action='store_true',
                              help='Prints the optimization path updates.')
 
     args = parser.parse_args()
 
     if not args.fl_dists and not args.fl_dist_norm:
-        raise ValueError, "Must specific either --fl-dist or --fl-dist-norm."
+        raise ValueError, "Must specific either --fl-dists or --fl-dist-norm."
 
     if args.fl_dist_norm != None:
         try:
@@ -819,7 +911,8 @@ def parse_arguments():
         fl_dists = { 'mean': build_normal_density( fl_min, fl_max, mean, sd ) }
         read_group_mappings = []
     else:
-        fl_dists, read_group_mappings = load_fl_dists( args.fl_dists )
+        fl_dists, read_group_mappings = load_fl_dists( 
+            fp.name for fp in args.fl_dists )
     
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
@@ -829,9 +922,10 @@ def parse_arguments():
 
     # we change to the output directory later, and these files need to opened in
     # each sub-process for thread safety, so we get the absokute path while we 
-    # can.
-    bam_fns = [ os.path.abspath( bam_fn ) for bam_fn in args.bam_fns ]
-
+    # can. We allow for multiple bams at this stage, but insist upon one in the
+    # arguments
+    bam_fns = [ os.path.abspath( args.bam_fn.name ),  ]
+    
     global PROCESS_SEQUENTIALLY
     if args.threads == 1:
         PROCESS_SEQUENTIALLY = True
@@ -841,19 +935,22 @@ def parse_arguments():
     
     ofps = {}
     for bam_fn in bam_fns:
-        ofps[bam_fn] = ThreadSafeFile(
-            "%s.%s.gtf" % (args.ofprefix, os.path.basename(bam_fn)), "w")
+        ofps[bam_fn] = ThreadSafeFile( args.ofname, "w" )
         ofps[bam_fn].write(
             "track name=transcripts.%s useScore=1\n" % os.path.basename(bam_fn))
-        
-    return args.gtf, bam_fns, ofps, fl_dists, read_group_mappings, \
+    
+    cage_fns = [] if args.cage_fns == None else [ 
+        fp.name for fp in args.cage_fns ]    
+    
+    return args.gtf, bam_fns, cage_fns, ofps, fl_dists, read_group_mappings, \
         args.estimate_confidence_bounds, args.write_design_matrices
     
 def main():
     # Get file objects from command line
-    gtf_fp, bam_fns, ofps, fl_dists, rg_mappings, \
+    gtf_fp, bam_fns, cage_fns, ofps, fl_dists, rg_mappings, \
         estimate_confidence_bounds, write_design_matrices = parse_arguments()
-    filter_value = 0.01
+    abs_filter_value = 1e-12 + 1e-16
+    rel_filter_value = 0
     
     manager = multiprocessing.Manager()
 
@@ -862,14 +959,32 @@ def main():
 
     output_dict_lock = manager.Lock()    
     output_dict = manager.dict()
+
+    cage = {}
+    for cage_fn in cage_fns:
+        strand = guess_strand_from_fname( cage_fn )
+        data = load_bedgraph( cage_fn )
+        for chrm, array in data.iteritems():
+            if not cage.has_key((strand, fix_chr_name(chrm))):
+                cage[ (strand, fix_chr_name(chrm)) ] = []
+            cage[(strand, fix_chr_name(chrm))].append( array )
     
     # add all the genes, in order of longest first. 
     genes = load_gtf( gtf_fp.name )
     for gene in sorted( genes, key=lambda x: -len(x.transcripts) ):
+        gene_cage = []
+        if (gene.strand, gene.chrm) not in cage:
+            print "WARNING: Could not find CAGE signal for strand %s chr %s"% (
+                gene.strand, gene.chrm )
+        else:
+            for cage_array in cage[(gene.strand, gene.chrm)]:
+                gene_cage.append(cage_array[gene.start:gene.stop+1].copy())
+        
         for bam_fn in bam_fns:
             input_queue.append(('design_matrices', (gene.id, bam_fn, None)))
             gene_data = manager.dict()
             gene_data[ 'gene' ] = gene
+            gene_data[ 'cage' ] = gene_cage
             gene_data[ 'fl_dists' ] = fl_dists
             gene_data[ 'lbs' ] = {}
             gene_data[ 'ubs' ] = {}
@@ -882,12 +997,12 @@ def main():
             input_queue_lock, input_queue, 
             output_dict_lock, output_dict, 
             estimate_confidence_bounds,
-            filter_value )
+            abs_filter_value, rel_filter_value )
         write_finished_data_to_disk( 
             output_dict, output_dict_lock, ofps,
             estimate_confidence_bounds, 
             write_design_matrices,
-            filter_value )
+            abs_filter_value, rel_filter_value )
     else:
         ps = []
         for i in xrange( num_threads ):
@@ -895,17 +1010,16 @@ def main():
                         args=( input_queue_lock, input_queue, 
                                output_dict_lock, output_dict, 
                                estimate_confidence_bounds,
-                               filter_value ) )
+                               abs_filter_value, rel_filter_value ) )
             p.start()
             ps.append( p )    
 
         write_p = Process(target=write_finished_data_to_disk, args=(
                 output_dict, output_dict_lock, ofps,
                 estimate_confidence_bounds, write_design_matrices,
-                filter_value)  )
-
-        write_p.start()
+                abs_filter_value, rel_filter_value)  )
         
+        write_p.start()    
         write_p.join()
 
         for p in ps:
