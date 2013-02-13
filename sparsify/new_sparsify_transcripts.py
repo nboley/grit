@@ -66,6 +66,7 @@ num_threads = 1
 NUM_ITER_FOR_CONV = 5
 DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
+ABS_TOL = 1e-5
 
 def log_warning(text):
     print >> sys.stderr, text
@@ -318,9 +319,19 @@ def build_design_matrices( gene, bam_fname, fl_dists, cage_arrays ):
         expected_promoter_cnts, observed_promoter_cnts, False )
     
     # combine the arrays
+    observed_rnaseq_array = numpy.delete( observed_rnaseq_array, 
+                  numpy.array(list(unobservable_prom_trans)) )
+    observed_prom_array = numpy.delete( observed_prom_array, 
+                  numpy.array(list(unobservable_rnaseq_trans)) )
     observed_array = numpy.hstack((observed_prom_array, observed_rnaseq_array))
     if observed_array.sum() == 0:
         raise ValueError, "TOO FEW READS"
+
+    expected_rnaseq_array = numpy.delete( expected_rnaseq_array, 
+                  numpy.array(list(unobservable_prom_trans)), axis=1 )
+    expected_prom_array = numpy.delete( expected_prom_array, 
+                  numpy.array(list(unobservable_rnaseq_trans)), axis=1 )   
+    
     expected_array = numpy.vstack((expected_prom_array, expected_rnaseq_array))
     unobservable_transcripts \
         = unobservable_rnaseq_trans.union(unobservable_prom_trans)
@@ -373,7 +384,7 @@ def project_onto_simplex( x, debug=False ):
     return x_minus_theta
 
 def estimate_transcript_frequencies_line_search(  
-        observed_array, full_expected_array, x0, dont_zero, abs_tol=1e-6 ):
+        observed_array, full_expected_array, x0, dont_zero, abs_tol ):
     expected_array = full_expected_array.copy()
     def f_lhd(x):
         log_lhd = calc_lhd(x, observed_array, expected_array)
@@ -507,7 +518,7 @@ def estimate_transcript_frequencies_line_search(
     return final_x, lhds
 
 def estimate_transcript_frequencies(  
-        observed_array, full_expected_array, abs_tol=1e-5 ):
+        observed_array, full_expected_array, abs_tol ):
     fp = open( "lhd_change.txt", "w" )
     if observed_array.sum() == 0:
         raise ValueError, "Too few reads."
@@ -534,7 +545,7 @@ def estimate_transcript_frequencies(
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
         if DEBUG_VERBOSE:
             print "Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
-                i, lhd, lhd - prev_lhd, len(lhds ), eps, 
+                i, lhd, (lhd - prev_lhd)/len(lhds), len(lhds ), eps, 
                 make_time_str((time.time()-start_time)/len(lhds)) )
             
         start_time = time.time()
@@ -556,7 +567,7 @@ def estimate_transcript_frequencies(
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
         if DEBUG_VERBOSE:
             print "Non-Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
-                i, lhd, lhd - prev_lhd, len(lhds ), eps,
+                i, lhd, (lhd - prev_lhd)/len(lhds), len(lhds), eps,
                 make_time_str((time.time()-start_time)/len(lhds)))
         
         start_time = time.time()
@@ -632,33 +643,6 @@ def estimate_confidence_bound( observed_array,
                     
     pass
 
-def estimate_gene_expression( expected_array, observed_array, unobservable_transcripts ):
-    mle_estimate = estimate_transcript_frequencies( 
-        observed_array, expected_array )
-        
-    if False and estimate_confidence_bounds:
-        bnds = []
-        for index, mle_value in enumerate( mle_estimate ):
-            if index in unobservable_transcripts: continue
-            
-            transcript = gene.transcripts[index]
-            bnds.append( [] )
-            for bnd_type in ( "LOWER", "UPPER" ):
-                p_value, bnd = estimate_confidence_bound( 
-                    observed_array, expected_array, index, mle_estimate, bnd_type )
-                bnds[-1].append( bnd )
-            if VERBOSE: 
-                print "Gene %s\tTranscript %s (%i/%i)\tBam %s\tEst %.2e\tBnds [%.2e %.2e]" % (
-                    gene.id, transcript.id, index+1, len(gene.transcripts), 
-                    os.path.basename(bam_fname), 
-                    mle_value, bnds[-1][0], bnds[-1][1])
-
-        lower_bnds, upper_bnds = zip( *bnds )
-    else:
-        lower_bnds, upper_bnds = [None]*len(mle_estimate), [None]*len(mle_estimate)
-    
-    return mle_estimate, lower_bnds, upper_bnds
-
 def build_mle_estimate( observed_array, expected_array ):
     log_lhd, mle_estimate = estimate_transcript_frequencies( 
         observed_array, expected_array )
@@ -722,8 +706,7 @@ def estimate_gene_expression_worker( ip_lock, input_queue,
                 expected_array, observed_array, unobservable_transcripts \
                     = build_design_matrices( gene, bam_fn, fl_dists, cage )
             except ValueError, inst:
-                print "Skipping %s: Too Few Reads" % gene.id
-                print inst
+                print "Skipping %s: %s" % ( gene.id, inst )
                 continue
             
             if VERBOSE: print "FINISHED DESIGN MATRICES %s\t%s" % ( 
@@ -747,7 +730,7 @@ def estimate_gene_expression_worker( ip_lock, input_queue,
 
             try:
                 mle_estimate = estimate_transcript_frequencies( 
-                    observed_array, expected_array)
+                    observed_array, expected_array, ABS_TOL)
             except ValueError:
                 print "Skipping %s: Too Few Reads" % gene_id
                 continue
