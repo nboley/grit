@@ -15,6 +15,8 @@ import copy
 
 import hashlib
 def hash_array( array ):
+    if None == array:
+        return str(hash(None))
     b = array.view(numpy.uint8)
     return str(hashlib.sha1(b).hexdigest())
 
