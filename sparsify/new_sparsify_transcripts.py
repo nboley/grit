@@ -290,7 +290,7 @@ def build_design_matrices( gene, bam_fname, fl_dists, cage_array ):
     import cPickle
     # only do this if we are in debugging mode
     if num_threads == 1:
-        obj_name = "." + gene.id + "_" + hash_arrays(cage_array) \
+        obj_name = "." + gene.id + "_" + hash_array(cage_array) \
             + "_" + os.path.basename(bam_fname) + ".obj"
         try:
             fp = open( obj_name )
