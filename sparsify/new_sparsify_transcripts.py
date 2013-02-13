@@ -14,12 +14,9 @@ def make_time_str(et):
 import copy
 
 import hashlib
-def hash_arrays( arrays ):
-    res = []
-    for x in arrays:
-        b = x.view(numpy.uint8)
-        res.append( hashlib.sha1(b).hexdigest() )
-    return str(hash(tuple(res)))
+def hash_array( array ):
+    b = array.view(numpy.uint8)
+    return str(hashlib.sha1(b).hexdigest())
 
 from scipy.linalg import svd, inv
 from scipy.stats import chi2
@@ -67,6 +64,7 @@ NUM_ITER_FOR_CONV = 5
 DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
 ABS_TOL = 1e-5
+DEBUG = True
 
 def log_warning(text):
     print >> sys.stderr, text
@@ -240,7 +238,7 @@ def build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists ):
     
     return expected_cnts, observed_cnts
 
-def build_expected_and_observed_promoter_counts( gene, cage_arrays ):
+def build_expected_and_observed_promoter_counts( gene, cage_array ):
     # find the promoters
     promoters = list()
     for transcript in gene.transcripts:
@@ -268,26 +266,31 @@ def build_expected_and_observed_promoter_counts( gene, cage_arrays ):
         nonoverlapping_indices = \
             find_nonoverlapping_contig_indices( 
                 [promoter,], promoter_boundaries )
-        for i in xrange(len(cage_arrays)):
-            for j in nonoverlapping_indices:
-                ps_promoter = pseudo_promoters[j]
-                expected_cnts[ (i, ps_promoter) ][transcript_i] = 1.0
-                #    = float(ps_promoter[1]-ps_promoter[0])\
-                #      /float(promoter[1]-promoter[0]+1)
-    
+        # calculate the count probabilities, adding a fudge to deal with 0
+        # frequency bins
+        tag_cnt = cage_array[
+            promoter[0]-gene.start:promoter[1]-gene.start].sum() \
+            + 1e-6*len(nonoverlapping_indices)
+        for i in nonoverlapping_indices:
+            ps_promoter = pseudo_promoters[i]
+            ps_tag_cnt = cage_array[
+                ps_promoter[0]-gene.start:ps_promoter[1]-gene.start].sum()
+            expected_cnts[ ps_promoter ][transcript_i] \
+                = (ps_tag_cnt+1e-6)/tag_cnt
+        
     # count the reads in each non-overlaping promoter
     observed_cnts = {}
-    for i, (start, stop) in expected_cnts.keys():
-        observed_cnts[ (i, (start, stop)) ] \
-            = int(round(cage_arrays[i][start-gene.start:stop-gene.start].sum()))
+    for (start, stop) in expected_cnts.keys():
+        observed_cnts[ (start, stop) ] \
+            = int(round(cage_array[start-gene.start:stop-gene.start].sum()))
     
     return expected_cnts, observed_cnts
 
-def build_design_matrices( gene, bam_fname, fl_dists, cage_arrays ):
+def build_design_matrices( gene, bam_fname, fl_dists, cage_array ):
     import cPickle
     # only do this if we are in debugging mode
     if num_threads == 1:
-        obj_name = "." + gene.id + "_" + hash_arrays(cage_arrays) \
+        obj_name = "." + gene.id + "_" + hash_arrays(cage_array) \
             + "_" + os.path.basename(bam_fname) + ".obj"
         try:
             fp = open( obj_name )
@@ -306,14 +309,14 @@ def build_design_matrices( gene, bam_fname, fl_dists, cage_arrays ):
         build_expected_and_observed_arrays( 
             expected_rnaseq_cnts, observed_rnaseq_cnts, True )
 
-    if len( cage_arrays ) == 0:
+    if cage_array == None:
         return expected_rnaseq_array, \
             observed_rnaseq_array, \
             unobservable_rnaseq_trans
     
     # bin the CAGE data
     expected_promoter_cnts, observed_promoter_cnts = \
-        build_expected_and_observed_promoter_counts( gene, cage_arrays )
+        build_expected_and_observed_promoter_counts( gene, cage_array )
     expected_prom_array, observed_prom_array, unobservable_prom_trans = \
         build_expected_and_observed_arrays( 
         expected_promoter_cnts, observed_promoter_cnts, False )
@@ -707,6 +710,7 @@ def estimate_gene_expression_worker( ip_lock, input_queue,
                     = build_design_matrices( gene, bam_fn, fl_dists, cage )
             except ValueError, inst:
                 print "Skipping %s: %s" % ( gene.id, inst )
+                if DEBUG: raise
                 continue
             
             if VERBOSE: print "FINISHED DESIGN MATRICES %s\t%s" % ( 
@@ -731,9 +735,11 @@ def estimate_gene_expression_worker( ip_lock, input_queue,
             try:
                 mle_estimate = estimate_transcript_frequencies( 
                     observed_array, expected_array, ABS_TOL)
-            except ValueError:
-                print "Skipping %s: Too Few Reads" % gene_id
+            except ValueError, inst:
+                print "Skipping %s: %s" % ( gene_id, inst )
+                if DEBUG: raise
                 continue
+            
             log_lhd = calc_lhd( mle_estimate, observed_array, expected_array)
             if VERBOSE: print "FINISHED MLE %s\t%s\t%.2f\n%s" % ( 
                 gene_id, bam_fn, log_lhd, 
@@ -957,9 +963,9 @@ def main():
         strand = guess_strand_from_fname( cage_fn )
         data = load_bedgraph( cage_fn )
         for chrm, array in data.iteritems():
-            if not cage.has_key((strand, fix_chr_name(chrm))):
-                cage[ (strand, fix_chr_name(chrm)) ] = []
-            cage[(strand, fix_chr_name(chrm))].append( numpy.array(array) )
+            if cage.has_key((strand, fix_chr_name(chrm))):
+                raise ValueError, "Duplicated keys for promoter data."
+            cage[(strand, fix_chr_name(chrm))] = numpy.array(array)
     
     if VERBOSE:
         print "Finished Loading CAGE"
@@ -970,13 +976,13 @@ def main():
         print "Finished Loading %s" % gtf_fp.name
 
     for gene in sorted( genes, key=lambda x: -len(x.transcripts) ):
-        gene_cage = []
         if (gene.strand, gene.chrm) not in cage:
             print "WARNING: Could not find CAGE signal for strand %s chr %s"% (
                 gene.strand, gene.chrm )
+            gene_cage = None
         else:
-            for cage_array in cage[(gene.strand, gene.chrm)]:
-                gene_cage.append(cage_array[gene.start:gene.stop+1].copy())
+            gene_cage = cage[(gene.strand, gene.chrm)][
+                gene.start:gene.stop+1].copy()
         
         for bam_fn in bam_fns:
             input_queue.append(('design_matrices', (gene.id, bam_fn, None)))

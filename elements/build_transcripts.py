@@ -142,8 +142,6 @@ def build_genes(all_internal_exons, all_tss_exons, all_tes_exons, jns, ofp):
                 for line in build_gtf_lines( 
                     gene_name, chrm, strand, trans_name, exons):
                     ofp.write( line + "\n" )
-                
-
 
 def parse_arguments():
     import argparse
