@@ -13,6 +13,14 @@ def make_time_str(et):
 
 import copy
 
+import hashlib
+def hash_arrays( arrays ):
+    res = []
+    for x in arrays:
+        b = x.view(numpy.uint8)
+        res.append( hashlib.sha1(b).hexdigest() )
+    return str(hash(tuple(res)))
+
 from scipy.linalg import svd, inv
 from scipy.stats import chi2
 from scipy.optimize import fminbound, brentq, bisect, line_search
@@ -55,10 +63,8 @@ MIN_TRANSCRIPT_FREQ = 1e-12
 FD_SS = 1e-8
 COMPARE_TO_DCP = False
 num_threads = 1
-CONV_EPS = 1e-12
 NUM_ITER_FOR_CONV = 5
 DEBUG_OPTIMIZATION = False
-USE_HESSIAN = False
 PROMOTER_SIZE = 50
 
 def log_warning(text):
@@ -264,9 +270,9 @@ def build_expected_and_observed_promoter_counts( gene, cage_arrays ):
         for i in xrange(len(cage_arrays)):
             for j in nonoverlapping_indices:
                 ps_promoter = pseudo_promoters[j]
-                expected_cnts[ (i, ps_promoter) ][transcript_i] \
-                    = float(ps_promoter[1]-ps_promoter[0])\
-                      /float(promoter[1]-promoter[0]+1)
+                expected_cnts[ (i, ps_promoter) ][transcript_i] = 1.0
+                #    = float(ps_promoter[1]-ps_promoter[0])\
+                #      /float(promoter[1]-promoter[0]+1)
     
     # count the reads in each non-overlaping promoter
     observed_cnts = {}
@@ -280,7 +286,8 @@ def build_design_matrices( gene, bam_fname, fl_dists, cage_arrays ):
     import cPickle
     # only do this if we are in debugging mode
     if num_threads == 1:
-        obj_name = gene.id + "_" + os.path.basename(bam_fname) + ".obj"
+        obj_name = "." + gene.id + "_" + hash_arrays(cage_arrays) \
+            + "_" + os.path.basename(bam_fname) + ".obj"
         try:
             fp = open( obj_name )
             expected_array, observed_array, unobservable_transcripts = \
@@ -298,26 +305,26 @@ def build_design_matrices( gene, bam_fname, fl_dists, cage_arrays ):
         build_expected_and_observed_arrays( 
             expected_rnaseq_cnts, observed_rnaseq_cnts, True )
 
+    if len( cage_arrays ) == 0:
+        return expected_rnaseq_array, \
+            observed_rnaseq_array, \
+            unobservable_rnaseq_trans
+    
     # bin the CAGE data
     expected_promoter_cnts, observed_promoter_cnts = \
         build_expected_and_observed_promoter_counts( gene, cage_arrays )
-    print expected_promoter_cnts
     expected_prom_array, observed_prom_array, unobservable_prom_trans = \
         build_expected_and_observed_arrays( 
-            expected_promoter_cnts, observed_promoter_cnts, False )
-    print expected_prom_array.sum(0)
+        expected_promoter_cnts, observed_promoter_cnts, False )
     
     # combine the arrays
     observed_array = numpy.hstack((observed_prom_array, observed_rnaseq_array))
     if observed_array.sum() == 0:
         raise ValueError, "TOO FEW READS"
-
     expected_array = numpy.vstack((expected_prom_array, expected_rnaseq_array))
-    print expected_array.sum(0)
-    
     unobservable_transcripts \
         = unobservable_rnaseq_trans.union(unobservable_prom_trans)
-    
+
     if num_threads == 1:
         fp = open( obj_name, "w" )
         cPickle.dump( (expected_array,observed_array,unobservable_transcripts),
@@ -467,9 +474,9 @@ def estimate_transcript_frequencies_line_search(
             x = project_onto_simplex(x)
             continue
      
-        if alpha == 0 or f_lhd(x) - prev_lhd < abs_tol:
+        if i > 30 and (alpha == 0 or f_lhd(x) - prev_lhd < abs_tol):
             zeros_counter += 1
-            if zeros_counter > 30:
+            if zeros_counter > 3:
                 break            
         else:
             zeros_counter = 0
@@ -513,7 +520,7 @@ def estimate_transcript_frequencies(
     eps = 10.
     start_time = time.time()
     if DEBUG_VERBOSE:
-        print "Iteration\tlog lhd\t\tchange lhd\tn iter\ttollerance\ttime (hr:min:sec)"
+        print "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)"
     for i in xrange( 500 ):
         prev_x = x.copy()
         
@@ -528,18 +535,17 @@ def estimate_transcript_frequencies(
         if DEBUG_VERBOSE:
             print "Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
                 i, lhd, lhd - prev_lhd, len(lhds ), eps, 
-                make_time_str(time.time()-start_time) )
+                make_time_str((time.time()-start_time)/len(lhds)) )
             
         start_time = time.time()
         
-        if lhd - prev_lhd < eps \
-                or (numpy.array(lhds[1:])-numpy.array(lhds[:-1])).max() < eps:
+        if float(lhd - prev_lhd)/len(lhds) < eps:
+            if eps == abs_tol: break
             eps /= 5
-        if eps < abs_tol:
-            break
+            eps = max( eps, abs_tol )
+        
     
-    
-    for i in xrange( 50 ):
+    for i in xrange( 5 ):
         prev_x = x.copy()
         x, lhds = estimate_transcript_frequencies_line_search(  
             observed_array, full_expected_array, x, 
@@ -551,7 +557,8 @@ def estimate_transcript_frequencies(
         if DEBUG_VERBOSE:
             print "Non-Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
                 i, lhd, lhd - prev_lhd, len(lhds ), eps,
-                make_time_str(time.time()-start_time))
+                make_time_str((time.time()-start_time)/len(lhds)))
+        
         start_time = time.time()
         if len( lhds ) < 500: break
 
@@ -714,8 +721,9 @@ def estimate_gene_expression_worker( ip_lock, input_queue,
             try:
                 expected_array, observed_array, unobservable_transcripts \
                     = build_design_matrices( gene, bam_fn, fl_dists, cage )
-            except ValueError:
+            except ValueError, inst:
                 print "Skipping %s: Too Few Reads" % gene.id
+                print inst
                 continue
             
             if VERBOSE: print "FINISHED DESIGN MATRICES %s\t%s" % ( 
@@ -968,10 +976,16 @@ def main():
         for chrm, array in data.iteritems():
             if not cage.has_key((strand, fix_chr_name(chrm))):
                 cage[ (strand, fix_chr_name(chrm)) ] = []
-            cage[(strand, fix_chr_name(chrm))].append( array )
+            cage[(strand, fix_chr_name(chrm))].append( numpy.array(array) )
+    
+    if VERBOSE:
+        print "Finished Loading CAGE"
     
     # add all the genes, in order of longest first. 
     genes = load_gtf( gtf_fp.name )
+    if VERBOSE:
+        print "Finished Loading %s" % gtf_fp.name
+
     for gene in sorted( genes, key=lambda x: -len(x.transcripts) ):
         gene_cage = []
         if (gene.strand, gene.chrm) not in cage:
@@ -992,6 +1006,8 @@ def main():
             gene_data[ 'mle' ] = None
             gene_data[ 'design_matrices' ] = None
             output_dict[ (gene.id, bam_fn) ] = gene_data
+
+    del cage
     
     if 1 == num_threads:
         estimate_gene_expression_worker( 
