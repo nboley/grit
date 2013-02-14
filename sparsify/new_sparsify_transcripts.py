@@ -66,7 +66,7 @@ NUM_ITER_FOR_CONV = 5
 DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
 ABS_TOL = 1e-5
-DEBUG = True
+DEBUG = False
 
 def log_warning(text):
     print >> sys.stderr, text
@@ -698,8 +698,6 @@ def estimate_gene_expression_worker( ip_lock, input_queue,
             continue
         ip_lock.release()
         
-        
-        
         if work_type == 'design_matrices':
             op_lock.acquire()
             gene = output[(gene_id, bam_fn)]['gene']
@@ -977,7 +975,9 @@ def main():
     if VERBOSE:
         print "Finished Loading %s" % gtf_fp.name
 
-    for gene in sorted( genes, key=lambda x: -len(x.transcripts) ):
+    # add the genes in reverse sorted order so that the longer genes are dealt
+    # with first
+    for gene in sorted( genes, key=lambda x: len(x.transcripts) ):
         if (gene.strand, gene.chrm) not in cage:
             print "WARNING: Could not find CAGE signal for strand %s chr %s"% (
                 gene.strand, gene.chrm )
