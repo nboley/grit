@@ -678,7 +678,7 @@ def write_gene_to_gtf( ofp, gene, mles, lbs=None, ubs=None,
     return
 
 def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
-                                     input_queue,
+                                     input_queue, input_queue_lock,
                                      op_lock, output, 
                                      estimate_confidence_bounds ):
     if work_type == 'design_matrices':
@@ -694,11 +694,17 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
         except ValueError, inst:
             error_msg = "%i: Skipping %s: %s" % ( os.getpid(), gene.id, inst )
             if DEBUG: raise
-            input_queue.put(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
+            input_queue_lock.acquire()
+            input_queue.append(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
+            input_queue_release.acquire()
+            return
         except MemoryError, inst:
             error_msg =  "%i: Skipping %s: %s" % ( os.getpid(), gene.id, inst )
             if DEBUG: raise
-            input_queue.put(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
+            input_queue_lock.acquire()
+            input_queue.append(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
+            input_queue_lock.release()
+            return
         
         if VERBOSE: print "FINISHED DESIGN MATRICES %s\t%s" % ( 
             gene_id, bam_fn )
@@ -708,7 +714,9 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
             ( observed_array, expected_array, unobservable_transcripts )
         op_lock.release()
         
-        input_queue.put( ('mle', (gene.id, bam_fn, None)) )
+        input_queue_lock.acquire()
+        input_queue.append( ('mle', (gene.id, bam_fn, None)) )
+        input_queue_lock.release()
     elif work_type == 'mle':
         op_lock.acquire()
         observed_array, expected_array, unobservable_transcripts = \
@@ -721,7 +729,10 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
         except ValueError, inst:
             error_msg = "Skipping %s: %s" % ( gene_id, inst )
             if DEBUG: raise
-            input_queue.put(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
+            input_queue_lock.acquire()
+            input_queue.append(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
+            input_queue_lock.relase()
+            return
         
         log_lhd = calc_lhd( mle_estimate, observed_array, expected_array)
         if VERBOSE: print "FINISHED MLE %s\t%s\t%.2f" % ( 
@@ -731,13 +742,15 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
         output[((gene_id, bam_fn), 'mle')] = mle_estimate
         op_lock.release()
 
+        input_queue_lock.acquire()
         if estimate_confidence_bounds:
             for i in xrange(expected_array.shape[1]):
-                input_queue.put( ('lb', (gene_id, bam_fn, i)) )
-                input_queue.put( ('ub', (gene_id, bam_fn, i)) )
+                input_queue.append( ('lb', (gene_id, bam_fn, i)) )
+                input_queue.append( ('ub', (gene_id, bam_fn, i)) )
         else:
-            input_queue.put(('FINISHED', (gene_id, bam_fn, None)))
-        
+            input_queue.append(('FINISHED', (gene_id, bam_fn, None)))
+        input_queue_lock.release()
+
     elif work_type in ('lb', 'ub'):
         op_lock.acquire()
         observed_array, expected_array, unobservable_transcripts = \
@@ -755,8 +768,10 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
 
         assert False
         
-        input_queue.put(('FINISHED', (gene_id, bam_fn, work_type, trans_index)))
-    
+        input_queue_lock.acquire()
+        input_queue.append(('FINISHED', (gene_id, bam_fn, work_type, trans_index)))
+        input_queue_lock.release()
+
     return
 
 def write_finished_data_to_disk( output_dict, output_dict_lock, 
@@ -904,7 +919,8 @@ def main():
     rel_filter_value = 0
     
     manager = multiprocessing.Manager()
-    input_queue = manager.Queue()
+    input_queue = manager.list()
+    input_queue_lock = manager.Lock()
     finished_queue = manager.Queue()
     output_dict_lock = manager.Lock()    
     output_dict = manager.dict()
@@ -939,7 +955,9 @@ def main():
                 gene.start:gene.stop+1].copy()
         
         for bam_fn in bam_fns:
-            input_queue.put(('design_matrices', (gene.id, bam_fn, None)))
+            input_queue_lock.acquire()
+            input_queue.append(('design_matrices', (gene.id, bam_fn, None)))
+            input_queue_lock.release()
             
             key = (gene.id, bam_fn)
             output_dict[ (key, 'gene') ] = gene
@@ -951,6 +969,8 @@ def main():
             output_dict[ (key, 'design_matrices') ] = None
     
     del cage
+    del genes
+    del fl_dists
     
     write_p = Process(target=write_finished_data_to_disk, args=(
             output_dict, output_dict_lock, 
@@ -964,12 +984,16 @@ def main():
     while True:
         # get the data to process
         try:
-            work_type, key = input_queue.get(timeout=0.1)
-        except Queue.Empty:
-            if all( p == None or not p.is_alive() for p in ps ): 
+            input_queue_lock.acquire()
+            work_type, key = input_queue.pop()
+        except IndexError:
+            if len(input_queue) == 0 and all( 
+                    p == None or not p.is_alive() for p in ps ): 
+                input_queue_lock.release()
                 break
-            time.sleep(1.0)
+            input_queue_lock.release()
             continue
+        input_queue_lock.release()
         
         if work_type == 'ERROR':
             ( gene_id, bam_fn, trans_index ), msg = key
@@ -988,7 +1012,7 @@ def main():
         # get a process index
         while True:
             if all( p != None and p.is_alive() for p in ps ):
-                time.sleep(1.0)
+                time.sleep(0.1)
                 continue
             break
         
@@ -998,7 +1022,7 @@ def main():
         # find a finished process index
         p = Process(target=estimate_gene_expression_worker, 
                     args=(work_type, (gene_id, bam_fn, trans_index),
-                          input_queue, 
+                          input_queue, input_queue_lock, 
                           output_dict_lock, output_dict, 
                           estimate_confidence_bounds ) )
         p.start()
