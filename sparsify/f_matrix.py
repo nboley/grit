@@ -378,7 +378,8 @@ def estimate_num_paired_reads_from_bin(
 
 cached_f_mat_entries = {}
 def calc_expected_cnts( exon_boundaries, transcripts, fl_dists_and_read_lens, \
-                            max_num_unmappable_bases=MAX_NUM_UNMAPPABLE_BASES ):
+                        max_num_unmappable_bases=MAX_NUM_UNMAPPABLE_BASES,
+                        max_memory_usage=8 ):
     # store all counts, and count vectors. Indexed by ( 
     # read_group, read_len, bin )
     f_mat_entries = {}
@@ -388,8 +389,12 @@ def calc_expected_cnts( exon_boundaries, transcripts, fl_dists_and_read_lens, \
                       izip(exon_boundaries[:-1], exon_boundaries[1:])])
     
     # for each candidate trasncript
+    n_bins = 0
     for fl_dist, read_len in fl_dists_and_read_lens:
         for transcript_index, nonoverlapping_indices in enumerate(transcripts):
+            if (n_bins*len(transcripts)*8.)/(1024**3) > max_memory_usage:
+                raise MemoryError, "Building the design matrix has exceeded the maximum allowed memory "
+            
             # find all of the possible read bins for transcript given this 
             # fl_dist and read length
             full, pair, single =  \
@@ -399,7 +404,7 @@ def calc_expected_cnts( exon_boundaries, transcripts, fl_dists_and_read_lens, \
             
             # add the expected counts for paired reads
             for bin in pair:
-                key = (read_len, fl_dist, bin)
+                key = (read_len, hash(fl_dist), bin)
                 if key in cached_f_mat_entries:
                     pseudo_cnt = cached_f_mat_entries[ key ]
                 else:
@@ -411,7 +416,9 @@ def calc_expected_cnts( exon_boundaries, transcripts, fl_dists_and_read_lens, \
                     cached_f_mat_entries[ key ] = pseudo_cnt
                 
                 if not f_mat_entries.has_key( key ):
-                    f_mat_entries[key]= [0]*len( transcripts )
+                    n_bins += 1
+                    f_mat_entries[key]= numpy.zeros( 
+                        len(transcripts), dtype=float )
                     
                 f_mat_entries[key][ transcript_index ] = pseudo_cnt
         
@@ -434,7 +441,7 @@ def convert_f_matrices_into_arrays( f_mats, normalize=True ):
     
     if zero_entries.shape[0] > 0:
         expected_cnts = expected_cnts[:, expected_cnts.sum(0) > 0 ]
-
+    
     if normalize:
         assert expected_cnts.sum(0).min() > 0
         expected_cnts = expected_cnts/expected_cnts.sum(0)

@@ -1,7 +1,7 @@
 import numpy
 numpy.seterr(all='ignore')
 
-import sys, os
+import sys, os, gc
 import math
 import traceback
 import time
@@ -28,6 +28,7 @@ from scipy.io import savemat
 from StringIO import StringIO
 from itertools import izip
 from collections import defaultdict
+import Queue
 
 import subprocess
 import multiprocessing
@@ -86,7 +87,7 @@ class ThreadSafeFile( file ):
 def build_observed_cnts( binned_reads, fl_dists ):
     rv = {}
     for ( read_len, read_group, bin ), value in binned_reads.iteritems():
-        rv[ ( read_len, fl_dists[read_group], bin ) ] = value
+        rv[ ( read_len, hash(fl_dists[read_group]), bin ) ] = value
     
     return rv
 
@@ -641,7 +642,8 @@ def estimate_confidence_bound( observed_array,
             observed_array,  expected_array, fixed_index,
             mle_estimate, bound_type, alpha )
     except ValueError:
-        #print "WARNING: Couldn't find bound for transcript %i %s directly: trying bisection." % (fixed_index+1, bound_type)
+        # print "WARNING: Couldn't find bound for transcript %i %s directly: 
+        # trying bisection." % (fixed_index+1, bound_type)
         return estimate_confidence_bound_by_bisection( 
             observed_array,  expected_array, fixed_index,
             mle_estimate, bound_type, alpha )
@@ -675,181 +677,132 @@ def write_gene_to_gtf( ofp, gene, mles, lbs=None, ubs=None,
     
     return
 
-def estimate_gene_expression_worker( ip_lock, input_queue, 
+def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
+                                     input_queue,
                                      op_lock, output, 
-                                     estimate_confidence_bounds, 
-                                     abs_filter_value,
-                                     rel_filter_value):
-    while True:
+                                     estimate_confidence_bounds ):
+    if work_type == 'design_matrices':
         op_lock.acquire()
-        if 0 == len( output ):
-            op_lock.release()
-            return
+        gene = output[((gene_id, bam_fn), 'gene')]
+        fl_dists = output[((gene_id, bam_fn), 'fl_dists')]
+        cage = output[((gene_id, bam_fn), 'cage')]
         op_lock.release()
         
-        ip_lock.acquire()
         try:
-            work_type, ( gene_id, bam_fn, trans_index ) = input_queue.pop()
-        except IndexError:
-            ip_lock.release()
-            if num_threads == 1:
-                return
-            time.sleep(2.0)
-            continue
-        ip_lock.release()
+            expected_array, observed_array, unobservable_transcripts \
+                = build_design_matrices( gene, bam_fn, fl_dists, cage )
+        except ValueError, inst:
+            error_msg = "%i: Skipping %s: %s" % ( os.getpid(), gene.id, inst )
+            if DEBUG: raise
+            input_queue.put(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
+        except MemoryError, inst:
+            error_msg =  "%i: Skipping %s: %s" % ( os.getpid(), gene.id, inst )
+            if DEBUG: raise
+            input_queue.put(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
         
-        if work_type == 'design_matrices':
-            op_lock.acquire()
-            gene = output[(gene_id, bam_fn)]['gene']
-            fl_dists = output[(gene_id, bam_fn)]['fl_dists']
-            cage = output[(gene_id, bam_fn)]['cage']
-            op_lock.release()
-                        
-            try:
-                expected_array, observed_array, unobservable_transcripts \
-                    = build_design_matrices( gene, bam_fn, fl_dists, cage )
-            except ValueError, inst:
-                print "Skipping %s: %s" % ( gene.id, inst )
-                if DEBUG: raise
-                continue
-            
-            if VERBOSE: print "FINISHED DESIGN MATRICES %s\t%s" % ( 
-                gene_id, bam_fn )
-            
-            op_lock.acquire()
-            gene_data = output[(gene_id, bam_fn)]
-            gene_data['design_matrices'] = \
-                (observed_array, expected_array, unobservable_transcripts)
-            output[(gene_id, bam_fn)] = gene_data
-            op_lock.release()
+        if VERBOSE: print "FINISHED DESIGN MATRICES %s\t%s" % ( 
+            gene_id, bam_fn )
 
-            ip_lock.acquire()
-            input_queue.append( ('mle', (gene.id, bam_fn, None)) )
-            ip_lock.release()
-        elif work_type == 'mle':
-            op_lock.acquire()
-            observed_array, expected_array, unobservable_transcripts = \
-                output[(gene_id, bam_fn)]['design_matrices']
-            op_lock.release()
-
-            try:
-                mle_estimate = estimate_transcript_frequencies( 
-                    observed_array, expected_array, ABS_TOL)
-            except ValueError, inst:
-                print "Skipping %s: %s" % ( gene_id, inst )
-                if DEBUG: raise
-                continue
-            
-            log_lhd = calc_lhd( mle_estimate, observed_array, expected_array)
-            if VERBOSE: print "FINISHED MLE %s\t%s\t%.2f\n%s" % ( 
-                gene_id, bam_fn, log_lhd, 
-                ["%.2e" % x for x in mle_estimate] )
-            
-            op_lock.acquire()
-            gene_data = output[(gene_id, bam_fn)]
-            gene_data['mle'] = mle_estimate
-            output[(gene_id, bam_fn)] = gene_data
-            op_lock.release()
-            
-            if estimate_confidence_bounds:
-                ip_lock.acquire()
-                for i in xrange(expected_array.shape[1]):
-                    input_queue.append( ('lb', (gene_id, bam_fn, i)) )
-                    input_queue.append( ('ub', (gene_id, bam_fn, i)) )
-                ip_lock.release()
+        op_lock.acquire()
+        output[((gene_id, bam_fn), 'design_matrices')] = \
+            ( observed_array, expected_array, unobservable_transcripts )
+        op_lock.release()
         
-        elif work_type in ('lb', 'ub'):
-            op_lock.acquire()
-            observed_array, expected_array, unobservable_transcripts = \
-                output[(gene_id, bam_fn)]['design_matrices']
-            mle_estimate = output[(gene_id, bam_fn)]['mle']
-            op_lock.release()
-            
-            bnd_type = 'LOWER' if work_type == 'lb' else 'UPPER'
-            
-            p_value, bnd = estimate_confidence_bound( 
-                observed_array, expected_array, 
-                trans_index, mle_estimate, bnd_type )
-            if VERBOSE: print "FINISHED %s BOUND %s\t%s\t%i\t%.2e\t%.2e" % ( 
-                bnd_type, gene_id, bam_fn, trans_index, bnd, p_value )
-            
-            op_lock.acquire()
-            gene_data = output[(gene_id, bam_fn)]
-            bnds = gene_data[work_type + 's']
-            bnds[trans_index] = bnd
-            gene_data[work_type + 's'] = bnds
-            output[(gene_id, bam_fn)] = gene_data
-            op_lock.release()
+        input_queue.put( ('mle', (gene.id, bam_fn, None)) )
+    elif work_type == 'mle':
+        op_lock.acquire()
+        observed_array, expected_array, unobservable_transcripts = \
+            output[((gene_id, bam_fn), 'design_matrices')]
+        op_lock.release()
+        
+        try:
+            mle_estimate = estimate_transcript_frequencies( 
+                observed_array, expected_array, ABS_TOL)
+        except ValueError, inst:
+            error_msg = "Skipping %s: %s" % ( gene_id, inst )
+            if DEBUG: raise
+            input_queue.put(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
+        
+        log_lhd = calc_lhd( mle_estimate, observed_array, expected_array)
+        if VERBOSE: print "FINISHED MLE %s\t%s\t%.2f" % ( 
+            gene_id, bam_fn, log_lhd )
+        
+        op_lock.acquire()
+        output[((gene_id, bam_fn), 'mle')] = mle_estimate
+        op_lock.release()
 
-class WorkQueue():
-    def __init__(self):
-        pass
+        if estimate_confidence_bounds:
+            for i in xrange(expected_array.shape[1]):
+                input_queue.put( ('lb', (gene_id, bam_fn, i)) )
+                input_queue.put( ('ub', (gene_id, bam_fn, i)) )
+        else:
+            input_queue.put(('FINISHED', (gene_id, bam_fn, None)))
+        
+    elif work_type in ('lb', 'ub'):
+        op_lock.acquire()
+        observed_array, expected_array, unobservable_transcripts = \
+            output[((gene_id, bam_fn), 'design_matrices')]
+        mle_estimate = output[((gene_id, bam_fn), 'mle')]
+        op_lock.release()
 
-def gene_is_finished( gene_data, compute_confidence_bounds ):
-    if gene_data['mle'] == None:
-        return False
-    
-    if not compute_confidence_bounds:
-        return True
-    
-    observed_array, expected_array, unobservable_transcripts \
-        = gene_data['design_matrices']
-    
-    n_transcripts = gene_data['design_matrices'][1].shape[1]
-    assert n_transcripts == len( gene_data['gene'].transcripts ) \
-        - len( gene_data['design_matrices'][1] )
-    if n_transcripts != len(gene_data['ubs']):
-        return False
-    if n_transcripts != len(gene_data['lbs']):
-        return False
-    
-    return True
+        bnd_type = 'LOWER' if work_type == 'lb' else 'UPPER'
 
-def write_finished_data_to_disk( output_dict, output_dict_lock, ofps,
+        p_value, bnd = estimate_confidence_bound( 
+            observed_array, expected_array, 
+            trans_index, mle_estimate, bnd_type )
+        if VERBOSE: print "FINISHED %s BOUND %s\t%s\t%i\t%.2e\t%.2e" % ( 
+            bnd_type, gene_id, bam_fn, trans_index, bnd, p_value )
+
+        assert False
+        
+        input_queue.put(('FINISHED', (gene_id, bam_fn, work_type, trans_index)))
+    
+    return
+
+def write_finished_data_to_disk( output_dict, output_dict_lock, 
+                                 finished_genes_queue, ofps,
                                  compute_confidence_bounds=True, 
                                  write_design_matrices=False,
                                  abs_filter_value=0.0,
                                  rel_filter_value=0.0 ):
-    written_design_matrices = set()
     while True:
-        output_dict_lock.acquire()
-        if len( output_dict ) == 0: 
+        try:
+            write_type, key = finished_genes_queue.get(timeout=1.0)
+            if DEBUG_VERBOSE: print "WRITE PROCESS GOT: ", write_type, key
+            if write_type == 'FINISHED':
+                break
+        except Queue.Empty:
+            continue
+        
+        # write out the design matrix
+        if write_type == 'design_matrix':
+            observed, expected, missed = output_dict[(key, 'design_matrices')]
+            ofname = "./%s_%s.mat" % ( key[0], os.path.basename(key[1]) )
+            if DEBUG_VERBOSE: print "Writing mat to '%s'" % ofname
+            savemat( ofname, {'observed': observed, 'expected': expected}, 
+                     oned_as='column' )
+            if DEBUG_VERBOSE: print "Finished writing mat to '%s'" % ofname
+            continue
+        elif write_type == 'gtf':
+            output_dict_lock.acquire()
+            if VERBOSE: print "Finished processing", key
+            
+            gene = output_dict[(key, 'gene')]
+            mles = output_dict[(key, 'mle')]
+            lbs = output_dict[(key, 'lbs')] if compute_confidence_bounds else None
+            ubs = output_dict[(key, 'ubs')] if compute_confidence_bounds else None
+
+            write_gene_to_gtf( ofps[key[1]], gene, mles, 
+                               lbs, ubs, abs_filter_value, rel_filter_value)
+
+            del output_dict[(key, 'gene')]
+            del output_dict[(key, 'mle')]
+            del output_dict[(key, 'design_matrices')]
+            del output_dict[(key, 'lbs')]
+            del output_dict[(key, 'ubs')]
+            
             output_dict_lock.release()
-            return
-        output_dict_lock.release()
         
-        for key in output_dict.keys():
-            # write out the design matrix
-            if write_design_matrices \
-                    and key not in written_design_matrices \
-                    and None != output_dict[key]['design_matrices']:
-                observed, expected, missed = output_dict[key]['design_matrices']
-                ofname = "./%s_%s.mat" % ( key[0], os.path.basename(key[1]) )
-                if DEBUG_VERBOSE: print "Writing mat to '%s'" % ofname
-                savemat( ofname, {'observed': observed, 'expected': expected} )
-                if DEBUG_VERBOSE: print "Finished writing mat to '%s'" % ofname
-                          
-                written_design_matrices.add( key )
-                
-            if gene_is_finished( output_dict[key], compute_confidence_bounds ):
-                output_dict_lock.acquire()
-                assert gene_is_finished( 
-                    output_dict[key], compute_confidence_bounds )
-                if VERBOSE: print "Finished processing", key
-
-                gene = output_dict[key]['gene']
-                mles = output_dict[key]['mle']
-                lbs = output_dict[key]['lbs'] if compute_confidence_bounds else None
-                ubs = output_dict[key]['ubs'] if compute_confidence_bounds else None
-
-                write_gene_to_gtf( ofps[key[1]], gene, mles, 
-                                   lbs, ubs, abs_filter_value, rel_filter_value)
-                
-                del output_dict[key]
-                output_dict_lock.release()
-        
-        time.sleep(2.0)
-    
     return
 
 def parse_arguments():
@@ -951,10 +904,8 @@ def main():
     rel_filter_value = 0
     
     manager = multiprocessing.Manager()
-
-    input_queue_lock = manager.Lock()
-    input_queue = manager.list()
-
+    input_queue = manager.Queue()
+    finished_queue = manager.Queue()
     output_dict_lock = manager.Lock()    
     output_dict = manager.dict()
 
@@ -979,60 +930,86 @@ def main():
     # with first
     for gene in sorted( genes, key=lambda x: len(x.transcripts) ):
         if (gene.strand, gene.chrm) not in cage:
-            print "WARNING: Could not find CAGE signal for strand %s chr %s"% (
-                gene.strand, gene.chrm )
+            if cage != {}:
+                print "WARNING: Could not find CAGE signal for gene %s (strand %s chr %s)"% (
+                    gene.id, gene.strand, gene.chrm )
             gene_cage = None
         else:
             gene_cage = cage[(gene.strand, gene.chrm)][
                 gene.start:gene.stop+1].copy()
         
         for bam_fn in bam_fns:
-            input_queue.append(('design_matrices', (gene.id, bam_fn, None)))
-            gene_data = manager.dict()
-            gene_data[ 'gene' ] = gene
-            gene_data[ 'cage' ] = gene_cage
-            gene_data[ 'fl_dists' ] = fl_dists
-            gene_data[ 'lbs' ] = {}
-            gene_data[ 'ubs' ] = {}
-            gene_data[ 'mle' ] = None
-            gene_data[ 'design_matrices' ] = None
-            output_dict[ (gene.id, bam_fn) ] = gene_data
-
+            input_queue.put(('design_matrices', (gene.id, bam_fn, None)))
+            
+            key = (gene.id, bam_fn)
+            output_dict[ (key, 'gene') ] = gene
+            output_dict[ (key, 'cage') ] = gene_cage
+            output_dict[ (key, 'fl_dists') ] = fl_dists
+            output_dict[ (key, 'lbs') ] = {}
+            output_dict[ (key, 'ubs') ] = {}
+            output_dict[ (key, 'mle') ] = None
+            output_dict[ (key, 'design_matrices') ] = None
+    
     del cage
     
-    if 1 == num_threads:
-        estimate_gene_expression_worker( 
-            input_queue_lock, input_queue, 
-            output_dict_lock, output_dict, 
-            estimate_confidence_bounds,
-            abs_filter_value, rel_filter_value )
-        write_finished_data_to_disk( 
-            output_dict, output_dict_lock, ofps,
-            estimate_confidence_bounds, 
-            write_design_matrices,
-            abs_filter_value, rel_filter_value )
-    else:
-        ps = []
-        for i in xrange( num_threads ):
-            p = Process(target=estimate_gene_expression_worker, 
-                        args=( input_queue_lock, input_queue, 
-                               output_dict_lock, output_dict, 
-                               estimate_confidence_bounds,
-                               abs_filter_value, rel_filter_value ) )
-            p.start()
-            ps.append( p )    
+    write_p = Process(target=write_finished_data_to_disk, args=(
+            output_dict, output_dict_lock, 
+            finished_queue, ofps, 
+            estimate_confidence_bounds, write_design_matrices,
+            abs_filter_value, rel_filter_value)  )
 
-        write_p = Process(target=write_finished_data_to_disk, args=(
-                output_dict, output_dict_lock, ofps,
-                estimate_confidence_bounds, write_design_matrices,
-                abs_filter_value, rel_filter_value)  )
+    write_p.start()    
+    
+    ps = [None]*num_threads
+    while True:
+        # get the data to process
+        try:
+            work_type, key = input_queue.get(timeout=0.1)
+        except Queue.Empty:
+            if all( p == None or not p.is_alive() for p in ps ): 
+                break
+            time.sleep(1.0)
+            continue
         
-        write_p.start()    
-        write_p.join()
+        if work_type == 'ERROR':
+            ( gene_id, bam_fn, trans_index ), msg = key
+            print "ERROR", key[1]
+            continue
+        else:
+            gene_id, bam_fn, trans_index = key
 
-        for p in ps:
-            p.join()
+        if work_type == 'FINISHED':
+            finished_queue.put( ('gtf', (gene_id, bam_fn)) )
+            continue
 
+        if work_type == 'mle':
+            finished_queue.put( ('design_matrix', (gene_id, bam_fn)) )
+
+        # get a process index
+        while True:
+            if all( p != None and p.is_alive() for p in ps ):
+                time.sleep(1.0)
+                continue
+            break
+        
+        proc_i = min( i for i, p in enumerate(ps) 
+                      if p == None or not p.is_alive() )
+        
+        # find a finished process index
+        p = Process(target=estimate_gene_expression_worker, 
+                    args=(work_type, (gene_id, bam_fn, trans_index),
+                          input_queue, 
+                          output_dict_lock, output_dict, 
+                          estimate_confidence_bounds ) )
+        p.start()
+        print "Replacing slot %i, process %s with %i" % ( 
+            proc_i, ps[proc_i], p.pid )
+        if ps[proc_i] != None: ps[proc_i].join()
+        ps[proc_i] = p
+    
+    finished_queue.put( ('FINISHED', None) )
+    write_p.join()
+    
     for ofp in ofps.values():
         ofp.close()
     
