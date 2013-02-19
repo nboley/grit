@@ -2171,7 +2171,7 @@ def main():
     
     #run_all_slide_compares( elements, pserver, base_dir + "stats" )
     
-    #sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
+    sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
     
     pserver.process_queue()                
     return

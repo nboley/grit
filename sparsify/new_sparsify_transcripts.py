@@ -311,6 +311,7 @@ def build_design_matrices( gene, bam_fname, fl_dists, cage_array ):
     expected_rnaseq_array, observed_rnaseq_array, unobservable_rnaseq_trans = \
         build_expected_and_observed_arrays( 
             expected_rnaseq_cnts, observed_rnaseq_cnts, True )
+    del expected_rnaseq_cnts, observed_rnaseq_cnts
 
     if cage_array == None:
         return expected_rnaseq_array, \
@@ -323,6 +324,7 @@ def build_design_matrices( gene, bam_fname, fl_dists, cage_array ):
     expected_prom_array, observed_prom_array, unobservable_prom_trans = \
         build_expected_and_observed_arrays( 
         expected_promoter_cnts, observed_promoter_cnts, False )
+    del expected_promoter_cnts, observed_promoter_cnts
     
     # combine the arrays
     observed_rnaseq_array = numpy.delete( observed_rnaseq_array, 
@@ -341,13 +343,7 @@ def build_design_matrices( gene, bam_fname, fl_dists, cage_array ):
     expected_array = numpy.vstack((expected_prom_array, expected_rnaseq_array))
     unobservable_transcripts \
         = unobservable_rnaseq_trans.union(unobservable_prom_trans)
-
-    if num_threads == 1:
-        fp = open( obj_name, "w" )
-        cPickle.dump( (expected_array,observed_array,unobservable_transcripts),
-                      fp )
-        fp.close()
-
+        
     return expected_array, observed_array, unobservable_transcripts
 
 try:
@@ -696,7 +692,7 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
             if DEBUG: raise
             input_queue_lock.acquire()
             input_queue.append(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
-            input_queue_release.acquire()
+            input_queue_lock.release()
             return
         except MemoryError, inst:
             error_msg =  "%i: Skipping %s: %s" % ( os.getpid(), gene.id, inst )
@@ -710,9 +706,18 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
             gene_id, bam_fn )
 
         op_lock.acquire()
-        output[((gene_id, bam_fn), 'design_matrices')] = \
-            ( observed_array, expected_array, unobservable_transcripts )
-        op_lock.release()
+        try:
+            output[((gene_id, bam_fn), 'design_matrices')] = \
+                ( observed_array, expected_array, unobservable_transcripts )
+        except SystemError, inst:
+            op_lock.release()
+            error_msg =  "SYSTEM ERROR: %i: Skipping %s: %s" % ( os.getpid(), gene.id, inst )
+            input_queue_lock.acquire()
+            input_queue.append(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
+            input_queue_lock.release()
+            return
+        else:
+            op_lock.release()
         
         input_queue_lock.acquire()
         input_queue.append( ('mle', (gene.id, bam_fn, None)) )
@@ -899,6 +904,8 @@ def parse_arguments():
     global num_threads
     num_threads = args.threads
     
+    log_fp = open( args.ofname + ".log", "w" )
+    
     ofps = {}
     for bam_fn in bam_fns:
         ofps[bam_fn] = ThreadSafeFile( args.ofname, "w" )
@@ -908,16 +915,17 @@ def parse_arguments():
     cage_fns = [] if args.cage_fns == None else [ 
         fp.name for fp in args.cage_fns ]    
     
-    return args.gtf, bam_fns, cage_fns, ofps, fl_dists, read_group_mappings, \
+    return args.gtf, bam_fns, cage_fns, ofps, log_fp, \
+        fl_dists, read_group_mappings, \
         args.estimate_confidence_bounds, args.write_design_matrices
     
 def main():
     # Get file objects from command line
-    gtf_fp, bam_fns, cage_fns, ofps, fl_dists, rg_mappings, \
+    gtf_fp, bam_fns, cage_fns, ofps, log_fp, fl_dists, rg_mappings, \
         estimate_confidence_bounds, write_design_matrices = parse_arguments()
     abs_filter_value = 1e-12 + 1e-16
     rel_filter_value = 0
-    
+        
     manager = multiprocessing.Manager()
     input_queue = manager.list()
     input_queue_lock = manager.Lock()
@@ -997,6 +1005,7 @@ def main():
         
         if work_type == 'ERROR':
             ( gene_id, bam_fn, trans_index ), msg = key
+            log_fp.write( key[1] + "\t" + msg + "\n" )
             print "ERROR", key[1]
             continue
         else:
@@ -1008,6 +1017,7 @@ def main():
 
         if work_type == 'mle':
             finished_queue.put( ('design_matrix', (gene_id, bam_fn)) )
+            log_fp.write( key[1] + "\t" + "Finished MLE" + "\n" )
 
         # get a process index
         while True:
@@ -1026,13 +1036,16 @@ def main():
                           output_dict_lock, output_dict, 
                           estimate_confidence_bounds ) )
         p.start()
-        print "Replacing slot %i, process %s with %i" % ( 
-            proc_i, ps[proc_i], p.pid )
+        if DEBUG_VERBOSE: 
+            print "Replacing slot %i, process %s with %i" % ( 
+                proc_i, ps[proc_i], p.pid )
         if ps[proc_i] != None: ps[proc_i].join()
         ps[proc_i] = p
     
     finished_queue.put( ('FINISHED', None) )
     write_p.join()
+    
+    log_fp.close()
     
     for ofp in ofps.values():
         ofp.close()
