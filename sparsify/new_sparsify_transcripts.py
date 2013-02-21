@@ -58,6 +58,7 @@ from frag_len import load_fl_dists, FlDist, build_normal_density
 import cvxopt
 from cvxopt import solvers, matrix, spdiag, log, div, sqrt
 
+MAX_NUM_TRANSCRIPTS = 500
 MIN_TRANSCRIPT_FREQ = 1e-12
 # finite differences step size
 FD_SS = 1e-8
@@ -736,7 +737,7 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
             if DEBUG: raise
             input_queue_lock.acquire()
             input_queue.append(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
-            input_queue_lock.relase()
+            input_queue_lock.release()
             return
         
         log_lhd = calc_lhd( mle_estimate, observed_array, expected_array)
@@ -852,7 +853,7 @@ def parse_arguments():
     parser.add_argument( '--estimate-confidence-bounds', '-c', default=False,
         action="store_true",
         help='Whether or not to calculate confidence bounds ( this is slow )')
-
+    
     parser.add_argument( '--write-design-matrices', default=False,
         action="store_true",
         help='Write the design matrices out to a matlab-style matrix file.')
@@ -861,12 +862,12 @@ def parse_arguments():
                              help='Whether or not to print status information.')
     parser.add_argument( '--debug-verbose', default=False, action='store_true',
                              help='Prints the optimization path updates.')
-
+    
     args = parser.parse_args()
-
+    
     if not args.fl_dists and not args.fl_dist_norm:
         raise ValueError, "Must specific either --fl-dists or --fl-dist-norm."
-
+    
     if args.fl_dist_norm != None:
         try:
             mean, sd = args.fl_dist_norm.split(':')
@@ -890,7 +891,7 @@ def parse_arguments():
     
     global VERBOSE
     VERBOSE = ( args.verbose or DEBUG_VERBOSE )
-
+    
     # we change to the output directory later, and these files need to opened in
     # each sub-process for thread safety, so we get the absokute path while we 
     # can. We allow for multiple bams at this stage, but insist upon one in the
@@ -953,6 +954,10 @@ def main():
     # add the genes in reverse sorted order so that the longer genes are dealt
     # with first
     for gene in sorted( genes, key=lambda x: len(x.transcripts) ):
+        if len(gene.transcripts) > MAX_NUM_TRANSCRIPTS:
+            log_fp.write( "Skipping %s: too many transcripts ( %i )\n" % ( 
+                    gene.id, len(gene.transcripts ) ) )
+        
         if (gene.strand, gene.chrm) not in cage:
             if cage != {}:
                 print "WARNING: Could not find CAGE signal for gene %s (strand %s chr %s)"% (
@@ -1005,8 +1010,8 @@ def main():
         
         if work_type == 'ERROR':
             ( gene_id, bam_fn, trans_index ), msg = key
-            log_fp.write( key[1] + "\t" + msg + "\n" )
-            print "ERROR", key[1]
+            log_fp.write( gene_id + "\t" + msg + "\n" )
+            print "ERROR", gene_id, key[1]
             continue
         else:
             gene_id, bam_fn, trans_index = key
@@ -1017,7 +1022,7 @@ def main():
 
         if work_type == 'mle':
             finished_queue.put( ('design_matrix', (gene_id, bam_fn)) )
-            log_fp.write( key[1] + "\t" + "Finished MLE" + "\n" )
+            log_fp.write( "\t".join(key[0]) + "\t" + "Finished MLE" + "\n" )
 
         # get a process index
         while True:
