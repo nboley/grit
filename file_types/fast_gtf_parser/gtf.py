@@ -97,6 +97,8 @@ def partition_coding_and_utr_segments( exons, cds_start, cds_stop ):
     
     def mod_external_bndrys( exons, lower_bnd, upper_bnd ):
         """If necessary, shrink the external boundaries"""
+        # if it's an empty set, there is nothing to be done
+        if len( exons ) == 0: return exons
         exons[0] = ( max(exons[0][0], lower_bnd), exons[0][1] )
         exons[-1] = ( exons[-1][0], min(upper_bnd, exons[-1][1] ) )
         return exons
