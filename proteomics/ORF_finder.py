@@ -117,7 +117,6 @@ def get_trans_seq( gene, gene_seq, trans ):
         # convert the coords from genomic to gene-relative
         relative_start = start - gene.start
         relative_stop = stop - gene.start
-        
         if gene.strand == '+':
             # get the portion of the gene sequence for the current exon
             # add 1 to stop since string slice is closed-open
@@ -126,7 +125,7 @@ def get_trans_seq( gene, gene_seq, trans ):
             # if the gene is neg strand reverse coords as gene_seq is rev_comp
             tmp_start = relative_start
             relative_start = len(gene_seq) - relative_stop - 1
-            relative_stop = len(gene_seq) - _start - 1
+            relative_stop = len(gene_seq) - tmp_start - 1
             # add the new sequence at the beginning since seq is rev_comp
             trans_seq.append( gene_seq[ relative_start:relative_stop+1 ] )
     
@@ -229,29 +228,18 @@ def find_cds_for_gene( gene, fasta ):
         
         for orf_id, (start, stop) in enumerate( filtered_orfs ):
             if gene.strand == '-':
-                start = len( trans_seq ) - start
-                stop = len( trans_seq ) - stop
+                start = len( trans_seq ) - start - 1
+                stop = len( trans_seq ) - stop - 1
             
             # find the coding region boundaries in genomic coordinates
             start = convert_to_genomic( start, trans.exons )
             stop = convert_to_genomic( stop, trans.exons )
             start, stop = sorted((start, stop))
             
-            # update the exon bounds to include the cds boundaries
-            exon_bnds = list( trans.exon_bnds )
-            if start not in exon_bnds:
-                exon_bnds.extend( (start-1, start ) )
-            if stop not in exon_bnds:
-                exon_bnds.extend( (stop, stop+1 ) )
-            
-            exon_bnds = sorted( exon_bnds )
-            exons = tuple(zip(exon_bnds[:-1:2], exon_bnds[1::2]))
             trans_id = trans.id + "_CDS%i" % (orf_id+1) \
-                if len( orfs ) > 1 else trans.id
-            
+                if len( filtered_orfs ) > 1 else trans.id            
             new_trans = Transcript( 
-                trans_id, trans.chrm, trans.strand, exons, (start, stop) )
-            
+                trans_id, trans.chrm, trans.strand, trans.exons, (start, stop) )
             annotated_transcripts.append( new_trans )
     
     return annotated_transcripts
