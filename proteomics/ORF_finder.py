@@ -41,11 +41,8 @@ GENCODE = {
 COMP_BASES = { 'A':'T', 'T':'A', 'C':'G', 'G':'C' }
 
 # Variables effecting .annotation.gtf output
-PRINT_NON_ORF_TRANS = True
-PRINT_ORF_EXONS = False
-PRINT_CODONS = False
-PRINT_UTRS = True
 ONLY_USE_LONGEST_ORF = False
+INCLUDE_STOP_CODON = False
 
 VERBOSE = False
 MIN_VERBOSE = False
@@ -184,6 +181,7 @@ def find_orfs( sequence ):
 
     # find all start and stop codon positions along sequence
     starts = find_all( sequence, 'ATG' )
+
     stop_amber = find_all( sequence, 'TAG' )
     stop_ochre = find_all( sequence, 'TAA' )
     stop_umber = find_all( sequence, 'TGA' )
@@ -191,8 +189,6 @@ def find_orfs( sequence ):
     stops.sort()
     
     orfs = []    
-    # group the starts and stops by their frame
-    
     starts_by_frame = grp_by_frame( starts )
     stops_by_frame = grp_by_frame( stops )
     
@@ -227,6 +223,8 @@ def find_cds_for_gene( gene, fasta ):
             filtered_orfs = orfs
         
         for orf_id, (start, stop) in enumerate( filtered_orfs ):
+            if INCLUDE_STOP_CODON:
+                stop += 3
             if gene.strand == '-':
                 start = len( trans_seq ) - start - 1
                 stop = len( trans_seq ) - stop - 1
@@ -298,6 +296,7 @@ def parse_arguments():
     global OUTPUT_PROTEINS
     global VERBOSE
     global ONLY_USE_LONGEST_ORF
+    global INCLUDE_STOP_CODON
     import argparse
     
     parser = argparse.ArgumentParser(
@@ -317,6 +316,9 @@ def parse_arguments():
     parser.add_argument(
         '--only-longest-orf', default=False, action='store_true',
         help='If this is set, only report the longest ORF per transcript. ' )
+    parser.add_argument(
+        '--include-stop-codon', default=False, action='store_true',
+        help='If this is set, include the stop codon in the CDS region. ' )
     
     parser.add_argument(
         '--threads', '-t', type=int, default=1,
@@ -342,6 +344,7 @@ def parse_arguments():
     # set flag args
     VERBOSE = args.verbose
     ONLY_USE_LONGEST_ORF = args.only_longest_orf
+    INCLUDE_STOP_CODON = args.include_stop_codon
     
     return args.gtf, args.fasta, args.threads, ofp
 
