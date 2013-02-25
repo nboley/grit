@@ -20,11 +20,11 @@ def parse_gff_line( line, fix_chrm=True ):
         data[0] = data[0][3:]
     
     # the source is required and always the 2nd entry
-    # source = data[1]
+    source = data[1]
     
     # the type of element - ie exon, transcript, etc.
     # its required
-    # feature_type = data[2]
+    feature_type = data[2]
     
     # check that this is a valid gff/gtf line else return None
     # check that start and stop are valid integers, and convert
@@ -37,7 +37,7 @@ def parse_gff_line( line, fix_chrm=True ):
     
     # check the score
     if data[5] == '.':
-        data[5] = 0
+        data[5] = -1
     else:
         try:
             data[5] = float(data[5])

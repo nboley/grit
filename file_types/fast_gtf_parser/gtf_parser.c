@@ -20,6 +20,11 @@ enum ELEMENT_TYPE {
     STOP_CODON
 };
 
+struct exon_t {
+    int start;
+    int stop;
+};
+
 struct gtf_line {
     char* chrm;
     int start;
@@ -277,8 +282,8 @@ struct transcript {
     char* trans_id;
     int cds_start;
     int cds_stop;
-    int num_exon_bnds;
-    int* exon_bnds;
+    int num_exons;
+    struct exon_t* exons;
     int score;
     double rpkm;
     double rpk;
@@ -300,7 +305,7 @@ void
 add_transcript( struct transcript*** transcripts, 
                 int* num_transcripts, int* num_allcd_trans,
                 char* trans_id, 
-                int num_exons, int* exon_bnds,
+                int num_exons, struct exon_t* exons,
                 int cds_start, int cds_stop,
                 int score, double rpkm, double rpk )
 {
@@ -316,13 +321,13 @@ add_transcript( struct transcript*** transcripts,
         = calloc(strlen(trans_id)+1, 1);
     strcpy( (*transcripts)[ *num_transcripts ]->trans_id, trans_id );
     
-    (*transcripts)[ *num_transcripts ]->num_exon_bnds = num_exons;
+    (*transcripts)[ *num_transcripts ]->num_exons = num_exons;
     /* init memory for, and copy over the exon bounds */
-    (*transcripts)[ *num_transcripts ]->exon_bnds
-        = calloc( sizeof( int ), num_exons );
+    (*transcripts)[ *num_transcripts ]->exons
+        = calloc( sizeof( struct exon_t ), num_exons );
     
-    memcpy( (*transcripts)[ *num_transcripts ]->exon_bnds, 
-            exon_bnds, sizeof(int)*num_exons );
+    memcpy( (*transcripts)[ *num_transcripts ]->exons, 
+            exons, sizeof(struct exon_t)*num_exons );
     
     (*transcripts)[ *num_transcripts ]->cds_start = cds_start;
     (*transcripts)[ *num_transcripts ]->cds_stop = cds_stop;
@@ -382,11 +387,11 @@ parse_gtf_data( struct gtf_line** gtf_lines, int num_lines,
     char* prev_trans_id = gtf_lines[ 0 ]->trans_id;
     char* prev_chrm = gtf_lines[ 0 ]->chrm;
     char prev_strand = gtf_lines[ 0 ]->strand;
-    int curr_trans_exons[ 10000 ];
-    memset( curr_trans_exons, 0, sizeof(int)*10000 );
-    curr_trans_exons[0] = gtf_lines[ 0 ]->start;
-    curr_trans_exons[1] = gtf_lines[ 0 ]->stop;
-    int curr_trans_num_exons = 2;
+    struct exon_t curr_trans_exons[ 10000 ];
+    memset( curr_trans_exons, 0, sizeof(struct exon_t)*10000 );
+    curr_trans_exons[0].start = gtf_lines[ 0 ]->start;
+    curr_trans_exons[0].stop = gtf_lines[ 0 ]->stop;
+    int curr_trans_num_exons = 1;
     int curr_trans_CDS_start = -1;
     int curr_trans_CDS_stop = -1;
     if( gtf_lines[0]->element_type == CDS ) {
@@ -469,7 +474,8 @@ parse_gtf_data( struct gtf_line** gtf_lines, int num_lines,
             }
             // otherwise, just update the stop
             else {
-                curr_trans_CDS_stop = line->stop;
+                curr_trans_CDS_start = MIN( curr_trans_CDS_start, line->start );
+                curr_trans_CDS_stop = MAX( curr_trans_CDS_stop, line->stop );
             }
         }
 
@@ -479,10 +485,9 @@ parse_gtf_data( struct gtf_line** gtf_lines, int num_lines,
         curr_rpk = line->rpk;
         curr_min_loc = MIN( curr_min_loc, line->start );
         curr_max_loc = MAX( curr_max_loc, line->stop );
-        curr_trans_exons[ curr_trans_num_exons ] = line->start;
-        curr_trans_exons[ curr_trans_num_exons+1 ] = line->stop;
-        
-        curr_trans_num_exons += 2;
+        curr_trans_exons[ curr_trans_num_exons ].start = line->start;
+        curr_trans_exons[ curr_trans_num_exons ].stop = line->stop;        
+        curr_trans_num_exons += 1;
 
     }
 
@@ -559,7 +564,7 @@ free_gtf_data( struct gene** genes, int num_genes )
         for( j = 0; j < genes[i]->num_transcripts; j++ )
         {
             free( genes[i]->transcripts[j]->trans_id );
-            free( genes[i]->transcripts[j]->exon_bnds );
+            free( genes[i]->transcripts[j]->exons );
             free( genes[i]->transcripts[j] );
         }
         
@@ -592,9 +597,15 @@ int main( int argc, char** argv )
         int j;
         for( j = 0; j < genes[ i ]->num_transcripts; j++ )
         {
-            printf( "\t%s %i %i", genes[ i ]->transcripts[j]->trans_id, 
+            printf( "\t%s %i %i\n", genes[ i ]->transcripts[j]->trans_id, 
                     genes[ i ]->transcripts[j]->cds_start, 
-                    genes[ i ]->transcripts[j]->cds_stop );                
+                    genes[ i ]->transcripts[j]->cds_stop );
+            int k;
+            for( k = 0; k < genes[i]->transcripts[j]->num_exons; k++ )
+            {
+                printf( "\t\t%i %i\n", genes[i]->transcripts[j]->exons[k].start,
+                        genes[i]->transcripts[j]->exons[k].stop);
+            }
         }
         printf( "\n" );
     }

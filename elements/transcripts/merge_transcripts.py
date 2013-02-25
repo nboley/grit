@@ -162,11 +162,11 @@ def reduce_internal_clustered_transcripts( internal_grpd_transcripts ):
         bt = clustered_transcripts[0]
         assert all( t.IB_key() == bt.IB_key() for t in clustered_transcripts )
         new_trans_id = "_".join( t.id for t in clustered_transcripts )
-        new_exon_bnds = bt.exon_bnds
-        new_exon_bnds[0] = start
-        new_exon_bnds[-1] = stop
+        new_exons = list(bt.exons)
+        new_exons[0] = ( start, new_exons[0][1] )
+        new_exons[-1] = ( new_exons[-1][0], stop )
         yield ( Transcript( new_trans_id, bt.chrm, bt.strand, 
-                            new_exon_bnds, bt.cds_region ), 
+                            new_exons, bt.cds_region ), 
                 clustered_transcript_grp_sources[cluster_index] )
     
     return

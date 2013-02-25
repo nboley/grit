@@ -16,14 +16,26 @@ VERBOSE = False
 gtf_o = cdll.LoadLibrary( os.path.join( ".", \
         os.path.dirname( __file__), "libgtf.so" ) )
 
+class c_exon_t(Structure):
+    """
+struct exon {
+    int start;
+    int stop;
+};
+"""
+    _fields_ = [
+                ("start", c_int),
+                ("stop", c_int),
+               ]
+
 class c_transcript_t(Structure):
     """
 struct transcript {
     char* trans_id;
     int cds_start;
     int cds_stop;
-    int num_exon_bnds;
-    int* exon_bnds;
+    int num_exons;
+    struct* exons;
     int score;
     int rpkm;
     int rpk;
@@ -34,8 +46,8 @@ struct transcript {
                 ("cds_start", c_int),
                 ("cds_stop", c_int),
                 
-                ("num_exon_bnds", c_int),
-                ("exon_bnds", POINTER(c_int)),
+                ("num_exons", c_int),
+                ("exons", POINTER(c_exon_t)),
 
                 ("score", c_int),
                 ("rpkm", c_double),
@@ -66,6 +78,44 @@ struct gene {
                 ("transcripts", POINTER(POINTER(c_transcript_t)))
                ]
 
+def partition_coding_and_utr_segments( exons, cds_start, cds_stop ):
+    """Split the exons into UTR and CDS exons.
+
+    """
+    # find the exon index the the start codon intersects
+    cds_start_i = [ i for i, (start, stop) in enumerate(exons) 
+                    if cds_start >= start and cds_start <= stop ]
+    assert len( cds_start_i ) == 1
+    cds_start_i = cds_start_i[0]
+    
+    # we start at the cds_start exon because we know this index must be >= 
+    assert cds_stop >= cds_start
+    cds_stop_i = [ i for i, (start, stop) in enumerate(exons[cds_start_i:]) 
+                   if cds_stop >= start and cds_stop <= stop ]
+    assert len( cds_stop_i ) == 1
+    cds_stop_i = cds_stop_i[0] + cds_start_i
+    
+    def mod_external_bndrys( exons, lower_bnd, upper_bnd ):
+        """If necessary, shrink the external boundaries"""
+        exons[0] = ( max(exons[0][0], lower_bnd), exons[0][1] )
+        exons[-1] = ( exons[-1][0], min(upper_bnd, exons[-1][1] ) )
+        return exons
+    
+    cds_exons = mod_external_bndrys( 
+        list(exons[cds_start_i:cds_stop_i+1]), cds_start, cds_stop )
+    
+    us_utr_stop_i = cds_start_i if exons[cds_start_i][0] < cds_start \
+        else cds_start_i - 1
+    us_utr_exons = mod_external_bndrys(
+        list(exons[:us_utr_stop_i+1]), 1, cds_start-1)
+    
+    ds_utr_stop_i = cds_stop_i if exons[cds_stop_i][1] > cds_stop \
+        else cds_stop_i + 1
+    ds_utr_exons = mod_external_bndrys(
+        list(exons[ds_utr_stop_i:]), cds_stop+1, 1e100)
+    
+    return us_utr_exons, cds_exons, ds_utr_exons
+
 class Transcript( list ):
     def __init__(self, trans_id, chrm, strand, exons, cds_region,
                  gene_id=None, score=None, rpkm=None, rpk=None ):
@@ -77,11 +127,10 @@ class Transcript( list ):
         self.score = score
         self.rpkm = rpkm
         self.rpk = rpk
-        
+
         exon_bnds = list( chain( *exons ) )
         self.exon_bnds = exon_bnds
         self.exons = tuple(zip(exon_bnds[:-1:2], exon_bnds[1::2]))
-        assert list(self.exons) == list(exons)
         self.introns = tuple([ (x+1, y-1) for x, y in 
                                izip(exon_bnds[1:-2:2], exon_bnds[2:-1:2]) ])
         
@@ -92,18 +141,10 @@ class Transcript( list ):
         self.tp_utr_exons = None
 
         if cds_region != None:
-            # find the start index of the coding sequence
-            cds_start_bndry_index = exon_bnds.index( cds_region[0] )
-            cds_stop_bndry_index = exon_bnds.index( cds_region[1] )
+            self.us_exons, self.cds_exons, self.ds_exons = \
+                partition_coding_and_utr_segments( 
+                self.exons, self.cds_region[0], self.cds_region[1] )
             
-            cds_exon_bnds = exon_bnds[cds_start_bndry_index:cds_stop_bndry_index+1]
-            fp_bnds = exon_bnds[:cds_start_bndry_index]
-            tp_bnds = exon_bnds[cds_stop_bndry_index+1:]
-
-            self.cds_exons = tuple(zip(cds_exon_bnds[:-1:2], cds_exon_bnds[1::2]))
-            self.us_exons = tuple(zip(fp_bnds[:-1:2], fp_bnds[1::2]))
-            self.ds_exons = tuple(zip(tp_bnds[:-1:2], tp_bnds[1::2]))
-
             # if this is a reverse strand transcript, rev 5' and 3' ends
             if self.strand == '+':
                 self.fp_utr_exons, self.tp_utr_exons \
@@ -111,19 +152,7 @@ class Transcript( list ):
             else:
                 self.fp_utr_exons, self.tp_utr_exons \
                     = self.ds_exons, self.us_exons
-            
-            # now, remove CDS boundaries if they aren't real ( ie, if they just
-            # differentiate between coding and non coding sequence )
-            
-            # start with the stop so we don't have to re-search for the index
-            if cds_stop_bndry_index+1 < len(exon_bnds) \
-                    and exon_bnds[ cds_stop_bndry_index+1 ] == cds_region[1]+1:
-                del exon_bnds[ cds_stop_bndry_index:cds_stop_bndry_index+2 ]
-            
-            if cds_start_bndry_index > 0 \
-                    and exon_bnds[ cds_start_bndry_index-1]+1 == cds_region[0]:
-                del exon_bnds[ cds_start_bndry_index-1:cds_start_bndry_index+1 ]
-                
+                        
         # add these for compatability
         self.append( trans_id )
         self.append( exon_bnds )        
@@ -192,6 +221,33 @@ class Gene( list ):
         list.extend( self, ( id, chrm, strand, start, stop, transcripts ) )
         return    
 
+def flatten( regions ):
+    new_regions = []
+    curr_start = regions[0][0]
+    curr_end = regions[0][1]
+    for i,(start,end) in enumerate(regions):
+        if curr_end > end:
+            end = curr_end
+        if i+1 == len( regions ): 
+            if len(new_regions) == 0:
+                new_regions = [curr_start, curr_end]
+                break
+            if new_regions[-1][1] == end:
+                break
+            else:
+                new_regions.append( [ curr_start, curr_end] )
+                break
+        if regions[i+1][0]-end <= 1:
+            curr_end = max( regions[i+1][1], end ) 
+        else:
+            new_regions.append( [curr_start, curr_end] )
+            curr_start = regions[i+1][0]
+            curr_end = regions[i+1][1]
+    if type(new_regions[0]) == int:
+        return [new_regions]
+    else:
+        return new_regions
+
 def load_gtf( fname ):
     c_genes_p = c_void_p()   
     num_genes = c_int()
@@ -222,14 +278,17 @@ def load_gtf( fname ):
             rpk = None if g.transcripts[j].contents.rpk < -1e-10 \
                 else float(g.transcripts[j].contents.rpk)
             
-            num_exon_bnds = g.transcripts[j].contents.num_exon_bnds
-            exon_bnds = g.transcripts[j].contents.exon_bnds[:num_exon_bnds]
+            num_exons = g.transcripts[j].contents.num_exons
+            exons = g.transcripts[j].contents.exons[:num_exons]
             if cds_start == -1 or cds_stop == -1:
                 assert cds_start == -1 and cds_stop == -1
                 cds_region = None
             else:
                 cds_region = ( cds_start, cds_stop )
-            exons = tuple(zip(exon_bnds[:-1:2], exon_bnds[1::2]))
+            
+            exons = [(x.start, x.stop) for x in exons]
+            exons = flatten( exons )
+            
             transcripts.append( 
                 Transcript(trans_id, chrm, g.strand, 
                            exons, cds_region, g.gene_id, 
