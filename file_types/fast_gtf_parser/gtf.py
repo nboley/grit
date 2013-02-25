@@ -118,18 +118,18 @@ def partition_coding_and_utr_segments( exons, cds_start, cds_stop ):
     
     return us_utr_exons, cds_exons, ds_utr_exons
 
-class Transcript( list ):
+class Transcript( object ):
     def __init__(self, trans_id, chrm, strand, exons, cds_region,
-                 gene_id=None, score=None, rpkm=None, rpk=None ):
+                 gene_id=None, score=None, rpkm=None, rpk=None, promoter=None ):
         self.gene_id = gene_id
         self.id = trans_id
         self.chrm = chrm
         self.strand = strand
-
+        
         self.score = score
         self.rpkm = rpkm
         self.rpk = rpk
-
+        
         exon_bnds = list( chain( *exons ) )
         self.exon_bnds = exon_bnds
         self.exons = tuple(zip(exon_bnds[:-1:2], exon_bnds[1::2]))
@@ -137,27 +137,36 @@ class Transcript( list ):
                                izip(exon_bnds[1:-2:2], exon_bnds[2:-1:2]) ])
         
         self.is_protein_coding = ( cds_region != None )
+        
         self.cds_region = cds_region
+        self.start_codon = None
+        self.stop_codon = None
+        
         self.cds_exons = None
         self.fp_utr_exons = None
         self.tp_utr_exons = None
-
+        
+        self.promoter = promoter
+        
         if cds_region != None:
             self.us_exons, self.cds_exons, self.ds_exons = \
                 partition_coding_and_utr_segments( 
                 self.exons, self.cds_region[0], self.cds_region[1] )
-            
+        
+            us_codon, ds_codon = self.cds_region[0], self.cds_region[1]
             # if this is a reverse strand transcript, rev 5' and 3' ends
             if self.strand == '+':
                 self.fp_utr_exons, self.tp_utr_exons \
                     = self.us_exons, self.ds_exons
+                self.start_codon, self.stop_codon = us_codon, ds_codon
             else:
                 self.fp_utr_exons, self.tp_utr_exons \
                     = self.ds_exons, self.us_exons
-                        
+                self.stop_codon, self.start_codon = us_codon, ds_codon
+        
         # add these for compatability
-        self.append( trans_id )
-        self.append( exon_bnds )        
+        #self.append( trans_id )
+        #self.append( exon_bnds )        
     
     def __hash__( self ):
         if self.cds_region != None:
@@ -196,7 +205,6 @@ class Transcript( list ):
         else:
             us_exons, ds_exons = self.fp_utr_exons, self.tp_utr_exons
             us_label, ds_label = 'five_prime_UTR', 'three_prime_UTR'
-            us_label, ds_label = 'exon', 'exon'
             if self.strand == '-': 
                 us_exons, ds_exons = ds_exons, us_exons
                 us_label, ds_label = ds_label, us_label
