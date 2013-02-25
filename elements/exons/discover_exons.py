@@ -841,20 +841,6 @@ def filter_exon_bndrys( exon_bndrys, jn_bndrys ):
     
     return verified_bndrys
 
-def create_exon_gff_line( chrm, strand, start, stop, exon_id ):
-    gff_line = ["chr" + chrm, 'exon_finder', 'exon', str(start), \
-                    str(stop), '.', strand, '.', str(exon_id) ]
-    return '\t'.join( gff_line )
-
-def write_gff_lines( bndrys, chrm, strand, out_fp ):
-    for exon_id, (start, stop) in enumerate(bndrys):
-        strand_str = 'plus' if strand == '+' else 'minus'
-        exon_id_str = "exon_%s_%s_%i" % ( strand_str, chrm, exon_id )
-        out_fp.write(  create_exon_gff_line( \
-                chrm, strand, start, stop, exon_id_str ) + "\n" )
-    
-    return
-
 def find_bndry_indices( bndries, exon ):
     start_index = bndries.searchsorted( exon[0] )
     index = start_index
@@ -1361,7 +1347,7 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts,
                          cage_cov, polya_sites ):
                          
     jns_wo_cnts = [ jn for jn, score in jns_w_cnts ]
-
+    
     if VERBOSE: print >> sys.stderr,  'Finding initial boundaries and labels'
     labels, bndrys = find_initial_boundaries_and_labels( \
         read_cov_obj, jns_wo_cnts )

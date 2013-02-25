@@ -103,10 +103,10 @@ def cluster_overlapping_genes( genes_groups ):
                 [ [] for i in xrange(len(genes_groups)) ] )
             
             for source_id, gene_id in cluster:
-                for transcript_id, transcript in \
+                for transcript in \
                         genes_mapping[ (source_id, gene_id) ]:
                     clustered_transcripts[-1][source_id].append(
-                        ( gene_id, transcript_id, transcript ) )
+                        ( gene_id, transcript.id, transcript ) )
         all_clustered_transcripts[ (chrm, strand) ] = clustered_transcripts
     
     return all_clustered_transcripts
@@ -119,29 +119,24 @@ def build_element_stats( ref_genes, t_genes, output_stats ):
         all_introns = set()
         single_exon_genes = set()
         for gene_id, chrm, strand,  min_loc, max_loc, transcripts in genes:
-            for tr_id, bndries in transcripts:
+            for trans in transcripts:
                 # skip single exon genes
-                if len( bndries ) <= 2: 
-                    assert len( bndries ) == 2
-                    single_exon_genes.add( ( bndries[0], bndries[1] ) )
+                if len( trans.exons ) == 1: 
+                    single_exon_genes.add( trans.exons[0] )
                     continue
                 
-                exons = zip( bndries[::2], bndries[1::2] )
-                for exon in exons[1:-1]:
-                    assert len( exon ) == 2
+                for exon in trans.exons:
                     internal_exons.add( ( chrm, strand, exon ) )
                 
                 # add the boundary exons
                 if strand == '+':
-                    tss_exons.add( ( chrm, strand, exons[0][1] ) )
-                    tes_exons.add( ( chrm, strand, exons[-1][0] ) )
+                    tss_exons.add( ( chrm, strand, trans.exons[0][1] ) )
+                    tes_exons.add( ( chrm, strand, trans.exons[-1][0] ) )
                 else:
-                    tss_exons.add( ( chrm, strand, exons[-1][0] ) )
-                    tes_exons.add( ( chrm, strand, exons[0][1] ) )
+                    tss_exons.add( ( chrm, strand, trans.exons[-1][0] ) )
+                    tes_exons.add( ( chrm, strand, trans.exons[0][1] ) )
                 
-                introns = izip( bndries[1::2], bndries[2::2] )
-                for intron in introns:
-                    assert len( intron ) == 2
+                for intron in trans.introns:
                     all_introns.add( ( chrm, strand, intron ) )
         
         return internal_exons, tss_exons, tes_exons, all_introns, single_exon_genes
@@ -199,14 +194,14 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
         full_transcripts = defaultdict( list )
         contains_map = defaultdict( list )
         introns_map = defaultdict( list )
-        for g_name, t_name, exons in grp:
+        for g_name, t_name, trans in grp:
             # store single exon genes seperately. For now, se_trans are included
             # in the numbers. May want to process further in the future
-            if len( exons ) > 2:
-                full_transcripts[ tuple( exons[1:-1] ) ].append( \
+            if len( trans.exons ) > 2:
+                full_transcripts[ tuple( trans.exons[1:-1] ) ].append( \
                     ( g_name, t_name ) )
             else:
-                bndries_tup = tuple(exons)
+                bndries_tup = tuple(trans.exons)
                 if bndries_tup in se_transcripts:
                     if VERBOSE:
                         print >> sys.stderr, "WARNING: found a single exon " \
@@ -225,11 +220,11 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
             # check the rest matches to verify that its a 'contains' match
             if build_maps or build_maps_stats:
                 for i_index, intron in \
-                        enumerate( izip( exons[1::2], exons[2::2] )):
+                        enumerate( izip( trans.exons[1::2], trans.exons[2::2] )):
                     n_skipped_introns = i_index
                     contains_map[ intron ].append(
                         ( g_name, t_name, n_skipped_introns,
-                          exons[ i_index*2+1: ] ) )
+                          trans.exons[ i_index*2+1: ] ) )
                     introns_map[ intron ].append( ( g_name, t_name ) )
         
         return ( full_transcripts, se_transcripts,
