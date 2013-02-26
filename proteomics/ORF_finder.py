@@ -42,7 +42,7 @@ COMP_BASES = { 'A':'T', 'T':'A', 'C':'G', 'G':'C' }
 
 # Variables effecting .annotation.gtf output
 ONLY_USE_LONGEST_ORF = False
-INCLUDE_STOP_CODON = False
+INCLUDE_STOP_CODON = True
 
 VERBOSE = False
 MIN_VERBOSE = False
@@ -317,8 +317,8 @@ def parse_arguments():
         '--only-longest-orf', default=False, action='store_true',
         help='If this is set, only report the longest ORF per transcript. ' )
     parser.add_argument(
-        '--include-stop-codon', default=False, action='store_true',
-        help='If this is set, include the stop codon in the CDS region. ' )
+        '--dont-include-stop-codon', default=False, action='store_true',
+        help='If this is set, don\'include the stop codon in the CDS region. ' )
     
     parser.add_argument(
         '--threads', '-t', type=int, default=1,
@@ -344,7 +344,7 @@ def parse_arguments():
     # set flag args
     VERBOSE = args.verbose
     ONLY_USE_LONGEST_ORF = args.only_longest_orf
-    INCLUDE_STOP_CODON = args.include_stop_codon
+    INCLUDE_STOP_CODON = not args.dont_include_stop_codon
     
     return args.gtf, args.fasta, args.threads, ofp
 
