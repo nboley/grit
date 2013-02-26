@@ -1042,7 +1042,7 @@ def find_distal_exons_from_signal( ( region_cov, region_start, region_stop ),
               find_peaks(region_cov, window_len, min_score, max_score_frac)]
     
     if len( peaks ) == 0:
-        return []
+        return [], []
 
     
     MERGE_DIST = max( 3, window_len/2 )
@@ -1117,7 +1117,7 @@ def find_distal_exons_from_signal( ( region_cov, region_start, region_stop ),
                 #print "(%i-%i) %i %i" % ( bs[i], stop, bndry, bndry_i )
                 if ls[i-1] == 'L': break
     
-    return distal_exons
+    return peaks, distal_exons
 
 def find_distal_exons_without_signal( 
         find_upstream_exons, intron_starts, intron_stops, bs, ls, 
@@ -1194,7 +1194,7 @@ def find_distal_exons( region_start, region_stop,
         print >> sys.stderr, ls
         print >> sys.stderr, bs
         assert False
-        return []
+        return [], []
     
     # if we have signal data
     if cov != None and cov.max() > 0:
@@ -1203,23 +1203,23 @@ def find_distal_exons( region_start, region_stop,
             raise NotImplemented, "Not implemented ( although easy to fix ) "
             region_cov = region_cov/(rnaseq_cov+10)
         
-        distal_exons = find_distal_exons_from_signal( 
+        peaks, distal_exons = find_distal_exons_from_signal( 
             ( cov, region_start, region_stop ), 
             find_upstream_exons, intron_starts, intron_stops,
             bs, ls, min_score, window_len, max_score_frac )
         
         if len( distal_exons ) > 0: 
-            return distal_exons
+            return peaks, distal_exons
         
     # if we don't have signal data
     if require_signal:
-        return []
+        return [], []
     
     distal_exons = find_distal_exons_without_signal( 
         find_upstream_exons, intron_starts, intron_stops, bs, ls, 
         ( rnaseq_cov, region_start ) )
-        
-    return distal_exons
+    
+    return [], distal_exons
 
 def filter_exons_by_polya_signal(strand, region_stop, exon_bndrys, polya_sites):
     filtered_tes_exons = set()
@@ -1251,6 +1251,7 @@ def find_exons_in_cluster(op_queue, ls, bs,
                           region_start, region_stop,
                           read_cov, cage_cov, polya_sites,
                           intron_starts, intron_stops ):
+    all_cage_peaks = []
     all_exons = []
     all_seg_exons = []
     all_tss_exons = []
@@ -1273,7 +1274,7 @@ def find_exons_in_cluster(op_queue, ls, bs,
         return 
     
     # find cage peaks
-    tss_exons = find_distal_exons_from_signal( 
+    cage_peaks, tss_exons = find_distal_exons_from_signal( 
         ( cage_cov, region_start, region_stop ), 
         (strand=='+'),  
         intron_starts, intron_stops, 
@@ -1302,14 +1303,16 @@ def find_exons_in_cluster(op_queue, ls, bs,
     if len( tes_exons ) == 0:
         # print >> sys.stderr, "WARNING: cant find any tes exons."
         return
-        
+
+    all_cage_peaks.extend( cage_peaks )
     all_tss_exons.extend( tss_exons )
     all_internal_exons.extend( internal_exons )
     all_tes_exons.extend( tes_exons )
     all_exons.extend( exon_bndrys )
     
-    return ( all_exons, all_seg_exons, \
-                 all_tss_exons, all_internal_exons, all_tes_exons )
+    return ( all_exons, all_seg_exons, 
+             all_tss_exons, all_internal_exons, all_tes_exons,
+             all_cage_peaks)
 
 def find_exons_in_cluster_worker( read_cov_obj, cage_cov, polya_sites, 
                                   intron_starts, intron_stops,
@@ -1364,6 +1367,7 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts,
     all_tss_exons = []
     all_internal_exons = []
     all_tes_exons = []
+    all_cage_peaks = []
     
     def empty_output_queue():
         while True:
@@ -1377,6 +1381,7 @@ def find_exons_in_contig(strand, read_cov_obj, jns_w_cnts,
             all_tss_exons.extend( rv[2] )
             all_internal_exons.extend( rv[3] )
             all_tes_exons.extend( rv[4] )
+            all_cage_peaks.extend( rv[5] )
         
         return
 
@@ -1458,7 +1463,7 @@ def parse_arguments():
 
     ofps_prefixes = [ "single_exon_genes", 
                       "tss_exons", "internal_exons", "tes_exons", 
-                      "all_exons"]
+                      "elements"]
     
     fps = []
     for field_name in ofps_prefixes:
@@ -1508,10 +1513,11 @@ def find_exons_in_contig_worker(
             'Building output (%s,%s)' % ( chrm, strand )
     
     for ofp, exons, grp_id_start in zip(
-            out_fps.values(), disc_grpd_exons, grp_id_starts ):
-        regions_iter = ( GenomicInterval( chrm, strand, start, stop) \
-                             for start, stop in exons                \
-                             if stop - start < MAX_EXON_SIZE )
+            out_fps.values()[:-1], disc_grpd_exons[:-1], grp_id_starts[:-1] ):
+        print >> sys.stderr, ofp, grp_id_start
+        regions_iter = ( GenomicInterval( chrm, strand, start, stop) 
+                         for start, stop in exons                
+                         if stop - start < MAX_EXON_SIZE )
         
         grp_id_start.lock()
         grp_id_iter = ( str(i) for i in count(int(str(grp_id_start))) )

@@ -199,10 +199,10 @@ class Transcript( object ):
                 current_frame = ( current_frame + stop - start + 1 )%3
             return
         
-        if self.cds_region == None:
-            ret_lines.extend( build_lines_for_feature( 
-                    self.exons, 'exon', False ) )
-        else:
+        ret_lines.extend( build_lines_for_feature( 
+                self.exons, 'exon', False ) )
+        
+        if self.cds_region != None:
             us_exons, ds_exons = self.fp_utr_exons, self.tp_utr_exons
             us_label, ds_label = 'five_prime_UTR', 'three_prime_UTR'
             if self.strand == '-': 
@@ -211,7 +211,7 @@ class Transcript( object ):
             
             ret_lines.extend( build_lines_for_feature( 
                     us_exons, us_label, False ) )
-
+            
             ret_lines.extend( build_lines_for_feature( 
                     self.cds_exons, 'CDS', True ) )
             

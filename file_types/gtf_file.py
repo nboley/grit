@@ -93,7 +93,7 @@ def parse_gtf_line( line, fix_chrm=True ):
                         gffl[1], gffl[2], gffl[3], gffl[4], meta_data )
 
 def create_gff_line( region, grp_id, score=0, \
-                         feature='.', source='.', frame='.' ):
+                     feature='.', source='.', frame='.' ):
     r = region
     chrm = region.chr
     if not chrm.startswith( 'chr' ):
