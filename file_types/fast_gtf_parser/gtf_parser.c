@@ -408,8 +408,8 @@ parse_gtf_data( struct gtf_line** gtf_lines, int num_lines,
     int num_genes = 0;
     
     int num_allcd_genes = 0;
-    int curr_max_loc = -1;
-    int curr_min_loc = (1 >> 30);
+    int curr_max_loc = gtf_lines[ 0 ]->stop;
+    int curr_min_loc = gtf_lines[ 0 ]->start;
     
     int curr_score = gtf_lines[ 0 ]->score;
     double curr_rpkm = gtf_lines[ 0 ]->rpkm;

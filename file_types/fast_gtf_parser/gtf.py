@@ -379,6 +379,7 @@ if __name__ == "__main__":
     for genes in gene_grps:
         for gene in genes:
             print gene[0]
+            print list( gene )
             for trans in gene[-1]:
                 print trans.chrm, trans.strand, trans.id, trans.cds_region
                 print trans.fp_utr_exons
