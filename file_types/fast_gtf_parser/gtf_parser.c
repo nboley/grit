@@ -468,6 +468,11 @@ parse_gtf_data( struct gtf_line** gtf_lines, int num_lines,
             curr_max_loc = -1;
             curr_min_loc = (1 << 30);            
         }
+
+        if( line->element_type == TRANSCRIPT 
+            || line->element_type == GENE     ) 
+            continue;
+
        
         /******** update the CDS *******/
         // if this is coding seqeunce
@@ -498,7 +503,7 @@ parse_gtf_data( struct gtf_line** gtf_lines, int num_lines,
         curr_trans_num_exons += 1;
 
     }
-
+        
     /* Add the final transcript */
     add_transcript( &transcripts, &num_transcripts, &num_allcd_trans,
                     prev_trans_id, curr_trans_num_exons, curr_trans_exons,
