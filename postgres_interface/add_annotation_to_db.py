@@ -40,7 +40,21 @@ def add_exons_to_db( transcript, conn ):
               start, stop )
         cursor.execute( query )
     cursor.close()
+    return
+
+def add_transcript_regions_to_db( transcript, conn ):
+    cursor = conn.cursor()
+    # add the coding sequence
+    if transcript.is_protein_coding:
+        start = transcript.relative_pos( transcript.cds_region[0] )
+        stop = transcript.relative_pos( transcript.cds_region[1] )
+        query = "INSERT into transcript_regions " \
+              + "VALUES ( '%s', '[%s,%s]', '%s' )" \
+              % (transcript.id, start, stop, 'CDS')
+        cursor.execute( query )
     
+    cursor.close()
+    return
 
 def add_transcript_to_db( gene, annotation_key, transcript, conn ):
     cursor = conn.cursor()
@@ -53,6 +67,8 @@ def add_transcript_to_db( gene, annotation_key, transcript, conn ):
     cursor.close()
     
     add_exons_to_db( transcript, conn )
+    
+    add_transcript_regions_to_db( transcript, conn )
     
     return 
 
@@ -81,11 +97,11 @@ def add_annotation_to_db( conn, name, description='NULL' ):
 def main():
     gtf_fp, ann_name, conn = parse_arguments()
     
-    # load the genes
-    genes = load_gtf( gtf_fp.name )
-    
     # add the annotation, and return the pkey
     annotation_key = add_annotation_to_db( conn, ann_name )
+    
+    # load the genes
+    genes = load_gtf( gtf_fp.name )
     
     # add all of the genes to the DB
     for i, gene in enumerate(genes):
