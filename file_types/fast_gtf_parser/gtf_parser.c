@@ -108,6 +108,9 @@ find_element_type_from_str( char* element_type_str ) {
     if( 0 == strcmp(element_type_str, "start_codon") )
         return START_CODON;
 
+    if( 0 == strcmp(element_type_str, "Selenocysteine") )
+        return STOP_CODON;
+    
     if( 0 == strcmp(element_type_str, "stop_codon") )
         return STOP_CODON;
 
@@ -138,6 +141,11 @@ find_element_type_from_str( char* element_type_str ) {
 
 struct gtf_line*
 get_line_info( char* line ) {
+    // If this is a comment line
+    if( line[0] == '#' ) {
+        return NULL;
+    }
+
     // Allocate space for the current line
     struct gtf_line* curr_line = 
         malloc( sizeof( struct gtf_line ) );
