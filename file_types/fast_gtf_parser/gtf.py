@@ -191,6 +191,15 @@ class Transcript( object ):
             return (self.chrm, self.strand, 
                     tuple(self.exon_bnds[1:-1]), self.cds_region)
     
+    def relative_pos( self, genome_coord ):
+        """Convert a genme coordinate into a transcript coordinate.
+        
+        """
+        return genome_coord - self.start - sum( 
+            i_stop - i_start + 1 
+            for i_start, i_stop in self.introns 
+            if i_stop < genome_coord )
+    
     def build_gtf_lines( self, gene_id, meta_data, source='.'):
         ret_lines = []
         def build_lines_for_feature( exons, feature, is_CDS=False ):
@@ -318,6 +327,7 @@ def load_gtf( fname ):
                 cds_region = ( cds_start, cds_stop )
             
             exons = [(x.start, x.stop) for x in exons]
+            print exons
             exons = flatten( exons )
             
             transcripts.append( 
@@ -412,4 +422,5 @@ if __name__ == "__main__":
                 print
                 print trans.exons
                 print trans.introns
+                print
                 print
