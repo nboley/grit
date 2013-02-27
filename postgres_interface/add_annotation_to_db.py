@@ -11,6 +11,9 @@ def parse_arguments():
 
     parser = argparse.ArgumentParser(description='Load GTF file into database.')
     parser.add_argument( 'gtf', type=file, help='GTF file to load.')
+
+    # TODO add code to determine this automatically
+    parser.add_argument( '--annotation-name', required=True, help='Database host. ' )
         
     parser.add_argument( '--host', default='localhost', help='Database host. ' )
     parser.add_argument( '--db-name', default='rnaseq_data', 
@@ -24,22 +27,73 @@ def parse_arguments():
     VERBOSE = args.verbose
     
     conn = psycopg2.connect("dbname=%s host=%s" % ( args.db_name, args.host) )
-    return args.gtf, conn
 
-def add_gene_to_db( gene, conn ):
+    return args.gtf, args.annotation_name, conn
+
+def add_exons_to_db( transcript, conn ):
+    cursor = conn.cursor()
+    for (start, stop) in transcript.exons:
+        query = "INSERT INTO exons " \
+            + "( transcript, contig, strand, location )" \
+            + "VALUES ( '%s', '(\"%s\", 1)', '%s', '[%s, %s]')" % \
+            ( transcript.id, transcript.chrm, transcript.strand,
+              start, stop )
+        cursor.execute( query )
+    cursor.close()
+    
+
+def add_transcript_to_db( gene, annotation_key, transcript, conn ):
+    cursor = conn.cursor()
+    query = "INSERT INTO transcripts " \
+        + "( id, gene, annotation, contig, strand, location )" \
+        + "VALUES ( '%s', '%s', %s, '(\"%s\", 1)', '%s', '[%s, %s]')" % \
+        ( transcript.id, gene.id, annotation_key, transcript.chrm, 
+          transcript.strand, transcript.start, transcript.stop )
+    cursor.execute( query )
+    cursor.close()
+    
+    add_exons_to_db( transcript, conn )
+    
+    return 
+
+def add_gene_to_db( gene, conn, annotation_key ):
+    cursor = conn.cursor()
+    
+    #add the gene entry
+    query = "INSERT INTO genes ( id, annotation, contig, strand, location ) " \
+        + "VALUES ( '%s', %s, '(\"%s\", 1)', '%s', '[%s, %s]')" % \
+        ( gene.id, annotation_key, 
+          gene.chrm, gene.strand, gene.start, gene.stop )
+    cursor.execute( query )
+    cursor.close()
+    
     for trans in gene.transcripts:
-        print trans.chrm, trans.strand
-        print trans.exons
-        print trans.us_exons, trans.cds_exons, trans.ds_exons
-        print trans
-    sys.exit()
+        add_transcript_to_db( gene, annotation_key, trans, conn )
+
+def add_annotation_to_db( conn, name, description='NULL' ):
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO annotations ( name, description )"
+                   + "VALUES ( %s, %s ) RETURNING id", (name, description) )
+    rv = cursor.fetchone()[0]
+    cursor.close()
+    return int(rv)
 
 def main():
-    gtf_fp, conn = parse_arguments()
+    gtf_fp, ann_name, conn = parse_arguments()
+    
+    # load the genes
     genes = load_gtf( gtf_fp.name )
-    for gene in genes:
-        add_gene_to_db( gene, conn )
-
+    
+    # add the annotation, and return the pkey
+    annotation_key = add_annotation_to_db( conn, ann_name )
+    
+    # add all of the genes to the DB
+    for i, gene in enumerate(genes):
+        print "(%i/%i)    Processing %s" % ( i+1, len(genes), gene.id )
+        add_gene_to_db( gene, conn, annotation_key )
+    
+    conn.commit()
+    conn.close()
 
 if __name__ == '__main__':
     main()
