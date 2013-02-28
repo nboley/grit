@@ -153,27 +153,26 @@ class Transcript( object ):
         self.ds_exons = None
         
         self.promoter = promoter
-        
         if cds_region != None:
-            self.us_exons, self.cds_exons, self.ds_exons = \
-                partition_coding_and_utr_segments( 
-                self.exons, self.cds_region[0], self.cds_region[1] )
-        
-            us_codon, ds_codon = self.cds_region[0], self.cds_region[1]
-            # if this is a reverse strand transcript, rev 5' and 3' ends
-            if self.strand == '+':
-                self.fp_utr_exons, self.tp_utr_exons \
-                    = self.us_exons, self.ds_exons
-                self.start_codon, self.stop_codon = us_codon, ds_codon
-            else:
-                self.fp_utr_exons, self.tp_utr_exons \
-                    = self.ds_exons, self.us_exons
-                self.stop_codon, self.start_codon = us_codon, ds_codon
-        
-        # add these for compatability
-        #self.append( trans_id )
-        #self.append( exon_bnds )        
+            self.add_cds_region( cds_region )
+            
+    def add_cds_region( self, cds_region ):
+        self.cds_region = cds_region
+        self.us_exons, self.cds_exons, self.ds_exons = \
+            partition_coding_and_utr_segments( 
+            self.exons, self.cds_region[0], self.cds_region[1] )
     
+        us_codon, ds_codon = self.cds_region[0], self.cds_region[1]
+        # if this is a reverse strand transcript, rev 5' and 3' ends
+        if self.strand == '+':
+            self.fp_utr_exons, self.tp_utr_exons \
+                = self.us_exons, self.ds_exons
+            self.start_codon, self.stop_codon = us_codon, ds_codon
+        else:
+            self.fp_utr_exons, self.tp_utr_exons \
+                = self.ds_exons, self.us_exons
+            self.stop_codon, self.start_codon = us_codon, ds_codon
+        
     def __hash__( self ):
         if self.cds_region != None:
             return hash(( self.chrm, self.strand, 
@@ -199,6 +198,23 @@ class Transcript( object ):
             i_stop - i_start + 1 
             for i_start, i_stop in self.introns 
             if i_stop < genome_coord )
+
+    def genome_pos( self, trans_coord ):
+        """Convert a transcript coordinate into a genome coordinate.
+        
+        """
+        tot_len = 0
+        insert_len = 0
+        for (i_start, i_stop), (e_start, e_stop) \
+                in izip( self.introns, self.exons ):
+            e_len = e_stop - e_start + 1
+            if tot_len + e_len > trans_coord:
+                break
+            else:
+                insert_len += i_stop - i_start + 1
+
+        print trans_coord, self.start, insert_len
+        return trans_coord + self.start + insert_len
     
     def build_gtf_lines( self, gene_id, meta_data, source='.'):
         ret_lines = []
