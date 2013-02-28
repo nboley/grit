@@ -6,30 +6,6 @@ from gtf import load_gtf
 VERBOSE = False
 import psycopg2
 
-def parse_arguments():
-    import argparse
-
-    parser = argparse.ArgumentParser(description='Load GTF file into database.')
-    parser.add_argument( 'gtf', type=file, help='GTF file to load.')
-
-    # TODO add code to determine this automatically
-    parser.add_argument( '--annotation-name', required=True, help='Database host. ' )
-        
-    parser.add_argument( '--host', default='localhost', help='Database host. ' )
-    parser.add_argument( '--db-name', default='rnaseq_data', 
-                         help='Database name. ' )
-    
-    parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
-                             help='Whether or not to print status information.')
-    args = parser.parse_args()
-    
-    global VERBOSE
-    VERBOSE = args.verbose
-    
-    conn = psycopg2.connect("dbname=%s host=%s" % ( args.db_name, args.host) )
-
-    return args.gtf, args.annotation_name, conn
-
 def add_exons_to_db( transcript, conn ):
     cursor = conn.cursor()
     for (start, stop) in transcript.exons:
@@ -93,6 +69,30 @@ def add_annotation_to_db( conn, name, description='NULL' ):
     rv = cursor.fetchone()[0]
     cursor.close()
     return int(rv)
+
+def parse_arguments():
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Load GTF file into database.')
+    parser.add_argument( 'gtf', type=file, help='GTF file to load.')
+
+    # TODO add code to determine this automatically
+    parser.add_argument( '--annotation-name', required=True, help='Database host. ' )
+        
+    parser.add_argument( '--host', default='localhost', help='Database host. ' )
+    parser.add_argument( '--db-name', default='rnaseq_data', 
+                         help='Database name. ' )
+    
+    parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
+                             help='Whether or not to print status information.')
+    args = parser.parse_args()
+    
+    global VERBOSE
+    VERBOSE = args.verbose
+    
+    conn = psycopg2.connect("dbname=%s host=%s" % ( args.db_name, args.host) )
+
+    return args.gtf, args.annotation_name, conn
 
 def main():
     gtf_fp, ann_name, conn = parse_arguments()
