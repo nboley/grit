@@ -31,7 +31,7 @@ from reads import Reads
 
 import pysam
 
-def main(nsamples=50000, min_exon_size=600):
+def main(nsamples=5000, min_exon_size=600):
     bam_fn = sys.argv[1]
     reads = pysam.Samfile( bam_fn, "rb" )
     reads = Reads( bam_fn, "rb" )
@@ -73,6 +73,6 @@ def main(nsamples=50000, min_exon_size=600):
     fl_dist = FlDist( int(min_fl), int(max_fl), frag_dist )
     
     with open( bam_fn + ".fldist", "w" ) as ofp:
-        pickle.dump( { 'mean:', fl_dist }, ofp )
+        pickle.dump( { 'mean': fl_dist }, ofp )
     
 main()

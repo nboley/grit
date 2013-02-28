@@ -65,7 +65,7 @@ FD_SS = 1e-8
 COMPARE_TO_DCP = False
 num_threads = 1
 NUM_ITER_FOR_CONV = 5
-DEBUG_OPTIMIZATION = True
+DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
 ABS_TOL = 1e-5
 DEBUG = False
@@ -161,56 +161,6 @@ def nnls( X, Y, fixed_indices_and_values={} ):
         print "RSS: ".ljust(22), rss
     
     return x
-
-def solve_trust_region_sub_problem( gradient, hessian ):
-    """
-    minimize gradient*p + (1/2)p'*hessian*p
-    
-    st sum(p) == 1 and p > 0
-    """
-    from cvxpy import maximize, minimize, geq, eq, variable, matrix, program, \
-        log, sum, quad_form, square, quad_over_lin, geo_mean, leq, norm2, \
-        cvxpy_second_order_cone, belongs
-    import cvxpy
-    # belongs(x, cvxpy_second_order_cone())
-    n = len( gradient )
-    x = variable( n )
-    # eq( sum(x), 1), geq( x, 1e-6 ), leq(norm2(x), 0.7)
-    solvers.options['show_progress'] = False
-    p = program( minimize( -matrix(gradient)*x + 0.5*quad_form(x, matrix(hessian))),
-                 [ eq( sum(x), 1), geq( x, MIN_TRANSCRIPT_FREQ )] )
-    # +1*quad_over_lin(1,thetas[1, 0]) ), 
-    # p = program( minimize( -Xs*log(ps*thetas) ),
-    #             [eq( sum(thetas), 1), geq( thetas, 0 )] )
-
-    p.options['maxiters']  = 500
-    p.options['show_progress']  = False
-    #res = p.solve(quiet=not VERBOSE)
-    res = p.solve(quiet=True)
-    
-    """
-    G = matrix(0.0, (n,n))
-    G[::n+1] = -1.0
-    h = matrix(MIN_TRANSCRIPT_FREQ, (n,1))
-
-    # Add the equality constraints
-    A=matrix(0., (1,n))
-    b=matrix(0., (1,1))
-
-    # Add the sum to one constraint
-    A[0,:] = 1.
-    b[0,0] = 1.
-    
-    solvers.options['show_progress'] = DEBUG_OPTIMIZATION
-    res = solvers.qp(P=-matrix(hessian), q=-matrix(gradient), G=-G, h=-h, A=A, b=b )
-    #res = solvers.qp(P=-matrix(hessian), q=-matrix(gradient), G=G, h=h, A=A, b=b)
-    print res
-    return res
-    x = numpy.array(res['x']).T[0,]
-    rss = ((numpy.array(X*res['x'] - Y)[0,])**2).sum()
-    """
-    return numpy.array( x.value.T )[0,:]
-
 
 def build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists ):
     # load the bam file
