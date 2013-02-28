@@ -84,7 +84,4 @@ def load_gene_from_db( (gene_id, annotation_id), db_name='rnaseq_data', host='lo
     load_transcripts( gene, conn )
     return gene
 
-print load_gene_from_db( ('ENSG00000000003.10', 64))
-
-
-pass
+# print load_gene_from_db( ('ENSG00000000003.10', 64))

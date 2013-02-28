@@ -137,21 +137,31 @@ try:
 
 
         """
-        def iter_paired_reads( self, chrm, strand, start, stop ):
+        def iter_paired_reads(self, chrm, strand, start, stop, 
+                              min_read_len=0, ignore_partial_alignments=True):
             # whether or not the gene is on the positive strand
             gene_strnd_is_rev = ( strand == '-' )
-            chrm = clean_chr_name( chrm )
+            #chrm = clean_chr_name( chrm )
 
             # get all of the first pairs
             def iter_pair1_reads():
                 for read in self.fetch( chrm, start, stop  ):
+                    if read.alen < min_read_len: continue
+                    if ignore_partial_alignments and read.alen != read.qlen:
+                        continue
                     if get_strand( read, False, False ) == strand:
                         yield read
 
             # index the pair 2 reads
             reads_pair2 = {}
             for read in self.fetch( chrm, start, stop ):
+                if read.alen < min_read_len: continue
+                if ignore_partial_alignments and read.alen != read.qlen:
+                    continue
                 if get_strand( read, False, False ) != strand:
+                    if read.qname in reads_pair2:
+                        if DEBUG:
+                            print "Multiple reads on the same strand"
                     reads_pair2[ read.qname ] = read
 
             # iterate through the read pairs
@@ -163,15 +173,16 @@ try:
                     if DEBUG:
                         print "No mate: ", read1.pos, read1.aend, read1.qname
                     continue
-
+                
                 assert ( read1.qlen == read1.aend - read1.pos ) \
                        or ( len( read1.cigar ) > 1 )
                 assert ( read2.qlen == read2.aend - read2.pos ) \
                        or ( len( read2.cigar ) > 1 )
 
                 if read1.qlen != read2.qlen:
-                    print( "ERROR: unequal read lengths %i and %i\n", \
-                           read1.qlen, read2.qlen )
+                    if DEBUG:
+                        print( "ERROR: unequal read lengths %i and %i\n", \
+                                   read1.qlen, read2.qlen )
                     continue
 
                 yield read1, read2
