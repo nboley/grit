@@ -212,8 +212,7 @@ class Transcript( object ):
                 break
             else:
                 insert_len += i_stop - i_start + 1
-
-        print trans_coord, self.start, insert_len
+        
         return trans_coord + self.start + insert_len
     
     def build_gtf_lines( self, gene_id, meta_data, source='.'):
@@ -328,7 +327,6 @@ def load_gtf( fname ):
                 cds_region = ( cds_start, cds_stop )
             
             exons = [(x.start, x.stop) for x in exons]
-            print exons
             exons = flatten( exons )
             
             transcripts.append( 
