@@ -65,7 +65,7 @@ FD_SS = 1e-8
 COMPARE_TO_DCP = False
 num_threads = 1
 NUM_ITER_FOR_CONV = 5
-DEBUG_OPTIMIZATION = False
+DEBUG_OPTIMIZATION = True
 PROMOTER_SIZE = 50
 ABS_TOL = 1e-5
 DEBUG = False
@@ -225,7 +225,7 @@ def build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists ):
                 gene.transcripts, exon_boundaries ))
     
     binned_reads = bin_reads( 
-        reads, gene.chrm, gene.strand, exon_boundaries, False, True)
+        reads, "chr" + gene.chrm, gene.strand, exon_boundaries, False, True)
     
     observed_cnts = build_observed_cnts( binned_reads, fl_dists )    
     read_groups_and_read_lens =  { (RG, read_len) for RG, read_len, bin 
