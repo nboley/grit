@@ -127,6 +127,11 @@ def iter_coverage_regions_for_read(
 
     return
 
+def clean_qname( qname ):
+    if qname[-2] == '/' and qname[-1] in '12':
+        return qname[:-2]
+    return qname
+
 try:
     import pysam
 
@@ -158,19 +163,19 @@ try:
                 if ignore_partial_alignments and read.alen != read.qlen:
                     continue
                 if get_strand( read, False, False ) != strand:
-                    if read.qname in reads_pair2:
+                    if clean_qname(read.qname) in reads_pair2:
                         if DEBUG:
                             print "Multiple reads on the same strand"
-                    reads_pair2[ read.qname ] = read
+                    reads_pair2[ clean_qname(read.qname) ] = read
 
             # iterate through the read pairs
             for read1 in iter_pair1_reads():
                 try:
-                    read2 = reads_pair2[ read1.qname ]
+                    read2 = reads_pair2[ clean_qname(read1.qname) ]
                 # if there is no mate, skip this read
                 except KeyError:
                     if DEBUG:
-                        print "No mate: ", read1.pos, read1.aend, read1.qname
+                        print "No mate: ", read1.pos, read1.aend, clean_qname(read1.qname)
                     continue
                 
                 assert ( read1.qlen == read1.aend - read1.pos ) \
