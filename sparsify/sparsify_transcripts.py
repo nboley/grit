@@ -649,7 +649,8 @@ if __name__ == "__main__":
     else:
         fl_dists, read_group_mappings = load_fl_dists( fl_dist_fns )
 
-
+    print fl_dists
+    sys.exit()
     def foo():
         estimate_genes_expression( \
             genes.values(), gene_transcripts, bam_fns, \
