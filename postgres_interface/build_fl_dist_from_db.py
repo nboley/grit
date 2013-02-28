@@ -31,7 +31,7 @@ from reads import Reads
 
 import pysam
 
-def main(nsamples=5000, min_exon_size=600):
+def main(nsamples=25000, min_exon_size=600):
     bam_fn = sys.argv[1]
     reads = pysam.Samfile( bam_fn, "rb" )
     reads = Reads( bam_fn, "rb" )
@@ -48,12 +48,17 @@ def main(nsamples=5000, min_exon_size=600):
         exon = gene.transcripts[0].exons[0]
         chrm = 'chr%s' % gene.chrm[0]
         if exon[1] - exon[0] < min_exon_size: continue
-        
-        for r1, r2 in reads.iter_paired_reads(
-                chrm, gene.strand, exon[0], exon[1], min_read_len=100):
-            f_start = min( r1.pos, r2.pos )
-            f_stop = max( r1.aend, r2.aend )
-            frag_lens.append( f_stop - f_start + 1 )
+        print len(frag_lens), exon
+        try:
+            for r1, r2 in reads.iter_paired_reads(
+                    chrm, gene.strand, exon[0], exon[1], min_read_len=10, 
+                    ignore_partial_alignments=False):
+                f_start = min( r1.pos, r2.pos )
+                f_stop = max( r1.aend, r2.aend )
+                frag_lens.append( f_stop - f_start + 1 )
+        except ValueError, inst:
+            print "ValueError:, ", inst
+            continue
         
         if len( frag_lens ) > nsamples:
             break
