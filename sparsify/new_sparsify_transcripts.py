@@ -69,6 +69,7 @@ DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
 ABS_TOL = 1e-5
 DEBUG = False
+DEBUG_VERBOSE = False
 
 def log_warning(text):
     print >> sys.stderr, text
