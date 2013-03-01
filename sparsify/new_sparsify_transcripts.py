@@ -473,7 +473,6 @@ def estimate_transcript_frequencies_line_search(
 
 def estimate_transcript_frequencies(  
         observed_array, full_expected_array, abs_tol ):
-    fp = open( "lhd_change.txt", "w" )
     if observed_array.sum() == 0:
         raise ValueError, "Too few reads."
     n = full_expected_array.shape[1]
@@ -492,8 +491,6 @@ def estimate_transcript_frequencies(
         x, lhds = estimate_transcript_frequencies_line_search(  
             observed_array, full_expected_array, x, 
             dont_zero=False, abs_tol=eps )
-        for lhd in lhds: fp.write( "%e\n" % lhd )
-        fp.flush()
         
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
@@ -515,8 +512,6 @@ def estimate_transcript_frequencies(
         x, lhds = estimate_transcript_frequencies_line_search(  
             observed_array, full_expected_array, x, 
             dont_zero=True, abs_tol=abs_tol)
-        for lhd in lhds: fp.write( "%e\n" % (lhd - prev_lhd) )
-        fp.flush()
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
         if DEBUG_VERBOSE:
@@ -526,8 +521,7 @@ def estimate_transcript_frequencies(
         
         start_time = time.time()
         if len( lhds ) < 500: break
-
-    fp.close()    
+    
     return x
 
 def estimate_confidence_bound_by_bisection( 
