@@ -78,8 +78,7 @@ def load_transcripts( gene, conn ):
     
     return
 
-def load_gene_from_db( (gene_id, annotation_id), db_name='rnaseq_data', host='localhost'):
-    conn = psycopg2.connect("dbname=%s host=%s" % ( db_name, host) )
+def load_gene_from_db( (gene_id, annotation_id), conn):
     gene = load_gene_object( (gene_id, annotation_id), conn )
     load_transcripts( gene, conn )
     return gene

@@ -37,6 +37,7 @@ def get_strand( read, reverse_read_strand, pairs_are_opp_strand ):
     return strand
 
 def get_read_group( r1, r2 ):        
+    return 'mean'
     r1_read_group = [ val for key, val in r1.tags if key == 'RG' ]
     r1_read_group = r1_read_group[0] if len( r1_read_group ) == 1 else 'mean'
     r2_read_group = [ val for key, val in r2.tags if key == 'RG' ]
