@@ -147,17 +147,9 @@ def parse_arguments():
     import argparse
 
     parser = argparse.ArgumentParser(description='Determine valid transcripts.')
-    parser.add_argument( '--exons', type=file, required=True, nargs="+", \
-        help='GFF file(s) contaning exons.')
-    parser.add_argument( '--tss', type=file, required=True, nargs="+", \
-        help='Gff file(s) containing valid transcription stop site exons. ' )
-    parser.add_argument( '--tes', type=file, required=True, nargs="+", \
-        help='Gff file(s) containing valid transcription stop site exons.')
-    parser.add_argument( '--junctions', type=file, required=True, nargs="+", \
-        help='Gff file(s) containing valid introns.')
-    parser.add_argument( '--single-exon-genes', type=file, nargs="*", 
-        help='Single exon genes file.')    
-
+    parser.add_argument( 'elements', type=file, \
+        help='BED file containing elements ( output of find_exons ).')
+    
     parser.add_argument( '--threads', '-t', type=int , default=1, \
                              help='Number of threads spawn for multithreading.')
     parser.add_argument( '--out-fname', '-o', default='',\
@@ -177,56 +169,44 @@ def parse_arguments():
     log_fp = multi_safe_file( args.log_fname, 'w' ) \
         if args.log_fname else sys.stderr
     
-    return args.exons, args.tss, args.tes, args.junctions, \
-        args.single_exon_genes, args.threads, out_fp, log_fp
+    return args.elements, args.threads, out_fp, log_fp
 
-def load_jns( jn_gff_fps, min_cnt_ratio=0.1 ):
-    all_jns = parse_jn_gffs( jn_gff_fps )
-    donor_scores = defaultdict(lambda: defaultdict(int))
-    acceptor_scores = defaultdict(lambda: defaultdict(int))
-    for jn in all_jns:
-        donor_scores[(jn.chrm, jn.strand)][jn.start] \
-            = max( jn.cnt, donor_scores[(jn.chrm, jn.strand)][jn.start] )
-        acceptor_scores[(jn.chrm, jn.strand)][jn.stop] \
-            = max( jn.cnt, acceptor_scores[(jn.chrm, jn.strand)][jn.stop] )
-
-    jns = defaultdict(list)    
-    for jn in all_jns:
-        donor_score = donor_scores[(jn.chrm, jn.strand)][jn.start]
-        if float(jn.cnt)/donor_score < min_cnt_ratio:
-            continue
-        acceptor_score = acceptor_scores[(jn.chrm, jn.strand)][jn.stop]
-        if float(jn.cnt)/acceptor_score < min_cnt_ratio:
-            continue
-
-        jns[(jn.chrm, jn.strand)].append( (jn.start, jn.stop) )
+def load_elements( fp ):
+    all_elements = defaultdict( lambda: defaultdict(set) )
+    for line in fp:
+        if line.startswith( 'track' ): continue
+        chrm, start, stop, element_type, score, strand = line.split()[:6]
+        all_elements[ element_type ][ (chrm, strand) ].add( 
+            (int(start), int(stop)) )
     
-    return dict((key, numpy.array(val)) for key, val in jns.iteritems() )
+    # convert into array
+    for element_type, elements in all_elements.iteritems():
+        for key, contig_elements in elements.iteritems():
+            all_elements[element_type][key] \
+                = numpy.array( sorted( contig_elements ) )
+
+    return all_elements
 
 def main():
-    exon_fps, tss_exon_fps, tes_exon_fps, junction_fps, \
-        single_exon_fps, threads, out_fp, log_fp = parse_arguments()
+    elements_fp, n_threads, out_fp, log_fp = parse_arguments()
     
     if VERBOSE:
         print >> sys.stderr, 'Parsing input...'
+    elements = load_elements( elements_fp )
+    elements_fp.close()
     
+    gene_id = 1
+    for (chrm, strand), exons in elements['single_exon_gene'].iteritems():
+        for start, stop in exons:
+            gene_name = "single_exon_gene_%i" % gene_id
+            out_fp.write( build_gtf_line( 
+                gene_name, chrm, strand, gene_name, 1, start, stop ) + "\n")
+            gene_id += 1
     
-    internal_exons = parse_exons_files( exon_fps )
-    tss_exons = parse_exons_files( tss_exon_fps )
-    tes_exons = parse_exons_files( tes_exon_fps )
-    jns = load_jns( junction_fps )
-    
-    if None != single_exon_fps:
-        se_genes = parse_exons_files( single_exon_fps )
-        gene_id = 1
-        for (chrm, strand), exons in se_genes.iteritems():
-            for start, stop in exons:
-                gene_name = "single_exon_gene_%i" % gene_id
-                out_fp.write( build_gtf_line( 
-                    gene_name, chrm, strand, gene_name, 1, start, stop ) + "\n")
-                gene_id += 1
-    
-    build_genes(internal_exons, tss_exons, tes_exons, jns, out_fp)
+    # internal_exons, tss_exons, tes_exons, jns
+    build_genes( elements['internal_exon'], elements['tss_exon'], 
+                 elements['tes_exon'], elements['intron'], 
+                 out_fp)
             
     return
 
