@@ -14,6 +14,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../", 'file_types'))
 from wiggle import Wiggle, load_wiggle_asynchronously, guess_strand_from_fname
 from junctions_file import parse_jn_gff, Junctions
 from gtf_file import parse_gff_line, create_gff_line, GenomicInterval
+from bed import create_bed_line
 
 from bisect import bisect
 from copy import copy
@@ -37,30 +38,6 @@ class ThreadSafeFile( file ):
         file.write( self, data )
         file.flush( self )
         self._writelock.release()
-
-
-class GroupIdCntr( object ):
-    def __init__( self, start_val=0 ):
-        self.value = multiprocessing.RawValue( 'i', start_val )
-        self._lock = multiprocessing.RLock()
-
-    def __iadd__(self, val_to_add):
-        self._lock.acquire()
-        self.value.value += val_to_add
-        self._lock.release()
-        return self
-    
-    def lock(self):
-        self._lock.acquire()
-
-    def release(self):
-        self._lock.release()
-    
-    def __str__( self ):
-        self._lock.acquire()
-        rv = str(self.value.value)
-        self._lock.release()
-        return rv
 
 def multi_delete( l, is_to_remove ):
     for i in sorted( is_to_remove, reverse=True ):
@@ -164,7 +141,7 @@ class Bins( list ):
         return
 
 
-def write_unified_gff( elements, contig_len, ofp ):
+def write_unified_bed( elements, contig_len, ofp ):
     assert isinstance( elements, Bins )
     
     feature_mapping = { 
@@ -174,6 +151,15 @@ def write_unified_gff( elements, contig_len, ofp ):
         'EXON': 'internal_exon',
         'TES_EXON': 'tes_exon',
         'INTRON': 'intron'
+    }
+
+    color_mapping = { 
+        'CAGE_PEAK': '153,255,000',
+        'SE_GENE': '000,000,000',
+        'TSS_EXON': '140,195,59',
+        'EXON': '000,000,000',
+        'TES_EXON': '255,51,255',
+        'INTRON': '200,200,200'
     }
     
     if elements.strand == '-':
@@ -185,20 +171,25 @@ def write_unified_gff( elements, contig_len, ofp ):
             region = GenomicInterval( elements.chrm, elements.strand, 
                                       bin.start, bin.stop)
             grp_id = feature_mapping[bin.type] + "_%s_%s_%i_%i" % region
-            
-            gff_line = create_gff_line( region, grp_id, 
-                                        feature=feature_mapping[bin.type] )
-            ofp.write( gff_line + "\n"  )
+            bed_line = create_bed_line( elements.chrm, elements.strand, 
+                                        bin.start, bin.stop, 
+                                        feature_mapping[bin.type],
+                                        score=bin.score,
+                                        color=color_mapping[bin.type],
+                                        use_thick_lines=(bin.type != 'INTRON'))
+            ofp.write( bed_line + "\n"  )
     return
 
 class Bin( object ):
-    def __init__( self, start, stop, left_label, right_label, bin_type=None ):
+    def __init__( self, start, stop, left_label, right_label, 
+                  bin_type=None, score=1000 ):
         self.start = start
         self.stop = stop
         assert stop - start > 0
         self.left_label = left_label
         self.right_label = right_label
         self.type = bin_type
+        self.score = score
     
     def mean_cov( self, cov_array ):
         return cov_array[self.start:self.stop].mean()
@@ -342,7 +333,7 @@ def find_gene_boundaries( (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns
                           poss[-1][1], "CONTIG_BNDRY" ) )
     
     if WRITE_DEBUG_DATA:
-        bins.writeBed( binsFps[strand], len(rnaseq_cov) )
+        bins.writeBed( debug_ofps['binsFps'][strand], len(rnaseq_cov) )
     
     # find regions that end with a polya, and look like genic regions
     # ( ie, they are a double polya that looks like a single exon gene, or
@@ -1042,7 +1033,7 @@ def find_exons_in_contig( ( chrm, strand ),
         (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns )
     
     if WRITE_DEBUG_DATA:
-        gene_bndry_bins.writeBed( 
+        debug_ofps['gene_bndry_bins'].writeBed( 
             geneBoundariesFps[strand], len(rnaseq_cov) )
     
     
@@ -1095,11 +1086,46 @@ def find_exons_in_contig( ( chrm, strand ),
                              tss_exons, internal_exons, tes_exons, se_genes))
     
     if WRITE_DEBUG_DATA:
-        all_exons.writeBed( allExonsFps[strand], len(rnaseq_cov) )
-        ps_exons.writeBed( psExonsFps[strand], len(rnaseq_cov) )
+        debug_ofps['all_exons'].writeBed( allExonsFps[strand], len(rnaseq_cov) )
+        debug_ofps['ps_exons'].writeBed( psExonsFps[strand], len(rnaseq_cov) )
     
     return all_exons
 
+
+def init_debug_fps( out_file_prefix ):
+    debug_ofps = {}
+    
+    binsFps = { "+": ThreadSafeFile( 
+            out_file_prefix + ".bins.plus.bed", "w", "bins_plus" ),
+                "-": ThreadSafeFile( 
+            out_file_prefix + ".bins.minus.bed", "w", "bins_minus" ) }
+    debug_ofps['binsFps'] = binsFps
+
+    geneBoundariesFps = { 
+        "+": ThreadSafeFile( 
+            out_file_prefix + ".gene_boundaries.plus.bed", "w", "gene_bndrys_plus" ),
+        "-": ThreadSafeFile( 
+            out_file_prefix + ".gene_boundaries.minus.bed", "w", "gene_bndrys_minus" ) 
+    }
+    debug_ofps['geneBoundariesFps'] = geneBoundariesFps
+
+    allExonsFps = { 
+        "+": ThreadSafeFile( 
+            out_file_prefix + ".all_exons.plus.bed", "w", "all_exons_plus" ),
+        "-": ThreadSafeFile(
+            out_file_prefix + ".all_exons.minus.bed", "w", "all_exons_minus" ) 
+    }
+    debug_ofps['allExonsFps'] = allExonsFps
+
+    psExonsFps = { 
+        "+": ThreadSafeFile( 
+            out_file_prefix + ".pseudo_exons.plus.bed", "w", "pseudo_exons_plus" ),
+        "-": ThreadSafeFile(
+            out_file_prefix + ".pseudo_exons.minus.bed", "w", "pseudo_exons_minus" ) 
+    }
+    debug_ofps['psExonsFps'] = psExonsFps
+    
+    return debug_ofps
 
 def parse_arguments():
     import argparse
@@ -1120,8 +1146,9 @@ def parse_arguments():
     parser.add_argument( '--polya-candidate-sites', type=file, nargs='*', \
         help='files with allowed polya sites.')
     
-    parser.add_argument( '--out-file-prefix', '-o', default="discovered_exons",\
-        help='Output file name. (default: discovered_exons)')
+    parser.add_argument( '--out-filename', '-o', 
+                         default="discovered_elements.bed",\
+        help='Output file name. (default: discovered_elements.bed)')
     
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
         help='Whether or not to print status information.')
@@ -1134,40 +1161,12 @@ def parse_arguments():
 
     global num_threads
     num_threads = args.threads
-    
-    fps = []
-    for field_name in ofps_prefixes:
-        fps.append(open("%s.%s.gff" % (args.out_file_prefix, field_name), "w"))
-    ofps = OrderedDict( zip( ofps_prefixes, fps ) )
-    ofps['discovered_elements'] = open("%s.gff" % args.out_file_prefix, "w")
-    
+        
     # prepare the intermediate output objects
     if WRITE_DEBUG_DATA:
-        global binsFps, geneBoundariesFps, allExonsFps, psExonsFps
-        binsFps = { "+": ThreadSafeFile( 
-                args.out_file_prefix + ".bins.plus.bed", "w", "bins_plus" ),
-                    "-": ThreadSafeFile( 
-                args.out_file_prefix + ".bins.minus.bed", "w", "bins_minus" ) }
-        geneBoundariesFps = { 
-            "+": ThreadSafeFile( 
-                args.out_file_prefix + ".gene_boundaries.plus.bed", "w", "gene_bndrys_plus" ),
-            "-": ThreadSafeFile( 
-                args.out_file_prefix + ".gene_boundaries.minus.bed", "w", "gene_bndrys_minus" ) 
-        }
-        allExonsFps = { 
-            "+": ThreadSafeFile( 
-                args.out_file_prefix + ".all_exons.plus.bed", "w", "all_exons_plus" ),
-            "-": ThreadSafeFile(
-                args.out_file_prefix + ".all_exons.minus.bed", "w", "all_exons_minus" ) 
-        }
-        psExonsFps = { 
-            "+": ThreadSafeFile( 
-                args.out_file_prefix + ".pseudo_exons.plus.bed", "w", "pseudo_exons_plus" ),
-            "-": ThreadSafeFile(
-                args.out_file_prefix + ".pseudo_exons.minus.bed", "w", "pseudo_exons_minus" ) 
-        }
-
-
+        global debug_fps
+        debug_fps = init_debug_fps( args.out_filename )
+    
     # set flag args
     global VERBOSE
     VERBOSE = args.verbose
@@ -1197,15 +1196,15 @@ def parse_arguments():
 
     cage_grpd_wigs = [ cage_plus_wigs, cage_minus_wigs ]
     
+    ofp = open( args.out_filename, "w" )
+    
     return rnaseq_grpd_wigs, args.junctions, args.chrm_sizes_fname, \
-        cage_grpd_wigs, args.polya_candidate_sites, ofps
+        cage_grpd_wigs, args.polya_candidate_sites, ofp
 
 
 def main():
-    wigs, jns_fp, chrm_sizes_fp, cage_wigs, polya_candidate_sites_fps, out_fps \
+    wigs, jns_fp, chrm_sizes_fp, cage_wigs, polya_candidate_sites_fps, ofp \
         = parse_arguments()
-    
-    group_id_starts = [ GroupIdCntr(1) for fp in out_fps ]
     
     # set up all of the file processing calls
     worker_pool = multiprocessing.BoundedSemaphore( num_threads )
@@ -1262,17 +1261,10 @@ def main():
     tss_exons = []
     internal_exons = []
     tes_exons = []
+
+    ofp.write('track name="discovered_elements" visibility=2 itemRgb="On"\n')
     
-    output_exons = dict( (x,[]) for x in ofps_prefixes )
-    
-    out_fps["internal_exons"].write("track name=\"internal_exons\"\n")
-    out_fps["tss_exons"].write("track name=\"tss_exons\"\n")
-    out_fps["tes_exons"].write("track name=\"tes_exons\"\n")
-    out_fps["single_exon_genes"].write("track name=\"single_exon_genes\"\n")
-    out_fps["cage_peaks"].write("track name=\"cage_peaks\"\n")
-    out_fps["discovered_elements"].write("track name=\"discovered_elements\"\n")
-    
-    keys = sorted( set( jns ) )
+    keys = sorted( set( jns.keys() ) )
     for chrm, strand in keys:        
         if VERBOSE: print >> sys.stderr, \
                 'Processing chromosome %s strand %s.' % ( chrm, strand )
@@ -1286,22 +1278,17 @@ def main():
            cage_cov[ (chrm, strand) ], 
            polya_sites[ (chrm, strand) ] )
         
-        all_elements.writeGff( out_fps["internal_exons"], 
-                               contig_len, filter='EXON')
-        all_elements.writeGff( out_fps["tss_exons"], 
-                               contig_len, filter='TSS_EXON' )
-        all_elements.writeGff( out_fps["tes_exons"], 
-                               contig_len, filter='TES_EXON' )
-        all_elements.writeGff( out_fps["single_exon_genes"], 
-                            contig_len, filter='SE_GENE' )
-        all_elements.writeGff( out_fps["cage_peaks"], 
-                             contig_len, filter='CAGE_PEAK' )
+        for jn, cnt in jns[(chrm, strand)].iteritems():
+            bin = Bin(jn[0], jn[1], 'donor', 'acceptor', 'INTRON', cnt)
+            if strand == '-':
+                bin = bin.reverse_strand(contig_len)
+            all_elements.append( bin )
+                
         
-        write_unified_gff( all_elements, contig_len, 
-                           out_fps["discovered_elements"] )
+        write_unified_bed( all_elements, contig_len, ofp )
     
     if WRITE_DEBUG_DATA:
-        for fps_dict in (binsFps, geneBoundariesFps, allExonsFps, psExonsFps):
+        for fps_dict in debug_fps.values():
             for fp in fps_dict.values():
                 fp.close()
     
