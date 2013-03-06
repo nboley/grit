@@ -1,6 +1,8 @@
 import os, sys
 import pickle
 
+from multiprocessing import BoundedSemaphore
+
 VERBOSE = False
 import psycopg2
 
@@ -70,6 +72,36 @@ def estimate_transcript_frequencies(conn, ann_id, gene_name, bam_fn, fl_dists):
     
     return 
 
+def get_queue_item(conn):
+    """Get an item from the queue, return None if it's empty
+
+    """
+    cursor = conn.cursor()
+    query = """
+    UPDATE gene_expression_queue 
+       SET processing_status = 'PROCESSING' 
+     WHERE (gene, annotation, reads_fn) in (
+            SELECT gene, annotation, reads_fn
+            FROM gene_expression_queue 
+            WHERE processing_status = 'UNPROCESSED' 
+            FOR UPDATE
+            LIMIT 1
+    ) RETURNING gene, annotation, reads_fn;
+    """
+    cursor.execute( query )
+    res = cursor.fetchall()
+    cursor.close()
+    conn.commit()
+    
+    # if we can't get an item, then just exit
+    if len( res ) == 0: os._exit(os.EX_OK)
+    return res[0]
+
+def load_fl_dists( bam_fn ):
+    with open( bam_fn + ".fldist" ) as fl_dists_fp:
+        fl_dists = pickle.load( fl_dists_fp )
+    return fl_dists
+
 def parse_arguments():
     import argparse
 
@@ -83,11 +115,13 @@ def parse_arguments():
     parser.add_argument( '--host', default='localhost', help='Database host.' )
     parser.add_argument( '--db-name', default='rnaseq_data', 
                          help='Database name. ' )
-    
-    parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
-                             help='Print status information.')
-    parser.add_argument( '--debug-verbose', default=False, action='store_true',\
-                             help='Print additional status information.')
+
+    parser.add_argument( '--threads', '-t', default=1,
+                         help='Number of threads to spawn.')    
+    parser.add_argument( '--verbose', '-v', default=False, action='store_true',
+                         help='Print status information.')
+    parser.add_argument( '--debug-verbose', default=False, action='store_true',
+                         help='Print additional status information.')
 
     args = parser.parse_args()
     
@@ -98,54 +132,48 @@ def parse_arguments():
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
     new_sparsify_transcripts.DEBUG_VERBOSE = DEBUG_VERBOSE
-        
-    conn = psycopg2.connect("dbname=%s host=%s" % ( args.db_name, args.host) )
-    return conn, args.annotation_name
-
-def load_fl_dists( bam_fn ):
-    with open( bam_fn + ".fldist" ) as fl_dists_fp:
-        fl_dists = pickle.load( fl_dists_fp )
-    return fl_dists
     
+    return ( args.db_name, args.host), args.annotation_name, int(args.threads)
+
+def gene_queue_is_empty(cursor):
+    query = "SELECT * FROM gene_expression_queue" \
+            + " WHERE processing_status = 'UNPROCESSED' LIMIT 1;"
+    cursor.execute( query )
+    return len( cursor.fetchall() ) == 0
 
 def main():
-    all_fl_dists = {}
+    conn_info, ann_name, nthreads  = parse_arguments()
+    parent_conn = psycopg2.connect("dbname=%s host=%s" % conn_info)
+    cursor = parent_conn.cursor()
+    thread_cntr = BoundedSemaphore( nthreads )
     
-    conn, ann_name  = parse_arguments()
     while True:
-        cursor = conn.cursor()
-        query = "SELECT gene, annotation, reads_fn  " \
-                + "FROM gene_expression_queue " \
-                + "WHERE processing_status = 'UNPROCESSED' LIMIT 1 FOR UPDATE;"
-        cursor.execute( query )
+        if gene_queue_is_empty(cursor): 
+            break
         
-        # get and parse the arguments
-        res = cursor.fetchall()
-        if len( res ) == 0: break
-        gene_id, annotation, reads_fn = res[0]
-        if reads_fn not in all_fl_dists:
-            all_fl_dists[reads_fn] = load_fl_dists(reads_fn)
-            
-        if VERBOSE:
-            print "Processing ", gene_id
+        # acquire a thread 
+        thread_cntr.acquire()
+        pid = os.fork()
+        if pid != 0: 
+            continue
         
-        # update the queue so that we are processing it
-        query = "UPDATE gene_expression_queue " \
-              + "SET processing_status = 'PROCESSING' " \
-              + "WHERE gene = '%s'" % gene_id \
-              + "  AND annotation = '%s'" % annotation \
-              + "  AND reads_fn = '%s';" % reads_fn
-        
-        cursor.execute( query )
-        cursor.close()
+        conn = psycopg2.connect("dbname=%s host=%s" % conn_info)
 
-        # commit so that the FOR UPDATE unlocks.
-        conn.commit()
+        gene_id, annotation, reads_fn = get_queue_item(conn)
+        fl_dist = load_fl_dists(reads_fn)
+        
+        if VERBOSE: print "Processing ", gene_id
         
         estimate_transcript_frequencies( 
-            conn, annotation, gene_id, reads_fn, all_fl_dists[ reads_fn ] )
+            conn, annotation, gene_id, reads_fn, fl_dist  )
+
+        conn.close()
+        # release the thread
+        thread_cntr.release()
+        os._exit(os.EX_OK)
     
-    conn.close()
+    # wait until all of the threads have terminated
+    for loop in range(nthreads): thread_cntr.acquire()
 
 if __name__ == '__main__':
     main()
