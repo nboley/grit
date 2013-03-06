@@ -141,24 +141,41 @@ def gene_queue_is_empty(cursor):
     cursor.execute( query )
     return len( cursor.fetchall() ) == 0
 
+def clear_zombies( pids ):
+    for pid in sorted(pids):
+        with open("/proc/%d/stat" %(pid)) as procfile:
+            status = procfile.readline().split()[2]
+        if status == 'Z': 
+            os.waitpid( pid, 0 )
+            pids.remove(pid)
+    
+    return
+
 def main():
     conn_info, ann_name, nthreads  = parse_arguments()
     parent_conn = psycopg2.connect("dbname=%s host=%s" % conn_info)
     cursor = parent_conn.cursor()
     thread_cntr = BoundedSemaphore( nthreads )
-    
+    processes = set()
     while True:
+        # wait4 zombied processes
+        clear_zombies( processes )
+        
         if gene_queue_is_empty(cursor): 
             break
         
-        # acquire a thread 
+        # acquire a thread, and for. We us ethe double fork
+        # trick to avoid zombie processes
         thread_cntr.acquire()
         pid = os.fork()
         if pid != 0: 
+            processes.add( pid )
             continue
         
+        # open a new connection ( which we need to do because of the fork )
         conn = psycopg2.connect("dbname=%s host=%s" % conn_info)
-
+        
+        # get and lock a gene to process
         gene_id, annotation, reads_fn = get_queue_item(conn)
         fl_dist = load_fl_dists(reads_fn)
         
@@ -168,7 +185,7 @@ def main():
             conn, annotation, gene_id, reads_fn, fl_dist  )
 
         conn.close()
-        # release the thread
+        # release the thread, and stop the process
         thread_cntr.release()
         os._exit(os.EX_OK)
     
