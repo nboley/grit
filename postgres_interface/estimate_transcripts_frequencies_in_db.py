@@ -54,7 +54,7 @@ def estimate_transcript_frequencies(conn, ann_id, gene_name, bam_fn, fl_dists):
 
         cursor.execute( query )
     except Exception, inst:
-        print "ERROR in %s:" % gene_name, inst
+        if VERBOSE: print "ERROR in %s:" % gene_name, inst
         inst = str(inst)
         inst.replace( "'", "" )
         query = "UPDATE gene_expression_queue " \
