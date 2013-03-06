@@ -376,12 +376,12 @@ def estimate_num_paired_reads_from_bin(
     
     return float( density )
 
-cached_f_mat_entries = {}
 def calc_expected_cnts( exon_boundaries, transcripts, fl_dists_and_read_lens, \
                         max_num_unmappable_bases=MAX_NUM_UNMAPPABLE_BASES,
                         max_memory_usage=3.5 ):
     # store all counts, and count vectors. Indexed by ( 
     # read_group, read_len, bin )
+    cached_f_mat_entries = {}
     f_mat_entries = {}
     
     nonoverlapping_exon_lens = \
