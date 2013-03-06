@@ -61,12 +61,13 @@ def estimate_transcript_frequencies(conn, ann_id, gene_name, bam_fn, fl_dists):
               + "WHERE gene = '%s'" % gene_name \
               + "  AND annotation = '%s'" % ann_id \
               + "  AND reads_fn = '%s';" % bam_fn
-        print query
+        
         cursor.execute( query )
         
-    finally:
-        cursor.close()
-        conn.commit()
+    
+    cursor.close()
+    conn.commit()
+    
     return 
 
 def parse_arguments():
@@ -144,7 +145,6 @@ def main():
         estimate_transcript_frequencies( 
             conn, annotation, gene_id, reads_fn, all_fl_dists[ reads_fn ] )
     
-    cursor.close()
     conn.close()
 
 if __name__ == '__main__':
