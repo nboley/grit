@@ -16,29 +16,26 @@ def parse_contig_composite( data ):
     name, ann_id = data[1:-1].split(",")
     return ( name, int(ann_id) )
 
-def load_gene_object( (gene_id, annotation_id), conn ):
+def load_gene_object( gene_id, conn ):
     cursor = conn.cursor()
     query = """SELECT contig, strand, location 
-               FROM genes WHERE id = '%s' AND annotation = %i;""" \
-        % ( gene_id, annotation_id )
+               FROM annotations.genes WHERE id = '%s';""" % gene_id
     cursor.execute( query )
     res = cursor.fetchall()
     if len(res) == 0: 
-        raise ValueError, "Unknown gene-annotation: %s-%i" \
-            % ( (gene_id, annotation_id) )
+        raise ValueError, "Unknown gene: %s" % gene_id
     assert len(res) == 1
     
     chrm, strand, region = res[0]
     start, stop = parse_integer_range(region)
     cursor.close()
     
-    return Gene( (gene_id, annotation_id), parse_contig_composite(chrm), 
+    return Gene( gene_id, parse_contig_composite(chrm), 
                  strand, start, stop, [] )
 
 def load_transcript_ids( gene, conn ):
     cursor = conn.cursor()
-    query = "SELECT id FROM transcripts " \
-          + "WHERE gene = '%s' AND annotation = %i;" % gene.id
+    query = "SELECT id FROM annotations.transcripts WHERE gene = %s;" % gene.id
     cursor.execute( query )
     rv = [ x[0] for x in cursor.fetchall() ]
     cursor.close()
@@ -47,7 +44,7 @@ def load_transcript_ids( gene, conn ):
 def load_transcript( gene, trans_id, conn ):
     cursor = conn.cursor()
     # load the exons
-    query = "SELECT location FROM exons " \
+    query = "SELECT location FROM annotations.exons " \
           + "WHERE transcript = '%s';" % trans_id
     cursor.execute( query )
     exons = [ parse_integer_range(x[0]) for x in cursor.fetchall() ]
@@ -58,7 +55,7 @@ def load_transcript( gene, trans_id, conn ):
     return trans
     
     # try and load the coding sequence
-    query = "SELECT region FROM transcript_regions " \
+    query = "SELECT region FROM annotations.transcript_regions " \
           + "WHERE transcript = '%s' and type='CDS';" % trans_id
     cursor.execute( query )
     res = cursor.fetchone()
@@ -78,8 +75,8 @@ def load_transcripts( gene, conn ):
     
     return
 
-def load_gene_from_db( (gene_id, annotation_id), conn):
-    gene = load_gene_object( (gene_id, annotation_id), conn )
+def load_gene_from_db( gene_id, conn):
+    gene = load_gene_object( gene_id, conn )
     load_transcripts( gene, conn )
     return gene
 

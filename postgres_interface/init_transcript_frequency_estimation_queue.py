@@ -52,9 +52,8 @@ def main():
     cursor = conn.cursor()
     query = "INSERT INTO gene_expression_queue " \
           + "    SELECT id as gene, " \
-          + "           %i as annotation, " % ann_id \
           + "         '%s' as bam_fn " % bam_fp.name \
-          + "    FROM genes WHERE annotation = %i;" % ann_id
+          + "    FROM annotations.genes WHERE annotation = %i;" % ann_id
     cursor.execute( query )
     conn.commit()
 

@@ -14,7 +14,7 @@ import new_sparsify_transcripts
 from new_sparsify_transcripts import build_design_matrices
 from new_sparsify_transcripts import estimate_transcript_frequencies
 
-def estimate_transcript_frequencies(conn, ann_id, gene_name, bam_fn, fl_dists):
+def estimate_transcript_frequencies(conn, gene_id, bam_fn, fl_dists):
     """
 
     """
@@ -22,8 +22,7 @@ def estimate_transcript_frequencies(conn, ann_id, gene_name, bam_fn, fl_dists):
         cursor = conn.cursor()
         
         # load the genes
-        gene = load_gene_from_db( (gene_name, ann_id), conn )
-        gene.id = gene.id[0]
+        gene = load_gene_from_db( gene_id, conn )
         gene.chrm = gene.chrm[0]
 
         # build the design matrices
@@ -48,22 +47,18 @@ def estimate_transcript_frequencies(conn, ann_id, gene_name, bam_fn, fl_dists):
 
         query = "UPDATE gene_expression_queue " \
               + "SET processing_status = 'FINISHED' " \
-              + "WHERE gene = '%s'" % gene_name \
-              + "  AND annotation = '%s'" % ann_id \
+              + "WHERE gene = '%s'" % gene_id \
               + "  AND reads_fn = '%s';" % bam_fn
 
         cursor.execute( query )
     except Exception, inst:
-        if VERBOSE: print "ERROR in %s:" % gene_name, inst
-        inst = str(inst)
-        inst.replace( "'", "" )
+        if VERBOSE: print "ERROR in %s:" % gene_id, inst
+        inst = str(inst).replace( "'", "" )
         query = "UPDATE gene_expression_queue " \
               + "SET processing_status = 'FAILED', " \
               + "error_log = '%s' " % inst \
-              + "WHERE gene = '%s'" % gene_name \
-              + "  AND annotation = '%s'" % ann_id \
+              + "WHERE gene = %s" % gene_id \
               + "  AND reads_fn = '%s';" % bam_fn
-        
         cursor.execute( query )
         
     
@@ -80,13 +75,13 @@ def get_queue_item(conn):
     query = """
     UPDATE gene_expression_queue 
        SET processing_status = 'PROCESSING' 
-     WHERE (gene, annotation, reads_fn) in (
-            SELECT gene, annotation, reads_fn
+     WHERE (gene, reads_fn) in (
+            SELECT gene, reads_fn
             FROM gene_expression_queue 
             WHERE processing_status = 'UNPROCESSED' 
             FOR UPDATE
             LIMIT 1
-    ) RETURNING gene, annotation, reads_fn;
+    ) RETURNING gene, reads_fn;
     """
     cursor.execute( query )
     res = cursor.fetchall()
@@ -126,7 +121,7 @@ def parse_arguments():
     args = parser.parse_args()
     
     global VERBOSE
-    VERBOSE = args.verbose
+    VERBOSE = args.verbose or args.debug_verbose
     new_sparsify_transcripts.VERBOSE = VERBOSE
     
     global DEBUG_VERBOSE
@@ -176,13 +171,13 @@ def main():
         conn = psycopg2.connect("dbname=%s host=%s" % conn_info)
         
         # get and lock a gene to process
-        gene_id, annotation, reads_fn = get_queue_item(conn)
+        gene_id, reads_fn = get_queue_item(conn)
         fl_dist = load_fl_dists(reads_fn)
         
         if VERBOSE: print "Processing ", gene_id
         
         estimate_transcript_frequencies( 
-            conn, annotation, gene_id, reads_fn, fl_dist  )
+            conn, gene_id, reads_fn, fl_dist  )
 
         conn.close()
         # release the thread, and stop the process
