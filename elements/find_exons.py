@@ -699,7 +699,7 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, pol
     poss = sorted( locs.iteritems() )
     poss = merge_empty_labels( poss )
     if len( poss ) == 0:
-        return [], [], []
+        return [], [], [], []
 
     gene_bins = []
     if gene.start < poss[0][0]:
@@ -805,7 +805,7 @@ def find_exons_in_gene( ( chrm, strand ), gene,
         print "============================================= NO EXONS IN REGION"
         print gene
         return list(chain(tss_pseudo_exons, pseudo_exons, tes_pseudo_exons)), \
-            [], [], [], []
+            [], [], [], [], []
 
 
     internal_exons = []

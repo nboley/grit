@@ -118,7 +118,8 @@ from chrm_sizes import ChrmSizes
 BaseDataTypes = [  "RNASeq", "CAGE", "PolyASeq", "Annotation"]
 CHRM_LENS_DATA_TYPE = "chrm_sizes"
 GENOME_DATA_TYPE = "genome"
-RnaSeqDataTypes = [ "rnaseq_polyaplus_bam",
+RnaSeqDataTypes = [ "elements_bed",
+                    "rnaseq_polyaplus_bam",
                     "rnaseq_polyaplus_rev_bam",
                     "rnaseq_polyaplus_unstranded_bam",
                     "rnaseq_total_bam",
@@ -1273,7 +1274,7 @@ def build_all_exon_files( elements, pserver, output_prefix ):
       --out-file-prefix=test
     """
     def build_find_exons_cmds( sample_type, sample_id ):
-        call_template = "python {0} {1} {2} {3} --cage-wigs {4} {5} --out-file-prefix {6}"
+        call_template = "python {0} {1} {2} {3} --cage-wigs {4} {5} --out-filename {6}"
         
         bedgraph_fnames = get_rnaseqcov_bedgraphs( 
             elements, sample_type, sample_id )
@@ -1317,30 +1318,22 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         
         chrm_sizes_fname = elements.chr_sizes.get_tmp_fname( with_chr = True )
 
-        output_fn_prefix = os.path.join( output_prefix, \
-            "discovered_exons.%s.%s" % ( sample_type, sample_id ) )
-        output_fn_prefix = output_fn_prefix.replace( ".*", "" )
+        output_fn = os.path.join( output_prefix, \
+            "discovered_elements.%s.%s.bed" % ( sample_type, sample_id ) )
+        output_fn = output_fn.replace( ".*", "" )
         
         call = call_template.format( 
             FIND_EXONS_CMD, jns_fname, chrm_sizes_fname,
             " ".join(bedgraph_fnames),   
             " ".join(cage_wig_fnames), 
             "--polya-candidate-sites "+" ".join( candidate_polya_site_fnames ),
-            output_fn_prefix )
+            output_fn )
         
         call += " --threads {threads}"
-        
-        extensions = [ ".internal_exons.gff",    
-                       ".tss_exons.gff", 
-                       ".tes_exons.gff" ,
-                       ".single_exon_genes.gff" ]
-        
-        output_fnames = [output_fn_prefix+extension for extension in extensions]
+                
+        output_fnames = [output_fn,]
         output_element_types = [
-              ElementType( "exons_gff", sample_type, sample_id, "." ),
-              ElementType( "cage_tss_exons_gff", sample_type, sample_id, "." ),
-              ElementType( "polya_tes_exons_gff", sample_type, sample_id, "." ),
-              ElementType( "single_exon_genes_gff", sample_type, sample_id, ".")
+              ElementType( "elements_bed", sample_type, sample_id, "." ),
         ]
         
         dependency_fnames = [ jns_fname ]
@@ -1348,6 +1341,7 @@ def build_all_exon_files( elements, pserver, output_prefix ):
         dependency_fnames.extend( cage_wig_fnames )
         
         cmd = Cmd(call, output_element_types, output_fnames, dependency_fnames)
+        
         pserver.add_process( cmd, Resource(1), Resource(1) )
 
     # build the merged sample exons
@@ -1369,13 +1363,9 @@ def build_all_exon_files( elements, pserver, output_prefix ):
     
     return
 
-def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False ):
+def build_transcripts( elements, pserver, output_prefix ):
     """
-    build_transcripts.py [-h] --exons EXONS [EXONS ...] 
-                              --tss TSS [TSS ...]
-                              --tes TES [TES ...] 
-                              --junctions JUNCTIONS [JUNCTIONS ...] 
-                              [ --single-exon-genes ]
+    build_transcripts.py [-h] elements.bed
                               [--threads THREADS]
                               [--out-fname OUT_FNAME] 
                               [--log-fname LOG_FNAME]
@@ -1388,101 +1378,41 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         # assume that the directory already exists, and continue
         pass
 
-    if use_TF_elements:
-        exon_input_type = 'TF_exons_gff'
-        jn_input_type = 'TF_jns_gff'
-        transcript_output_type = "TF_filt_element_transcripts_gtf"
-    else:
-        exon_input_type = 'exons_gff'
-        jn_input_type = 'filtered_jns_gff'
-        transcript_output_type = "transcripts_gtf"
+    elements_input_type = 'elements_bed'
+    transcript_output_type = "transcripts_gtf"
         
     def build_transcripts_for_sample( sample_type, sample_id ):
         # get the exons
         if not USE_MERGED_EXONS_FOR_TRANSCRIPTS and BUILD_SAMPLE_SPECIFIC_EXONS:
             ress = elements.get_elements_from_db( \
-                exon_input_type, sample_type, sample_id  )
+                elements_input_type, sample_type, sample_id  )
         else:
             ress = elements.get_elements_from_db( \
-                exon_input_type, "*", "*"  )
+                elements_input_type, "*", "*"  )
         
         if len( ress ) < 1: return
         assert len( ress ) == 1
-        exons_fname = ress[0].fname
+        elements_fname = ress[0].fname
         
-        # get tss exons
-        if not USE_MERGED_EXONS_FOR_TRANSCRIPTS and BUILD_SAMPLE_SPECIFIC_EXONS:
-            ress = elements.get_elements_from_db(\
-                "cage_tss_exons_gff", sample_type, sample_id)
-        else:
-            ress = elements.get_elements_from_db(\
-                "cage_tss_exons_gff", "*", "*" )
-
-        assert len( ress ) == 1
-        
-        tss_exons_fnames = [ ress[0].fname, ]
-        ress = elements.get_elements_from_db( "cdna_tss_gff" )
-        tss_exons_fnames.extend( e.fname for e in ress )
-        
-        # get tes exons
-        if not USE_MERGED_EXONS_FOR_TRANSCRIPTS and BUILD_SAMPLE_SPECIFIC_EXONS:
-            ress = elements.get_elements_from_db( \
-                "polya_tes_exons_gff", sample_type, sample_id  )
-        else:
-            ress = elements.get_elements_from_db( \
-                "polya_tes_exons_gff", "*", "*"  )
-
-        assert len( ress ) == 1
-        tes_exons_fnames = [ ress[0].fname, ]
-        ress = elements.get_elements_from_db( "cdna_tes_gff" )
-        tes_exons_fnames.extend( e.fname for e in ress )
-
-        # get single exon genes
-        if not USE_MERGED_EXONS_FOR_TRANSCRIPTS and BUILD_SAMPLE_SPECIFIC_EXONS:
-            ress = elements.get_elements_from_db( \
-                "single_exon_genes_gff", sample_type, sample_id  )
-        else:
-            ress = elements.get_elements_from_db( \
-                "single_exon_genes_gff", "*", "*"  )
-
-        assert len( ress ) == 1
-        single_exon_genes_fnames = [ ress[0].fname, ]
-
-        # get junctions
-        ress = elements.get_elements_from_db( \
-            jn_input_type, sample_type, sample_id  )
-        assert len( ress ) == 1
-        jns_fname = ress[0].fname
-
-
         sample_type_name = "merged_input" if sample_type == "*" else sample_type
         sample_id_name = "merged_input" if sample_id == "*" else sample_id
-        suffix = ".transcripts.gtf" if not use_TF_elements \
-            else ".tfelements.transcripts.gtf"
+        suffix = ".transcripts.gtf"
         op_fname = os.path.join( output_prefix, sample_type_name + "." \
                                      + sample_id_name + suffix )
         
         log_fname = op_fname + ".log"
         
-        call = "python %s --exons {0} --tss {1} --tes {2} --junctions {3} " \
-                     + "--single-exon-genes {4} --out-fname {5} --log-fname {6}"
+        call = "python %s {0} --out-fname {1} --log-fname {2}"
         call = call % BUILD_TRANSCRIPTS_CMD
         
-        call = call.format( exons_fname, 
-                            " ".join( tss_exons_fnames ),
-                            " ".join( tes_exons_fnames ),
-                            jns_fname,
-                            " ".join( single_exon_genes_fnames ),
-                            op_fname, log_fname  )
+        call = call.format( elements_fname, op_fname, log_fname )
         call +=  " --threads={threads}"
         
         op_element_types = [ \
             ElementType( transcript_output_type, sample_type, sample_id, "." ),]
         op_fnames = [ op_fname,]
 
-        dependencies = [ exons_fname, jns_fname ]
-        dependencies.extend( tss_exons_fnames )
-        dependencies.extend( tes_exons_fnames )
+        dependencies = [ elements_fname, ]
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
         
@@ -1490,7 +1420,7 @@ def build_transcripts( elements, pserver, output_prefix, use_TF_elements=False )
         pserver.add_process( cmd, Resource(1) )
         return
 
-    ress = elements.get_elements_from_db( exon_input_type )
+    ress = elements.get_elements_from_db( elements_input_type )
     for e in ress[:]:
         if USE_MERGED_RNASEQ_FOR_EXONS and e.sample_id != '*': 
             continue
@@ -1818,7 +1748,7 @@ def call_orfs( elements, pserver, output_prefix ):
         if basename.endswith( '.gtf' ): basename = basename[:-4]
         op_fname = os.path.join( output_prefix, basename + ".CDS.gtf")
         
-        call = "python %s {0} {1} --only-longest-orf --include-stop-codon --output-filename {2}" % FIND_ORFS_CMD
+        call = "python %s {0} {1} --only-longest-orf --output-filename {2}" % FIND_ORFS_CMD
         call = call.format( merged_trans_fname, fasta_fn, op_fname )
         call += " --threads {threads}"
         
@@ -2157,7 +2087,7 @@ def main():
     merge_sample_type_junctions( elements, pserver, base_dir + "junctions/" )
         
     build_all_exon_files( elements, pserver, base_dir + "exons" )
-    estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
+    #estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
     
     build_transcripts( elements, pserver, base_dir + "transcripts" )
 
