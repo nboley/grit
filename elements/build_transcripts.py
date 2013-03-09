@@ -1,7 +1,6 @@
 # Copyright (c) 2011-2012 Nathan Boley
 
-MAX_NUM_TRANSCRIPTS = 200000
-MIN_INTRON_CNT_FRAC = 0.001
+MAX_NUM_TRANSCRIPTS = 100000
 VERBOSE = False
 MIN_VERBOSE = False
 
@@ -180,12 +179,14 @@ def load_elements( fp ):
             (int(start), int(stop)) )
     
     # convert into array
+    all_array_elements = defaultdict( 
+        lambda: defaultdict(lambda: numpy.zeros(0)) )
     for element_type, elements in all_elements.iteritems():
         for key, contig_elements in elements.iteritems():
-            all_elements[element_type][key] \
+            all_array_elements[element_type][key] \
                 = numpy.array( sorted( contig_elements ) )
 
-    return all_elements
+    return all_array_elements
 
 def main():
     elements_fp, n_threads, out_fp, log_fp = parse_arguments()
