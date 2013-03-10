@@ -31,7 +31,7 @@ class TabixBackedArray(object):
         self._data_files = [ pysam.Tabixfile( file ) 
                              if type(file) == str else file 
                              for file in files ]
-        self.chrm = chrm
+        self.chrm = clean_chr_name(chrm)
         self.strand = strand
         self.contig_len = contig_len
         return
@@ -40,19 +40,18 @@ class TabixBackedArray(object):
         start, stop = item.start, item.stop
         if start == None: start = 0 
         if stop == None: stop = self.contig_len 
-
-        rv = numpy.zeros( stop - start + 1 )
+        rv = numpy.zeros( stop - start  )
         for data_file in self._data_files:
             for line in data_file.fetch( 
                     'chr' + self.chrm, start, stop, parser=pysam.asTuple() ):
-                rv[int(line[1])-start:int(line[2])-stop] += float(line[3])
+                rv[max(0, int(line[1]))-start:int(line[2])-start] += float(line[3])
         
         return rv
     
     def asarray( self, contig_len=None ):
         if contig_len == None:
             contig_len = self.contig_len
-        return self[0:contig_len]
+        return self[0:contig_len+1]
     
     def __len__(self):
         return self.contig_len
@@ -94,6 +93,11 @@ class Wiggle( dict ):
         return
 
 if __name__ == '__main__':
-    x = Wiggle( open(sys.argv[1]), [ open( x ) for x in sys.argv[2:] ] )
-    print x
-    print x.keys()
+    chrm_lens_fp = open(sys.argv[1])
+    fps = [ open( x ) for x in sys.argv[2:] ]
+    x = Wiggle( chrm_lens_fp, fps )
+    import wiggle
+    y = wiggle.Wiggle( chrm_lens_fp, fps )
+    for key in y.keys():        
+        print "Diff indices: ", ( x[key].asarray() - y[key] ).nonzero()
+    
