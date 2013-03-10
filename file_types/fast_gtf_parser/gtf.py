@@ -132,6 +132,10 @@ class Transcript( object ):
         
         exon_bnds = list( chain( *exons ) )
         self.exon_bnds = exon_bnds
+        self.start = exon_bnds[0]
+        self.stop = exon_bnds[-1]
+        assert self.start <= self.stop
+
         self.exons = tuple(zip(exon_bnds[:-1:2], exon_bnds[1::2]))
         self.introns = tuple([ (x+1, y-1) for x, y in 
                                izip(exon_bnds[1:-2:2], exon_bnds[2:-1:2]) ])
@@ -145,6 +149,8 @@ class Transcript( object ):
         self.cds_exons = None
         self.fp_utr_exons = None
         self.tp_utr_exons = None
+        self.us_exons = None
+        self.ds_exons = None
         
         self.promoter = promoter
         
