@@ -11,7 +11,7 @@ from pygraph.classes.graph import graph
 from pygraph.algorithms.accessibility import connected_components
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../", 'file_types'))
-from wiggle import Wiggle, load_wiggle_asynchronously, guess_strand_from_fname
+from tabix_wiggle import Wiggle, guess_strand_from_fname
 from junctions_file import parse_jn_gff, Junctions
 from gtf_file import parse_gff_line, create_gff_line, GenomicInterval
 from bed import create_bed_line
@@ -1206,25 +1206,17 @@ def main():
     wigs, jns_fp, chrm_sizes_fp, cage_wigs, polya_candidate_sites_fps, ofp \
         = parse_arguments()
     
-    # set up all of the file processing calls
-    worker_pool = multiprocessing.BoundedSemaphore( num_threads )
-    ps = []
-    
     if VERBOSE: print >> sys.stderr,  'Loading merged read pair wiggles'    
-    fnames =[wigs[0][0].name, wigs[1][0].name, wigs[2][0].name, wigs[3][0].name]
+    fps =[wigs[0][0], wigs[1][0], wigs[2][0], wigs[3][0]]
     strands = ["+", "-", "+", "-"]
-    read_cov, new_ps = load_wiggle_asynchronously( 
-        chrm_sizes_fp.name, fnames, strands, worker_pool )
-    ps.extend( new_ps )    
+    read_cov = Wiggle( chrm_sizes_fp, fps, strands )
+    if VERBOSE: print >> sys.stderr, 'Finished loading merged read pair wiggles'
     
     if VERBOSE: print >> sys.stderr,  'Loading CAGE.'
-    assert all( len(fps) == 1 for fps in cage_wigs )
-    cage_cov, new_ps = load_wiggle_asynchronously( 
-        chrm_sizes_fp.name, [fps[0].name for fps in cage_wigs], 
-        ["+", "-"], worker_pool)
+    cage_cov = Wiggle( chrm_sizes_fp, zip(*cage_wigs)[0] )
+    for cage_fps in cage_wigs: [ cage_fp.close() for cage_fp in cage_fps ]
+    if VERBOSE: print >> sys.stderr, 'Finished loading CAGE data'
     
-    ps.extend( new_ps )
-            
     if VERBOSE: print >> sys.stderr,  'Loading candidate polyA sites'
     polya_sites = find_polya_sites([x.name for x in polya_candidate_sites_fps])
     for fp in polya_candidate_sites_fps: fp.close()
@@ -1232,30 +1224,7 @@ def main():
 
     if VERBOSE: print >> sys.stderr,  'Loading junctions.'
     jns = Junctions( parse_jn_gff( jns_fp.name ) )
-    
-    for p in ps:
-        if VERBOSE:
-            print >> sys.stderr, "Joining process: ", p
-        p.join()
-        if VERBOSE:
-            print >> sys.stderr, "Joined process: ", p
-    
-    assert all( x.min() >= 0 and x.max() >= 0 for x in cage_cov.values() )
-    assert all( x.min() >= 0 and x.max() >= 0 for x in read_cov.values() )
-
-    ##### join all of the wiggle processes
-    
-    # get the joined read data, and calculate stats
-    if VERBOSE: print >> sys.stderr, 'Finished loading merged read pair wiggles'
-    
-    # join the cage data, and calculate statistics
-    for cage_fps in cage_wigs: [ cage_fp.close() for cage_fp in cage_fps ]
-    if VERBOSE: print >> sys.stderr, 'Finished loading CAGE data'
-
-    if VERBOSE: print >> sys.stderr, 'Finished loading read pair 1 wiggles'
-
-    if VERBOSE: print >> sys.stderr, 'Finished loading read pair 2 wiggles'
-    
+        
     all_cage_peaks = []
     single_exon_genes = []
     tss_exons = []
@@ -1273,9 +1242,9 @@ def main():
         
         all_elements = find_exons_in_contig( \
            ( chrm, strand ),
-           read_cov[ (chrm, strand) ],
+           read_cov[ (chrm, strand) ].asarray(),
            jns[ (chrm, strand) ],
-           cage_cov[ (chrm, strand) ], 
+           cage_cov[ (chrm, strand) ].asarray(),
            polya_sites[ (chrm, strand) ] )
         
         for jn, cnt in jns[(chrm, strand)].iteritems():
