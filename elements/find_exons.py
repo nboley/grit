@@ -195,7 +195,7 @@ class Bin( object ):
         return cov_array[self.start:self.stop].mean()
     
     def reverse_strand(self, contig_len):
-        return Bin(contig_len-self.stop-1, contig_len-self.start-1, 
+        return Bin(contig_len-self.stop, contig_len-self.start, 
                    self.right_label, self.left_label, self.type)
     
     def __repr__( self ):
@@ -1243,7 +1243,7 @@ def main():
         if VERBOSE: print >> sys.stderr, \
                 'Processing chromosome %s strand %s.' % ( chrm, strand )
         
-        contig_len = len( read_cov[ (chrm, strand) ] )
+        contig_len = len(read_cov[(chrm, strand)])
         
         all_elements = find_exons_in_contig( \
            ( chrm, strand ),
