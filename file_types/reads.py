@@ -48,7 +48,7 @@ def get_read_group( r1, r2 ):
         return None
 
 
-def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=100 ):
+def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=5000 ):
     # keep track of which fractiona re on the sam strand
     paired_cnts = {'no_mate': 0, 'same_strand': 1e-4, 'diff_strand': 1e-4}
     
