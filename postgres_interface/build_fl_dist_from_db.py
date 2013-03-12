@@ -31,20 +31,17 @@ from reads import Reads
 
 import pysam
 
-def main(nsamples=25000, min_exon_size=600):
-    bam_fn = sys.argv[1]
+def build_fl_dist(bam_fn, conn, nsamples=25000, min_exon_size=600):
     reads = pysam.Samfile( bam_fn, "rb" )
     reads = Reads( bam_fn, "rb" )
-
-    conn = psycopg2.connect("dbname=%s host=%s" % ( 'rnaseq_data', 'localhost'))
     
     cursor = conn.cursor()
-    query = "SELECT * FROM single_exon_genes"
+    query = """SELECT * FROM annotations.single_exon_genes"""
     cursor.execute( query )
-    
+        
     frag_lens = []
-    for gene_id, ann_id in cursor.fetchall():
-        gene = load_gene_from_db( (gene_id, ann_id) )
+    for gene_id in cursor.fetchall():
+        gene = load_gene_from_db( gene_id, conn )
         exon = gene.transcripts[0].exons[0]
         chrm = 'chr%s' % gene.chrm[0]
         if exon[1] - exon[0] < min_exon_size: continue
@@ -79,5 +76,12 @@ def main(nsamples=25000, min_exon_size=600):
     
     with open( bam_fn + ".fldist", "w" ) as ofp:
         pickle.dump( { 'mean': fl_dist }, ofp )
+
+def main():
+    bam_fn = sys.argv[1]
+    conn = psycopg2.connect("dbname=%s host=%s user=nboley" 
+                            % ('rnaseq_data', '10.151.16.87'))
+    build_fl_dist(bam_fn, conn)
     
-main()
+if __name__ == '__main__':
+    main()
