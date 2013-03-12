@@ -3,7 +3,7 @@ import pickle
 import time
 from itertools import izip
 
-from multiprocessing import BoundedSemaphore, Process
+from multiprocessing import BoundedSemaphore, Process, cpu_count
 
 VERBOSE = False
 import psycopg2
@@ -62,8 +62,8 @@ def estimate_transcript_frequencies(conn, gene_id, bam_fn, fl_dists):
         # build the design matrices
         expected_array, observed_array, unobservable_transcripts \
             = new_sparsify_transcripts.build_design_matrices( 
-                gene, bam_fn, fl_dists, None )
-
+                gene, bam_fn, fl_dists, None, reverse_strand=True )
+        if DEBUG_VERBOSE: print "Sum counts:", observed_array.sum()
         add_design_matrices_to_DB( cursor, gene, bam_fn, 
                                    expected_array, observed_array, 
                                    unobservable_transcripts )
@@ -144,8 +144,8 @@ def parse_arguments():
     parser.add_argument( '--db-name', default='rnaseq_data', 
                          help='Database name. ' )
 
-    parser.add_argument( '--threads', '-t', default=1,
-                         help='Number of threads to spawn.')    
+    parser.add_argument( '--threads', '-t', default='MAX',
+                         help='Number of threads to spawn ( MAX for the number of cores ).')    
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',
                          help='Print status information.')
     parser.add_argument( '--debug-verbose', default=False, action='store_true',
@@ -163,11 +163,13 @@ def parse_arguments():
     DEBUG_VERBOSE = args.debug_verbose
     new_sparsify_transcripts.DEBUG_VERBOSE = DEBUG_VERBOSE
     
+    if args.threads == 'MAX':
+        args.threads = cpu_count()
+    
     return ( args.db_name, args.host), int(args.threads), args.daemon
 
 def get_reads_fn_and_fl_dist( manager_inst, reads_location, conn ):
     # check to see if the filename is already in the manager
-    manager_inst.lock.acquire()
     # if it is, then find the corresponding filenames and return them
     if reads_location in manager_inst.location_to_fn_mapping:
         while True:
@@ -176,43 +178,51 @@ def get_reads_fn_and_fl_dist( manager_inst, reads_location, conn ):
             # if they are finished ( ie downloaded, and the fl dist
             # is built ) then return them
             if status == 'FINISHED':
-                manager_inst.lock.release()
                 return reads_fn, load_fl_dists(reads_fn)
+            elif status == 'ERROR':
+                raise ValueError, "Cant get files"
             # otherwise, wait a second and try again
             else:
                 if DEBUG_VERBOSE: 
                     print "Waiting on %s: status %s" % ( reads_fn, status )
-                manager_inst.lock.release()
                 time.sleep(1.)
-                manager_inst.lock.acquire()
     # otherwise, we need to get them
     else:
-        # choose a filename
-        op_fname = "/scratch/" + ''.join( 
-            x for x in reads_location.replace("/", "_") 
-            if x.isalnum() or x == '_' ) + ".bam"
-        manager_inst.location_to_fn_mapping[reads_location] = (
-            op_fname, op_fname + ".fldist", 'downloading' )
-        manager_inst.lock.release()
-        
-        # download the file
-        if VERBOSE: print "Downloading ", reads_location
-        res = os.system( "s3cmd get %s %s --continue" 
-                         % (reads_location, op_fname) )
-        res = os.system( "s3cmd get %s.bai %s.bai --continue" 
-                         % (reads_location, op_fname) )
-        
-        # build the fl dist
-        if not os.path.exists( op_fname + ".fldist" ):
-            build_fl_dist(op_fname, conn)
-        
-        # release the lock
-        manager_inst.lock.acquire()
-        manager_inst.location_to_fn_mapping[reads_location] = (
-            op_fname, op_fname + ".fldist", 'FINISHED' )        
-        manager_inst.lock.release()
+        try:
+            # choose a filename
+            op_fname = "/scratch/" + ''.join( 
+                x for x in reads_location.replace("/", "_") 
+                if x.isalnum() or x == '_' ) + ".bam"
+            manager_inst.location_to_fn_mapping[reads_location] = (
+                op_fname, op_fname + ".fldist", 'downloading' )
 
-        return op_fname, load_fl_dists(op_fname)
+            # download the file
+            if VERBOSE: print "Downloading ", reads_location
+            print "s3cmd get %s %s --continue" \
+                             % (reads_location, op_fname)
+            res = os.system( "s3cmd get %s %s --continue" 
+                             % (reads_location, op_fname) )
+            res = os.system( "s3cmd get %s.bai %s.bai --continue" 
+                             % (reads_location, op_fname) )
+
+            # build the fl dist
+            if not os.path.exists( op_fname + ".fldist" ):
+                build_fl_dist(op_fname, conn)
+            
+            fl_dists = load_fl_dists(op_fname)
+
+            # release the lock
+            manager_inst.location_to_fn_mapping[reads_location] = (
+                op_fname, op_fname + ".fldist", 'FINISHED' )        
+        except Exception, inst:
+            if VERBOSE: print "ERROR loading files. %s" % inst
+            # release the lock
+            manager_inst.location_to_fn_mapping[reads_location] = (
+                op_fname, op_fname + ".fldist", 'ERROR' )        
+            
+            raise ValueError, "Cant get files" + str(inst)
+        
+        return op_fname, fl_dists
 
     assert False
 
@@ -231,8 +241,23 @@ def spawn_process( conn_info, manager_inst ):
     # get and lock a gene to process
     gene_id, reads_location = get_queue_item(conn)
 
-    reads_fn, fl_dist \
-        = get_reads_fn_and_fl_dist( manager_inst, reads_location, conn )
+    try:
+        reads_fn, fl_dist \
+            = get_reads_fn_and_fl_dist( manager_inst, reads_location, conn )
+    except ValueError, inst:
+        inst = str(inst).replace( "'", "" )
+        cursor = conn.cursor()
+        query = "UPDATE gene_expression_queue " \
+              + "SET processing_status = 'FAILED', " \
+              + "error_log = '%s' " % inst \
+              + "WHERE gene = %s" % gene_id \
+              + "  AND reads_fn = '%s';" % reads_location
+        cursor.execute( query )
+        cursor.close()
+        conn.commit()
+        conn.close()
+        if DEBUG_VERBOSE: print "CLEANED UP ", inst, reads_location
+        return
 
     if VERBOSE: print "Processing ", gene_id
 
