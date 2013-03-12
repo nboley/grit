@@ -131,16 +131,6 @@ def gene_queue_is_empty(cursor):
     cursor.execute( query )
     return len( cursor.fetchall() ) == 0
 
-def clear_zombies( pids ):
-    for pid in sorted(pids):
-        with open("/proc/%d/stat" %(pid)) as procfile:
-            status = procfile.readline().split()[2]
-        if status == 'Z': 
-            os.waitpid( pid, 0 )
-            pids.remove(pid)
-    
-    return
-
 def load_fl_dists( bam_fn ):
     with open( bam_fn + ".fldist" ) as fl_dists_fp:
         fl_dists = pickle.load( fl_dists_fp )
@@ -176,27 +166,6 @@ def parse_arguments():
     new_sparsify_transcripts.DEBUG_VERBOSE = DEBUG_VERBOSE
     
     return ( args.db_name, args.host), int(args.threads), args.daemon
-
-def fork_into_daemon():
-    try:
-        pid = os.fork()
-        if pid > 0:
-            exit(0)
-    except OSError, e:
-        exit(1)
-
-    os.chdir("/")
-    os.setsid()
-    os.umask(0)
-
-    try:
-        pid = os.fork()
-        if pid > 0:
-            exit(0)
-    except OSError, e:
-        exit(1)
-    
-    return
 
 def get_reads_fn_and_fl_dist( manager_inst, reads_location, conn ):
     # check to see if the filename is already in the manager
@@ -279,9 +248,6 @@ def main():
     conn_info, nthreads, daemon  = parse_arguments()
     parent_conn = psycopg2.connect("dbname=%s host=%s user=nboley" % conn_info)
     cursor = parent_conn.cursor()
-
-    if daemon:
-        fork_into_daemon()    
     
     manager_inst = FilesManager()
     processes = []
