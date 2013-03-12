@@ -15,11 +15,8 @@ def parse_arguments():
     # TODO add code to determine this automatically
     parser.add_argument( '--annotation-name', required=True, type=int,
                          help='Annotation for which to estimate transcript frequencies.')
-
-    parser.add_argument( '--bam-fname', required=True, type=file,
+    parser.add_argument( '--bam-fname', required=True, type=str,
                          help='File containing the reads to estimate transcript frequencies from.')
-    parser.add_argument( '--fl-dists', type=file,
-                         help='File containing the estimated fragment length dist. ( default: BAM_FN.fl_dist )')
     
     parser.add_argument( '--host', default='localhost', help='Database host.' )
     parser.add_argument( '--db-name', default='rnaseq_data', 
@@ -32,16 +29,12 @@ def parse_arguments():
     
     global VERBOSE
     VERBOSE = args.verbose
-    
-    # load the fl dists
-    fl_dists_fp = open( args.bam_fname.name + ".fldist" ) \
-        if args.fl_dists == None else args.fl_dists
-    
+        
     conn = psycopg2.connect("dbname=%s host=%s" % ( args.db_name, args.host) )
-    return conn, args.annotation_name, args.bam_fname, fl_dists_fp
+    return conn, args.annotation_name, args.bam_fname
 
 def main():
-    conn, ann_id, bam_fp, fl_dists_fp = parse_arguments()
+    conn, ann_id, bam_fname = parse_arguments()
     # add the bam, bam.bai, and fl_dist object to S3
     # 
     # XXX for now, just add the actual filename
@@ -52,7 +45,7 @@ def main():
     cursor = conn.cursor()
     query = "INSERT INTO gene_expression_queue " \
           + "    SELECT id as gene, " \
-          + "         '%s' as bam_fn " % bam_fp.name \
+          + "         '%s' as bam_fn " % bam_fname \
           + "    FROM annotations.genes WHERE annotation = %i;" % ann_id
     cursor.execute( query )
     conn.commit()
