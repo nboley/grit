@@ -85,7 +85,6 @@ def estimate_transcript_frequencies(conn, gene_id, bam_fn, fl_dists):
         cursor.execute( query )
     except Exception, inst:
         if VERBOSE: print "ERROR in %s:" % gene_id, inst
-        raise
         inst = str(inst).replace( "'", "" )
         query = "UPDATE gene_expression_queue " \
               + "SET processing_status = 'FAILED', " \
@@ -112,7 +111,6 @@ def get_queue_item(conn):
             FROM gene_expression_queue 
             WHERE processing_status = 'UNPROCESSED' 
             FOR UPDATE
-            ORDER BY reads_fn
             LIMIT 1
     ) RETURNING gene, reads_fn;
     """
