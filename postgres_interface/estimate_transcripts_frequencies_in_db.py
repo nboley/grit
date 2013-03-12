@@ -1,6 +1,7 @@
 import os, sys
 import pickle
 import time
+from itertools import izip
 
 from multiprocessing import BoundedSemaphore, Process
 
@@ -23,25 +24,30 @@ def add_freq_estimates_to_DB( cursor, gene, bam_fn, freq_estimates ):
         query_template += "( %s, %s, %s );"
         cursor.execute( query_template, 
                         (transcript.id, bam_fn, freq_estimate) )
-
+    
     return
 
 def add_design_matrices_to_DB( cursor, gene, bam_fn, 
                                expected_array, observed_array, 
                                unobservable_transcripts ):
-    print unobservable_transcripts
-    
     # insert the observed array
-    query_template = """INSERT INTO observed_arrays ( gene, fname, array ) 
+    query_template = """INSERT INTO observed_arrays 
+                        ( gene, reads_fn, observed_bin_cnts ) 
                         VALUES ( %s, %s, %s );"""
     #cursor.execute( query_template, ( gene.id, bam_fn, observed_array ) )
-    print query_template
+    query = cursor.mogrify( query_template, 
+                            (gene.id, bam_fn, observed_array.tolist()) )
+    cursor.execute( query )
     
-    for trans_i, transcript in enumerate( gene.transcripts ):
-        query_template = """INSERT INTO expected_arrays ( transcript, array ) 
-                            VALUES ( %s, %s );"""
-        #cursor.execute( query_template, ( gene.id, bam_fn, expected_array ) )
-        print query_template
+    for trans_i, (transcript, expected) in enumerate( 
+            izip(gene.transcripts, expected_array.tolist()) ):
+        if trans_i in unobservable_transcripts: continue
+        query_template = """INSERT INTO expected_arrays 
+                            ( transcript, reads_fn, expected_bin_fracs ) 
+                            VALUES ( %s, %s, %s );"""
+        query = cursor.mogrify( query_template, 
+                                ( transcript.id, bam_fn, expected ) )
+        cursor.execute( query )
     
     return
 
@@ -58,6 +64,10 @@ def estimate_transcript_frequencies(conn, gene_id, bam_fn, fl_dists):
             = new_sparsify_transcripts.build_design_matrices( 
                 gene, bam_fn, fl_dists, None )
 
+        add_design_matrices_to_DB( cursor, gene, bam_fn, 
+                                   expected_array, observed_array, 
+                                   unobservable_transcripts )
+        
         # estimate the transcript frequencies, and add them into the DB
         ABS_TOL = 1e-4
         mle_estimates = new_sparsify_transcripts.estimate_transcript_frequencies( 
@@ -86,7 +96,7 @@ def estimate_transcript_frequencies(conn, gene_id, bam_fn, fl_dists):
         
     cursor.close()
     conn.commit()
-        
+    
     return 
 
 def get_queue_item(conn):
@@ -102,6 +112,7 @@ def get_queue_item(conn):
             FROM gene_expression_queue 
             WHERE processing_status = 'UNPROCESSED' 
             FOR UPDATE
+            ORDER BY reads_fn
             LIMIT 1
     ) RETURNING gene, reads_fn;
     """
