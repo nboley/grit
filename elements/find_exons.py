@@ -1,3 +1,5 @@
+# Copyright (c) 2011-2013 Nathan Boley
+
 import sys, os
 import numpy
 import multiprocessing
