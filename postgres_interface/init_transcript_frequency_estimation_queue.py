@@ -43,13 +43,16 @@ def main():
     # add the genes and file to the db table
     # 
     cursor = conn.cursor()
+    print "Inserting %s %s" % ( ann_id, bam_fname )
     query = "INSERT INTO gene_expression_queue " \
           + "    SELECT id as gene, " \
           + "         '%s' as bam_fn " % bam_fname \
           + "    FROM annotations.genes WHERE annotation = %i;" % ann_id
     cursor.execute( query )
     conn.commit()
-
+    print "FINISHED Inserting %s %s" % ( ann_id, bam_fname )
+    conn.close()
+    
     return
 
 if __name__ == '__main__':

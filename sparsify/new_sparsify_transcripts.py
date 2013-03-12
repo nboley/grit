@@ -163,7 +163,7 @@ def nnls( X, Y, fixed_indices_and_values={} ):
     
     return x
 
-def build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists ):
+def build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists, reverse_strand=False ):
     # load the bam file
     reads = Reads(bam_fname)
     
@@ -176,7 +176,7 @@ def build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists ):
                 gene.transcripts, exon_boundaries ))
     
     binned_reads = bin_reads( 
-        reads, "chr" + gene.chrm, gene.strand, exon_boundaries, False, True)
+        reads, "chr" + gene.chrm, gene.strand, exon_boundaries, reverse_strand, True)
     
     observed_cnts = build_observed_cnts( binned_reads, fl_dists )    
     read_groups_and_read_lens =  { (RG, read_len) for RG, read_len, bin 
@@ -241,7 +241,7 @@ def build_expected_and_observed_promoter_counts( gene, cage_array ):
     
     return expected_cnts, observed_cnts
 
-def build_design_matrices( gene, bam_fname, fl_dists, cage_array ):
+def build_design_matrices( gene, bam_fname, fl_dists, cage_array, reverse_strand=False ):
     import cPickle
     # only do this if we are in debugging mode
     if num_threads == 1:
@@ -259,7 +259,7 @@ def build_design_matrices( gene, bam_fname, fl_dists, cage_array ):
     
     # bin the rnaseq reads
     expected_rnaseq_cnts, observed_rnaseq_cnts = \
-        build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists )
+        build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists, reverse_strand=reverse_strand )
     expected_rnaseq_array, observed_rnaseq_array, unobservable_rnaseq_trans = \
         build_expected_and_observed_arrays( 
             expected_rnaseq_cnts, observed_rnaseq_cnts, True )
