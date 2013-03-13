@@ -51,7 +51,7 @@ def add_design_matrices_to_DB( cursor, gene, bam_fn,
     
     return
 
-def estimate_transcript_frequencies(conn, gene_id, bam_fn, fl_dists):
+def estimate_transcript_frequencies(conn, gene_id, reads_key, bam_fn, fl_dists):
     try:
         cursor = conn.cursor()
         
@@ -64,7 +64,7 @@ def estimate_transcript_frequencies(conn, gene_id, bam_fn, fl_dists):
             = new_sparsify_transcripts.build_design_matrices( 
                 gene, bam_fn, fl_dists, None, reverse_strand=True )
         if DEBUG_VERBOSE: print "Sum counts:", observed_array.sum()
-        add_design_matrices_to_DB( cursor, gene, bam_fn, 
+        add_design_matrices_to_DB( cursor, gene, reads_key, 
                                    expected_array, observed_array, 
                                    unobservable_transcripts )
         
@@ -74,7 +74,7 @@ def estimate_transcript_frequencies(conn, gene_id, bam_fn, fl_dists):
             observed_array, expected_array, ABS_TOL)
         if VERBOSE:
             print "Estimates:", mle_estimates
-        add_freq_estimates_to_DB( cursor, gene, bam_fn, mle_estimates )
+        add_freq_estimates_to_DB( cursor, gene, reads_key, mle_estimates )
         
         # updae the queue
         query = "UPDATE gene_expression_queue " \
@@ -262,7 +262,7 @@ def spawn_process( conn_info, manager_inst ):
     if VERBOSE: print "Processing ", gene_id
 
     estimate_transcript_frequencies( 
-        conn, gene_id, reads_fn, fl_dist  )
+        conn, gene_id, reads_location, reads_fn, fl_dist  )
 
     conn.close()
     return
