@@ -231,6 +231,21 @@ class Gene( list ):
         list.extend( self, ( id, chrm, strand, start, stop, transcripts ) )
         return    
 
+    def find_transcribed_regions( self ):
+        exons = set()
+        for transcript in self.transcripts:
+            exons.update( transcript.exons )
+        
+        return flatten( sorted( exons ) )
+    
+    def calc_bpkm(self, read_cov):
+        base_cov, length = 0.0, 0
+        for start, stop in self.find_transcribed_regions():
+            length += stop - start + 1
+            base_cov += read_cov[(self.chrm, self.strand)][start:stop+1].sum()
+        
+        return base_cov/length
+        
 def flatten( regions ):
     new_regions = []
     curr_start = regions[0][0]

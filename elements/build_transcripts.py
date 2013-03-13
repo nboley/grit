@@ -1,6 +1,6 @@
 # Copyright (c) 2011-2012 Nathan Boley
 
-MAX_NUM_TRANSCRIPTS = 1000
+MAX_NUM_TRANSCRIPTS = 100000
 VERBOSE = False
 MIN_VERBOSE = False
 

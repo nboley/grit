@@ -1106,7 +1106,7 @@ def build_high_quality_junctions( elements, pserver, output_prefix ):
     merged_output_fname = os.path.join(output_prefix, "merged.filtered.jns.gff")
     
     # get all of the raw junctions fnames, and merge them
-    call = "python %s --filter --threads {threads} --fasta %s %s > %s"\
+    call = "python %s --threads {threads} --filter --fasta %s %s > %s"\
         % ( MERGE_AND_FILTER_JNS_CMD, elements.genome_fname, 
             " ".join( raw_jn_fnames ), merged_output_fname  )
 

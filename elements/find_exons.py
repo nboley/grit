@@ -21,7 +21,9 @@ from copy import copy
 
 WRITE_DEBUG_DATA = False
 EXON_EXT_CVG_RATIO_THRESH = 4
-MIN_EXON_BPKM = 10
+MIN_NUM_CAGE_TAGS = 10
+MIN_EXON_BPKM = 1.0
+MAX_CAGE_FRAC = 0.05
 
 ofps_prefixes = [ "cage_peaks", "single_exon_genes", 
                   "tss_exons", "internal_exons", "tes_exons" ]
@@ -290,7 +292,7 @@ def check_for_se_gene( start, stop, cage_cov, rnaseq_cov ):
     # check to see if the rnaseq signal after the cage peak
     # is much greater than before
     split_pos = cage_cov[start:stop+1].argmax() + start
-    if cage_cov[split_pos-1:split_pos+2].sum() < 20:
+    if cage_cov[split_pos-1:split_pos+2].sum() < MIN_NUM_CAGE_TAGS:
         return False
     window_size = min( split_pos - start, stop - split_pos, 200 )
     after_cov = rnaseq_cov[split_pos:split_pos+window_size].sum()
@@ -310,7 +312,7 @@ def find_gene_boundaries( (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns
         locs[stop+1] = "R_JN"
     
     for start, stop in find_empty_regions( rnaseq_cov ):
-        if stop - start < 100: continue
+        if stop - start < MIN_EMPTY_REGION_LEN: continue
         if start in locs or stop in locs:
             continue
         locs[start] = "ESTART"
@@ -333,7 +335,7 @@ def find_gene_boundaries( (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns
                           poss[-1][1], "CONTIG_BNDRY" ) )
     
     if WRITE_DEBUG_DATA:
-        bins.writeBed( debug_ofps['binsFps'][strand], len(rnaseq_cov) )
+        bins.writeBed( debug_fps['binsFps'][strand], len(rnaseq_cov) )
     
     # find regions that end with a polya, and look like genic regions
     # ( ie, they are a double polya that looks like a single exon gene, or
@@ -438,8 +440,8 @@ def find_gene_boundaries( (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns
 
 def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
      raw_peaks = find_peaks( cage_cov[gene.start:gene.stop+1], 
-                             window_len=20, min_score=15,
-                             max_score_frac=0.05, max_num_peaks=20 )
+                             window_len=20, min_score=MIN_NUM_CAGE_TAGS,
+                             max_score_frac=MAX_CAGE_FRAC, max_num_peaks=20 )
      if len( raw_peaks ) == 0:
          return []
      
@@ -689,7 +691,7 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, pol
         locs[stop+1] = "R_JN"
 
     for start, stop in find_empty_regions( rnaseq_cov[gene.start:gene.stop+1] ):
-        if stop - start < 100: continue
+        if stop - start < MIN_EMPTY_REGION_LEN: continue
         if start in locs or stop in locs:
             continue
         locs[start+gene.start] = "ESTART"
@@ -889,6 +891,7 @@ def find_exons_in_gene( ( chrm, strand ), gene,
 
 
 def find_empty_regions( cov, thresh=1 ):
+    return []
     x = numpy.diff( numpy.asarray( cov >= thresh, dtype=int ) )
     return zip(numpy.nonzero(x==1)[0],numpy.nonzero(x==-1)[0])
 
@@ -1033,8 +1036,8 @@ def find_exons_in_contig( ( chrm, strand ),
         (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns )
     
     if WRITE_DEBUG_DATA:
-        debug_ofps['gene_bndry_bins'].writeBed( 
-            geneBoundariesFps[strand], len(rnaseq_cov) )
+        gene_bndry_bins.writeBed( 
+            debug_fps['geneBoundariesFps'][strand], len(rnaseq_cov) )
     
     
     # find all exons
@@ -1086,8 +1089,8 @@ def find_exons_in_contig( ( chrm, strand ),
                              tss_exons, internal_exons, tes_exons, se_genes))
     
     if WRITE_DEBUG_DATA:
-        debug_ofps['all_exons'].writeBed( allExonsFps[strand], len(rnaseq_cov) )
-        debug_ofps['ps_exons'].writeBed( psExonsFps[strand], len(rnaseq_cov) )
+        all_exons.writeBed( debug_fps['allExonsFps'][strand], len(rnaseq_cov) )
+        ps_exons.writeBed( debug_fps['psExonsFps'][strand], len(rnaseq_cov) )
     
     return all_exons
 
@@ -1163,6 +1166,8 @@ def parse_arguments():
     num_threads = args.threads
         
     # prepare the intermediate output objects
+    global WRITE_DEBUG_DATA
+    WRITE_DEBUG_DATA = args.write_debug_data
     if WRITE_DEBUG_DATA:
         global debug_fps
         debug_fps = init_debug_fps( args.out_filename )

@@ -4,6 +4,8 @@ import numpy
 
 from chrm_sizes import ChrmSizes
 
+VERBOSE = True
+
 def clean_chr_name( chrm ):
     if chrm.startswith( "chr" ):
         chrm = chrm[3:]
@@ -56,30 +58,46 @@ class TabixBackedArray(object):
     def __len__(self):
         return self.contig_len
     
+def build_tabix_index( fp ):
+    # check to see if we've been passed the compressed version. If
+    # it ends with .gz, assume that we have
+    fname = fp.name + ".gz" if not fp.name.endswith('.gz') else fp.name
+    
+    # check to see if the compressed version exists. if not, create it
+    if not os.path.exists(fname):
+        if VERBOSE: print >> sys.stderr, "Compressing ", fp.name
+        try:
+            pysam.tabix_compress( fp.name, fname)
+        # if the file already exists, assume it is fine
+        except IOError, inst:
+            if VERBOSE: print >> sys.stderr, "ERROR:", inst
+
+    # check to see if the tabix index exists. If not, create it
+    if not os.path.exists(fname + '.tbi'):
+        # check for a header line
+        fp.seek(0)
+        nskip = 1 if fp.readline().startswith("track") else 0
+        fp.seek(0)
+        
+        import subprocess
+        if VERBOSE: print >> sys.stderr, "Indexing", fname
+        cmd = "tabix %s -p bed -S %i" % ( fname, nskip )
+        subprocess.check_call( cmd, shell=True )
+    
+    return fname
+
 class Wiggle( dict ):
     def __init__( self, chrm_sizes_fp, fps, strands=None ):
         self.chrm_sizes = ChrmSizes( chrm_sizes_fp.name )
         
         for i, fp in enumerate(fps):
-            fname = fp.name
             # find the strand
             strand = strands[i] if strands != None \
-                else guess_strand_from_fname(fname)
+                else guess_strand_from_fname(fp.name)
             
             # compress the file if necessary
-            if not fname.endswith('.gz'):
-                try:
-                    pysam.tabix_compress( fname, fname + '.gz')
-                # if the file already exists, assume it is fine
-                except IOError:
-                    pass
-                fname = fname + '.gz'
-            
             # index the file, if necessary
-            try:
-                pysam.tabix_index( fname, preset='bed' )
-            except IOError:
-                pass
+            fname = build_tabix_index( fp )
             
             for contig, contig_size in self.chrm_sizes.iteritems():
                 if not self.has_key((contig, strand)):
