@@ -1543,7 +1543,7 @@ def estimate_fl_dists( elements, pserver, output_prefix ):
         # get the exons file ( we always use distal exons, because reads that 
         # fall entirely within them are necessarily full length
         ress = elements.get_elements_from_db( \
-            "cage_tss_exons_gff", sample_type, "*" )
+            "elements_bed", sample_type, "*" )
         assert len( ress ) == 1
         exons_fname = ress[0].fname
         
@@ -2087,7 +2087,7 @@ def main():
     merge_sample_type_junctions( elements, pserver, base_dir + "junctions/" )
         
     build_all_exon_files( elements, pserver, base_dir + "exons" )
-    #estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
+    estimate_fl_dists( elements, pserver, base_dir + "fl_dists" )
     
     build_transcripts( elements, pserver, base_dir + "transcripts" )
 
