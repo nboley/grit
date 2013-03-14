@@ -797,12 +797,13 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
         
         # write out the design matrix
         if write_type == 'design_matrix':
-            observed, expected, missed = output_dict[(key, 'design_matrices')]
-            ofname = "./%s_%s.mat" % ( key[0], os.path.basename(key[1]) )
-            if DEBUG_VERBOSE: print "Writing mat to '%s'" % ofname
-            savemat( ofname, {'observed': observed, 'expected': expected}, 
-                     oned_as='column' )
-            if DEBUG_VERBOSE: print "Finished writing mat to '%s'" % ofname
+            if write_design_matrices:
+                observed,expected,missed = output_dict[(key,'design_matrices')]
+                ofname = "./%s_%s.mat" % ( key[0], os.path.basename(key[1]) )
+                if DEBUG_VERBOSE: print "Writing mat to '%s'" % ofname
+                savemat( ofname, {'observed': observed, 'expected': expected}, 
+                         oned_as='column' )
+                if DEBUG_VERBOSE: print "Finished writing mat to '%s'" % ofname
             continue
         elif write_type == 'gtf':
             output_dict_lock.acquire()
