@@ -87,7 +87,7 @@ BUILD_FL_DIST_CMD = os.path.join( os.path.dirname( __file__ ),
                         "./sparsify/", "frag_len.py" )
 
 SPARSIFY_TRANSCRIPTS_CMD = os.path.join( 
-    os.path.dirname( __file__ ), "./sparsify/", "sparsify_transcripts.py" )
+    os.path.dirname( __file__ ), "./sparsify/", "new_sparsify_transcripts.py" )
 
 FIND_ORFS_CMD = os.path.join( 
     os.path.dirname( __file__ ), "./proteomics/", "ORF_finder.py" )
@@ -1609,23 +1609,36 @@ def sparsify_transcripts( elements, pserver, output_prefix ):
         fldist_fname = ress[0].fname
         
         op_fname = os.path.join(
-            output_prefix, "%s.%s.sparse.transcripts.gtf" % (sample_type, sample_id))
+            output_prefix, "%s.%s.sparse.transcripts.gtf" \
+                % (sample_type, sample_id))
         
-        cmd_str_template  = "python %s %s %s %s --fl-dists %s -m "   \
-            % ( SPARSIFY_TRANSCRIPTS_CMD,                            \
-                op_fname, merged_transcript_fname,                    \
+        cmd_str_template  = "python %s %s %s %s --fl-dists %s "   \
+            % ( SPARSIFY_TRANSCRIPTS_CMD,
+                op_fname, merged_transcript_fname,
                 bam_fname, fldist_fname  )
-        cmd_str_template += "--threads={threads}"
+
+        ress = elements.get_elements_from_db(
+            "cage_cov_wig", sample_type, sample_id)
+        if len( ress ) == 0:
+            ress = elements.get_elements_from_db(
+                "cage_cov_wig", sample_type, "*")
+        
+        if len( ress ) == 2:
+            cage_fnames = [ x.fname for x in ress ]
+            cmd_str_template += " --cage-fns " + " ".join( cage_fnames)
+            
+        cmd_str_template += " --threads={threads}"
         call = cmd_str_template
         
         op_element_types = [ \
-            ElementType( "sparse_transcripts_gtf", sample_type, sample_id, "." ),]
+            ElementType( "sparse_transcripts_gtf", 
+                         sample_type, sample_id, "." ),]
         op_fnames = [ op_fname,]
         
         dependencies = [ merged_transcript_fname, bam_fname, fldist_fname ]
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-        pserver.add_process( cmd,  Resource(1), Resource(4) )
+        pserver.add_process( cmd,  Resource(16) )
     
     
     # get all of the bam files
@@ -2101,10 +2114,9 @@ def main():
     
     run_all_slide_compares( elements, pserver, base_dir + "stats" )
     
-    #sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
+    sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
     
     pserver.process_queue()                
     return
 
 main()
-
