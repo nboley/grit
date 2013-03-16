@@ -281,7 +281,8 @@ def find_fragments_in_exon( reads, exon ):
             read_group = [ val for key, val in read1.tags if key == 'RG' ][0]
         except IndexError:
             read_group = 'mean'
-
+        read_group = 'mean'
+        
         strand = '-' if read1.is_reverse else '+'
 
         if not read1.is_reverse:
