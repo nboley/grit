@@ -60,7 +60,7 @@ from frag_len import load_fl_dists, FlDist, build_normal_density
 import cvxopt
 from cvxopt import solvers, matrix, spdiag, log, div, sqrt
 
-MAX_NUM_TRANSCRIPTS = 500
+MAX_NUM_TRANSCRIPTS = 5000
 MIN_TRANSCRIPT_FREQ = 1e-12
 MIN_NUM_READS = 10
 
