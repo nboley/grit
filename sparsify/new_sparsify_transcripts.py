@@ -34,6 +34,8 @@ import subprocess
 import multiprocessing
 from multiprocessing import Process
 
+import pysam
+
 from math import sqrt
 
 sys.path.append( os.path.join( os.path.dirname( __file__ ),
@@ -86,6 +88,16 @@ class ThreadSafeFile( file ):
         file.write( self, string )
         self.flush()
         self.lock.release()
+
+def calc_fpkm( gene, fl_dist, freqs, num_reads_in_bam, num_reads_in_gene ):
+    fpkms = []
+    for t, freq in izip( gene.transcripts, freqs ):
+        num_reads_in_t = num_reads_in_gene*freq
+        t_len = sum( e[1] - e[0] + 1 for e in t.exons )
+        fpk = num_reads_in_t/(t_len/1000.)
+        fpkm = fpk/(num_reads_in_bam/1000000.)
+        fpkms.append( fpkm )
+    return fpkms
 
 def build_observed_cnts( binned_reads, fl_dists ):
     rv = {}
@@ -641,27 +653,23 @@ def estimate_confidence_bound( observed_array,
                     
     pass
 
-def build_mle_estimate( observed_array, expected_array ):
-    log_lhd, mle_estimate = estimate_transcript_frequencies( 
-        observed_array, expected_array )
-
 def build_bound(observed_array, expected_array, mle_estimate, index, bnd_type):
     p_value, bnd = estimate_confidence_bound( 
         observed_array, expected_array, index, mle_estimate, bnd_type )
 
-def write_gene_to_gtf( ofp, gene, mles, lbs=None, ubs=None, 
+def write_gene_to_gtf( ofp, gene, mles, lbs=None, ubs=None, fpkms=None,
                        abs_filter_value=0, rel_filter_value=0 ):
-    scores = [ int(1000*mle/max( mles )) for mle in mles ]
-    
     for index, (mle, transcript) in enumerate(izip(mles, gene.transcripts)):
         if mle <= abs_filter_value: continue
         if mle/max( mles ) <= rel_filter_value: continue
         meta_data = { "frac": "%.2e" % mle }
-        transcript.score = max( 1, int(1000*mle/max(mles)) )
+        transcript.score = min( 1000, max( 1, int(1*fpkms[index]) ) )
         if lbs != None:
             meta_data["conf_lo"] = "%.2e" % lbs[index]
         if ubs != None:
             meta_data["conf_hi"] = "%.2e" % ubs[index]
+        if fpkms != None:
+            meta_data["FPKM"] = "%.2e" % fpkms[index]
         
         ofp.write( transcript.build_gtf_lines(
                 gene.id, meta_data, source="grit") + "\n" )
@@ -725,11 +733,17 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
         op_lock.acquire()
         observed_array, expected_array, unobservable_transcripts = \
             output[((gene_id, bam_fn), 'design_matrices')]
+        gene = output[((gene_id, bam_fn), 'gene')]
+        fl_dists = output[((gene_id, bam_fn), 'fl_dists')]
         op_lock.release()
         
         try:
             mle_estimate = estimate_transcript_frequencies( 
                 observed_array, expected_array, ABS_TOL)
+            num_reads_in_gene = observed_array.sum()
+            num_reads_in_bam = NUMBER_OF_READS_IN_BAM
+            fpkms = calc_fpkm( gene, fl_dists, mle_estimate, 
+                              num_reads_in_bam, num_reads_in_gene )
         except ValueError, inst:
             error_msg = "Skipping %s: %s" % ( gene_id, inst )
             log_warning( error_msg )
@@ -745,6 +759,7 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
         
         op_lock.acquire()
         output[((gene_id, bam_fn), 'mle')] = mle_estimate
+        output[((gene_id, bam_fn), 'fpkm')] = fpkms
         op_lock.release()
 
         input_queue_lock.acquire()
@@ -810,11 +825,12 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
             
             gene = output_dict[(key, 'gene')]
             mles = output_dict[(key, 'mle')]
+            fpkms = output_dict[(key, 'fpkm')]
             lbs = output_dict[(key, 'lbs')] if compute_confidence_bounds else None
             ubs = output_dict[(key, 'ubs')] if compute_confidence_bounds else None
 
-            write_gene_to_gtf( ofps[key[1]], gene, mles, 
-                               lbs, ubs, abs_filter_value, rel_filter_value)
+            write_gene_to_gtf( ofps[key[1]], gene, mles, lbs, ubs, fpkms,
+                               abs_filter_value, rel_filter_value)
 
             del output_dict[(key, 'gene')]
             del output_dict[(key, 'mle')]
@@ -968,6 +984,12 @@ def main():
             gene_cage = cage[(gene.strand, gene.chrm)][
                 gene.start:gene.stop+1].copy()
         
+        assert len(bam_fns ) == 1
+        samfile = pysam.Samfile( bam_fns[0], "rb" )
+        global NUMBER_OF_READS_IN_BAM
+        NUMBER_OF_READS_IN_BAM = samfile.mapped
+        samfile.close()
+        
         for bam_fn in bam_fns:
             input_queue_lock.acquire()
             input_queue.append(('design_matrices', (gene.id, bam_fn, None)))
@@ -980,6 +1002,7 @@ def main():
             output_dict[ (key, 'lbs') ] = {}
             output_dict[ (key, 'ubs') ] = {}
             output_dict[ (key, 'mle') ] = None
+            output_dict[ (key, 'fpkm') ] = None
             output_dict[ (key, 'design_matrices') ] = None
     
     del cage
