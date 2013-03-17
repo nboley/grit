@@ -13,17 +13,21 @@ from pygraph.classes.graph import graph
 from pygraph.algorithms.accessibility import connected_components
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../", 'file_types'))
-from wiggle import Wiggle, load_wiggle_asynchronously, guess_strand_from_fname
+from tabix_wiggle import Wiggle, guess_strand_from_fname
 from junctions_file import parse_jn_gff, Junctions
 from gtf_file import parse_gff_line, create_gff_line, GenomicInterval
+from bed import create_bed_line
 
 from bisect import bisect
 from copy import copy
 
+WRITE_DEBUG_DATA = False
 EXON_EXT_CVG_RATIO_THRESH = 4
-MIN_EXON_BPKM = 10
+MIN_NUM_CAGE_TAGS = 10
+MIN_EXON_BPKM = 1.0
+MAX_CAGE_FRAC = 0.05
 
-ofps_prefixes = [ "single_exon_genes", 
+ofps_prefixes = [ "cage_peaks", "single_exon_genes", 
                   "tss_exons", "internal_exons", "tes_exons" ]
 
 class ThreadSafeFile( file ):
@@ -38,30 +42,6 @@ class ThreadSafeFile( file ):
         file.write( self, data )
         file.flush( self )
         self._writelock.release()
-
-
-class GroupIdCntr( object ):
-    def __init__( self, start_val=0 ):
-        self.value = multiprocessing.RawValue( 'i', start_val )
-        self._lock = multiprocessing.RLock()
-
-    def __iadd__(self, val_to_add):
-        self._lock.acquire()
-        self.value.value += val_to_add
-        self._lock.release()
-        return self
-    
-    def lock(self):
-        self._lock.acquire()
-
-    def release(self):
-        self._lock.release()
-    
-    def __str__( self ):
-        self._lock.acquire()
-        rv = str(self.value.value)
-        self._lock.release()
-        return rv
 
 def multi_delete( l, is_to_remove ):
     for i in sorted( is_to_remove, reverse=True ):
@@ -165,20 +145,61 @@ class Bins( list ):
         return
 
 
+def write_unified_bed( elements, contig_len, ofp ):
+    assert isinstance( elements, Bins )
+    
+    feature_mapping = { 
+        'CAGE_PEAK': 'promoter',
+        'SE_GENE': 'single_exon_gene',
+        'TSS_EXON': 'tss_exon',
+        'EXON': 'internal_exon',
+        'TES_EXON': 'tes_exon',
+        'INTRON': 'intron'
+    }
+
+    color_mapping = { 
+        'CAGE_PEAK': '153,255,000',
+        'SE_GENE': '000,000,000',
+        'TSS_EXON': '140,195,59',
+        'EXON': '000,000,000',
+        'TES_EXON': '255,51,255',
+        'INTRON': '200,200,200'
+    }
+    
+    if elements.strand == '-':
+        writetable_bins = elements.reverse_strand( contig_len )
+    else:
+        writetable_bins = elements
+    
+    for bin in writetable_bins:
+            region = GenomicInterval( elements.chrm, elements.strand, 
+                                      bin.start, bin.stop)
+            grp_id = feature_mapping[bin.type] + "_%s_%s_%i_%i" % region
+            bed_line = create_bed_line( elements.chrm, elements.strand, 
+                                        bin.start, bin.stop, 
+                                        feature_mapping[bin.type],
+                                        score=bin.score,
+                                        color=color_mapping[bin.type],
+                                        use_thick_lines=(bin.type != 'INTRON'))
+            ofp.write( bed_line + "\n"  )
+    return
+
 class Bin( object ):
-    def __init__( self, start, stop, left_label, right_label, bin_type=None ):
+    def __init__( self, start, stop, left_label, right_label, 
+                  bin_type=None, score=1000 ):
         self.start = start
         self.stop = stop
         assert stop - start > 0
         self.left_label = left_label
         self.right_label = right_label
         self.type = bin_type
+        self.score = score
     
     def mean_cov( self, cov_array ):
         return cov_array[self.start:self.stop].mean()
     
     def reverse_strand(self, contig_len):
-        return Bin(contig_len-self.stop-1, contig_len-self.start-1, 
+        return Bin(contig_len-self.stop, contig_len-self.start, 
                    self.right_label, self.left_label, self.type)
     
     def __repr__( self ):
@@ -273,7 +294,7 @@ def check_for_se_gene( start, stop, cage_cov, rnaseq_cov ):
     # check to see if the rnaseq signal after the cage peak
     # is much greater than before
     split_pos = cage_cov[start:stop+1].argmax() + start
-    if cage_cov[split_pos-1:split_pos+2].sum() < 20:
+    if cage_cov[split_pos-1:split_pos+2].sum() < MIN_NUM_CAGE_TAGS:
         return False
     window_size = min( split_pos - start, stop - split_pos, 200 )
     after_cov = rnaseq_cov[split_pos:split_pos+window_size].sum()
@@ -293,7 +314,7 @@ def find_gene_boundaries( (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns
         locs[stop+1] = "R_JN"
     
     for start, stop in find_empty_regions( rnaseq_cov ):
-        if stop - start < 100: continue
+        if stop - start < MIN_EMPTY_REGION_LEN: continue
         if start in locs or stop in locs:
             continue
         locs[start] = "ESTART"
@@ -315,7 +336,8 @@ def find_gene_boundaries( (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns
         bins.append( Bin( poss[-1][0], len(rnaseq_cov)-1, 
                           poss[-1][1], "CONTIG_BNDRY" ) )
     
-    bins.writeBed( binsFps[strand], len(rnaseq_cov) )
+    if WRITE_DEBUG_DATA:
+        bins.writeBed( debug_fps['binsFps'][strand], len(rnaseq_cov) )
     
     # find regions that end with a polya, and look like genic regions
     # ( ie, they are a double polya that looks like a single exon gene, or
@@ -416,14 +438,12 @@ def find_gene_boundaries( (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns
                 Bin( gene_bin.start, gene_bin.stop, 
                      gene_bin.left_label, gene_bin.right_label, "GENE") )
 
-    cage_peaks.writeBed( cagePeaksFps[strand], len(rnaseq_cov) )
-    
     return refined_gene_bndry_bins
 
 def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
      raw_peaks = find_peaks( cage_cov[gene.start:gene.stop+1], 
-                             window_len=20, min_score=15,
-                             max_score_frac=0.05, max_num_peaks=20 )
+                             window_len=20, min_score=MIN_NUM_CAGE_TAGS,
+                             max_score_frac=MAX_CAGE_FRAC, max_num_peaks=20 )
      if len( raw_peaks ) == 0:
          return []
      
@@ -673,7 +693,7 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, pol
         locs[stop+1] = "R_JN"
 
     for start, stop in find_empty_regions( rnaseq_cov[gene.start:gene.stop+1] ):
-        if stop - start < 100: continue
+        if stop - start < MIN_EMPTY_REGION_LEN: continue
         if start in locs or stop in locs:
             continue
         locs[start+gene.start] = "ESTART"
@@ -683,7 +703,7 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, pol
     poss = sorted( locs.iteritems() )
     poss = merge_empty_labels( poss )
     if len( poss ) == 0:
-        return [], [], []
+        return [], [], [], []
 
     gene_bins = []
     if gene.start < poss[0][0]:
@@ -758,11 +778,13 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, pol
     pseudo_exons = list( set( pseudo_exons ) )
     pseudo_exons.sort( key=lambda x: (x.start, x.stop ) )
     
-    return tss_exons, pseudo_exons, tes_exons
+    return cage_peaks, tss_exons, pseudo_exons, tes_exons
 
-def find_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, polya_sites, jns ):
-    tss_pseudo_exons, pseudo_exons, tes_pseudo_exons=find_pseudo_exons_in_gene(
-        ( chrm, strand ), gene, rnaseq_cov, cage_cov, polya_sites, jns )
+def find_exons_in_gene( ( chrm, strand ), gene, 
+                        rnaseq_cov, cage_cov, polya_sites, jns ):
+    cage_peaks, tss_pseudo_exons, pseudo_exons, tes_pseudo_exons = \
+        find_pseudo_exons_in_gene(
+            ( chrm, strand ), gene, rnaseq_cov, cage_cov, polya_sites, jns )
     
     # find the contiguous set of adjoining exons
     slices = [[0,],]
@@ -787,7 +809,7 @@ def find_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, polya_site
         print "============================================= NO EXONS IN REGION"
         print gene
         return list(chain(tss_pseudo_exons, pseudo_exons, tes_pseudo_exons)), \
-            [], [], [], []
+            [], [], [], [], []
 
 
     internal_exons = []
@@ -863,11 +885,15 @@ def find_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, polya_site
                          tes_exon.right_label, "TES_EXON" )
                     )
         
-    return chain(tss_pseudo_exons, pseudo_exons, tes_pseudo_exons, single_exon_genes), \
+    all_exons = chain( tss_pseudo_exons, pseudo_exons, 
+                       tes_pseudo_exons, single_exon_genes)
+    return cage_peaks, all_exons, \
         tss_exons, internal_exons, tes_exons, single_exon_genes
+        
 
 
 def find_empty_regions( cov, thresh=1 ):
+    return []
     x = numpy.diff( numpy.asarray( cov >= thresh, dtype=int ) )
     return zip(numpy.nonzero(x==1)[0],numpy.nonzero(x==-1)[0])
 
@@ -1011,11 +1037,13 @@ def find_exons_in_contig( ( chrm, strand ),
     gene_bndry_bins = find_gene_boundaries( 
         (chrm, strand), cage_cov, rnaseq_cov, polya_sites, jns )
     
-    gene_bndry_bins.writeBed( 
-        geneBoundariesFps[strand], len(rnaseq_cov) )
+    if WRITE_DEBUG_DATA:
+        gene_bndry_bins.writeBed( 
+            debug_fps['geneBoundariesFps'][strand], len(rnaseq_cov) )
     
     
     # find all exons
+    cage_peaks = Bins( chrm, strand, [] )
     ps_exons = Bins( chrm, strand, [] )
     tss_exons = Bins( chrm, strand, [] )
     internal_exons = Bins( chrm, strand, [] )
@@ -1032,28 +1060,77 @@ def find_exons_in_contig( ( chrm, strand ),
         # find the junctions associated with this gene
         gj_sa = bisect( jn_stops, gene.start )
         gj_so = bisect( jn_starts, gene.stop )
-        gene_jns = zip( jn_starts[gj_sa:gj_so], jn_stops[gj_sa:gj_so], jn_values[gj_sa:gj_so] )
+        gene_jns = zip( jn_starts[gj_sa:gj_so], 
+                        jn_stops[gj_sa:gj_so], 
+                        jn_values[gj_sa:gj_so] )
         
         # find the polyas associated with this gene
         gene_polya_sa_i = polya_sites.searchsorted( gene.start )
         gene_polya_so_i = polya_sites.searchsorted( gene.stop, side='right' )
         gene_polyas = polya_sites[gene_polya_sa_i:gene_polya_so_i]
         
-        gene_ps_exons, gene_tss_exons, gene_internal_exons, gene_tes_exons, gene_se_genes = \
-            find_exons_in_gene( ( chrm, strand ), gene, rnaseq_cov, cage_cov, polya_sites, gene_jns )
+        gene_cage_peaks, gene_ps_exons, gene_tss_exons, \
+            gene_internal_exons, gene_tes_exons, gene_se_genes = \
+            find_exons_in_gene( ( chrm, strand ), gene, 
+                                rnaseq_cov, cage_cov, polya_sites, gene_jns )
         
+        cage_peaks.extend( gene_cage_peaks )
         ps_exons.extend( gene_ps_exons )
         internal_exons.extend( filter_exons( gene_internal_exons, rnaseq_cov ) )
         tss_exons.extend( filter_exons( gene_tss_exons, rnaseq_cov ) )
         tes_exons.extend( filter_exons( gene_tes_exons, rnaseq_cov ) )
         se_genes.extend( filter_exons( gene_se_genes, rnaseq_cov ) )
     
-    all_exons = Bins(chrm, strand, chain(tss_exons, internal_exons, tes_exons, se_genes))
-    all_exons.writeBed( allExonsFps[strand], len(rnaseq_cov) )
-    ps_exons.writeBed( psExonsFps[strand], len(rnaseq_cov) )
+    tss_exon_starts = set( x.start for x in tss_exons )
+    filtered_cage_peaks = Bins( cage_peaks.chrm, cage_peaks.strand, 
+                                ( x for x in cage_peaks 
+                                  if x.start in tss_exon_starts ) )
+    
+    all_exons = Bins( chrm, strand, 
+                      chain( filtered_cage_peaks, 
+                             tss_exons, internal_exons, tes_exons, se_genes))
+    
+    if WRITE_DEBUG_DATA:
+        all_exons.writeBed( debug_fps['allExonsFps'][strand], len(rnaseq_cov) )
+        ps_exons.writeBed( debug_fps['psExonsFps'][strand], len(rnaseq_cov) )
     
     return all_exons
 
+
+def init_debug_fps( out_file_prefix ):
+    debug_ofps = {}
+    
+    binsFps = { "+": ThreadSafeFile( 
+            out_file_prefix + ".bins.plus.bed", "w", "bins_plus" ),
+                "-": ThreadSafeFile( 
+            out_file_prefix + ".bins.minus.bed", "w", "bins_minus" ) }
+    debug_ofps['binsFps'] = binsFps
+
+    geneBoundariesFps = { 
+        "+": ThreadSafeFile( 
+            out_file_prefix + ".gene_boundaries.plus.bed", "w", "gene_bndrys_plus" ),
+        "-": ThreadSafeFile( 
+            out_file_prefix + ".gene_boundaries.minus.bed", "w", "gene_bndrys_minus" ) 
+    }
+    debug_ofps['geneBoundariesFps'] = geneBoundariesFps
+
+    allExonsFps = { 
+        "+": ThreadSafeFile( 
+            out_file_prefix + ".all_exons.plus.bed", "w", "all_exons_plus" ),
+        "-": ThreadSafeFile(
+            out_file_prefix + ".all_exons.minus.bed", "w", "all_exons_minus" ) 
+    }
+    debug_ofps['allExonsFps'] = allExonsFps
+
+    psExonsFps = { 
+        "+": ThreadSafeFile( 
+            out_file_prefix + ".pseudo_exons.plus.bed", "w", "pseudo_exons_plus" ),
+        "-": ThreadSafeFile(
+            out_file_prefix + ".pseudo_exons.minus.bed", "w", "pseudo_exons_minus" ) 
+    }
+    debug_ofps['psExonsFps'] = psExonsFps
+    
+    return debug_ofps
 
 def parse_arguments():
     import argparse
@@ -1074,11 +1151,14 @@ def parse_arguments():
     parser.add_argument( '--polya-candidate-sites', type=file, nargs='*', \
         help='files with allowed polya sites.')
     
-    parser.add_argument( '--out-file-prefix', '-o', default="discovered_exons",\
-        help='Output file name. (default: discovered_exons)')
+    parser.add_argument( '--out-filename', '-o', 
+                         default="discovered_elements.bed",\
+        help='Output file name. (default: discovered_elements.bed)')
     
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
         help='Whether or not to print status information.')
+    parser.add_argument('--write-debug-data',default=False,action='store_true',\
+        help='Whether or not to print out gff files containing intermediate exon assembly data.')
     parser.add_argument( '--threads', '-t', default=1, type=int,
         help='The number of threads to use.')
         
@@ -1086,44 +1166,14 @@ def parse_arguments():
 
     global num_threads
     num_threads = args.threads
-    
-    fps = []
-    for field_name in ofps_prefixes:
-        fps.append(open("%s.%s.gff" % (args.out_file_prefix, field_name), "w"))
-    ofps = OrderedDict( zip( ofps_prefixes, fps ) )
-    
+        
     # prepare the intermediate output objects
-    global binsFps, geneBoundariesFps, cagePeaksFps, allExonsFps, psExonsFps
-    binsFps = { "+": ThreadSafeFile( 
-            args.out_file_prefix + ".bins.plus.bed", "w", "bins_plus" ),
-                "-": ThreadSafeFile( 
-            args.out_file_prefix + ".bins.minus.bed", "w", "bins_minus" ) }
-    geneBoundariesFps = { 
-        "+": ThreadSafeFile( 
-            args.out_file_prefix + ".gene_boundaries.plus.bed", "w", "gene_bndrys_plus" ),
-        "-": ThreadSafeFile( 
-            args.out_file_prefix + ".gene_boundaries.minus.bed", "w", "gene_bndrys_minus" ) 
-    }
-    cagePeaksFps = { 
-        "+": ThreadSafeFile( 
-            args.out_file_prefix + ".cage_peaks.plus.bed", "w", "cage_peaks_plus" ),
-        "-": ThreadSafeFile(
-            args.out_file_prefix + ".cage_peaks.minus.bed", "w", "cage_peaks_minus" ) 
-    }
-    allExonsFps = { 
-        "+": ThreadSafeFile( 
-            args.out_file_prefix + ".all_exons.plus.bed", "w", "all_exons_plus" ),
-        "-": ThreadSafeFile(
-            args.out_file_prefix + ".all_exons.minus.bed", "w", "all_exons_minus" ) 
-    }
-    psExonsFps = { 
-        "+": ThreadSafeFile( 
-            args.out_file_prefix + ".pseudo_exons.plus.bed", "w", "pseudo_exons_plus" ),
-        "-": ThreadSafeFile(
-            args.out_file_prefix + ".pseudo_exons.minus.bed", "w", "pseudo_exons_minus" ) 
-    }
-
-
+    global WRITE_DEBUG_DATA
+    WRITE_DEBUG_DATA = args.write_debug_data
+    if WRITE_DEBUG_DATA:
+        global debug_fps
+        debug_fps = init_debug_fps( args.out_filename )
+    
     # set flag args
     global VERBOSE
     VERBOSE = args.verbose
@@ -1153,35 +1203,32 @@ def parse_arguments():
 
     cage_grpd_wigs = [ cage_plus_wigs, cage_minus_wigs ]
     
+    ofp = open( args.out_filename, "w" )
+    
     return rnaseq_grpd_wigs, args.junctions, args.chrm_sizes_fname, \
-        cage_grpd_wigs, args.polya_candidate_sites, ofps
+        cage_grpd_wigs, args.polya_candidate_sites, ofp
 
 
 def main():
-    wigs, jns_fp, chrm_sizes_fp, cage_wigs, polya_candidate_sites_fps, out_fps \
+    wigs, jns_fp, chrm_sizes_fp, cage_wigs, polya_candidate_sites_fps, ofp \
         = parse_arguments()
     
-    group_id_starts = [ GroupIdCntr(1) for fp in out_fps ]
-    
-    # set up all of the file processing calls
-    worker_pool = multiprocessing.BoundedSemaphore( num_threads )
-    ps = []
-    
     if VERBOSE: print >> sys.stderr,  'Loading merged read pair wiggles'    
-    fnames =[wigs[0][0].name, wigs[1][0].name, wigs[2][0].name, wigs[3][0].name]
+    fps =[wigs[0][0], wigs[1][0], wigs[2][0], wigs[3][0]]
     strands = ["+", "-", "+", "-"]
-    read_cov, new_ps = load_wiggle_asynchronously( 
-        chrm_sizes_fp.name, fnames, strands, worker_pool )
-    ps.extend( new_ps )    
+    read_cov = Wiggle( chrm_sizes_fp, fps, strands )
+    if VERBOSE: print >> sys.stderr, 'Finished loading merged read pair wiggles'
     
     if VERBOSE: print >> sys.stderr,  'Loading CAGE.'
-    assert all( len(fps) == 1 for fps in cage_wigs )
-    cage_cov, new_ps = load_wiggle_asynchronously( 
-        chrm_sizes_fp.name, [fps[0].name for fps in cage_wigs], 
-        ["+", "-"], worker_pool)
+    all_cage_wigs, cage_strands = [], []
+    all_cage_wigs.extend( cage_wigs[0] )
+    cage_strands.extend( ['+']*len( cage_wigs[0] ) )
+    all_cage_wigs.extend( cage_wigs[1] )
+    cage_strands.extend( ['-']*len( cage_wigs[1] ) )
+    cage_cov = Wiggle( chrm_sizes_fp, all_cage_wigs, cage_strands )
+    for cage_fps in cage_wigs: [ cage_fp.close() for cage_fp in cage_fps ]
+    if VERBOSE: print >> sys.stderr, 'Finished loading CAGE data'
     
-    ps.extend( new_ps )
-            
     if VERBOSE: print >> sys.stderr,  'Loading candidate polyA sites'
     polya_sites = find_polya_sites([x.name for x in polya_candidate_sites_fps])
     for fp in polya_candidate_sites_fps: fp.close()
@@ -1189,64 +1236,42 @@ def main():
 
     if VERBOSE: print >> sys.stderr,  'Loading junctions.'
     jns = Junctions( parse_jn_gff( jns_fp.name ) )
-    
-    for p in ps:
-        if VERBOSE:
-            print >> sys.stderr, "Joining process: ", p
-        p.join()
-        if VERBOSE:
-            print >> sys.stderr, "Joined process: ", p
-    
-    assert all( x.min() >= 0 and x.max() >= 0 for x in cage_cov.values() )
-    assert all( x.min() >= 0 and x.max() >= 0 for x in read_cov.values() )
-
-    ##### join all of the wiggle processes
-    
-    # get the joined read data, and calculate stats
-    if VERBOSE: print >> sys.stderr, 'Finished loading merged read pair wiggles'
-    
-    # join the cage data, and calculate statistics
-    for cage_fps in cage_wigs: [ cage_fp.close() for cage_fp in cage_fps ]
-    if VERBOSE: print >> sys.stderr, 'Finished loading CAGE data'
-
-    if VERBOSE: print >> sys.stderr, 'Finished loading read pair 1 wiggles'
-
-    if VERBOSE: print >> sys.stderr, 'Finished loading read pair 2 wiggles'
-    
+        
+    all_cage_peaks = []
     single_exon_genes = []
     tss_exons = []
     internal_exons = []
     tes_exons = []
+
+    ofp.write('track name="discovered_elements" visibility=2 itemRgb="On"\n')
     
-    output_exons = dict( (x,[]) for x in ofps_prefixes )
-    
-    out_fps["internal_exons"].write("track name=\"internal_exons\"\n")
-    out_fps["tss_exons"].write("track name=\"tss_exons\"\n")
-    out_fps["tes_exons"].write("track name=\"tes_exons\"\n")
-    
-    keys = sorted( set( jns ) )
+    keys = sorted( set( jns.keys() ) )
     for chrm, strand in keys:        
         if VERBOSE: print >> sys.stderr, \
                 'Processing chromosome %s strand %s.' % ( chrm, strand )
         
-        contig_len = len( read_cov[ (chrm, strand) ] )
+        contig_len = len(read_cov[(chrm, strand)])
         
-        all_exons = find_exons_in_contig( \
+        all_elements = find_exons_in_contig( \
            ( chrm, strand ),
-           read_cov[ (chrm, strand) ],
+           read_cov[ (chrm, strand) ].asarray(),
            jns[ (chrm, strand) ],
-           cage_cov[ (chrm, strand) ], 
+           cage_cov[ (chrm, strand) ].asarray(),
            polya_sites[ (chrm, strand) ] )
         
-        all_exons.writeGff(out_fps["internal_exons"], contig_len, filter='EXON')
-        all_exons.writeGff(out_fps["tss_exons"], contig_len, filter='TSS_EXON' )
-        all_exons.writeGff(out_fps["tes_exons"], contig_len, filter='TES_EXON' )
-        all_exons.writeGff(out_fps["single_exon_genes"], contig_len, filter='SE_GENE' )
-
-    for fps_dict in (binsFps, geneBoundariesFps, cagePeaksFps, \
-                     allExonsFps, psExonsFps):
-        for fp in fps_dict.values():
-            fp.close()
+        for jn, cnt in jns[(chrm, strand)].iteritems():
+            bin = Bin(jn[0], jn[1], 'donor', 'acceptor', 'INTRON', cnt)
+            if strand == '-':
+                bin = bin.reverse_strand(contig_len)
+            all_elements.append( bin )
+                
+        
+        write_unified_bed( all_elements, contig_len, ofp )
+    
+    if WRITE_DEBUG_DATA:
+        for fps_dict in debug_fps.values():
+            for fp in fps_dict.values():
+                fp.close()
     
     return
         

@@ -205,10 +205,10 @@ class Transcript( object ):
                 current_frame = ( current_frame + stop - start + 1 )%3
             return
         
-        if self.cds_region == None:
-            ret_lines.extend( build_lines_for_feature( 
-                    self.exons, 'exon', False ) )
-        else:
+        ret_lines.extend( build_lines_for_feature( 
+                self.exons, 'exon', False ) )
+        
+        if self.cds_region != None:
             us_exons, ds_exons = self.fp_utr_exons, self.tp_utr_exons
             us_label, ds_label = 'five_prime_UTR', 'three_prime_UTR'
             if self.strand == '-': 
@@ -217,7 +217,7 @@ class Transcript( object ):
             
             ret_lines.extend( build_lines_for_feature( 
                     us_exons, us_label, False ) )
-
+            
             ret_lines.extend( build_lines_for_feature( 
                     self.cds_exons, 'CDS', True ) )
             
@@ -237,6 +237,21 @@ class Gene( list ):
         list.extend( self, ( id, chrm, strand, start, stop, transcripts ) )
         return    
 
+    def find_transcribed_regions( self ):
+        exons = set()
+        for transcript in self.transcripts:
+            exons.update( transcript.exons )
+        
+        return flatten( sorted( exons ) )
+    
+    def calc_bpkm(self, read_cov):
+        base_cov, length = 0.0, 0
+        for start, stop in self.find_transcribed_regions():
+            length += stop - start + 1
+            base_cov += read_cov[(self.chrm, self.strand)][start:stop+1].sum()
+        
+        return base_cov/length
+        
 def flatten( regions ):
     new_regions = []
     curr_start = regions[0][0]
@@ -385,6 +400,7 @@ if __name__ == "__main__":
     for genes in gene_grps:
         for gene in genes:
             print gene[0]
+            print list( gene )
             for trans in gene[-1]:
                 print trans.chrm, trans.strand, trans.id, trans.cds_region
                 print trans.fp_utr_exons

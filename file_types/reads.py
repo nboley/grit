@@ -37,6 +37,7 @@ def get_strand( read, reverse_read_strand, pairs_are_opp_strand ):
     return strand
 
 def get_read_group( r1, r2 ):        
+    return 'mean'
     r1_read_group = [ val for key, val in r1.tags if key == 'RG' ]
     r1_read_group = r1_read_group[0] if len( r1_read_group ) == 1 else 'mean'
     r2_read_group = [ val for key, val in r2.tags if key == 'RG' ]
@@ -48,7 +49,7 @@ def get_read_group( r1, r2 ):
         return None
 
 
-def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=100 ):
+def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=25000 ):
     # keep track of which fractiona re on the sam strand
     paired_cnts = {'no_mate': 0, 'same_strand': 1e-4, 'diff_strand': 1e-4}
     

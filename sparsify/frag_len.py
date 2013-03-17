@@ -16,7 +16,7 @@ import os
 from old_reads import Reads
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
                                       "../file_types/" ))
-from gtf_file import parse_gff_line
+from bed import parse_bed_line
 
 from gene_models import GeneBoundaries, GenomicInterval
 
@@ -26,7 +26,9 @@ MIN_FLS_FOR_FL_DIST = 100
 
 # we stop collecting fragments after this many. We also make sure that we 
 # have observed at least MAX_NUM_FRAGMENTS/10 exons
-MAX_NUM_FRAGMENTS = 1000000
+MAX_NUM_FRAGMENTS = 25000
+MAX_NUM_FRAGMENTS_PER_EXON = 1000
+MIN_EXON_LENGTH = 1000
 
 class FlDist( object ):
     """Store a fragment length dist.
@@ -268,7 +270,7 @@ def find_fragments_in_exon( reads, exon ):
     exon_len = exon.stop - exon.start + 1
 
     # iterate through read pairs in exon to get fragment lengths
-    for read1, read2 in reads.iter_paired_reads( exon ):
+    for cnt, (read1, read2) in enumerate(reads.iter_paired_reads( exon )):
         # skip all secondary alignments
         if read1.is_secondary or read2.is_secondary:
             continue
@@ -279,7 +281,8 @@ def find_fragments_in_exon( reads, exon ):
             read_group = [ val for key, val in read1.tags if key == 'RG' ][0]
         except IndexError:
             read_group = 'mean'
-
+        read_group = 'mean'
+        
         strand = '-' if read1.is_reverse else '+'
 
         if not read1.is_reverse:
@@ -289,18 +292,20 @@ def find_fragments_in_exon( reads, exon ):
         
         key = ( read_group, strand, exon_len )
         fragment_sizes.append( ( key, frag_len ) )
-    
+        
+        if cnt > MAX_NUM_FRAGMENTS_PER_EXON:
+            break
+        
     return fragment_sizes
 
 def find_fragments( reads, exons ):
     fragment_sizes = []
     for exon_i, exon in enumerate(exons):
-        if (exon.stop - exon.start + 1) < 700:
+        if (exon.stop - exon.start + 1) < MIN_EXON_LENGTH:
             continue
         
         fragment_sizes.extend( find_fragments_in_exon( reads, exon ) )
-        if len( fragment_sizes ) > MAX_NUM_FRAGMENTS \
-                and exon_i > MAX_NUM_FRAGMENTS/10:
+        if len( fragment_sizes ) > MAX_NUM_FRAGMENTS:
             break
     
     return fragment_sizes
@@ -488,8 +493,6 @@ def merge_clustered_fl_dists( clustered_read_groups, grouped_fragments ):
 def estimate_fl_dists( reads, exons ):
     fragments = find_fragments( reads, exons )
     if len( fragments ) == 0:
-        return build_uniform_density(150, 240), []
-        build_normal_density
         err_str = "There are no reads for this data file in the " \
             + "high read depth exons."
         raise ValueError, err_str
@@ -529,13 +532,14 @@ def main():
     
     exons = []
     for line in gff_fp:
-        gff_line = parse_gff_line( line )
-        if gff_line != None: exons.append( gff_line[0] )
-
+        exon = parse_bed_line(line)
+        if None == exon: continue
+        exons.append( exon )
+    
     # randomly shuffle the exons so that they aren't biased 
     random.shuffle(exons)
     gff_fp.close()
-
+    
     # load the bam file
     reads = Reads( bam_fn , "rb" )
     # make sure that it is indexed by trying to get a read
