@@ -110,6 +110,7 @@ def build_expected_and_observed_arrays(
             observed_mat.append( 0 )
 
     if len( expected_mat ) == 0:
+        print >> sys.stderr, "NO EXPECTED READS"
         raise ValueError, "No expected reads."
     
     expected_mat = numpy.array( expected_mat, dtype=numpy.double )
@@ -156,9 +157,9 @@ def nnls( X, Y, fixed_indices_and_values={} ):
     if DEBUG_OPTIMIZATION:
         for key, val in res.iteritems():
             if key in 'syxz': continue
-            print "%s:\t%s" % ( key.ljust(22), val )
+            print >> sys.stderr, "%s:\t%s" % ( key.ljust(22), val )
         
-        print "RSS: ".ljust(22), rss
+        print >> sys.stderr, "RSS: ".ljust(22), rss
     
     return x
 
@@ -371,18 +372,18 @@ def calc_taylor_lhd( freqs, observed_array, expected_array ):
 def project_onto_simplex( x, debug=False ):
     if ( x >= MIN_TRANSCRIPT_FREQ ).all() and abs( 1-x.sum()  ) < 1e-6: return x
     sorted_x = numpy.sort(x)[::-1]
-    if debug: print "sorted x:", sorted_x
+    if debug: print >> sys.stderr, "sorted x:", sorted_x
     n = len(sorted_x)
-    if debug: print "cumsum:", sorted_x.cumsum()
-    if debug: print "arange:", numpy.arange(1,n+1)
+    if debug: print >> sys.stderr, "cumsum:", sorted_x.cumsum()
+    if debug: print >> sys.stderr, "arange:", numpy.arange(1,n+1)
     rhos = sorted_x - (1./numpy.arange(1,n+1))*( sorted_x.cumsum() - 1 )
-    if debug: print "rhos:", rhos
+    if debug: print >> sys.stderr, "rhos:", rhos
     rho = (rhos > 0).nonzero()[0].max() + 1
-    if debug: print "rho:", rho
+    if debug: print >> sys.stderr, "rho:", rho
     theta = (1./rho)*( sorted_x[:rho].sum()-1)
-    if debug: print "theta:", theta
+    if debug: print >> sys.stderr, "theta:", theta
     x_minus_theta = x - theta
-    if debug: print "x - theta:", x_minus_theta
+    if debug: print >> sys.stderr, "x - theta:", x_minus_theta
     x_minus_theta[ x_minus_theta < 0 ] = MIN_TRANSCRIPT_FREQ
     return x_minus_theta
 
@@ -454,9 +455,7 @@ def estimate_transcript_frequencies_line_search(
         if f_lhd(x) > f_lhd(x+step_size*gradient):
             step_size = downhill_search( step_size )
             return step_size, (step_size==0)
-
-        #print "Found step size:", step_size, "vs", max_feasible_step_size, \
-        #    "Graniness is %i" % graniness
+        
         return step_size, True
     
     n = full_expected_array.shape[1]
@@ -477,12 +476,6 @@ def estimate_transcript_frequencies_line_search(
         alpha, is_full_step = line_search(
             x, gradient, max_feasible_step_size)
         x += alpha*gradient
-        """
-        if alpha > 0 and not is_full_step:
-            print "%i\t%.2f\t%.6e\t%i" % ( 
-                i, f_lhd(x), f_lhd(x)-f_lhd(x-alpha*gradient), len(x) )
-            continue
-        """
         
         if abs( 1-x.sum() ) > 1e-6:
             x = project_onto_simplex(x)
@@ -511,7 +504,7 @@ def estimate_transcript_frequencies_line_search(
         lhd = f_lhd(x)
         lhds.append( lhd )
         if DEBUG_OPTIMIZATION:
-            print "%i\t%.2f\t%.6e\t%i" % ( 
+            print >> sys.stderr, "%i\t%.2f\t%.6e\t%i" % ( 
                 i, lhd, lhd - prev_lhd, len(x) )
     
     final_x = numpy.ones(n)*MIN_TRANSCRIPT_FREQ
@@ -534,7 +527,7 @@ def estimate_transcript_frequencies(
     eps = 10.
     start_time = time.time()
     if DEBUG_VERBOSE:
-        print "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)"
+        print >> sys.stderr, "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)"
     for i in xrange( 500 ):
         prev_x = x.copy()
         
@@ -547,7 +540,7 @@ def estimate_transcript_frequencies(
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
         if DEBUG_VERBOSE:
-            print "Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
+            print >> sys.stderr, "Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
                 i, lhd, (lhd - prev_lhd)/len(lhds), len(lhds ), eps, 
                 make_time_str((time.time()-start_time)/len(lhds)) )
             
@@ -569,7 +562,7 @@ def estimate_transcript_frequencies(
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
         if DEBUG_VERBOSE:
-            print "Non-Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
+            print >> sys.stderr, "Non-Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
                 i, lhd, (lhd - prev_lhd)/len(lhds), len(lhds), eps,
                 make_time_str((time.time()-start_time)/len(lhds)))
         
@@ -639,8 +632,6 @@ def estimate_confidence_bound( observed_array,
             observed_array,  expected_array, fixed_index,
             mle_estimate, bound_type, alpha )
     except ValueError:
-        # print "WARNING: Couldn't find bound for transcript %i %s directly: 
-        # trying bisection." % (fixed_index+1, bound_type)
         return estimate_confidence_bound_by_bisection( 
             observed_array,  expected_array, fixed_index,
             mle_estimate, bound_type, alpha )
@@ -690,6 +681,7 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
                 = build_design_matrices( gene, bam_fn, fl_dists, cage )
         except ValueError, inst:
             error_msg = "%i: Skipping %s: %s" % ( os.getpid(), gene.id, inst )
+            log_warning( error_msg )
             if DEBUG: raise
             input_queue_lock.acquire()
             input_queue.append(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
@@ -697,14 +689,16 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
             return
         except MemoryError, inst:
             error_msg =  "%i: Skipping %s: %s" % ( os.getpid(), gene.id, inst )
+            log_warning( error_msg )
             if DEBUG: raise
             input_queue_lock.acquire()
             input_queue.append(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
             input_queue_lock.release()
             return
         
-        if VERBOSE: print "FINISHED DESIGN MATRICES %s\t%s" % ( 
-            gene_id, bam_fn )
+        if VERBOSE: 
+            log_warning( "FINISHED DESIGN MATRICES %s\t%s" % ( 
+                    gene_id, bam_fn ) )
 
         op_lock.acquire()
         try:
@@ -713,6 +707,7 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
         except SystemError, inst:
             op_lock.release()
             error_msg =  "SYSTEM ERROR: %i: Skipping %s: %s" % ( os.getpid(), gene.id, inst )
+            log_warning( error_msg )
             input_queue_lock.acquire()
             input_queue.append(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
             input_queue_lock.release()
@@ -734,6 +729,7 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
                 observed_array, expected_array, ABS_TOL)
         except ValueError, inst:
             error_msg = "Skipping %s: %s" % ( gene_id, inst )
+            log_warning( error_msg )
             if DEBUG: raise
             input_queue_lock.acquire()
             input_queue.append(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
@@ -741,7 +737,7 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
             return
         
         log_lhd = calc_lhd( mle_estimate, observed_array, expected_array)
-        if VERBOSE: print "FINISHED MLE %s\t%s\t%.2f" % ( 
+        if VERBOSE: print >> sys.stderr, "FINISHED MLE %s\t%s\t%.2f" % ( 
             gene_id, bam_fn, log_lhd )
         
         op_lock.acquire()
@@ -945,24 +941,25 @@ def main():
             cage[(strand, fix_chr_name(chrm))] = numpy.array(array)
     
     if VERBOSE:
-        print "Finished Loading CAGE"
+        print >> sys.stderr, "Finished Loading CAGE"
     
     # add all the genes, in order of longest first. 
     genes = load_gtf( gtf_fp.name )
     if VERBOSE:
-        print "Finished Loading %s" % gtf_fp.name
+        print >> sys.stderr, "Finished Loading %s" % gtf_fp.name
 
     # add the genes in reverse sorted order so that the longer genes are dealt
     # with first
     for gene in sorted( genes, key=lambda x: len(x.transcripts) ):
         if len(gene.transcripts) > MAX_NUM_TRANSCRIPTS:
-            log_fp.write( "Skipping %s: too many transcripts ( %i )\n" % ( 
+            log_warning( "Skipping %s: too many transcripts ( %i )\n" % ( 
                     gene.id, len(gene.transcripts ) ) )
+            continue
         
         if (gene.strand, gene.chrm) not in cage:
             if cage != {}:
-                print "WARNING: Could not find CAGE signal for gene %s (strand %s chr %s)"% (
-                    gene.id, gene.strand, gene.chrm )
+                log_warning( "WARNING: Could not find CAGE signal for gene %s (strand %s chr %s)"% (
+                        gene.id, gene.strand, gene.chrm ) )
             gene_cage = None
         else:
             gene_cage = cage[(gene.strand, gene.chrm)][
