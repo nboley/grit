@@ -60,6 +60,8 @@ from cvxopt import solvers, matrix, spdiag, log, div, sqrt
 
 MAX_NUM_TRANSCRIPTS = 500
 MIN_TRANSCRIPT_FREQ = 1e-12
+MIN_NUM_READS = 10
+
 # finite differences step size
 FD_SS = 1e-8
 COMPARE_TO_DCP = False
@@ -108,9 +110,8 @@ def build_expected_and_observed_arrays(
             observed_mat.append( observed_cnts[key] )
         except KeyError:
             observed_mat.append( 0 )
-
+    
     if len( expected_mat ) == 0:
-        print >> sys.stderr, "NO EXPECTED READS"
         raise ValueError, "No expected reads."
     
     expected_mat = numpy.array( expected_mat, dtype=numpy.double )
@@ -224,9 +225,11 @@ def build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists ):
     transcripts_non_overlapping_exon_indices = \
         list(build_nonoverlapping_indices( 
                 gene.transcripts, exon_boundaries ))
-    
+
     binned_reads = bin_reads( 
         reads, gene.chrm, gene.strand, exon_boundaries, False, True)
+    if sum( binned_reads.values() ) < MIN_NUM_READS:
+        raise ValueError, "Too Few Reads"
     
     observed_cnts = build_observed_cnts( binned_reads, fl_dists )    
     read_groups_and_read_lens =  { (RG, read_len) for RG, read_len, bin 
@@ -334,7 +337,7 @@ def build_design_matrices( gene, bam_fname, fl_dists, cage_array ):
     observed_prom_array = numpy.delete( observed_prom_array, 
                   numpy.array(list(unobservable_rnaseq_trans)) )
     observed_array = numpy.hstack((observed_prom_array, observed_rnaseq_array))
-    if observed_array.sum() == 0:
+    if observed_array.sum() < MIN_NUM_READS:
         raise ValueError, "TOO FEW READS"
 
     expected_rnaseq_array = numpy.delete( expected_rnaseq_array, 
@@ -952,7 +955,7 @@ def main():
     # with first
     for gene in sorted( genes, key=lambda x: len(x.transcripts) ):
         if len(gene.transcripts) > MAX_NUM_TRANSCRIPTS:
-            log_warning( "Skipping %s: too many transcripts ( %i )\n" % ( 
+            log_warning( "Skipping %s: too many transcripts ( %i )" % ( 
                     gene.id, len(gene.transcripts ) ) )
             continue
         
@@ -1008,7 +1011,7 @@ def main():
         
         if work_type == 'ERROR':
             ( gene_id, bam_fn, trans_index ), msg = key
-            log_fp.write( gene_id + "\t" + msg + "\n" )
+            log_fp.write( gene_id + "\tERROR\t" + msg + "\n" )
             print "ERROR", gene_id, key[1]
             continue
         else:
@@ -1020,7 +1023,7 @@ def main():
 
         if work_type == 'mle':
             finished_queue.put( ('design_matrix', (gene_id, bam_fn)) )
-            log_fp.write( "\t".join(key[0]) + "\t" + "Finished MLE" + "\n" )
+            log_fp.write( key[0] + "\tFinished MLE\n" )
 
         # get a process index
         while True:
