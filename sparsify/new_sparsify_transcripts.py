@@ -663,7 +663,7 @@ def write_gene_to_gtf( ofp, gene, mles, lbs=None, ubs=None, fpkms=None,
         if mle <= abs_filter_value: continue
         if mle/max( mles ) <= rel_filter_value: continue
         meta_data = { "frac": "%.2e" % mle }
-        transcript.score = min( 1000, max( 1, int(1*fpkms[index]) ) )
+        transcript.score = (1000.*mle)/max(mles)
         if lbs != None:
             meta_data["conf_lo"] = "%.2e" % lbs[index]
         if ubs != None:
