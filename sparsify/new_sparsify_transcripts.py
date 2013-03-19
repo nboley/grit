@@ -90,6 +90,9 @@ class ThreadSafeFile( file ):
         self.flush()
         self.lock.release()
 
+class TooFewReadsError( ValueError ):
+    pass
+
 def calc_fpkm( gene, fl_dist, freqs, num_reads_in_bam, num_reads_in_gene ):
     fpkms = []
     for t, freq in izip( gene.transcripts, freqs ):
@@ -193,7 +196,7 @@ def build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists, revers
         reads, gene.chrm, gene.strand, exon_boundaries, reverse_strand, True)
     
     if sum( binned_reads.values() ) < MIN_NUM_READS:
-        raise ValueError, "Too Few Reads"
+        raise TooFewReadsError, "Too Few Reads"
     
     observed_cnts = build_observed_cnts( binned_reads, fl_dists )    
     read_groups_and_read_lens =  { (RG, read_len) for RG, read_len, bin 
@@ -302,7 +305,7 @@ def build_design_matrices( gene, bam_fname, fl_dists, cage_array, reverse_strand
                   numpy.array(list(unobservable_rnaseq_trans)) )
     observed_array = numpy.hstack((observed_prom_array, observed_rnaseq_array))
     if observed_array.sum() < MIN_NUM_READS:
-        raise ValueError, "TOO FEW READS"
+        raise TooFewReadsError, "TOO FEW READS"
 
     expected_rnaseq_array = numpy.delete( expected_rnaseq_array, 
                   numpy.array(list(unobservable_prom_trans)), axis=1 )
@@ -482,8 +485,9 @@ def estimate_transcript_frequencies_line_search(
 
 def estimate_transcript_frequencies(  
         observed_array, full_expected_array, abs_tol ):
-    if observed_array.sum() == 0:
-        raise ValueError, "Too few reads."
+    if observed_array.sum() < MIN_NUM_READS:
+        raise TooFewReadsError, "Too Few Reads"
+    
     n = full_expected_array.shape[1]
     if n == 1:
         return numpy.ones( 1, dtype=float )

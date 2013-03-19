@@ -19,7 +19,7 @@ sys.path.append( os.path.join(os.path.dirname(__file__), "../sparsify/") )
 import new_sparsify_transcripts
 from new_sparsify_transcripts import build_design_matrices
 from new_sparsify_transcripts import estimate_transcript_frequencies
-from new_sparsify_transcripts import calc_fpkm
+from new_sparsify_transcripts import calc_fpkm, TooFewReadsError
 
 def add_freq_estimates_to_DB( cursor, gene, bam_fn, freq_estimates, fpkms ):
     for transcript, freq_estimate, fpkm in zip( 
@@ -64,23 +64,27 @@ def estimate_transcript_frequencies(conn, gene_id, reads_key, bam_fn, fl_dists):
         gene = load_gene_from_db( gene_id, conn )
         gene.chrm = "chr" + gene.chrm[0]
 
-        # build the design matrices
-        expected_array, observed_array, unobservable_transcripts \
-            = new_sparsify_transcripts.build_design_matrices( 
-                gene, bam_fn, fl_dists, None, reverse_strand=True )
-        if DEBUG_VERBOSE: print "Sum counts:", observed_array.sum()
-        #add_design_matrices_to_DB( cursor, gene, reads_key, 
-        #                           expected_array, observed_array, 
-        #                           unobservable_transcripts )
+        try:
+            # build the design matrices
+            expected_array, observed_array, unobservable_transcripts \
+                = new_sparsify_transcripts.build_design_matrices( 
+                    gene, bam_fn, fl_dists, None, reverse_strand=True )
+            if DEBUG_VERBOSE: print "Sum counts:", observed_array.sum()
+            #add_design_matrices_to_DB( cursor, gene, reads_key, 
+            #                           expected_array, observed_array, 
+            #                           unobservable_transcripts )
+
+            # estimate the transcript frequencies, and add them into the DB
+            mle_estimates = new_sparsify_transcripts.estimate_transcript_frequencies( 
+                observed_array, expected_array, 1e-5)
+            bam_file = pysam.Samfile(bam_fn)
+            fpkms = calc_fpkm( gene, fl_dists, mle_estimates, bam_file.mapped, 
+                               observed_array.sum() )
+            bam_file.close()
+        except TooFewReadsError:
+            mle_estimates = [None]*len(gene.transcripts)
+            fpkms = [0.]*len(gene.transcripts)
         
-        # estimate the transcript frequencies, and add them into the DB
-        ABS_TOL = 1e-4
-        mle_estimates = new_sparsify_transcripts.estimate_transcript_frequencies( 
-            observed_array, expected_array, ABS_TOL)
-        bam_file = pysam.Samfile(bam_fn)
-        fpkms = calc_fpkm( gene, fl_dists, mle_estimates, bam_file.mapped, 
-                           observed_array.sum() )
-        bam_file.close()
         if DEBUG_VERBOSE:
             print "Estimates:", mle_estimates
         add_freq_estimates_to_DB(cursor, gene, reads_key, mle_estimates, fpkms)
@@ -305,7 +309,8 @@ def main():
         processes.append( p )
     
     # wait until all of the threads have terminated
-    for loop in range(nthreads): thread_cntr.acquire()
-
+    for p in processes:
+        p.join()
+    
 if __name__ == '__main__':
     main()
