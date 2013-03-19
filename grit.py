@@ -846,7 +846,7 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
             cmd = Cmd( cmd_str, [et1, et2, et3, et4], 
                        output_fnames, dependencies )
             
-            process_server.add_process( cmd, Resource(1), Resource(6) )
+            process_server.add_process( cmd, Resource(1), Resource(1) )
 
     # first get all of the read bams
     cov_wig_fnames = defaultdict( list )
