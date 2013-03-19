@@ -45,7 +45,6 @@ def build_fl_dist(bam_fn, conn, nsamples=25000, min_exon_size=600):
         exon = gene.transcripts[0].exons[0]
         chrm = 'chr%s' % gene.chrm[0]
         if exon[1] - exon[0] < min_exon_size: continue
-        print len(frag_lens), exon
         try:
             for r1, r2 in reads.iter_paired_reads(
                     chrm, gene.strand, exon[0], exon[1], min_read_len=10, 

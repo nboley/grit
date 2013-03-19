@@ -64,9 +64,9 @@ def estimate_transcript_frequencies(conn, gene_id, reads_key, bam_fn, fl_dists):
             = new_sparsify_transcripts.build_design_matrices( 
                 gene, bam_fn, fl_dists, None, reverse_strand=True )
         if DEBUG_VERBOSE: print "Sum counts:", observed_array.sum()
-        add_design_matrices_to_DB( cursor, gene, reads_key, 
-                                   expected_array, observed_array, 
-                                   unobservable_transcripts )
+        #add_design_matrices_to_DB( cursor, gene, reads_key, 
+        #                           expected_array, observed_array, 
+        #                           unobservable_transcripts )
         
         # estimate the transcript frequencies, and add them into the DB
         ABS_TOL = 1e-4
@@ -80,8 +80,7 @@ def estimate_transcript_frequencies(conn, gene_id, reads_key, bam_fn, fl_dists):
         query = "UPDATE gene_expression_queue " \
               + "SET processing_status = 'FINISHED' " \
               + "WHERE gene = '%s'" % gene_id \
-              + "  AND reads_fn = '%s';" % bam_fn
-
+              + "  AND reads_fn = '%s';" % reads_key
         cursor.execute( query )
     except Exception, inst:
         if VERBOSE: print "ERROR in %s:" % gene_id, inst
