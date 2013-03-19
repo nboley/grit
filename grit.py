@@ -846,7 +846,7 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
             cmd = Cmd( cmd_str, [et1, et2, et3, et4], 
                        output_fnames, dependencies )
             
-            process_server.add_process( cmd, Resource(1), Resource(6) )
+            process_server.add_process( cmd, Resource(1), Resource(1) )
 
     # first get all of the read bams
     cov_wig_fnames = defaultdict( list )
@@ -1417,7 +1417,7 @@ def build_transcripts( elements, pserver, output_prefix ):
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
         
         #max_res = min(Resource(8), Resource(pserver.max_available_resources))
-        pserver.add_process( cmd, Resource(1) )
+        pserver.add_process( cmd, Resource(4), Resource(8) )
         return
 
     ress = elements.get_elements_from_db( elements_input_type )
@@ -2112,7 +2112,7 @@ def main():
 
     #calc_expression_scores( elements, pserver, base_dir + "expression" )
     
-    run_all_slide_compares( elements, pserver, base_dir + "stats" )
+    #run_all_slide_compares( elements, pserver, base_dir + "stats" )
     
     sparsify_transcripts( elements, pserver, base_dir + "transcripts" )
     

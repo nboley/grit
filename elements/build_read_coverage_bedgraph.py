@@ -120,7 +120,7 @@ def populate_wiggle( reads_fname, chrms, rd1_ofps, rd2_ofps,
     separate_read_pairs = ( rd2_ofps != None )
     
     all_args = []
-    for chrm in chrms:
+    for chrm in sorted(chrms):
         all_args.append( ( reads_fname, chrm, rd1_ofps, rd2_ofps, 
                            reverse_read_strand, pairs_are_opp_strand,
                            separate_read_pairs ) )
@@ -184,6 +184,7 @@ def parse_arguments():
     
     global num_threads
     num_threads = args.threads
+    assert num_threads == 1, "This needs to be one now so that they stay sorted."
     
     global VERBOSE
     VERBOSE = args.verbose

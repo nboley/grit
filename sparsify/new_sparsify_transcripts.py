@@ -34,6 +34,8 @@ import subprocess
 import multiprocessing
 from multiprocessing import Process
 
+import pysam
+
 from math import sqrt
 
 sys.path.append( os.path.join( os.path.dirname( __file__ ),
@@ -58,8 +60,10 @@ from frag_len import load_fl_dists, FlDist, build_normal_density
 import cvxopt
 from cvxopt import solvers, matrix, spdiag, log, div, sqrt
 
-MAX_NUM_TRANSCRIPTS = 500
+MAX_NUM_TRANSCRIPTS = 5000
 MIN_TRANSCRIPT_FREQ = 1e-12
+MIN_NUM_READS = 10
+
 # finite differences step size
 FD_SS = 1e-8
 COMPARE_TO_DCP = False
@@ -86,6 +90,16 @@ class ThreadSafeFile( file ):
         self.flush()
         self.lock.release()
 
+def calc_fpkm( gene, fl_dist, freqs, num_reads_in_bam, num_reads_in_gene ):
+    fpkms = []
+    for t, freq in izip( gene.transcripts, freqs ):
+        num_reads_in_t = num_reads_in_gene*freq
+        t_len = sum( e[1] - e[0] + 1 for e in t.exons )
+        fpk = num_reads_in_t/(t_len/1000.)
+        fpkm = fpk/(num_reads_in_bam/1000000.)
+        fpkms.append( fpkm )
+    return fpkms
+
 def build_observed_cnts( binned_reads, fl_dists ):
     rv = {}
     for ( read_len, read_group, bin ), value in binned_reads.iteritems():
@@ -109,7 +123,7 @@ def build_expected_and_observed_arrays(
             observed_mat.append( observed_cnts[key] )
         except KeyError:
             observed_mat.append( 0 )
-
+    
     if len( expected_mat ) == 0:
         raise ValueError, "No expected reads."
     
@@ -157,9 +171,9 @@ def nnls( X, Y, fixed_indices_and_values={} ):
     if DEBUG_OPTIMIZATION:
         for key, val in res.iteritems():
             if key in 'syxz': continue
-            print "%s:\t%s" % ( key.ljust(22), val )
+            print >> sys.stderr, "%s:\t%s" % ( key.ljust(22), val )
         
-        print "RSS: ".ljust(22), rss
+        print >> sys.stderr, "RSS: ".ljust(22), rss
     
     return x
 
@@ -174,9 +188,12 @@ def build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists, revers
     transcripts_non_overlapping_exon_indices = \
         list(build_nonoverlapping_indices( 
                 gene.transcripts, exon_boundaries ))
-    
+
     binned_reads = bin_reads( 
-        reads, "chr" + gene.chrm, gene.strand, exon_boundaries, reverse_strand, True)
+        reads, gene.chrm, gene.strand, exon_boundaries, reverse_strand, True)
+    
+    if sum( binned_reads.values() ) < MIN_NUM_READS:
+        raise ValueError, "Too Few Reads"
     
     observed_cnts = build_observed_cnts( binned_reads, fl_dists )    
     read_groups_and_read_lens =  { (RG, read_len) for RG, read_len, bin 
@@ -284,7 +301,7 @@ def build_design_matrices( gene, bam_fname, fl_dists, cage_array, reverse_strand
     observed_prom_array = numpy.delete( observed_prom_array, 
                   numpy.array(list(unobservable_rnaseq_trans)) )
     observed_array = numpy.hstack((observed_prom_array, observed_rnaseq_array))
-    if observed_array.sum() == 0:
+    if observed_array.sum() < MIN_NUM_READS:
         raise ValueError, "TOO FEW READS"
 
     expected_rnaseq_array = numpy.delete( expected_rnaseq_array, 
@@ -322,18 +339,18 @@ def calc_taylor_lhd( freqs, observed_array, expected_array ):
 def project_onto_simplex( x, debug=False ):
     if ( x >= MIN_TRANSCRIPT_FREQ ).all() and abs( 1-x.sum()  ) < 1e-6: return x
     sorted_x = numpy.sort(x)[::-1]
-    if debug: print "sorted x:", sorted_x
+    if debug: print >> sys.stderr, "sorted x:", sorted_x
     n = len(sorted_x)
-    if debug: print "cumsum:", sorted_x.cumsum()
-    if debug: print "arange:", numpy.arange(1,n+1)
+    if debug: print >> sys.stderr, "cumsum:", sorted_x.cumsum()
+    if debug: print >> sys.stderr, "arange:", numpy.arange(1,n+1)
     rhos = sorted_x - (1./numpy.arange(1,n+1))*( sorted_x.cumsum() - 1 )
-    if debug: print "rhos:", rhos
+    if debug: print >> sys.stderr, "rhos:", rhos
     rho = (rhos > 0).nonzero()[0].max() + 1
-    if debug: print "rho:", rho
+    if debug: print >> sys.stderr, "rho:", rho
     theta = (1./rho)*( sorted_x[:rho].sum()-1)
-    if debug: print "theta:", theta
+    if debug: print >> sys.stderr, "theta:", theta
     x_minus_theta = x - theta
-    if debug: print "x - theta:", x_minus_theta
+    if debug: print >> sys.stderr, "x - theta:", x_minus_theta
     x_minus_theta[ x_minus_theta < 0 ] = MIN_TRANSCRIPT_FREQ
     return x_minus_theta
 
@@ -405,9 +422,7 @@ def estimate_transcript_frequencies_line_search(
         if f_lhd(x) > f_lhd(x+step_size*gradient):
             step_size = downhill_search( step_size )
             return step_size, (step_size==0)
-
-        #print "Found step size:", step_size, "vs", max_feasible_step_size, \
-        #    "Graniness is %i" % graniness
+        
         return step_size, True
     
     n = full_expected_array.shape[1]
@@ -428,12 +443,6 @@ def estimate_transcript_frequencies_line_search(
         alpha, is_full_step = line_search(
             x, gradient, max_feasible_step_size)
         x += alpha*gradient
-        """
-        if alpha > 0 and not is_full_step:
-            print "%i\t%.2f\t%.6e\t%i" % ( 
-                i, f_lhd(x), f_lhd(x)-f_lhd(x-alpha*gradient), len(x) )
-            continue
-        """
         
         if abs( 1-x.sum() ) > 1e-6:
             x = project_onto_simplex(x)
@@ -462,7 +471,7 @@ def estimate_transcript_frequencies_line_search(
         lhd = f_lhd(x)
         lhds.append( lhd )
         if DEBUG_OPTIMIZATION:
-            print "%i\t%.2f\t%.6e\t%i" % ( 
+            print >> sys.stderr, "%i\t%.2f\t%.6e\t%i" % ( 
                 i, lhd, lhd - prev_lhd, len(x) )
     
     final_x = numpy.ones(n)*MIN_TRANSCRIPT_FREQ
@@ -484,7 +493,7 @@ def estimate_transcript_frequencies(
     eps = 10.
     start_time = time.time()
     if DEBUG_VERBOSE:
-        print "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)"
+        print >> sys.stderr, "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)"
     for i in xrange( 500 ):
         prev_x = x.copy()
         
@@ -495,7 +504,7 @@ def estimate_transcript_frequencies(
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
         if DEBUG_VERBOSE:
-            print "Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
+            print >> sys.stderr, "Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
                 i, lhd, (lhd - prev_lhd)/len(lhds), len(lhds ), eps, 
                 make_time_str((time.time()-start_time)/len(lhds)) )
             
@@ -515,7 +524,7 @@ def estimate_transcript_frequencies(
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
         if DEBUG_VERBOSE:
-            print "Non-Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
+            print >> sys.stderr, "Non-Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
                 i, lhd, (lhd - prev_lhd)/len(lhds), len(lhds), eps,
                 make_time_str((time.time()-start_time)/len(lhds)))
         
@@ -584,35 +593,29 @@ def estimate_confidence_bound( observed_array,
             observed_array,  expected_array, fixed_index,
             mle_estimate, bound_type, alpha )
     except ValueError:
-        # print "WARNING: Couldn't find bound for transcript %i %s directly: 
-        # trying bisection." % (fixed_index+1, bound_type)
         return estimate_confidence_bound_by_bisection( 
             observed_array,  expected_array, fixed_index,
             mle_estimate, bound_type, alpha )
                     
     pass
 
-def build_mle_estimate( observed_array, expected_array ):
-    log_lhd, mle_estimate = estimate_transcript_frequencies( 
-        observed_array, expected_array )
-
 def build_bound(observed_array, expected_array, mle_estimate, index, bnd_type):
     p_value, bnd = estimate_confidence_bound( 
         observed_array, expected_array, index, mle_estimate, bnd_type )
 
-def write_gene_to_gtf( ofp, gene, mles, lbs=None, ubs=None, 
+def write_gene_to_gtf( ofp, gene, mles, lbs=None, ubs=None, fpkms=None,
                        abs_filter_value=0, rel_filter_value=0 ):
-    scores = [ int(1000*mle/max( mles )) for mle in mles ]
-    
     for index, (mle, transcript) in enumerate(izip(mles, gene.transcripts)):
         if mle <= abs_filter_value: continue
         if mle/max( mles ) <= rel_filter_value: continue
         meta_data = { "frac": "%.2e" % mle }
-        transcript.score = max( 1, int(1000*mle/max(mles)) )
+        transcript.score = (1000.*mle)/max(mles)
         if lbs != None:
             meta_data["conf_lo"] = "%.2e" % lbs[index]
         if ubs != None:
             meta_data["conf_hi"] = "%.2e" % ubs[index]
+        if fpkms != None:
+            meta_data["FPKM"] = "%.2e" % fpkms[index]
         
         ofp.write( transcript.build_gtf_lines(
                 gene.id, meta_data, source="grit") + "\n" )
@@ -635,6 +638,7 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
                 = build_design_matrices( gene, bam_fn, fl_dists, cage )
         except ValueError, inst:
             error_msg = "%i: Skipping %s: %s" % ( os.getpid(), gene.id, inst )
+            log_warning( error_msg )
             if DEBUG: raise
             input_queue_lock.acquire()
             input_queue.append(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
@@ -642,14 +646,16 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
             return
         except MemoryError, inst:
             error_msg =  "%i: Skipping %s: %s" % ( os.getpid(), gene.id, inst )
+            log_warning( error_msg )
             if DEBUG: raise
             input_queue_lock.acquire()
             input_queue.append(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
             input_queue_lock.release()
             return
         
-        if VERBOSE: print "FINISHED DESIGN MATRICES %s\t%s" % ( 
-            gene_id, bam_fn )
+        if VERBOSE: 
+            log_warning( "FINISHED DESIGN MATRICES %s\t%s" % ( 
+                    gene_id, bam_fn ) )
 
         op_lock.acquire()
         try:
@@ -658,6 +664,7 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
         except SystemError, inst:
             op_lock.release()
             error_msg =  "SYSTEM ERROR: %i: Skipping %s: %s" % ( os.getpid(), gene.id, inst )
+            log_warning( error_msg )
             input_queue_lock.acquire()
             input_queue.append(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
             input_queue_lock.release()
@@ -672,13 +679,20 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
         op_lock.acquire()
         observed_array, expected_array, unobservable_transcripts = \
             output[((gene_id, bam_fn), 'design_matrices')]
+        gene = output[((gene_id, bam_fn), 'gene')]
+        fl_dists = output[((gene_id, bam_fn), 'fl_dists')]
         op_lock.release()
         
         try:
             mle_estimate = estimate_transcript_frequencies( 
                 observed_array, expected_array, ABS_TOL)
+            num_reads_in_gene = observed_array.sum()
+            num_reads_in_bam = NUMBER_OF_READS_IN_BAM
+            fpkms = calc_fpkm( gene, fl_dists, mle_estimate, 
+                              num_reads_in_bam, num_reads_in_gene )
         except ValueError, inst:
             error_msg = "Skipping %s: %s" % ( gene_id, inst )
+            log_warning( error_msg )
             if DEBUG: raise
             input_queue_lock.acquire()
             input_queue.append(('ERROR', ((gene_id, bam_fn, trans_index), error_msg)))
@@ -686,11 +700,12 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
             return
         
         log_lhd = calc_lhd( mle_estimate, observed_array, expected_array)
-        if VERBOSE: print "FINISHED MLE %s\t%s\t%.2f" % ( 
+        if VERBOSE: print >> sys.stderr, "FINISHED MLE %s\t%s\t%.2f" % ( 
             gene_id, bam_fn, log_lhd )
         
         op_lock.acquire()
         output[((gene_id, bam_fn), 'mle')] = mle_estimate
+        output[((gene_id, bam_fn), 'fpkm')] = fpkms
         op_lock.release()
 
         input_queue_lock.acquire()
@@ -756,11 +771,12 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
             
             gene = output_dict[(key, 'gene')]
             mles = output_dict[(key, 'mle')]
+            fpkms = output_dict[(key, 'fpkm')]
             lbs = output_dict[(key, 'lbs')] if compute_confidence_bounds else None
             ubs = output_dict[(key, 'ubs')] if compute_confidence_bounds else None
 
-            write_gene_to_gtf( ofps[key[1]], gene, mles, 
-                               lbs, ubs, abs_filter_value, rel_filter_value)
+            write_gene_to_gtf( ofps[key[1]], gene, mles, lbs, ubs, fpkms,
+                               abs_filter_value, rel_filter_value)
 
             del output_dict[(key, 'gene')]
             del output_dict[(key, 'mle')]
@@ -890,28 +906,35 @@ def main():
             cage[(strand, fix_chr_name(chrm))] = numpy.array(array)
     
     if VERBOSE:
-        print "Finished Loading CAGE"
+        print >> sys.stderr, "Finished Loading CAGE"
     
     # add all the genes, in order of longest first. 
     genes = load_gtf( gtf_fp.name )
     if VERBOSE:
-        print "Finished Loading %s" % gtf_fp.name
+        print >> sys.stderr, "Finished Loading %s" % gtf_fp.name
 
     # add the genes in reverse sorted order so that the longer genes are dealt
     # with first
     for gene in sorted( genes, key=lambda x: len(x.transcripts) ):
         if len(gene.transcripts) > MAX_NUM_TRANSCRIPTS:
-            log_fp.write( "Skipping %s: too many transcripts ( %i )\n" % ( 
+            log_warning( "Skipping %s: too many transcripts ( %i )" % ( 
                     gene.id, len(gene.transcripts ) ) )
+            continue
         
         if (gene.strand, gene.chrm) not in cage:
             if cage != {}:
-                print "WARNING: Could not find CAGE signal for gene %s (strand %s chr %s)"% (
-                    gene.id, gene.strand, gene.chrm )
+                log_warning( "WARNING: Could not find CAGE signal for gene %s (strand %s chr %s)"% (
+                        gene.id, gene.strand, gene.chrm ) )
             gene_cage = None
         else:
             gene_cage = cage[(gene.strand, gene.chrm)][
                 gene.start:gene.stop+1].copy()
+        
+        assert len(bam_fns ) == 1
+        samfile = pysam.Samfile( bam_fns[0], "rb" )
+        global NUMBER_OF_READS_IN_BAM
+        NUMBER_OF_READS_IN_BAM = samfile.mapped
+        samfile.close()
         
         for bam_fn in bam_fns:
             input_queue_lock.acquire()
@@ -925,6 +948,7 @@ def main():
             output_dict[ (key, 'lbs') ] = {}
             output_dict[ (key, 'ubs') ] = {}
             output_dict[ (key, 'mle') ] = None
+            output_dict[ (key, 'fpkm') ] = None
             output_dict[ (key, 'design_matrices') ] = None
     
     del cage
@@ -956,7 +980,7 @@ def main():
         
         if work_type == 'ERROR':
             ( gene_id, bam_fn, trans_index ), msg = key
-            log_fp.write( gene_id + "\t" + msg + "\n" )
+            log_fp.write( gene_id + "\tERROR\t" + msg + "\n" )
             print "ERROR", gene_id, key[1]
             continue
         else:
@@ -968,7 +992,7 @@ def main():
 
         if work_type == 'mle':
             finished_queue.put( ('design_matrix', (gene_id, bam_fn)) )
-            log_fp.write( "\t".join(key[0]) + "\t" + "Finished MLE" + "\n" )
+            log_fp.write( key[0] + "\tFinished MLE\n" )
 
         # get a process index
         while True:

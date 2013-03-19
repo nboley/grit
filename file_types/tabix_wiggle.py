@@ -1,10 +1,12 @@
 import os, sys
 import pysam
 import numpy
+import gzip
+import subprocess
 
 from chrm_sizes import ChrmSizes
 
-VERBOSE = True
+VERBOSE = False
 
 def clean_chr_name( chrm ):
     if chrm.startswith( "chr" ):
@@ -65,13 +67,10 @@ def build_tabix_index( fp ):
     
     # check to see if the compressed version exists. if not, create it
     if not os.path.exists(fname):
-        if VERBOSE: print >> sys.stderr, "Compressing ", fp.name
-        try:
-            pysam.tabix_compress( fp.name, fname)
-        # if the file already exists, assume it is fine
-        except IOError, inst:
-            if VERBOSE: print >> sys.stderr, "ERROR:", inst
-
+        if VERBOSE: print >> sys.stderr, "Compressing ", fp.name        
+        cmd = "bgzip -c %s > %s" % (fp.name, fname)
+        subprocess.check_call( cmd, shell=True )
+    
     # check to see if the tabix index exists. If not, create it
     if not os.path.exists(fname + '.tbi'):
         # check for a header line
@@ -79,7 +78,6 @@ def build_tabix_index( fp ):
         nskip = 1 if fp.readline().startswith("track") else 0
         fp.seek(0)
         
-        import subprocess
         if VERBOSE: print >> sys.stderr, "Indexing", fname
         cmd = "tabix %s -p bed -S %i" % ( fname, nskip )
         subprocess.check_call( cmd, shell=True )
