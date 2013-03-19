@@ -6,7 +6,7 @@ import subprocess
 
 from chrm_sizes import ChrmSizes
 
-VERBOSE = True
+VERBOSE = False
 
 def clean_chr_name( chrm ):
     if chrm.startswith( "chr" ):
@@ -46,7 +46,6 @@ class TabixBackedArray(object):
         if stop == None: stop = self.contig_len 
         rv = numpy.zeros( stop - start  )
         for data_file in self._data_files:
-            print data_file.filename
             for line in data_file.fetch( 
                     'chr' + self.chrm, start, stop, parser=pysam.asTuple() ):
                 rv[max(0, int(line[1]))-start:int(line[2])-start] += float(line[3])
