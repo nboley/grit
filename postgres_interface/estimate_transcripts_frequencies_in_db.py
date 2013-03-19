@@ -6,7 +6,10 @@ from itertools import izip
 from multiprocessing import BoundedSemaphore, Process, cpu_count
 
 VERBOSE = False
+DEBUG = False
+
 import psycopg2
+import pysam
 
 from load_gene_from_db import load_gene_from_db
 from build_fl_dist_from_db import build_fl_dist
@@ -16,14 +19,16 @@ sys.path.append( os.path.join(os.path.dirname(__file__), "../sparsify/") )
 import new_sparsify_transcripts
 from new_sparsify_transcripts import build_design_matrices
 from new_sparsify_transcripts import estimate_transcript_frequencies
+from new_sparsify_transcripts import calc_fpkm
 
-def add_freq_estimates_to_DB( cursor, gene, bam_fn, freq_estimates ):
-    for transcript, freq_estimate in zip( gene.transcripts, freq_estimates ):
+def add_freq_estimates_to_DB( cursor, gene, bam_fn, freq_estimates, fpkms ):
+    for transcript, freq_estimate, fpkm in zip( 
+            gene.transcripts, freq_estimates, fpkms ):
         query_template  = "INSERT INTO transcript_expression "
-        query_template += "( transcript, reads_fn, frequency ) VALUES "
-        query_template += "( %s, %s, %s );"
+        query_template += "( transcript, reads_fn, frequency, rpkm ) VALUES "
+        query_template += "( %s, %s, %s, %s );"
         cursor.execute( query_template, 
-                        (transcript.id, bam_fn, freq_estimate) )
+                        (transcript.id, bam_fn, freq_estimate, fpkm) )
     
     return
 
@@ -57,7 +62,7 @@ def estimate_transcript_frequencies(conn, gene_id, reads_key, bam_fn, fl_dists):
         
         # load the genes
         gene = load_gene_from_db( gene_id, conn )
-        gene.chrm = gene.chrm[0]
+        gene.chrm = "chr" + gene.chrm[0]
 
         # build the design matrices
         expected_array, observed_array, unobservable_transcripts \
@@ -72,9 +77,13 @@ def estimate_transcript_frequencies(conn, gene_id, reads_key, bam_fn, fl_dists):
         ABS_TOL = 1e-4
         mle_estimates = new_sparsify_transcripts.estimate_transcript_frequencies( 
             observed_array, expected_array, ABS_TOL)
-        if VERBOSE:
+        bam_file = pysam.Samfile(bam_fn)
+        fpkms = calc_fpkm( gene, fl_dists, mle_estimates, bam_file.mapped, 
+                           observed_array.sum() )
+        bam_file.close()
+        if DEBUG_VERBOSE:
             print "Estimates:", mle_estimates
-        add_freq_estimates_to_DB( cursor, gene, reads_key, mle_estimates )
+        add_freq_estimates_to_DB(cursor, gene, reads_key, mle_estimates, fpkms)
         
         # updae the queue
         query = "UPDATE gene_expression_queue " \
@@ -84,12 +93,13 @@ def estimate_transcript_frequencies(conn, gene_id, reads_key, bam_fn, fl_dists):
         cursor.execute( query )
     except Exception, inst:
         if VERBOSE: print "ERROR in %s:" % gene_id, inst
+        if DEBUG: raise
         inst = str(inst).replace( "'", "" )
         query = "UPDATE gene_expression_queue " \
               + "SET processing_status = 'FAILED', " \
               + "error_log = '%s' " % inst \
               + "WHERE gene = %s" % gene_id \
-              + "  AND reads_fn = '%s';" % bam_fn
+              + "  AND reads_fn = '%s';" % reads_key
         cursor.execute( query )
         
     cursor.close()
@@ -287,7 +297,7 @@ def main():
             if not daemon:
                 break
             else:
-                time.sleep(1)
+                time.sleep(30)
         
         # release the thread, and stop the process
         p = Process( target=spawn_process, args=[conn_info,manager_inst] )
