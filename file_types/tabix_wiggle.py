@@ -70,9 +70,7 @@ def build_tabix_index( fp ):
         if VERBOSE: print >> sys.stderr, "Compressing ", fp.name        
         cmd = "bgzip -c %s > %s" % (fp.name, fname)
         subprocess.check_call( cmd, shell=True )
-    
-    # check to see if the tabix index exists. If not, create it
-    if not os.path.exists(fname + '.tbi'):
+        
         # check for a header line
         fp.seek(0)
         nskip = 1 if fp.readline().startswith("track") else 0
