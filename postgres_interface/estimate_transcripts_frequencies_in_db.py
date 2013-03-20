@@ -16,6 +16,7 @@ import boto.s3.key
 
 from load_gene_from_db import load_gene_from_db
 from build_fl_dist_from_db import build_fl_dist
+from s3_data import S3Cache
 
 # for fl dist object
 sys.path.append( os.path.join(os.path.dirname(__file__), "../sparsify/") )
@@ -184,81 +185,14 @@ def parse_arguments():
     
     return ( args.db_name, args.host), int(args.threads), args.daemon
 
-def get_reads_fn_and_fl_dist( manager_inst, reads_location, conn ):
-    # check to see if the filename is already in the manager
-    # if it is, then find the corresponding filenames and return them
-    if reads_location in manager_inst.location_to_fn_mapping:
-        while True:
-            reads_fn, frag_len_fn, status \
-                = manager_inst.location_to_fn_mapping[reads_location]
-            # if they are finished ( ie downloaded, and the fl dist
-            # is built ) then return them
-            if status == 'FINISHED':
-                return reads_fn, load_fl_dists(reads_fn)
-            elif status == 'ERROR':
-                raise ValueError, "Cant get files"
-            # otherwise, wait a second and try again
-            else:
-                if DEBUG_VERBOSE: 
-                    print "Waiting on %s: status %s" % ( reads_fn, status )
-                time.sleep(1.)
-    # otherwise, we need to get them
-    else:
-        try:
-            # choose a filename
-            op_fname = "/scratch/" + ''.join( 
-                x for x in reads_location.replace("/", "_") 
-                if x.isalnum() or x == '_' ) + ".bam"
-            manager_inst.location_to_fn_mapping[reads_location] = (
-                op_fname, op_fname + ".fldist", 'downloading' )
+def get_reads_fn_and_fl_dist(cache, reads_url):
+    reads_fp = cache.open_local_copy_from_s3_url(reads_url)
+    reads_fn = reads_fp.name
+    reads_fp.close()
+    fl_dist = load_fl_dists( reads_fn )
+    return reads_fn, fl_dist
 
-            # download the file
-            if VERBOSE: print "Downloading ", reads_location, " to ", op_fname
-            
-            # get the bucket
-            conn = boto.connect_s3(
-                "", 
-                "")
-            bucket = boto.s3.bucket.Bucket( conn, reads_location[5:].split("/")[0] )
-            key = boto.s3.key.Key(bucket)
-            # get the bam file
-            key.key = "/".join(reads_location[5:].split("/")[1:])
-            key.get_contents_to_filename(op_fname)
-            
-            # get the bai file
-            key.key = "/".join(reads_location[5:].split("/")[1:]) + '.bai'
-            key.get_contents_to_filename(op_fname)
-            
-            # build the fl dist
-            if not os.path.exists( op_fname + ".fldist" ):
-                build_fl_dist(op_fname, conn)
-            
-            fl_dists = load_fl_dists(op_fname)
-
-            # release the lock
-            manager_inst.location_to_fn_mapping[reads_location] = (
-                op_fname, op_fname + ".fldist", 'FINISHED' )        
-        except Exception, inst:
-            if VERBOSE: print "ERROR loading files. %s" % inst
-            # release the lock
-            manager_inst.location_to_fn_mapping[reads_location] = (
-                op_fname, op_fname + ".fldist", 'ERROR' )        
-            
-            raise ValueError, "Cant get files" + str(inst)
-        
-        return op_fname, fl_dists
-
-    assert False
-
-class FilesManager(object):
-    def __init__(self):
-        import multiprocessing
-        self.manager = multiprocessing.Manager()
-        self.lock = multiprocessing.Lock()
-        self.location_to_fn_mapping = self.manager.dict()
-        return
-
-def spawn_process( conn_info, manager_inst ):
+def spawn_process( conn_info, cache ):
     # open a new connection ( which we need to do because of the fork )
     conn = psycopg2.connect("dbname=%s host=%s user=nboley" % conn_info)
 
@@ -267,7 +201,7 @@ def spawn_process( conn_info, manager_inst ):
 
     try:
         reads_fn, fl_dist \
-            = get_reads_fn_and_fl_dist( manager_inst, reads_location, conn )
+            = get_reads_fn_and_fl_dist( cache, reads_location )
     except ValueError, inst:
         inst = str(inst).replace( "'", "" )
         cursor = conn.cursor()
@@ -295,7 +229,7 @@ def main_loop(conn_info, nthreads, is_daemon):
     parent_conn = psycopg2.connect("dbname=%s host=%s user=nboley" % conn_info)
     cursor = parent_conn.cursor()
     
-    manager_inst = FilesManager()
+    cache = S3Cache()
     processes = []
     while True:
         running_ps = []
@@ -314,7 +248,7 @@ def main_loop(conn_info, nthreads, is_daemon):
                 time.sleep(30)
         
         # release the thread, and stop the process
-        p = Process( target=spawn_process, args=[conn_info,manager_inst] )
+        p = Process( target=spawn_process, args=[conn_info, cache] )
         p.start()
         processes.append( p )
     
