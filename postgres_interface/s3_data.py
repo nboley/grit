@@ -18,10 +18,11 @@ class S3Cache(object):
     This returns the filename of a local copy of an s3 file, downloading and
     verifying if necessary.
     """
-    def __init__( self, access_key, private_key, scratch_directory="/scratch/" ):
+    def __init__( self, access_key, private_key, db_conn, scratch_directory="/scratch/" ):
         self._access_key = access_key
         self._private_key = private_key
         self.conn = boto.connect_s3( self._access_key, self._private_key )
+        self.db_conn = db_conn
         
         self.scratch_directory = scratch_directory
         
@@ -65,27 +66,27 @@ class S3Cache(object):
 
         assert False
     
-    def _add_file_to_cache( self, bucket_name, file_key, local_fname ):
+    def _add_file_to_cache( self, bucket_name, file_key, local_fn ):
         bucket = boto.s3.bucket.Bucket( self.conn, bucket_name )
         key = boto.s3.key.Key(bucket)
         # get the bam file
         if DEBUG_VERBOSE: print "Downloading ", file_key
         key.key = file_key
-        key.get_contents_to_filename(local_fname)
+        key.get_contents_to_filename(local_fn)
         
         # get the bai file
         if DEBUG_VERBOSE: print "Downloading ", file_key + '.bai'
         key.key = file_key + '.bai'
-        key.get_contents_to_filename(local_fname)
+        key.get_contents_to_filename(local_fn)
         
         # build the fl dist
-        if not os.path.exists( local_fname + ".fldist" ):
+        if not os.path.exists( local_fn + ".fldist" ):
             if DEBUG_VERBOSE: print "Building ", file_key + '.fldist'
-            build_fl_dist(local_fname, conn)
+            build_fl_dist(local_fn, self.db_conn)
         
         # release the lock
         self._manager.location_to_fn_mapping[(bucket_name, file_key)] = (
-            local_fname, 'FINISHED' )        
+            local_fn, 'FINISHED' )        
         
         return
     
@@ -121,7 +122,7 @@ class S3Cache(object):
             
             if local_size == amazon_size:
                 self._location_to_fn_mapping[(bucket_name, file_key)] = (
-                    local_fname, 'FINISHED' )        
+                    local_fn, 'FINISHED' )        
                 self._lock.release()
             else:
                 # remove the local file
@@ -146,7 +147,8 @@ class S3Cache(object):
     def open_local_copy_from_s3_url( self, url ):
         bucket, key = self.get_bucket_and_key_from_s3_url( url )
         return self.open_local_copy( bucket, key )
-
+        
+    
 def main():
     global VERBOSE
     VERBOSE = True

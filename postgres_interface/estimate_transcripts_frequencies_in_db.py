@@ -16,7 +16,8 @@ import boto.s3.key
 
 from load_gene_from_db import load_gene_from_db
 from build_fl_dist_from_db import build_fl_dist
-from s3_data import S3Cache
+
+import s3_data
 
 # for fl dist object
 sys.path.append( os.path.join(os.path.dirname(__file__), "../sparsify/") )
@@ -151,40 +152,6 @@ def load_fl_dists( bam_fn ):
         fl_dists = pickle.load( fl_dists_fp )
     return fl_dists
 
-def parse_arguments():
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description='Estimate transcript frequencies from DB.')
-
-    parser.add_argument( '--host', default='localhost', help='Database host.' )
-    parser.add_argument( '--db-name', default='rnaseq_data', 
-                         help='Database name. ' )
-
-    parser.add_argument( '--threads', '-t', default='MAX',
-                         help='Number of threads to spawn ( MAX for the number of cores ).')    
-    parser.add_argument( '--verbose', '-v', default=False, action='store_true',
-                         help='Print status information.')
-    parser.add_argument( '--debug-verbose', default=False, action='store_true',
-                         help='Print additional status information.')
-    parser.add_argument( '--daemon', default=False, action='store_true',
-                         help='Whether or not to run this as a daemon.')
-    
-    args = parser.parse_args()
-    
-    global VERBOSE
-    VERBOSE = args.verbose or args.debug_verbose
-    new_sparsify_transcripts.VERBOSE = VERBOSE
-    
-    global DEBUG_VERBOSE
-    DEBUG_VERBOSE = args.debug_verbose
-    new_sparsify_transcripts.DEBUG_VERBOSE = DEBUG_VERBOSE
-    
-    if args.threads == 'MAX':
-        args.threads = cpu_count()
-    
-    return ( args.db_name, args.host), int(args.threads), args.daemon
-
 def get_reads_fn_and_fl_dist(cache, reads_url):
     reads_fp = cache.open_local_copy_from_s3_url(reads_url)
     reads_fn = reads_fp.name
@@ -225,11 +192,50 @@ def spawn_process( conn_info, cache ):
     conn.close()
     return
 
-def main_loop(conn_info, nthreads, is_daemon):
+def parse_arguments():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description='Estimate transcript frequencies from DB.')
+
+    parser.add_argument( '--host', default='localhost', help='Database host.' )
+    parser.add_argument( '--db-name', default='rnaseq_data', 
+                         help='Database name. ' )
+
+    parser.add_argument( '--access-key', required=True, help='Amazon access key.' )
+    parser.add_argument( '--secret-key', required=True, help='Amazon secret key.' )
+
+    parser.add_argument( '--threads', '-t', default='MAX',
+                         help='Number of threads to spawn ( MAX for the number of cores ).')    
+    parser.add_argument( '--verbose', '-v', default=False, action='store_true',
+                         help='Print status information.')
+    parser.add_argument( '--debug-verbose', default=False, action='store_true',
+                         help='Print additional status information.')
+    parser.add_argument( '--daemon', default=False, action='store_true',
+                         help='Whether or not to run this as a daemon.')
+    
+    args = parser.parse_args()
+    
+    global VERBOSE
+    VERBOSE = args.verbose or args.debug_verbose
+    new_sparsify_transcripts
+    s3_data.VERBOSE = VERBOSE
+    
+    global DEBUG_VERBOSE
+    DEBUG_VERBOSE = args.debug_verbose
+    new_sparsify_transcripts.DEBUG_VERBOSE = DEBUG_VERBOSE
+    s3_data.DEBUG_VERBOSE = DEBUG_VERBOSE
+    
+    if args.threads == 'MAX':
+        args.threads = cpu_count()
+    
+    return ( args.db_name, args.host), int(args.threads), args.daemon, (args.access_key, args.secret_key )
+
+def main_loop(conn_info, s3_info, nthreads, is_daemon):
     parent_conn = psycopg2.connect("dbname=%s host=%s user=nboley" % conn_info)
     cursor = parent_conn.cursor()
     
-    cache = S3Cache()
+    cache = s3_data.S3Cache( s3_info[0], s3_info[1], parent_conn )
     processes = []
     while True:
         running_ps = []
@@ -259,13 +265,13 @@ def main_loop(conn_info, nthreads, is_daemon):
     return
 
 def main():
-    conn_info, nthreads, is_daemon  = parse_arguments()
+    conn_info, nthreads, is_daemon, s3_info  = parse_arguments()
     if is_daemon:
         import daemon
         with daemon.DaemonContext():
-            main_loop(conn_info, nthreads, is_daemon)
+            main_loop(conn_info, s3_info, nthreads, is_daemon)
     else:
-        main_loop(conn_info, nthreads, is_daemon)
+        main_loop(conn_info, s3_info, nthreads, is_daemon)
 
 if __name__ == '__main__':
     main()
