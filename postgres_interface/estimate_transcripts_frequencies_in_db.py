@@ -10,6 +10,9 @@ DEBUG = False
 
 import psycopg2
 import pysam
+import boto
+import boto.s3.bucket
+import boto.s3.key
 
 from load_gene_from_db import load_gene_from_db
 from build_fl_dist_from_db import build_fl_dist
@@ -210,14 +213,22 @@ def get_reads_fn_and_fl_dist( manager_inst, reads_location, conn ):
                 op_fname, op_fname + ".fldist", 'downloading' )
 
             # download the file
-            if VERBOSE: print "Downloading ", reads_location
-            print "s3cmd get %s %s --continue" \
-                             % (reads_location, op_fname)
-            res = os.system( "s3cmd get %s %s --continue" 
-                             % (reads_location, op_fname) )
-            res = os.system( "s3cmd get %s.bai %s.bai --continue" 
-                             % (reads_location, op_fname) )
-
+            if VERBOSE: print "Downloading ", reads_location, " to ", op_fname
+            
+            # get the bucket
+            conn = boto.connect_s3(
+                "", 
+                "")
+            bucket = boto.s3.bucket.Bucket( conn, reads_location[5:].split("/")[0] )
+            key = boto.s3.key.Key(bucket)
+            # get the bam file
+            key.key = "/".join(reads_location[5:].split("/")[1:])
+            key.get_contents_to_filename(op_fname)
+            
+            # get the bai file
+            key.key = "/".join(reads_location[5:].split("/")[1:]) + '.bai'
+            key.get_contents_to_filename(op_fname)
+            
             # build the fl dist
             if not os.path.exists( op_fname + ".fldist" ):
                 build_fl_dist(op_fname, conn)
@@ -280,8 +291,7 @@ def spawn_process( conn_info, manager_inst ):
     conn.close()
     return
 
-def main():
-    conn_info, nthreads, daemon  = parse_arguments()
+def main_loop(conn_info, nthreads, is_daemon):
     parent_conn = psycopg2.connect("dbname=%s host=%s user=nboley" % conn_info)
     cursor = parent_conn.cursor()
     
@@ -298,7 +308,7 @@ def main():
             continue
         
         if gene_queue_is_empty(cursor): 
-            if not daemon:
+            if not is_daemon:
                 break
             else:
                 time.sleep(30)
@@ -311,6 +321,17 @@ def main():
     # wait until all of the threads have terminated
     for p in processes:
         p.join()
-    
+
+    return
+
+def main():
+    conn_info, nthreads, is_daemon  = parse_arguments()
+    if is_daemon:
+        import daemon
+        with daemon.DaemonContext():
+            main_loop(conn_info, nthreads, is_daemon)
+    else:
+        main_loop(conn_info, nthreads, is_daemon)
+
 if __name__ == '__main__':
     main()
