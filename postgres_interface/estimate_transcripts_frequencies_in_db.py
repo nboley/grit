@@ -116,7 +116,7 @@ def estimate_transcript_frequencies(conn, gene_id, reads_key, bam_fn, fl_dists):
     
     return 
 
-def get_queue_item(conn):
+def get_queue_items(conn, max_number=1 ):
     """Get an item from the queue, return None if it's empty
 
     """
@@ -129,17 +129,15 @@ def get_queue_item(conn):
             FROM gene_expression_queue 
             WHERE processing_status = 'UNPROCESSED' 
             FOR UPDATE
-            LIMIT 1
+            LIMIT %i
     ) RETURNING gene, reads_fn;
-    """
+    """ % max_number
     cursor.execute( query )
     res = cursor.fetchall()
     cursor.close()
     conn.commit()
-    
-    # if we can't get an item, then just exit
-    if len( res ) == 0: os._exit(os.EX_OK)
-    return res[0]
+        
+    return res
 
 def gene_queue_is_empty(cursor):
     query = "SELECT * FROM gene_expression_queue" \
@@ -164,32 +162,67 @@ def spawn_process( conn_info, cache ):
     conn = psycopg2.connect("dbname=%s host=%s user=nboley" % conn_info)
 
     # get and lock a gene to process
-    gene_id, reads_location = get_queue_item(conn)
+    rv = get_queue_items(conn)
+    if len(rv) == 0: return
+    
+    for gene_id, reads_location in rv:
+        try:
+            if VERBOSE: print "Processing ", gene_id
+            
+            reads_fn, fl_dist \
+                = get_reads_fn_and_fl_dist( cache, reads_location )
+            
+            estimate_transcript_frequencies( 
+                conn, gene_id, reads_location, reads_fn, fl_dist  )
+        except ValueError, inst:
+            inst = str(inst).replace( "'", "" )
+            cursor = conn.cursor()
+            query = "UPDATE gene_expression_queue " \
+                  + "SET processing_status = 'FAILED', " \
+                  + "error_log = '%s' " % inst \
+                  + "WHERE gene = %s" % gene_id \
+                  + "  AND reads_fn = '%s';" % reads_location
+            cursor.execute( query )
+            cursor.close()
+            conn.commit()
+            if DEBUG_VERBOSE: print "CLEANED UP ", inst, reads_location
+            continue
 
-    try:
-        reads_fn, fl_dist \
-            = get_reads_fn_and_fl_dist( cache, reads_location )
-    except ValueError, inst:
-        inst = str(inst).replace( "'", "" )
-        cursor = conn.cursor()
-        query = "UPDATE gene_expression_queue " \
-              + "SET processing_status = 'FAILED', " \
-              + "error_log = '%s' " % inst \
-              + "WHERE gene = %s" % gene_id \
-              + "  AND reads_fn = '%s';" % reads_location
-        cursor.execute( query )
-        cursor.close()
-        conn.commit()
-        conn.close()
-        if DEBUG_VERBOSE: print "CLEANED UP ", inst, reads_location
-        return
-
-    if VERBOSE: print "Processing ", gene_id
-
-    estimate_transcript_frequencies( 
-        conn, gene_id, reads_location, reads_fn, fl_dist  )
 
     conn.close()
+    return
+
+def main_loop(conn_info, s3_info, nthreads, is_daemon):
+    parent_conn = psycopg2.connect("dbname=%s host=%s user=nboley" % conn_info)
+    cursor = parent_conn.cursor()
+    
+    cache = s3_data.S3Cache( s3_info[0], s3_info[1], parent_conn )
+    processes = []
+    while True:
+        running_ps = []
+        for p in processes:
+            if p.is_alive():
+                running_ps.append( p )
+        processes = running_ps
+        if len( processes ) == nthreads:
+            time.sleep( 1.0 )
+            continue
+        
+        if gene_queue_is_empty(cursor): 
+            if is_daemon:
+                time.sleep(30)
+            else:
+                break                
+        
+        # release the thread, and stop the process
+        p = Process( target=spawn_process, args=[conn_info, cache] )
+        p.start()
+        processes.append( p )
+    
+    # wait until all of the threads have terminated
+    for p in processes:
+        p.join()
+
     return
 
 def parse_arguments():
@@ -230,39 +263,6 @@ def parse_arguments():
         args.threads = cpu_count()
     
     return ( args.db_name, args.host), int(args.threads), args.daemon, (args.access_key, args.secret_key )
-
-def main_loop(conn_info, s3_info, nthreads, is_daemon):
-    parent_conn = psycopg2.connect("dbname=%s host=%s user=nboley" % conn_info)
-    cursor = parent_conn.cursor()
-    
-    cache = s3_data.S3Cache( s3_info[0], s3_info[1], parent_conn )
-    processes = []
-    while True:
-        running_ps = []
-        for p in processes:
-            if p.is_alive():
-                running_ps.append( p )
-        processes = running_ps
-        if len( processes ) == nthreads:
-            time.sleep( 1.0 )
-            continue
-        
-        if gene_queue_is_empty(cursor): 
-            if not is_daemon:
-                break
-            else:
-                time.sleep(30)
-        
-        # release the thread, and stop the process
-        p = Process( target=spawn_process, args=[conn_info, cache] )
-        p.start()
-        processes.append( p )
-    
-    # wait until all of the threads have terminated
-    for p in processes:
-        p.join()
-
-    return
 
 def main():
     conn_info, nthreads, is_daemon, s3_info  = parse_arguments()

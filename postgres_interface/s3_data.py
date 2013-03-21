@@ -48,7 +48,7 @@ class S3Cache(object):
     def _get_previously_cached_file( self, bucket_name, file_key ):
         while True:
             local_fn, status \
-                = self._manager.location_to_fn_mapping[(bucket_name, file_key)]
+                = self._location_to_fn_mapping[(bucket_name, file_key)]
             assert status in VALID_STATUSES
             # if it does, and it's finished, awesome, return it
             if status == 'FINISHED':
@@ -68,7 +68,8 @@ class S3Cache(object):
     
     def _add_file_to_cache( self, bucket_name, file_key, local_fn ):
         bucket = boto.s3.bucket.Bucket( self.conn, bucket_name )
-        key = boto.s3.key.Key(bucket)
+        key = bucket.lookup( file_key )
+        
         # get the bam file
         if DEBUG_VERBOSE: print "Downloading ", file_key
         key.key = file_key
@@ -77,7 +78,7 @@ class S3Cache(object):
         # get the bai file
         if DEBUG_VERBOSE: print "Downloading ", file_key + '.bai'
         key.key = file_key + '.bai'
-        key.get_contents_to_filename(local_fn)
+        key.get_contents_to_filename(local_fn + '.bai')
         
         # build the fl dist
         if not os.path.exists( local_fn + ".fldist" ):
@@ -85,7 +86,7 @@ class S3Cache(object):
             build_fl_dist(local_fn, self.db_conn)
         
         # release the lock
-        self._manager.location_to_fn_mapping[(bucket_name, file_key)] = (
+        self._location_to_fn_mapping[(bucket_name, file_key)] = (
             local_fn, 'FINISHED' )        
         
         return
@@ -159,7 +160,7 @@ def main():
     private_key = sys.argv[2]
     s3_url = sys.argv[3]
     
-    cache = S3Cache( access_key, private_key )
+    cache = S3Cache( access_key, private_key, None )
     fp = cache.open_local_copy_from_s3_url( s3_url )
     print fp
 
