@@ -1,4 +1,4 @@
-import os, sys
+import os, sys, time
 import multiprocessing
 import boto
 
@@ -27,7 +27,7 @@ class S3Cache(object):
         self.scratch_directory = scratch_directory
         
         self._manager = multiprocessing.Manager()
-        self._lock = multiprocessing.Lock()
+        self._lock = self._manager.Semaphore(1)
         self._location_to_fn_mapping = self._manager.dict()
     
     @staticmethod
@@ -85,7 +85,7 @@ class S3Cache(object):
             if DEBUG_VERBOSE: print "Building ", file_key + '.fldist'
             build_fl_dist(local_fn, self.db_conn)
         
-        # release the lock
+        # update the status int he dictionary
         self._location_to_fn_mapping[(bucket_name, file_key)] = (
             local_fn, 'FINISHED' )        
         
@@ -99,13 +99,13 @@ class S3Cache(object):
         
         # open a lock to make sure a file doesn't get added between deciding we need
         # to add it, and actually starting to add it
-        self._lock.acquire()        
+        self._lock.acquire()
         
         # see if the file exists in the manager. If it does, then return it or raise
         # an exception
-        if local_fn in self._location_to_fn_mapping:
+        if (bucket_name, file_key) in self._location_to_fn_mapping:
             self._lock.release()
-            local_fn = self._get_previously_cached_file( self, bucket_name, file_key )
+            local_fn = self._get_previously_cached_file( bucket_name, file_key )
         # otherwise, see if the filename exists locally, and verify it's complete with a checksum
         # we assume the bam index and fragment length file exist
         elif os.path.exists( local_fn ):
