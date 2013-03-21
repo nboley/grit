@@ -10,9 +10,6 @@ DEBUG = False
 
 import psycopg2
 import pysam
-import boto
-import boto.s3.bucket
-import boto.s3.key
 
 from load_gene_from_db import load_gene_from_db
 from build_fl_dist_from_db import build_fl_dist
