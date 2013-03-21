@@ -210,7 +210,8 @@ def main_loop(conn_info, s3_info, nthreads, is_daemon):
         
         if gene_queue_is_empty(cursor): 
             if is_daemon:
-                time.sleep(30)
+                time.sleep(1)
+                continue
             else:
                 break                
         
