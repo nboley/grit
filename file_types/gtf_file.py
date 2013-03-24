@@ -103,6 +103,16 @@ def create_gff_line( region, grp_id, score=0, \
                  str(score), r.strand, frame, str( grp_id ) ]
     return '\t'.join( gff_line )
 
+def create_gff3_line( chrm, strand, start, stop, type,
+                      ID, name, parents=[],
+                      source='.', frame='.', score='.' ):
+    parents_str = "Parent=" + ",".join(parents)+";" if len(parents) > 0 else ""
+    meta_data = "ID=%s;%sName=%s;" % ( ID, parents_str, name )
+    return "\t".join( map( str, [
+                'chr' + chrm, source, type, start, stop, score, 
+                strand, stop, frame, meta_data
+                ] ) )
+
 def create_gtf_line( region, gene_id, transcript_id, meta_data, score=0, \
                          feature='.', source='.', frame='.' ):
     r = region
