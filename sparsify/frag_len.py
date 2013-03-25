@@ -491,6 +491,7 @@ def merge_clustered_fl_dists( clustered_read_groups, grouped_fragments ):
     return clustered_fl_dists
 
 def estimate_fl_dists( reads, exons ):
+    
     fragments = find_fragments( reads, exons )
     if len( fragments ) == 0:
         err_str = "There are no reads for this data file in the " \

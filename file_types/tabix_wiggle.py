@@ -40,7 +40,8 @@ class TabixBackedArray(object):
                            for file in files ]
         # make sure this file has that contig, to avoid errors
         self._data_files = [ tabix_file for tabix_file in tmp_data_files 
-                             if chrm in tabix_file.contigs ]
+                             if clean_chr_name(chrm) in [
+                                 clean_chr_name(x) for x in tabix_file.contigs]]
         self.chrm = clean_chr_name(chrm)
         self.strand = strand
         self.contig_len = contig_len
