@@ -8,6 +8,7 @@ sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
                                       "../file_types/" ) )
 from reads import iter_coverage_regions_for_read, clean_chr_name, \
     read_pairs_are_on_same_strand
+from tabix_wiggle import build_tabix_index
 
 import multiprocessing
 from multiprocessing import Process
@@ -173,6 +174,9 @@ def parse_arguments():
     parser.add_argument( '--merge-read-ends', '-m', default=False, \
                              action='store_true', \
         help='Whether or not to merge pair1 and pair2 reads for paired reads.')
+    parser.add_argument( '--build-index', '-i', default=False, \
+                             action='store_true', \
+        help='Whether or not to build a tabix index.')
     
     parser.add_argument( '--out-fname-prefix', '-o', required=True,\
         help='Output files will be named outprefix.(plus,minus).bedGraph')
@@ -190,11 +194,11 @@ def parse_arguments():
     VERBOSE = args.verbose
     
     return args.mapped_reads_fname, args.chrm_sizes, args.out_fname_prefix, \
-        args.reverse_read_strand, args.merge_read_ends
+        args.reverse_read_strand, args.merge_read_ends, args.build_index
 
 def main():
-    reads_fname, chrm_sizes, op_prefix, reverse_read_strand, merge_read_ends \
-        = parse_arguments()
+    reads_fname, chrm_sizes, op_prefix, reverse_read_strand, merge_read_ends, \
+        build_index = parse_arguments()
 
     track_prefix = os.path.basename( op_prefix )
     
@@ -238,6 +242,20 @@ def main():
     populate_wiggle( reads_fname, chrm_names, 
                      rd1_fps, rd2_fps,
                      reverse_read_strand, pairs_are_opp_strand )
+
+    for fp in rd1_fps.values():
+        fname = fp.name
+        fp.close()
+        if build_index:
+            build_tabix_index( fname )
+
+    if rd2_fps != None:
+        for fp in rd2_fps.values():
+            fname = fp.name
+            fp.close()
+            if build_index:
+                build_tabix_index( fname )
+    
     return
 
 if __name__ == "__main__":

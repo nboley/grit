@@ -190,7 +190,7 @@ get_line_info( char* line ) {
 
 
     char* char_rpkm = NULL;
-    get_id_ptr( line, "rpkm", &(char_rpkm) );
+    get_id_ptr( line, "FPKM", &(char_rpkm) );
     if( NULL == char_rpkm ) {
         curr_line->rpkm = -1;
     } else {

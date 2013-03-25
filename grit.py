@@ -798,8 +798,9 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
         cmd += "--out-fname-prefix {0} ".format( \
             os.path.join( derived_output_dir, basename ) )
         cmd += "--mapped-reads-fname {0} ".format( bam_fname )
+        cmd += "--build-index "
         if rev_strand:
-            cmd += "--reverse-read-strand ".format( bam_fname )
+            cmd += "--reverse-read-strand "
         # cmd += "--merge-read-ends"
         
         dependencies.extend( ( bam_fname, ) )
@@ -892,7 +893,7 @@ def build_all_cov_wiggles( elements, process_server, derived_output_dir ):
         # get the track name
         track_name = base_name
         
-        cmd_str_template = "python {0} {1} --out-fname {2} "
+        cmd_str_template = "python {0} {1} --out-fname {2} --build-index "
         
         ##### get the output data types
         output_fnames = [ ofname, ]
@@ -982,7 +983,7 @@ def merged_cage_wiggles( elements, process_server, derived_output_dir ):
         # get the track name
         track_name = base_name
         
-        cmd_str_template = "python {0} {1} --out-fname {2} "
+        cmd_str_template = "python {0} {1} --out-fname {2} --build-index "
         
         ##### get the output data types
         output_fnames = [ ofname, ]
@@ -1417,7 +1418,7 @@ def build_transcripts( elements, pserver, output_prefix ):
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
         
         #max_res = min(Resource(8), Resource(pserver.max_available_resources))
-        pserver.add_process( cmd, Resource(4), Resource(8) )
+        pserver.add_process( cmd, Resource(min(pserver.max_available_resources, 4)), Resource(8) )
         return
 
     ress = elements.get_elements_from_db( elements_input_type )
@@ -1638,7 +1639,7 @@ def sparsify_transcripts( elements, pserver, output_prefix ):
         dependencies = [ merged_transcript_fname, bam_fname, fldist_fname ]
         
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
-        pserver.add_process( cmd,  Resource(16) )
+        pserver.add_process( cmd,  Resource(min(pserver.max_available_resources, 16)) )
     
     
     # get all of the bam files
