@@ -4,9 +4,12 @@ import numpy
 import gzip
 import subprocess
 
+from itertools import izip
+
 from chrm_sizes import ChrmSizes
 
 VERBOSE = False
+VERIFY_REGIONS = True
 
 def clean_chr_name( chrm ):
     if chrm.startswith( "chr" ):
@@ -32,12 +35,24 @@ def guess_strand_from_fname( fname ):
 
 class TabixBackedArray(object):
     def __init__( self, files, chrm, strand=None, contig_len=None ):
-        self._data_files = [ pysam.Tabixfile( file ) 
-                             if type(file) == str else file 
-                             for file in files ]
+        tmp_data_files = [ pysam.Tabixfile( file ) 
+                           if type(file) == str else file 
+                           for file in files ]
+        # make sure this file has that contig, to avoid errors
+        self._data_files = [ tabix_file for tabix_file in tmp_data_files 
+                             if clean_chr_name(chrm) in [
+                                 clean_chr_name(x) for x in tabix_file.contigs]]
         self.chrm = clean_chr_name(chrm)
         self.strand = strand
         self.contig_len = contig_len
+        self._contigs = []
+        for data_file in self._data_files:
+            self._contigs.append( set( data_file.contigs ) )
+        
+        if VERIFY_REGIONS:
+            for contigs, data_file in izip( self._contigs, self._data_files ):
+                res = data_file.fetch( 
+                    'chr' + self.chrm, 0, 2, parser=pysam.asTuple() )
         return
     
     def __getitem__( self, item ):
@@ -59,31 +74,26 @@ class TabixBackedArray(object):
     
     def __len__(self):
         return self.contig_len
-    
-def build_tabix_index( fp ):
+
+def build_tabix_index( bed_fname ):
     # check to see if we've been passed the compressed version. If
     # it ends with .gz, assume that we have
-    fname = fp.name + ".gz" if not fp.name.endswith('.gz') else fp.name
+    op_fname = bed_fname + ".gz"
     
-    # check to see if the compressed version exists. if not, create it
-    if not os.path.exists(fname):
-        if VERBOSE: print >> sys.stderr, "Compressing ", fp.name        
-        cmd = "bgzip -c %s > %s" % (fp.name, fname)
-        subprocess.check_call( cmd, shell=True )
-    
-    # check to see if the tabix index exists. If not, create it
-    if not os.path.exists(fname + '.tbi'):
-        # check for a header line
-        fp.seek(0)
-        nskip = 1 if fp.readline().startswith("track") else 0
-        fp.seek(0)
-        
-        if VERBOSE: print >> sys.stderr, "Indexing", fname
-        cmd = "tabix %s -p bed -S %i" % ( fname, nskip )
-        subprocess.check_call( cmd, shell=True )
-    
-    return fname
+    if VERBOSE: print >> sys.stderr, "Compressing ", bed_fname
+    cmd = "bgzip -c %s > %s" % (bed_fname, op_fname)
+    subprocess.check_call( cmd, shell=True )
 
+    # check for a header line
+    with open( bed_fname ) as fp:
+        nskip = 1 if fp.readline().startswith("track") else 0
+
+    if VERBOSE: print >> sys.stderr, "Indexing", op_fname
+    cmd = "tabix %s -p bed -S %i" % ( op_fname, nskip )
+    subprocess.check_call( cmd, shell=True )
+    
+    return op_fname
+    
 class Wiggle( dict ):
     def __init__( self, chrm_sizes_fp, fps, strands=None ):
         self.chrm_sizes = ChrmSizes( chrm_sizes_fp.name )
@@ -92,10 +102,9 @@ class Wiggle( dict ):
             # find the strand
             strand = strands[i] if strands != None \
                 else guess_strand_from_fname(fp.name)
-            
-            # compress the file if necessary
-            # index the file, if necessary
-            fname = build_tabix_index( fp )
+
+            # check to see if the file is compressed and indexed
+            fname = fp.name + ".gz" if not fp.name.endswith('.gz') else fp.name
             
             for contig, contig_size in self.chrm_sizes.iteritems():
                 if not self.has_key((contig, strand)):
@@ -116,4 +125,3 @@ if __name__ == '__main__':
     y = wiggle.Wiggle( chrm_lens_fp, fps )
     for key in y.keys():        
         print "Diff indices: ", ( x[key].asarray() - y[key] ).nonzero()
-    

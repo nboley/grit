@@ -8,6 +8,10 @@ import sys
 import tempfile
 import subprocess
 
+sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
+                                      "../file_types/" ) )
+from tabix_wiggle import build_tabix_index
+
 VERBOSE = False
 
 def create_sorted_temp_file( fname ):
@@ -29,7 +33,7 @@ def merge_sorted_temp_files( fps ):
 def merge_bedgraphs( fps, final_output_fp ):
     if VERBOSE:
         print >> sys.stderr, "Sorting bedgraphs"
-    # first, sort each bedgraph into a temporary file, and close the orig fps
+    # sort each bedgraph into a temporary file, and close the original fps
     sorted_temp_fps = []
     calls = []
     for fp in fps:
@@ -76,10 +80,11 @@ def parse_arguments():
         description='Merge counts of many bedgraph files into one bedgraph file.')
     parser.add_argument( 'files', type=file, nargs='+', \
                              help='BedGraph files to merge into one wiggle.')
-    
+
     parser.add_argument('--out-fname',help='Output filenames. Default: STDOUT.')
-                     
-    parser.add_argument( '--verbose', '-v', default=False, action='store_true', \
+    parser.add_argument( '--build-index', '-i', default=False, action='store_true', \
+                             help='Whether or not to build a tabix index.')
+    parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
                              help='Whether or not to print status information.')
     args = parser.parse_args()
     
@@ -87,10 +92,13 @@ def parse_arguments():
     global VERBOSE
     VERBOSE = args.verbose
     
-    return args.files, args.out_fname
+    if args.build_index and args.out_fname == None:
+        raise ValueError, "If you want to build an index you must specify an output file name."
+    
+    return args.files, args.out_fname, args.build_index
 
 def main():
-    input_files, out_fname = parse_arguments()
+    input_files, out_fname, build_index = parse_arguments()
 
     if out_fname == None:
         ofp = sys.stdout
@@ -106,6 +114,9 @@ def main():
     
     if out_fname != None:
         ofp.close()
+    
+    if build_index:
+        build_tabix_index( out_fname )
     
     return
     
