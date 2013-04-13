@@ -47,15 +47,21 @@ def add_transcript_to_db( gene_id, (chrm, assembly_id), transcript, conn ):
     
     return 
 
-def add_gene_to_db( gene, annotation_key, assembly_id, conn ):
+def add_gene_to_db( gene, annotation_key, assembly_id, conn, 
+                    use_name_instead_of_id=True ):
     cursor = conn.cursor()
+    
+    if use_name_instead_of_id and 'gene_name' in gene.meta_data:
+        gene_name = gene.meta_data['gene_name']
+    else:
+        gene_name = gene.id
     
     #add the gene entry
     query_template = "INSERT INTO annotations.genes " \
         + "( name, annotation, contig, strand, location ) " \
         + "VALUES ( '%s', %s, '(\"%s\", %i)', '%s', '[%s, %s]') " \
         + "RETURNING id;"
-    query = query_template % ( gene.id, annotation_key, gene.chrm, 
+    query = query_template % ( gene_name, annotation_key, gene.chrm, 
                                assembly_id, gene.strand, gene.start, gene.stop )
     cursor.execute( query )
     gene_id = int(cursor.fetchone()[0])
