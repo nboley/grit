@@ -10,6 +10,8 @@ GffLine = namedtuple( "GffLine", ["region", "feature", "score",
 GtfLine = namedtuple( "GtfLine", ["region", "gene_id", "trans_id", "feature", 
                                   "score", "source", "frame", "meta_data"])
 
+VERBOSE = True
+
 def partition_coding_and_utr_segments( exons, cds_start, cds_stop ):
     """Split the exons into UTR and CDS exons.
 
@@ -212,13 +214,14 @@ def flatten( regions ):
         return new_regions
     
 class Gene( list ):
-    def __init__( self, id, chrm, strand, start, stop, transcripts ):
+    def __init__(self, id,chrm, strand, start, stop, transcripts, meta_data={}):
         self.id = id
         self.chrm = chrm
         self.strand = strand
         self.start = start
         self.stop = stop
         self.transcripts = transcripts
+        self.meta_data = meta_data
         list.extend( self, ( id, chrm, strand, start, stop, transcripts ) )
         return    
 
@@ -240,6 +243,8 @@ class Gene( list ):
 
 
 def parse_gff_line( line, fix_chrm=True ):
+    if line.startswith( '#' ): return None
+    
     data = line.split()
     if len( data ) < 9: 
         return None
@@ -288,30 +293,32 @@ def parse_gff_line( line, fix_chrm=True ):
     return GffLine( GenomicInterval(data[0], data[6], data[3], data[4]), \
                         data[2], data[5], data[1], data[7], data[8] )
 
-def parse_gtf_line( line, fix_chrm=True, use_name_instead_of_id=True ):
+def parse_gtf_line( line, fix_chrm=True, use_name_instead_of_id=False ):
     gffl = parse_gff_line( line, fix_chrm=fix_chrm )
     if gffl == None: return None
-    
-    meta_data_items = (gffl.group).split()
-    # parse the meta data, and grab the gene name
-    meta_data = dict( zip( meta_data_items[::2], meta_data_items[1::2] ) )
-    
-    if "gene_id" not in meta_data:
-        raise ValueError, "GTF lines require a gene_id field."
-    if "transcript_id" not in meta_data:
-        raise ValueError, "GTF lines require a transcript_id field."
     
     # get gene and transcript name if parsing a gtf line 
     # else it is a gff line and does not have gene or trans names
     def get_name_from_field( name ):
         if name.startswith('"'):
             name = name[1:]
-        if name.endswith('";'):
-            name = name[:-2]
+        if name.endswith(';'):
+            name = name[:-1]
         if name.endswith('"'):
             name = name[:-1]
         return name
     
+    meta_data_items = (gffl.group).split()
+    # parse the meta data, and grab the gene name
+    meta_data = dict( zip( meta_data_items[::2], 
+                           ( get_name_from_field(x) 
+                             for x in meta_data_items[1::2] ) ) )
+    
+    if "gene_id" not in meta_data:
+        raise ValueError, "GTF lines require a gene_id field."
+    if "transcript_id" not in meta_data:
+        raise ValueError, "GTF lines require a transcript_id field."
+        
     if use_name_instead_of_id and 'gene_name' in meta_data:
         gene_name = meta_data[ 'gene_name' ]
     else:
@@ -357,25 +364,55 @@ def load_transcript_from_gtf_data(transcript_lines):
                        sorted(exons), CDS_region,
                        line.gene_id, score, rpkm, rpk, promoter )
 
-def load_gtf_file(fp, use_name_instead_of_id=False):
-    gene_lines = defaultdict(lambda: defaultdict(list))
+def load_gtf(fname_or_fp, use_name_instead_of_id=False):
+    if isinstance( fname_or_fp, str ):
+        fp = open( fname_or_fp )
+    else:
+        assert isinstance( fname_or_fp, file )
+        fp = fname_or_fp
+    
+    gene_lines = defaultdict(lambda: ( defaultdict(list), [] ))
     for line in fp:
-        data = parse_gtf_line(line)
+        data = parse_gtf_line(line, fix_chrm=True, 
+                              use_name_instead_of_id=use_name_instead_of_id)
         if None == data: continue
-        gene_lines[data.gene_id][data.trans_id].append(data)
+        # add gene lines directly to the gene object
+        if data.feature == 'gene': 
+            gene_lines[data.gene_id][1].append( data )
+        else:
+            gene_lines[data.gene_id][0][data.trans_id].append(data)
     
     genes = []
-    for gene_id, transcripts_data in gene_lines.iteritems():
+    for gene_id, ( transcripts_data, gene_lines ) in gene_lines.iteritems():
         transcripts = []
         for trans_id, transcript_lines in transcripts_data.iteritems():
             transcript = load_transcript_from_gtf_data(transcript_lines)
             if transcript == None: continue
             transcripts.append(transcript)
-        t_1 = transcripts[0]
-        genes.append( Gene( gene_id, t_1.chrm, t_1.strand, 
-                            min(t.start for t in transcripts ), 
-                            max(t.stop for t in transcripts ), 
-                            transcripts ) )
+        
+        # if there are no gene lines, then get the info from the transcripts
+        if len( gene_lines ) == 0:
+            chrm, strand = transcripts[0].chrm, transcripts[0].strand
+            gene_start = min(t.start for t in transcripts )
+            gene_stop = max(t.stop for t in transcripts )
+            gene_meta_data = {}
+        else:
+            assert len( gene_lines ) == 1
+            gene_data = gene_lines[0]
+            gene_chrm, gene_strand, gene_start, gene_stop = gene_data.region
+            gene_meta_data = gene_data.meta_data
+
+        if gene_start != min(t.start for t in transcripts ) \
+                or gene_stop != max(t.stop for t in transcripts ):
+            if VERBOSE: print >> sys.stderr, "Skipping '%s': gene boundaries dont match the transcript boundaries." % gene_id
+            continue
+            
+        genes.append( Gene( gene_id, gene_chrm, gene_strand, 
+                            gene_start, gene_stop,
+                            transcripts, gene_meta_data ) )
+    
+    if isinstance( fname_or_fp, str ):
+        fp.close()
     
     return genes
 
@@ -473,6 +510,6 @@ def iter_gtf_lines( regions_iter, gene_id_iter, trans_id_iter,               \
 
 if __name__ == '__main__':
     with open( sys.argv[1] ) as fp:
-        for gene in load_gtf_file( fp ):
+        for gene in load_gtf( fp ):
             for t in gene.transcripts:
                 print t.build_gtf_lines( gene.id, {} )

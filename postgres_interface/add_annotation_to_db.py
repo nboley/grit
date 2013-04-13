@@ -1,8 +1,7 @@
 import os, sys
 
-sys.path.append( os.path.join(os.path.dirname(__file__), 
-                              "../file_types/fast_gtf_parser") )
-from gtf import load_gtf
+sys.path.append( os.path.join(os.path.dirname(__file__), "../file_types/") )
+from gtf_file import load_gtf
 VERBOSE = False
 import psycopg2
 
@@ -86,7 +85,7 @@ def parse_arguments():
            help='ID of the assembly this annotation is based upon.' )
 
     parser.add_argument( '--host', default='localhost', help='Database host. ' )
-    parser.add_argument( '--db-name', default='rnaseq_data', 
+    parser.add_argument( '--db-name', default='rnaseq', 
                          help='Database to insert the data into. ' )
     
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
@@ -111,7 +110,7 @@ def main():
     
     # add all of the genes to the DB
     for i, gene in enumerate(genes):
-        print "(%i/%i)    Processing %s" % ( i+1, len(genes), gene.id )
+        if VERBOSE: print "(%i/%i)    Processing %s" % ( i+1, len(genes), gene.id )
         add_gene_to_db( gene, annotation_key, assembly_id, conn )
     
     conn.commit()
