@@ -1418,7 +1418,7 @@ def build_transcripts( elements, pserver, output_prefix ):
         cmd = Cmd( call, op_element_types, op_fnames, dependencies )
         
         #max_res = min(Resource(8), Resource(pserver.max_available_resources))
-        pserver.add_process( cmd, Resource(min(pserver.max_available_resources, 4)), Resource(8) )
+        pserver.add_process( cmd, Resource(min(pserver.max_available_resources, 4)), Resource(12) )
         return
 
     ress = elements.get_elements_from_db( elements_input_type )
@@ -2107,7 +2107,7 @@ def main():
 
     merge_transcripts( elements, pserver, base_dir + "transcripts" )
     
-    call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
+    #call_orfs( elements, pserver, base_dir + "CDS_transcripts" )
 
     #produce_final_annotation( elements, pserver, base_dir + "final_ann" )
 

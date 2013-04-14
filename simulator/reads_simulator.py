@@ -181,7 +181,7 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end, \
             if fl <= transcript.length:
                 return fl
         assert False
-            
+        
     def sample_read_offset( transcript, fl ):
         # calculate maximum offset
         max_offset = transcript.length - fl + 1
@@ -390,7 +390,8 @@ class Transcript( object ):
         self.introns = {}
         # the sequence of the transcript from the reference
         self.seq = ''
-    
+        self.name = trans_name
+        
     def add_exon( self, data ):
         assert data[0] == self.chrm
         assert data[1] == self.strand
@@ -448,7 +449,7 @@ class Transcript( object ):
             
             if fasta:
                 # pysam uses 0-based indexing while gtf uses 1-based
-                self.seq += fasta.fetch( self.chrm, start - 1, stop )
+                self.seq += fasta.fetch( 'chr' + self.chrm, start - 1, stop )
             else:
                 # add appropriate number of DEFAULT_BASEs if fasta is not provided
                 self.seq += DEFAULT_BASE * (stop - start + 1)

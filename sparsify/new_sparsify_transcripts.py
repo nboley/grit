@@ -57,9 +57,6 @@ from f_matrix import calc_expected_cnts, find_nonoverlapping_boundaries, \
 
 from frag_len import load_fl_dists, FlDist, build_normal_density
 
-import cvxopt
-from cvxopt import solvers, matrix, spdiag, log, div, sqrt
-
 MAX_NUM_TRANSCRIPTS = 5000
 MIN_TRANSCRIPT_FREQ = 1e-12
 MIN_NUM_READS = 10
@@ -112,7 +109,7 @@ def build_expected_and_observed_arrays(
     observed_mat = []
     unobservable_transcripts = set()
     
-    for key, val in expected_cnts.iteritems():
+    for key, val in sorted(expected_cnts.iteritems()):
         # skip bins with 0 expected reads
         if sum( val) == 0:
             continue
@@ -137,94 +134,6 @@ def build_expected_and_observed_arrays(
         expected_mat = expected_mat/expected_mat.sum(0)
     
     return expected_mat, observed_mat, unobservable_transcripts
-
-def nnls( X, Y, fixed_indices_and_values={} ):    
-    X = matrix(X)
-    Y = matrix(Y)
-    
-    m, n = X.size
-    num_constraint = len( fixed_indices_and_values )
-    
-    G = matrix(0.0, (n,n))
-    G[::n+1] = -1.0
-    h = matrix(-MIN_TRANSCRIPT_FREQ, (n,1))
-
-    # Add the equality constraints
-    A=matrix(0., (1+num_constraint,n))
-    b=matrix(0., (1+num_constraint,1))
-
-    # Add the sum to one constraint
-    A[0,:] = 1.
-    b[0,0] = 1.
-    
-    # Add the fixed value constraints
-    for const_i, (i, val) in enumerate(fixed_indices_and_values.iteritems()):
-        A[const_i+1,i] = 1.
-        b[const_i+1,0] = val
-    
-    solvers.options['show_progress'] = DEBUG_OPTIMIZATION
-    res = solvers.qp(P=X.T*X, q=-X.T*Y, G=G, h=h, A=A, b=b)
-    x = numpy.array(res['x']).T[0,]
-    rss = ((numpy.array(X*res['x'] - Y)[0,])**2).sum()
-    
-    if DEBUG_OPTIMIZATION:
-        for key, val in res.iteritems():
-            if key in 'syxz': continue
-            print >> sys.stderr, "%s:\t%s" % ( key.ljust(22), val )
-        
-        print >> sys.stderr, "RSS: ".ljust(22), rss
-    
-    return x
-
-def solve_trust_region_sub_problem( gradient, hessian ):
-    """
-    minimize gradient*p + (1/2)p'*hessian*p
-    
-    st sum(p) == 1 and p > 0
-    """
-    from cvxpy import maximize, minimize, geq, eq, variable, matrix, program, \
-        log, sum, quad_form, square, quad_over_lin, geo_mean, leq, norm2, \
-        cvxpy_second_order_cone, belongs
-    import cvxpy
-    # belongs(x, cvxpy_second_order_cone())
-    n = len( gradient )
-    x = variable( n )
-    # eq( sum(x), 1), geq( x, 1e-6 ), leq(norm2(x), 0.7)
-    solvers.options['show_progress'] = False
-    p = program( minimize( -matrix(gradient)*x + 0.5*quad_form(x, matrix(hessian))),
-                 [ eq( sum(x), 1), geq( x, MIN_TRANSCRIPT_FREQ )] )
-    # +1*quad_over_lin(1,thetas[1, 0]) ), 
-    # p = program( minimize( -Xs*log(ps*thetas) ),
-    #             [eq( sum(thetas), 1), geq( thetas, 0 )] )
-
-    p.options['maxiters']  = 500
-    p.options['show_progress']  = False
-    #res = p.solve(quiet=not VERBOSE)
-    res = p.solve(quiet=True)
-    
-    """
-    G = matrix(0.0, (n,n))
-    G[::n+1] = -1.0
-    h = matrix(MIN_TRANSCRIPT_FREQ, (n,1))
-
-    # Add the equality constraints
-    A=matrix(0., (1,n))
-    b=matrix(0., (1,1))
-
-    # Add the sum to one constraint
-    A[0,:] = 1.
-    b[0,0] = 1.
-    
-    solvers.options['show_progress'] = DEBUG_OPTIMIZATION
-    res = solvers.qp(P=-matrix(hessian), q=-matrix(gradient), G=-G, h=-h, A=A, b=b )
-    #res = solvers.qp(P=-matrix(hessian), q=-matrix(gradient), G=G, h=h, A=A, b=b)
-    print res
-    return res
-    x = numpy.array(res['x']).T[0,]
-    rss = ((numpy.array(X*res['x'] - Y)[0,])**2).sum()
-    """
-    return numpy.array( x.value.T )[0,:]
-
 
 def build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists ):
     # load the bam file
@@ -253,6 +162,9 @@ def build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists ):
     expected_cnts = calc_expected_cnts( 
         exon_boundaries, transcripts_non_overlapping_exon_indices, 
         fl_dists_and_read_lens)
+    for key in expected_cnts.keys():
+        if key[0] == 76:
+            del expected_cnts[key]
     
     reads.close()
     
@@ -307,9 +219,10 @@ def build_expected_and_observed_promoter_counts( gene, cage_array ):
     return expected_cnts, observed_cnts
 
 def build_design_matrices( gene, bam_fname, fl_dists, cage_array ):
-    import cPickle
     # only do this if we are in debugging mode
-    if num_threads == 1:
+    if num_threads == 1 and DEBUG:
+        import cPickle
+        
         obj_name = "." + gene.id + "_" + hash_array(cage_array) \
             + "_" + os.path.basename(bam_fname) + ".obj"
         try:
@@ -376,13 +289,31 @@ except ImportError:
         rv = (((expected_array.T)*observed_array))*(1.0/denom)
         return -numpy.array(rv)[:,0]
 
-def calc_taylor_lhd( freqs, observed_array, expected_array ):
-    observed_prbs = (observed_array + MIN_TRANSCRIPT_FREQ)/observed_array.sum()
-    bin_prbs = expected_array.dot(freqs)
-    fo_taylor_penalty = (observed_prbs - bin_prbs)/observed_prbs
-    taylor_penalty = numpy.log(observed_prbs) + fo_taylor_penalty \
-        - numpy.power(fo_taylor_penalty, 2)/2
-    return float( observed_array.dot( taylor_penalty ).sum() )
+def estimate_confidence_bounds_directly( 
+        observed_array, expected_array, fixed_i, 
+        mle_log_lhd, upper_bound=True, alpha=0.05 ):
+    assert upper_bound in ( True, False )
+    from cvxpy import matrix, variable, geq, log, eq, program, maximize, minimize, sum
+    lower_lhd_bound = mle_log_lhd - chi2.ppf( 1 - alpha, 1 )/2.
+    free_indices = set(range(expected_array.shape[1])) - set((fixed_i,))
+    
+    Xs = matrix( observed_array )
+    ps = matrix( expected_array )
+    thetas = variable( ps.shape[1] )
+    constraints = [ geq(Xs*log(ps*thetas), lower_lhd_bound), 
+                    eq(sum(thetas), 1), geq(thetas,0)]
+    if upper_bound:
+        p = program( maximize(thetas[fixed_i,0]), constraints )    
+    else:
+        p = program( minimize(thetas[fixed_i,0]), constraints )
+    
+    p.options['maxiters']  = 1500
+    value = p.solve(quiet=not DEBUG_OPTIMIZATION)
+    
+    thetas_values = numpy.array(thetas.value.T.tolist()[0])
+    log_lhd = calc_lhd( thetas_values, observed_array, expected_array )
+    
+    return chi2.sf( 2*(mle_log_lhd-log_lhd), 1), value
 
 def project_onto_simplex( x, debug=False ):
     if ( x >= MIN_TRANSCRIPT_FREQ ).all() and abs( 1-x.sum()  ) < 1e-6: return x
@@ -403,7 +334,9 @@ def project_onto_simplex( x, debug=False ):
     return x_minus_theta
 
 def estimate_transcript_frequencies_line_search(  
-        observed_array, full_expected_array, x0, dont_zero, abs_tol ):
+        observed_array, full_expected_array, x0, 
+        dont_zero, abs_tol,
+        fixed_indices=[], fixed_values=[] ):
     expected_array = full_expected_array.copy()
     def f_lhd(x):
         log_lhd = calc_lhd(x, observed_array, expected_array)
@@ -419,7 +352,7 @@ def estimate_transcript_frequencies_line_search(
         x = (y - MIN_TRANSCRIPT_FREQ)/gradient
         """
         # we use minus because we return a positive step
-        steps = (x0-MIN_TRANSCRIPT_FREQ)/gradient
+        steps = (x0-MIN_TRANSCRIPT_FREQ)/(gradient+1e-12)
         step_size = -steps[ steps < 0 ].max()
         step_size_i = ( steps == -step_size ).nonzero()[0]
         return step_size, step_size_i
@@ -429,6 +362,8 @@ def estimate_transcript_frequencies_line_search(
         gradient = gradient/gradient.sum()
         x_next = project_onto_simplex( x + 1.*gradient )
         gradient = (x_next - x)
+        for i, val in izip( fixed_indices, fixed_values ):
+            gradient[i] = val
         return gradient
 
     def maximum_step_is_optimal( x, gradient, max_feasible_step_size ):
@@ -529,7 +464,8 @@ def estimate_transcript_frequencies_line_search(
     return final_x, lhds
 
 def estimate_transcript_frequencies(  
-        observed_array, full_expected_array, abs_tol ):
+        observed_array, full_expected_array,
+        fixed_indices=[], fixed_values=[]):
     fp = open( "lhd_change.txt", "w" )
     if observed_array.sum() == 0:
         raise ValueError, "Too few reads."
@@ -537,8 +473,9 @@ def estimate_transcript_frequencies(
     if n == 1:
         return numpy.ones( 1, dtype=float )
     
-    x = numpy.array([1./n]*n)
-    #x = project_onto_simplex( nnls( full_expected_array, observed_array ) )
+    x = numpy.array([(1.-sum(fixed_values))/n]*n)
+    for i, v in zip( fixed_indices, fixed_values ):
+        x[i] = v
     eps = 10.
     start_time = time.time()
     if DEBUG_VERBOSE:
@@ -548,7 +485,8 @@ def estimate_transcript_frequencies(
         
         x, lhds = estimate_transcript_frequencies_line_search(  
             observed_array, full_expected_array, x, 
-            dont_zero=False, abs_tol=eps )
+            dont_zero=False, abs_tol=eps,
+            fixed_indices=fixed_indices, fixed_values=fixed_values)
         for lhd in lhds: fp.write( "%e\n" % lhd )
         fp.flush()
         
@@ -562,16 +500,17 @@ def estimate_transcript_frequencies(
         start_time = time.time()
         
         if float(lhd - prev_lhd)/len(lhds) < eps:
-            if eps == abs_tol: break
+            if eps == ABS_TOL: break
             eps /= 5
-            eps = max( eps, abs_tol )
+            eps = max( eps, ABS_TOL )
         
     
     for i in xrange( 5 ):
         prev_x = x.copy()
         x, lhds = estimate_transcript_frequencies_line_search(  
             observed_array, full_expected_array, x, 
-            dont_zero=True, abs_tol=abs_tol)
+            dont_zero=True, abs_tol=ABS_TOL,
+            fixed_indices=fixed_indices, fixed_values=fixed_values)
         for lhd in lhds: fp.write( "%e\n" % (lhd - prev_lhd) )
         fp.flush()
         lhd = calc_lhd( x, observed_array, full_expected_array )
@@ -614,8 +553,6 @@ def estimate_confidence_bound_by_bisection(
         # is really an identifiability check 
         test_stat = calc_test_statistic(etf_wrapped(other_bnd))
         if max_test_stat - test_stat > 0:
-            print "TERMINATE", optimal_RSS, calc_RSS(etf_wrapped(other_bnd), observed_array, expected_array), \
-                calc_RSS(etf_wrapped(other_bnd), observed_array, expected_array) - optimal_RSS
             return other_bnd
         
         lower_bnd, upper_bnd = \
@@ -642,10 +579,10 @@ def estimate_confidence_bound( observed_array,
                                bound_type,
                                alpha = 0.025):
     try:
-        raise ValueError, "TEST"
         return estimate_confidence_bounds_directly( 
             observed_array,  expected_array, fixed_index,
-            mle_estimate, bound_type, alpha )
+            calc_lhd(mle_estimate, observed_array, expected_array), 
+            (bound_type=='UPPER'), alpha )
     except ValueError:
         return estimate_confidence_bound_by_bisection( 
             observed_array,  expected_array, fixed_index,
@@ -659,11 +596,15 @@ def build_bound(observed_array, expected_array, mle_estimate, index, bnd_type):
 
 def write_gene_to_gtf( ofp, gene, mles, lbs=None, ubs=None, fpkms=None,
                        abs_filter_value=0, rel_filter_value=0 ):
-    for index, (mle, transcript) in enumerate(izip(mles, gene.transcripts)):
-        if mle <= abs_filter_value: continue
-        if mle/max( mles ) <= rel_filter_value: continue
-        meta_data = { "frac": "%.2e" % mle }
-        transcript.score = (1000.*mle)/max(mles)
+    max_ub = max(ubs) if ubs != None else max(fpkms)
+    for index, transcript in enumerate(gene.transcripts):
+        ub = ubs[index] if ubs != None else fpkms[index]
+        if ub <= abs_filter_value: continue
+        if ub/max_ub <= rel_filter_value: continue 
+        transcript.score = int((1000.*ub)/max_ub)
+       
+        meta_data = { "frac": "%.2e" % mles[index] }
+        
         if lbs != None:
             meta_data["conf_lo"] = "%.2e" % lbs[index]
         if ubs != None:
@@ -739,11 +680,11 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
         
         try:
             mle_estimate = estimate_transcript_frequencies( 
-                observed_array, expected_array, ABS_TOL)
+                observed_array, expected_array)
             num_reads_in_gene = observed_array.sum()
             num_reads_in_bam = NUMBER_OF_READS_IN_BAM
             fpkms = calc_fpkm( gene, fl_dists, mle_estimate, 
-                              num_reads_in_bam, num_reads_in_gene )
+                               num_reads_in_bam, num_reads_in_gene )
         except ValueError, inst:
             error_msg = "Skipping %s: %s" % ( gene_id, inst )
             log_warning( error_msg )
@@ -764,6 +705,11 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
 
         input_queue_lock.acquire()
         if estimate_confidence_bounds:
+            op_lock.acquire()
+            output[((gene_id, bam_fn), 'ub')] = [None]*len(mle_estimate)
+            output[((gene_id, bam_fn), 'lb')] = [None]*len(mle_estimate)
+            op_lock.release()        
+
             for i in xrange(expected_array.shape[1]):
                 input_queue.append( ('lb', (gene_id, bam_fn, i)) )
                 input_queue.append( ('ub', (gene_id, bam_fn, i)) )
@@ -786,11 +732,31 @@ def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
         if VERBOSE: print "FINISHED %s BOUND %s\t%s\t%i\t%.2e\t%.2e" % ( 
             bnd_type, gene_id, bam_fn, trans_index, bnd, p_value )
 
-        assert False
+        op_lock.acquire()
+        bnds = output[((gene_id, bam_fn), work_type+'s')]
+        bnds[trans_index] = bnd
+        output[((gene_id, bam_fn), work_type+'s')] = bnds
         
-        input_queue_lock.acquire()
-        input_queue.append(('FINISHED', (gene_id, bam_fn, work_type, trans_index)))
-        input_queue_lock.release()
+        ubs = output[((gene_id, bam_fn), 'ubs')]
+        lbs = output[((gene_id, bam_fn), 'lbs')]
+        mle = output[((gene_id, bam_fn), 'mle')]
+        if len(ubs) == len(lbs) == len(mle):
+            gene = output[((gene_id, bam_fn), 'gene')]
+            fl_dists = output[((gene_id, bam_fn), 'fl_dists')]
+            num_reads_in_gene = observed_array.sum()
+            num_reads_in_bam = NUMBER_OF_READS_IN_BAM
+            ub_fpkms = calc_fpkm( gene, fl_dists, [ ubs[i] for i in xrange(len(mle)) ], 
+                                  num_reads_in_bam, num_reads_in_gene )
+            output[((gene_id, bam_fn), 'ubs')] = ub_fpkms
+            lb_fpkms = calc_fpkm( gene, fl_dists, [ lbs[i] for i in xrange(len(mle)) ], 
+                                  num_reads_in_bam, num_reads_in_gene )
+            output[((gene_id, bam_fn), 'lbs')] = lb_fpkms
+            input_queue_lock.acquire()
+            input_queue.append(('FINISHED', (gene_id, bam_fn, None)))
+            input_queue_lock.release()
+        
+        op_lock.release()        
+        
 
     return
 
@@ -817,6 +783,13 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                 if DEBUG_VERBOSE: print "Writing mat to '%s'" % ofname
                 savemat( ofname, {'observed': observed, 'expected': expected}, 
                          oned_as='column' )
+                ofname = "./%s_%s.observed.txt" % ( key[0], os.path.basename(key[1]) )
+                with open( ofname, "w" ) as ofp:
+                    ofp.write("\n".join( "%e" % x for x in  observed ))
+                ofname = "./%s_%s.expected.txt" % ( key[0], os.path.basename(key[1]) )
+                with open( ofname, "w" ) as ofp:
+                    ofp.write("\n".join( "\t".join( "%e" % y for y in x ) for x in expected ))
+                
                 if DEBUG_VERBOSE: print "Finished writing mat to '%s'" % ofname
             continue
         elif write_type == 'gtf':
@@ -828,7 +801,8 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
             fpkms = output_dict[(key, 'fpkm')]
             lbs = output_dict[(key, 'lbs')] if compute_confidence_bounds else None
             ubs = output_dict[(key, 'ubs')] if compute_confidence_bounds else None
-
+            print lbs
+            print ubs
             write_gene_to_gtf( ofps[key[1]], gene, mles, lbs, ubs, fpkms,
                                abs_filter_value, rel_filter_value)
 
@@ -1059,17 +1033,21 @@ def main():
                       if p == None or not p.is_alive() )
         
         # find a finished process index
-        p = Process(target=estimate_gene_expression_worker, 
-                    args=(work_type, (gene_id, bam_fn, trans_index),
-                          input_queue, input_queue_lock, 
-                          output_dict_lock, output_dict, 
-                          estimate_confidence_bounds ) )
-        p.start()
-        if DEBUG_VERBOSE: 
-            print "Replacing slot %i, process %s with %i" % ( 
-                proc_i, ps[proc_i], p.pid )
-        if ps[proc_i] != None: ps[proc_i].join()
-        ps[proc_i] = p
+        args = (work_type, (gene_id, bam_fn, trans_index),
+                input_queue, input_queue_lock, 
+                output_dict_lock, output_dict, 
+                estimate_confidence_bounds )
+        if num_threads > 1:
+            p = Process(target=estimate_gene_expression_worker, args=args )
+            p.start()
+            if DEBUG_VERBOSE: 
+                print "Replacing slot %i, process %s with %i" % ( 
+                    proc_i, ps[proc_i], p.pid )
+            if ps[proc_i] != None: ps[proc_i].join()
+            ps[proc_i] = p
+        else:
+            estimate_gene_expression_worker(*args)
+        
     
     finished_queue.put( ('FINISHED', None) )
     write_p.join()

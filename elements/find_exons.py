@@ -1219,15 +1219,6 @@ def main():
     read_cov = Wiggle( chrm_sizes_fp, fps, strands )
     if VERBOSE: print >> sys.stderr, 'Finished loading merged read pair wiggles'
     
-    if VERBOSE: print >> sys.stderr,  'Loading CAGE.'
-    all_cage_wigs, cage_strands = [], []
-    all_cage_wigs.extend( cage_wigs[0] )
-    cage_strands.extend( ['+']*len( cage_wigs[0] ) )
-    all_cage_wigs.extend( cage_wigs[1] )
-    cage_strands.extend( ['-']*len( cage_wigs[1] ) )
-    cage_cov = Wiggle( chrm_sizes_fp, all_cage_wigs, cage_strands )
-    for cage_fps in cage_wigs: [ cage_fp.close() for cage_fp in cage_fps ]
-    if VERBOSE: print >> sys.stderr, 'Finished loading CAGE data'
     
     if VERBOSE: print >> sys.stderr,  'Loading candidate polyA sites'
     polya_sites = find_polya_sites([x.name for x in polya_candidate_sites_fps])
