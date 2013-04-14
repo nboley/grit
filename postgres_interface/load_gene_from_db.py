@@ -1,10 +1,8 @@
 import os, sys
 import psycopg2
 
-sys.path.append( os.path.join(os.path.dirname(__file__), 
-                              "../file_types/fast_gtf_parser") )
-from gtf import Gene, Transcript
-
+sys.path.append( os.path.join(os.path.dirname(__file__), "../file_types/") )
+from gtf_file import Gene, Transcript
 
 VERBOSE = False
 
@@ -80,4 +78,4 @@ def load_gene_from_db( gene_id, conn):
     load_transcripts( gene, conn )
     return gene
 
-# print load_gene_from_db( ('ENSG00000000003.10', 64))
+#print load_gene_from_db( 'RAB4B', 1 )

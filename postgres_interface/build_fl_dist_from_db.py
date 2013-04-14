@@ -79,7 +79,7 @@ def build_fl_dist(bam_fn, conn, nsamples=25000, min_exon_size=600):
 def main():
     bam_fn = sys.argv[1]
     conn = psycopg2.connect("dbname=%s host=%s user=nboley" 
-                            % ('rnaseq_data', '10.151.16.87'))
+                            % ('rnaseq', 'localhost'))
     build_fl_dist(bam_fn, conn)
     
 if __name__ == '__main__':

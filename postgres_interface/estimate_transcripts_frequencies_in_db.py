@@ -72,9 +72,9 @@ def estimate_transcript_frequencies(conn, gene_id, reads_key, bam_fn, fl_dists):
                 = new_sparsify_transcripts.build_design_matrices( 
                     gene, bam_fn, fl_dists, None, reverse_strand=True )
             if DEBUG_VERBOSE: print "Sum counts:", observed_array.sum()
-            #add_design_matrices_to_DB( cursor, gene, reads_key, 
-            #                           expected_array, observed_array, 
-            #                           unobservable_transcripts )
+            add_design_matrices_to_DB( cursor, gene, reads_key, 
+                                       expected_array, observed_array, 
+                                       unobservable_transcripts )
 
             # estimate the transcript frequencies, and add them into the DB
             mle_estimates = new_sparsify_transcripts.estimate_transcript_frequencies( 
@@ -165,9 +165,12 @@ def spawn_process( conn_info, cache ):
     for gene_id, reads_location in rv:
         try:
             if VERBOSE: print "Processing ", gene_id
-            
-            reads_fn, fl_dist \
-                = get_reads_fn_and_fl_dist( cache, reads_location )
+          
+            if reads_location.startswith( "s3" ):
+                reads_fn, fl_dist \
+                    = get_reads_fn_and_fl_dist( cache, reads_location )
+            else:
+                reads_fn, fl_dist = reads_location, load_fl_dists( reads_location )
             
             estimate_transcript_frequencies( 
                 conn, gene_id, reads_location, reads_fn, fl_dist  )
@@ -193,7 +196,8 @@ def main_loop(conn_info, s3_info, nthreads, is_daemon):
     parent_conn = psycopg2.connect("dbname=%s host=%s user=nboley" % conn_info)
     cursor = parent_conn.cursor()
     
-    cache = s3_data.S3Cache( s3_info[0], s3_info[1], parent_conn )
+    cache = s3_data.S3Cache( s3_info[0], s3_info[1], parent_conn ) \
+        if s3_info != None else None
     processes = []
     while True:
         running_ps = []
@@ -230,11 +234,11 @@ def parse_arguments():
         description='Estimate transcript frequencies from DB.')
 
     parser.add_argument( '--host', default='localhost', help='Database host.' )
-    parser.add_argument( '--db-name', default='rnaseq_data', 
+    parser.add_argument( '--db-name', default='rnaseq', 
                          help='Database name. ' )
 
-    parser.add_argument( '--access-key', required=True, help='Amazon access key.' )
-    parser.add_argument( '--secret-key', required=True, help='Amazon secret key.' )
+    parser.add_argument( '--access-key', default=None, help='Amazon access key.' )
+    parser.add_argument( '--secret-key', default=None, help='Amazon secret key.' )
 
     parser.add_argument( '--threads', '-t', default='MAX',
                          help='Number of threads to spawn ( MAX for the number of cores ).')    
@@ -260,7 +264,9 @@ def parse_arguments():
     if args.threads == 'MAX':
         args.threads = cpu_count()
     
-    return ( args.db_name, args.host), int(args.threads), args.daemon, (args.access_key, args.secret_key )
+    s3_info = None if args.access_key == None or args.secret_key == None \
+        else (args.access_key, args.secret_key )
+    return ( args.db_name, args.host), int(args.threads), args.daemon, s3_info
 
 def main():
     conn_info, nthreads, is_daemon, s3_info  = parse_arguments()

@@ -19,7 +19,7 @@ def parse_arguments():
                          help='File containing the reads to estimate transcript frequencies from.')
     
     parser.add_argument( '--host', default='localhost', help='Database host.' )
-    parser.add_argument( '--db-name', default='rnaseq_data', 
+    parser.add_argument( '--db-name', default='rnaseq', 
                          help='Database name. ' )
     
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
