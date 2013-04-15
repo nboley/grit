@@ -38,7 +38,8 @@ def main():
     # add the bam, bam.bai, and fl_dist object to S3
     # 
     # XXX for now, just add the actual filename
-    
+    if not bam_fname.startswith("s3" ):
+        bam_fname = os.path.abspath( bam_fname )
     # 
     # add the genes and file to the db table
     # 
