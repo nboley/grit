@@ -24,42 +24,42 @@ from new_sparsify_transcripts import build_design_matrices
 from new_sparsify_transcripts import estimate_transcript_frequencies
 from new_sparsify_transcripts import calc_fpkm, TooFewReadsError
 
-def add_freq_estimates_to_DB( cursor, gene, bam_fn, freq_estimates, fpkms ):
+def add_freq_estimates_to_DB( cursor, gene, experiment_id, freq_estimates, fpkms ):
     for transcript, freq_estimate, fpkm in zip( 
             gene.transcripts, freq_estimates, fpkms ):
-        query_template  = "INSERT INTO transcript_expression "
-        query_template += "( transcript, reads_fn, frequency, rpkm ) VALUES "
+        args = (transcript.id, experiment_id, freq_estimate, fpkm)
+        query_template  = "INSERT INTO expression.transcript_expression "
+        query_template += "( transcript, experiment, frequency, rpkm ) VALUES "
         query_template += "( %s, %s, %s, %s );"
-        cursor.execute( query_template, 
-                        (transcript.id, bam_fn, freq_estimate, fpkm) )
+        cursor.execute( query_template, args )
     
     return
 
-def add_design_matrices_to_DB( cursor, gene, bam_fn, 
+def add_design_matrices_to_DB( cursor, gene, experiment_id, 
                                expected_array, observed_array, 
                                unobservable_transcripts ):
     # insert the observed array
-    query_template = """INSERT INTO observed_arrays 
-                        ( gene, reads_fn, observed_bin_cnts ) 
+    query_template = """INSERT INTO expression.observed_arrays 
+                        ( gene, experiment, observed_bin_cnts ) 
                         VALUES ( %s, %s, %s );"""
     #cursor.execute( query_template, ( gene.id, bam_fn, observed_array ) )
     query = cursor.mogrify( query_template, 
-                            (gene.id, bam_fn, observed_array.tolist()) )
+                            (gene.id, experiment_id, observed_array.tolist()) )
     cursor.execute( query )
     
     for trans_i, (transcript, expected) in enumerate( 
             izip(gene.transcripts, expected_array.tolist()) ):
         if trans_i in unobservable_transcripts: continue
-        query_template = """INSERT INTO expected_arrays 
-                            ( transcript, reads_fn, expected_bin_fracs ) 
+        query_template = """INSERT INTO expression.expected_arrays 
+                            ( transcript, experiment, expected_bin_fracs ) 
                             VALUES ( %s, %s, %s );"""
         query = cursor.mogrify( query_template, 
-                                ( transcript.id, bam_fn, expected ) )
+                                ( transcript.id, experiment_id, expected ) )
         cursor.execute( query )
     
     return
 
-def estimate_transcript_frequencies(conn, gene_id, reads_key, bam_fn, fl_dists):
+def estimate_transcript_frequencies(conn, gene_id, experiment_id, bam_fn, fl_dists):
     try:
         cursor = conn.cursor()
         
@@ -73,7 +73,7 @@ def estimate_transcript_frequencies(conn, gene_id, reads_key, bam_fn, fl_dists):
                 = new_sparsify_transcripts.build_design_matrices( 
                     gene, bam_fn, fl_dists, None, reverse_strand=False )
             if DEBUG_VERBOSE: print "Sum counts:", observed_array.sum()
-            add_design_matrices_to_DB( cursor, gene, reads_key, 
+            add_design_matrices_to_DB( cursor, gene, experiment_id, 
                                        expected_array, observed_array, 
                                        unobservable_transcripts )
 
@@ -85,28 +85,29 @@ def estimate_transcript_frequencies(conn, gene_id, reads_key, bam_fn, fl_dists):
                                observed_array.sum() )
             bam_file.close()
         except TooFewReadsError:
+            if DEBUG_VERBOSE: print "TOO FEW READS:"
             mle_estimates = [None]*len(gene.transcripts)
             fpkms = [0.]*len(gene.transcripts)
         
         if DEBUG_VERBOSE:
             print "Estimates:", mle_estimates
-        add_freq_estimates_to_DB(cursor, gene, reads_key, mle_estimates, fpkms)
+        add_freq_estimates_to_DB(cursor, gene, experiment_id, mle_estimates, fpkms)
         
         # updae the queue
-        query = "UPDATE gene_expression_queue " \
+        query = "UPDATE work_queues.gene_expression_queue " \
               + "SET processing_status = 'FINISHED' " \
               + "WHERE gene = '%s'" % gene_id \
-              + "  AND reads_fn = '%s';" % reads_key
+              + "  AND experiment = %s;" % experiment_id
         cursor.execute( query )
     except Exception, inst:
         if VERBOSE: print "ERROR in %s:" % gene_id, inst
         if DEBUG: raise
         inst = str(inst).replace( "'", "" )
-        query = "UPDATE gene_expression_queue " \
+        query = "UPDATE work_queues.gene_expression_queue " \
               + "SET processing_status = 'FAILED', " \
               + "error_log = '%s' " % inst \
               + "WHERE gene = %s" % gene_id \
-              + "  AND reads_fn = '%s';" % reads_key
+              + "  AND experiment = %s;" % experiment_id
         cursor.execute( query )
         
     cursor.close()
@@ -120,15 +121,15 @@ def get_queue_items(conn, max_number=1 ):
     """
     cursor = conn.cursor()
     query = """
-    UPDATE gene_expression_queue 
+    UPDATE work_queues.gene_expression_queue 
        SET processing_status = 'PROCESSING' 
-     WHERE (gene, reads_fn) in (
-            SELECT gene, reads_fn
-            FROM gene_expression_queue 
+     WHERE (gene, experiment) in (
+            SELECT gene, experiment
+            FROM work_queues.gene_expression_queue 
             WHERE processing_status = 'UNPROCESSED' 
             FOR UPDATE
             LIMIT %i
-    ) RETURNING gene, reads_fn;
+    ) RETURNING gene, experiment;
     """ % max_number
     cursor.execute( query )
     res = cursor.fetchall()
@@ -138,7 +139,7 @@ def get_queue_items(conn, max_number=1 ):
     return res
 
 def gene_queue_is_empty(cursor):
-    query = "SELECT * FROM gene_expression_queue" \
+    query = "SELECT * FROM work_queues.gene_expression_queue" \
             + " WHERE processing_status = 'UNPROCESSED' LIMIT 1;"
     cursor.execute( query )
     return len( cursor.fetchall() ) == 0
@@ -148,11 +149,24 @@ def load_fl_dists( bam_fn ):
         fl_dists = pickle.load( fl_dists_fp )
     return fl_dists
 
-def get_reads_fn_and_fl_dist(cache, reads_url):
-    reads_fp = cache.open_local_copy_from_s3_url(reads_url)
-    reads_fn = reads_fp.name
-    reads_fp.close()
+def get_reads_fn_and_fl_dist(conn, cache, experiment_id):
+    cursor = conn.cursor()
+    query = """SELECT mapped_reads_local_fn 
+                 FROM experiments.mapped_reads_files
+                WHERE experiments.mapped_reads_files.experiment = %s"""
+    cursor.execute( query, (experiment_id,) )
+    reads_location = cursor.fetchone()[0]
+    
+    if reads_location.startswith( "s3" ):
+        reads_fp = cache.open_local_copy_from_s3_url(reads_url)
+        reads_fn = reads_fp.name
+        reads_fp.close()
+    else:
+        reads_fn = reads_location
+    
     fl_dist = load_fl_dists( reads_fn )
+    
+    cursor.close()
     return reads_fn, fl_dist
 
 def spawn_process( conn_info, cache ):
@@ -163,10 +177,9 @@ def spawn_process( conn_info, cache ):
     rv = get_queue_items(conn)
     if len(rv) == 0: return
     
-    for gene_id, reads_location in rv:
+    for gene_id, experiment_id in rv:
         try:
             if VERBOSE: print "Processing ", gene_id
-          
             if reads_location.startswith( "s3" ):
                 reads_fn, fl_dist \
                     = get_reads_fn_and_fl_dist( cache, reads_location )
@@ -174,16 +187,19 @@ def spawn_process( conn_info, cache ):
                 reads_fn, fl_dist = \
                     reads_location, load_fl_dists( reads_location )
             
+            reads_fn, fl_dist = get_reads_fn_and_fl_dist(
+                conn, cache, experiment_id)
+                        
             estimate_transcript_frequencies( 
-                conn, gene_id, reads_location, reads_fn, fl_dist  )
+                conn, gene_id, experiment_id, reads_fn, fl_dist  )
         except ValueError, inst:
             inst = str(inst).replace( "'", "" )
             cursor = conn.cursor()
-            query = "UPDATE gene_expression_queue " \
+            query = "UPDATE work_queues.gene_expression_queue " \
                   + "SET processing_status = 'FAILED', " \
                   + "error_log = '%s' " % inst \
                   + "WHERE gene = %s" % gene_id \
-                  + "  AND reads_fn = '%s';" % reads_location
+                  + "  AND experiment = %s;" % experiment_id
             cursor.execute( query )
             cursor.close()
             conn.commit()

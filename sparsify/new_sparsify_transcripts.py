@@ -304,9 +304,7 @@ def build_design_matrices( gene, bam_fname, fl_dists, cage_array, reverse_strand
     observed_prom_array = numpy.delete( observed_prom_array, 
                   numpy.array(list(unobservable_rnaseq_trans)) )
     observed_array = numpy.hstack((observed_prom_array, observed_rnaseq_array))
-    if observed_array.sum() < MIN_NUM_READS:
-        raise TooFewReadsError, "TOO FEW READS"
-
+    
     expected_rnaseq_array = numpy.delete( expected_rnaseq_array, 
                   numpy.array(list(unobservable_prom_trans)), axis=1 )
     expected_prom_array = numpy.delete( expected_prom_array, 
