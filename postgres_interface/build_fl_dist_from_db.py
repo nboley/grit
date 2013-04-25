@@ -32,7 +32,6 @@ from reads import Reads
 import pysam
 
 def build_fl_dist(bam_fn, conn, nsamples=25000, min_exon_size=600):
-    reads = pysam.Samfile( bam_fn, "rb" )
     reads = Reads( bam_fn, "rb" )
     
     cursor = conn.cursor()
@@ -76,10 +75,34 @@ def build_fl_dist(bam_fn, conn, nsamples=25000, min_exon_size=600):
     with open( bam_fn + ".fldist", "w" ) as ofp:
         pickle.dump( { 'mean': fl_dist }, ofp )
 
+def parse_arguments():
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Estimate the FL dist for a bam file.')
+    parser.add_argument( 'bam', type=file, help='Sorted indedexed BAM file.')
+
+    parser.add_argument( '--db-name', default='rnaseq', 
+                         help='Database to insert the data into. ' )
+    parser.add_argument( '--db-host', 
+                         help='Database host. default: socket connection' )
+    parser.add_argument( '--db-user', 
+                         help='Database connection user. Default: unix user' )
+    parser.add_argument( '--db-pass', help='DB connection password.' )
+    
+    parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
+                             help='Whether or not to print status information.')
+    args = parser.parse_args()
+    
+    global VERBOSE
+    VERBOSE = args.verbose
+
+    conn_str = "dbname=%s" % args.db_name
+    conn = psycopg2.connect(conn_str)
+
+    return args.bam.name, conn
+
 def main():
-    bam_fn = sys.argv[1]
-    conn = psycopg2.connect("dbname=%s host=%s user=nboley" 
-                            % ('rnaseq', 'localhost'))
+    bam_fn, conn = parse_arguments()
     build_fl_dist(bam_fn, conn)
     
 if __name__ == '__main__':

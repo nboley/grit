@@ -11,6 +11,7 @@ GtfLine = namedtuple( "GtfLine", ["region", "gene_id", "trans_id", "feature",
                                   "score", "source", "frame", "meta_data"])
 
 VERBOSE = True
+DEBUG = False
 
 def partition_coding_and_utr_segments( exons, cds_start, cds_stop ):
     """Split the exons into UTR and CDS exons.
@@ -331,8 +332,8 @@ def parse_gtf_line( line, fix_chrm=True, use_name_instead_of_id=False ):
         trans_name = meta_data[ 'transcript_id' ]    
     trans_name = get_name_from_field( trans_name )
     
-    return GtfLine( gffl[0], gene_name, trans_name, \
-                        gffl[1], gffl[2], gffl[3], gffl[4], meta_data )
+    return GtfLine( gffl[0], gene_name, trans_name,
+                    gffl[1], gffl[2], gffl[3], gffl[4], meta_data )
 
 def load_transcript_from_gtf_data(transcript_lines):
     exons = []
@@ -340,7 +341,7 @@ def load_transcript_from_gtf_data(transcript_lines):
     rpk = None
     rpkm = None
     promoter = None
-    CDS_region = None
+    CDS_start, CDS_stop = None, None
     for line in transcript_lines:
         scores.add( line.score )
         if rpk == None and 'rpk' in line.meta_data: 
@@ -351,18 +352,56 @@ def load_transcript_from_gtf_data(transcript_lines):
         if line.feature == 'exon':
             exons.append( (line.region.start, line.region.stop) )
         elif line.feature == 'CDS':
-            CDS_region = (line.region.start, line.region.stop)
+            exons.append( (line.region.start, line.region.stop) )
+            CDS_start = line.region.start \
+                if CDS_start == None or line.region.start < CDS_start else CDS_start
+            CDS_stop = line.region.stop \
+                if CDS_stop == None or line.region.stop > CDS_stop else CDS_stop
         elif line.feature == 'promoter':
             promoter = line.region
     
     if len( exons ) == 0:
         return None
     
+    CDS_region = None if CDS_start == None or CDS_stop == None \
+        else (CDS_start, CDS_stop)
+    
     score = next(iter(scores)) if len(scores) == 1 else None
     line = transcript_lines[0]
     return Transcript( line.trans_id, line.region.chr, line.region.strand, 
-                       sorted(exons), CDS_region,
+                       flatten(sorted(exons)), CDS_region,
                        line.gene_id, score, rpkm, rpk, promoter )
+
+def _load_gene_from_gtf_lines( gene_id, gene_lines, transcripts_data ):
+    if len( gene_lines ) > 1:
+        raise ValueError, "Multiple gene lines for '%s'" % gene_id
+    
+    transcripts = []
+    for trans_id, transcript_lines in transcripts_data.iteritems():
+        transcript = load_transcript_from_gtf_data(transcript_lines)
+        if transcript == None: continue
+        transcripts.append(transcript)
+
+    # if there are no gene lines, then get the info from the transcripts
+    if len( gene_lines ) == 0:
+        gene_chrm, gene_strand = transcripts[0].chrm, transcripts[0].strand
+        gene_start = min(t.start for t in transcripts )
+        gene_stop = max(t.stop for t in transcripts )
+        gene_meta_data = {}
+    else:
+        gene_data = gene_lines[0]
+        gene_chrm, gene_strand, gene_start, gene_stop = gene_data.region
+        gene_meta_data = gene_data.meta_data
+
+    if gene_start != min(t.start for t in transcripts ) \
+            or gene_stop != max(t.stop for t in transcripts ):
+        if VERBOSE: print >> sys.stderr, "Skipping '%s': gene boundaries dont match the transcript boundaries." % gene_id
+        return None
+    
+    return Gene( gene_id, gene_chrm, gene_strand, 
+                 gene_start, gene_stop,
+                 transcripts, gene_meta_data )
+    
 
 def load_gtf(fname_or_fp, use_name_instead_of_id=False):
     if isinstance( fname_or_fp, str ):
@@ -381,35 +420,22 @@ def load_gtf(fname_or_fp, use_name_instead_of_id=False):
             gene_lines[data.gene_id][1].append( data )
         else:
             gene_lines[data.gene_id][0][data.trans_id].append(data)
+    if VERBOSE: print >> sys.stderr, "Finished parsing gene lines."
     
     genes = []
     for gene_id, ( transcripts_data, gene_lines ) in gene_lines.iteritems():
-        transcripts = []
-        for trans_id, transcript_lines in transcripts_data.iteritems():
-            transcript = load_transcript_from_gtf_data(transcript_lines)
-            if transcript == None: continue
-            transcripts.append(transcript)
+        try:
+            gene = _load_gene_from_gtf_lines(gene_id, gene_lines, transcripts_data)
+        except Exception, inst:
+            print >> sys.stderr, "ERROR : Could not load '%s'" % gene_id
+            print >> sys.stderr, "DETAIL: %s" % str( inst )
+            if DEBUG: raise
+            gene = None
         
-        # if there are no gene lines, then get the info from the transcripts
-        if len( gene_lines ) == 0:
-            chrm, strand = transcripts[0].chrm, transcripts[0].strand
-            gene_start = min(t.start for t in transcripts )
-            gene_stop = max(t.stop for t in transcripts )
-            gene_meta_data = {}
-        else:
-            assert len( gene_lines ) == 1
-            gene_data = gene_lines[0]
-            gene_chrm, gene_strand, gene_start, gene_stop = gene_data.region
-            gene_meta_data = gene_data.meta_data
+        if gene == None: continue
+        genes.append( gene )
 
-        if gene_start != min(t.start for t in transcripts ) \
-                or gene_stop != max(t.stop for t in transcripts ):
-            if VERBOSE: print >> sys.stderr, "Skipping '%s': gene boundaries dont match the transcript boundaries." % gene_id
-            continue
-            
-        genes.append( Gene( gene_id, gene_chrm, gene_strand, 
-                            gene_start, gene_stop,
-                            transcripts, gene_meta_data ) )
+    if VERBOSE: print >> sys.stderr, "Finished building gene objects."
     
     if isinstance( fname_or_fp, str ):
         fp.close()

@@ -13,6 +13,7 @@ import pysam
 
 from load_gene_from_db import load_gene_from_db
 from build_fl_dist_from_db import build_fl_dist
+from db_conn import open_conn
 
 import s3_data
 
@@ -70,7 +71,7 @@ def estimate_transcript_frequencies(conn, gene_id, reads_key, bam_fn, fl_dists):
             # build the design matrices
             expected_array, observed_array, unobservable_transcripts \
                 = new_sparsify_transcripts.build_design_matrices( 
-                    gene, bam_fn, fl_dists, None, reverse_strand=True )
+                    gene, bam_fn, fl_dists, None, reverse_strand=False )
             if DEBUG_VERBOSE: print "Sum counts:", observed_array.sum()
             add_design_matrices_to_DB( cursor, gene, reads_key, 
                                        expected_array, observed_array, 
@@ -156,8 +157,8 @@ def get_reads_fn_and_fl_dist(cache, reads_url):
 
 def spawn_process( conn_info, cache ):
     # open a new connection ( which we need to do because of the fork )
-    conn = psycopg2.connect("dbname=%s host=%s user=nboley" % conn_info)
-
+    conn = open_conn(*conn_info)
+    
     # get and lock a gene to process
     rv = get_queue_items(conn)
     if len(rv) == 0: return
@@ -170,7 +171,8 @@ def spawn_process( conn_info, cache ):
                 reads_fn, fl_dist \
                     = get_reads_fn_and_fl_dist( cache, reads_location )
             else:
-                reads_fn, fl_dist = reads_location, load_fl_dists( reads_location )
+                reads_fn, fl_dist = \
+                    reads_location, load_fl_dists( reads_location )
             
             estimate_transcript_frequencies( 
                 conn, gene_id, reads_location, reads_fn, fl_dist  )
@@ -193,7 +195,7 @@ def spawn_process( conn_info, cache ):
     return
 
 def main_loop(conn_info, s3_info, nthreads, is_daemon):
-    parent_conn = psycopg2.connect("dbname=%s host=%s user=nboley" % conn_info)
+    parent_conn = open_conn(*conn_info)
     cursor = parent_conn.cursor()
     
     cache = s3_data.S3Cache( s3_info[0], s3_info[1], parent_conn ) \
@@ -233,9 +235,13 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description='Estimate transcript frequencies from DB.')
 
-    parser.add_argument( '--host', default='localhost', help='Database host.' )
     parser.add_argument( '--db-name', default='rnaseq', 
-                         help='Database name. ' )
+                         help='Database to insert the data into. ' )
+    parser.add_argument( '--db-host', 
+                         help='Database host. default: socket connection' )
+    parser.add_argument( '--db-user', 
+                         help='Database connection user. Default: unix user' )
+    parser.add_argument( '--db-pass', help='DB connection password.' )
 
     parser.add_argument( '--access-key', default=None, help='Amazon access key.' )
     parser.add_argument( '--secret-key', default=None, help='Amazon secret key.' )
@@ -266,7 +272,8 @@ def parse_arguments():
     
     s3_info = None if args.access_key == None or args.secret_key == None \
         else (args.access_key, args.secret_key )
-    return ( args.db_name, args.host), int(args.threads), args.daemon, s3_info
+    return ( args.db_name, args.db_host, args.db_user, args.db_pass), \
+        int(args.threads), args.daemon, s3_info
 
 def main():
     conn_info, nthreads, is_daemon, s3_info  = parse_arguments()

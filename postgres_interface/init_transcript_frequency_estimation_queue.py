@@ -18,19 +18,25 @@ def parse_arguments():
     parser.add_argument( '--bam-fname', required=True, type=str,
                          help='File containing the reads to estimate transcript frequencies from.')
     
-    parser.add_argument( '--host', default='localhost', help='Database host.' )
-    parser.add_argument( '--db-name', default='rnaseq', 
-                         help='Database name. ' )
-    
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
                              help='Print status information.')
+
+    parser.add_argument( '--db-name', default='rnaseq', 
+                         help='Database to insert the data into. ' )
+    parser.add_argument( '--db-host', 
+                         help='Database host. default: socket connection' )
+    parser.add_argument( '--db-user', 
+                         help='Database connection user. Default: unix user' )
+    parser.add_argument( '--db-pass', help='DB connection password.' )
 
     args = parser.parse_args()
     
     global VERBOSE
     VERBOSE = args.verbose
-        
-    conn = psycopg2.connect("dbname=%s host=%s" % ( args.db_name, args.host) )
+
+    conn_str = "dbname=%s" % args.db_name
+    conn = psycopg2.connect(conn_str)
+    
     return conn, args.annotation_name, args.bam_fname
 
 def main():

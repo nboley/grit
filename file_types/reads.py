@@ -144,6 +144,10 @@ try:
         """
         def iter_paired_reads(self, chrm, strand, start, stop, 
                               min_read_len=0, ignore_partial_alignments=True):
+            chrm = clean_chr_name( chrm )
+            if chrm not in self.references:
+                chrm = 'chr' + chrm
+            
             # whether or not the gene is on the positive strand
             gene_strnd_is_rev = ( strand == '-' )
             #chrm = clean_chr_name( chrm )
@@ -193,6 +197,7 @@ try:
                 yield read1, read2
 
             return
+
 except ImportError:
     pass
 

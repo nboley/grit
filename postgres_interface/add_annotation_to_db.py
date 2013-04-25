@@ -10,9 +10,8 @@ def add_exons_to_db( transcript, conn ):
     for (start, stop) in transcript.exons:
         query = "INSERT INTO annotations.exons " \
             + "( transcript, location )" \
-            + "VALUES ( '%s', '[%s, %s]')" % \
-            ( transcript.id, start, stop )
-        cursor.execute( query )
+            + "VALUES ( %s, %s)"
+        cursor.execute( query, (transcript.id, '[%s, %s]' % (start, stop) ) )
     cursor.close()
     return
 
@@ -23,9 +22,8 @@ def add_transcript_regions_to_db( transcript, conn ):
         start = transcript.relative_pos( transcript.cds_region[0] )
         stop = transcript.relative_pos( transcript.cds_region[1] )
         query = "INSERT into annotations.transcript_regions " \
-              + "VALUES ( '%s', '[%s,%s]', '%s' )" \
-              % (transcript.id, start, stop, 'CDS')
-        cursor.execute( query )
+              + "VALUES ( %s, %s, %s )"
+        cursor.execute( query, (transcript.id, '[%s, %s]' % (start, stop), 'CDS') )
     
     cursor.close()
     return
@@ -35,10 +33,13 @@ def add_transcript_to_db( gene_id, (chrm, assembly_id), transcript, conn ):
     cursor = conn.cursor()
     query = "INSERT INTO annotations.transcripts " \
         + "( id, gene, contig, strand, location )" \
-        + "VALUES ( '%s', %s, '(\"%s\", %s)', '%s', '[%s, %s]')" % \
-        ( transcript.id, gene_id, chrm, assembly_id,
-          transcript.strand, transcript.start, transcript.stop )
-    cursor.execute( query )
+        + "VALUES (%s, %s, %s, %s, %s)"
+    args = ( transcript.id, gene_id, 
+             '(\"%s\", %s)' % (chrm, assembly_id),
+             transcript.strand, 
+             '[%s, %s]' % (transcript.start, transcript.stop) )
+
+    cursor.execute( query, args )
     cursor.close()
     
     add_exons_to_db( transcript, conn )
@@ -57,13 +58,15 @@ def add_gene_to_db( gene, annotation_key, assembly_id, conn,
         gene_name = gene.id
     
     #add the gene entry
-    query_template = "INSERT INTO annotations.genes " \
+    query = "INSERT INTO annotations.genes " \
         + "( name, annotation, contig, strand, location ) " \
-        + "VALUES ( '%s', %s, '(\"%s\", %i)', '%s', '[%s, %s]') " \
+        + "VALUES ( %s, %s, %s, %s, %s) " \
         + "RETURNING id;"
-    query = query_template % ( gene_name, annotation_key, gene.chrm, 
-                               assembly_id, gene.strand, gene.start, gene.stop )
-    cursor.execute( query )
+    args = ( gene_name, annotation_key, 
+             '(\"%s\", %i)' % (gene.chrm, assembly_id),
+             gene.strand, 
+             '[%s, %s]' % (gene.start, gene.stop) )
+    cursor.execute( query, args )
     gene_id = int(cursor.fetchone()[0])
     cursor.close()
     
@@ -90,9 +93,13 @@ def parse_arguments():
     parser.add_argument( '--assembly-id', required=True, 
            help='ID of the assembly this annotation is based upon.' )
 
-    parser.add_argument( '--host', default='localhost', help='Database host. ' )
     parser.add_argument( '--db-name', default='rnaseq', 
                          help='Database to insert the data into. ' )
+    parser.add_argument( '--db-host', 
+                         help='Database host. default: socket connection' )
+    parser.add_argument( '--db-user', 
+                         help='Database connection user. Default: unix user' )
+    parser.add_argument( '--db-pass', help='DB connection password.' )
     
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
                              help='Whether or not to print status information.')
@@ -100,8 +107,9 @@ def parse_arguments():
     
     global VERBOSE
     VERBOSE = args.verbose
-    
-    conn = psycopg2.connect("dbname=%s host=%s" % ( args.db_name, args.host) )
+
+    conn_str = "dbname=%s" % args.db_name
+    conn = psycopg2.connect(conn_str)
 
     return args.gtf, args.annotation_name, int(args.assembly_id), conn
 
