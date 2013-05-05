@@ -35,7 +35,8 @@ def flatten( regions ):
     else:
         return new_regions
 
-MIN_REGION_LEN = 200
+MIN_REGION_LEN = 100
+EDGE_THRESHOLD_RATIO = 0.01
 EMPTY_BPK = 0
 MIN_BPK = 1
 
@@ -287,22 +288,13 @@ class Bins( list ):
         return
 
 def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads, polya_sites):
-    def check_for_low_coverage_region( l_split, r_split ):
-        region_len = r_split - l_split
-        cnt, max_cnt = 0, region_len*EMPTY_BPK
-        for rd in rnaseq_reads[0].iter_reads( chrm, strand, l_split, r_split ):
-            cnt += 1
-            if cnt > max_cnt: 
-                return False
-        return True
-    
     def find_splits_in_region(rnaseq_reads, chrm, strand, start, stop):
         n_splits = int( (stop-start)/MIN_REGION_LEN )
         segment_len = int((stop-start)/(n_splits+1))
         return [ start + i*segment_len for i in xrange(1,n_splits+1) ]
     
     def find_initial_segmentation( chrm, strand, rnaseq_reads, polya_sites ):
-        locs = {0: 'ESTOP', contig_len-1:'ESTART'}
+        locs = {0: 'SEGMENT', contig_len-1:'SEGMENT'}
         for polya in polya_sites:
             locs[ polya ] = "POLYA"
 
@@ -313,93 +305,54 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads, polya_sites):
         boundaries = sorted( locs.keys() )
         for start, stop in zip( boundaries[:-1], boundaries[1:] ):
             region_len = stop - start
-            if region_len > 3*MIN_REGION_LEN:
+            if region_len > 2*MIN_REGION_LEN:
                 splits = find_splits_in_region( 
                     rnaseq_reads, chrm, strand, start, stop )
-                for l_split, r_split in izip( splits[:-1], splits[1:] ):
-                    if check_for_low_coverage_region( l_split, r_split ):
-                        locs[l_split] = 'ESTART' 
-                        locs[r_split] = 'ESTOP' 
+                for split in splits:
+                    locs[split] = 'SEGMENT'
         
-        boundaries = sorted( locs.keys() )
-        bins = Bins( chrm, strand, [] )
-        for index, (start, stop) in enumerate(
-                izip(boundaries[:-1], boundaries[1:])):
-            bins.append( Bin(start, stop, locs[start], locs[stop]) )
-        
-        del locs, boundaries
-        return bins
-
-    def find_gene_segments( bins ):
-        gene_starts_indices = []
-        for i, bin in enumerate( bins ):
-            if bin.left_label == 'POLYA':
-                if bin.right_label in ('D_JN', 'ESTART', 'ESTOP'):
-                    gene_starts_indices.append( i )
-                elif bin.right_label in 'POLYA':
-                    gene_starts_indices[-1] = gene_starts_indices[-1] + 1
-        
-        gene_bndry_bins = Bins( chrm, strand )
-        for start_i, stop_i in \
-                zip( gene_starts_indices[:-1], gene_starts_indices[1:] ):
-            start = bins[start_i].start
-            left_label = bins[start_i].left_label
-            stop = bins[stop_i-1].stop
-            right_label = bins[stop_i-1].right_label
-            gene_bndry_bins.append(
-                Bin(start, stop, left_label, right_label, 'GENE'))
-        
-        gene_bndry_bins[0].start = 1
-        gene_bndry_bins[-1].stop = contig_len - 1
-
-        return gene_bndry_bins
+        return locs
     
-    def merge_gene_segments(junctions, gene_bndry_bins):
-        # find the junctions that overlap multiple gene bins
-        # we use the interval overlap join algorithm
-        sorted_jns = sorted( junctions )
-        start_i = 0
-        merge_jns = []
-        for bin_i, bin in enumerate( gene_bndry_bins ):
-            # increment the start pointer
-            new_start_i = start_i
-            for (jn_start, jn_stop), cnt in sorted_jns[start_i:]:
-                if jn_stop >= bin.start:
-                    break
-                new_start_i += 1
-
-            start_i = new_start_i
-
-            # find matching junctions
-            for (jn_start, jn_stop), cnt in sorted_jns[start_i:]:
-                if jn_start > bin.stop:
-                    break
-                if jn_stop > bin.stop:
-                    merge_jns.append( ( (jn_start, jn_stop), bin_i ) )
-
-        genes_graph = Graph(len( gene_bndry_bins ))
+    def cluster_segments( initial_segmentation ):
+        boundaries = numpy.array( sorted( initial_segmentation ) )
+        nodes = defaultdict(int)
+        edges = defaultdict(lambda: defaultdict(int))
+        for start, stop in izip( boundaries[:-1], boundaries[1:] ):
+            for reads in rnaseq_reads:
+                for rd in reads.iter_reads(chrm, strand, start, stop):
+                    # skip unpaired reads
+                    if rd.pnext == -1: continue
+                    pair_bin = boundaries.searchsorted( rd.pnext )
+                    nodes[pair_bin] += 1
+                    for start, stop in iter_coverage_intervals_for_read( rd ):
+                        bin = boundaries.searchsorted(start)
+                        nodes[bin] += 1
+                        edges[bin][pair_bin] += 1 
+                        bin = boundaries.searchsorted(stop)
+                        nodes[bin] += 1
+                        edges[boundaries.searchsorted(stop)][pair_bin] += 1
         
-        for jn, bin_i in merge_jns:
-            # find the bin index that the jn merges into
-            for end_bin_i, bin in enumerate( gene_bndry_bins[bin_i:] ):
-                if jn[1]+1 < bin.start:
-                    break
-            
-            assert bin_i + end_bin_i < len( gene_bndry_bins )
-            for i in xrange( bin_i+1, bin_i+end_bin_i ):
-                genes_graph.add_edge(bin_i, i)
-
-        conn_nodes = genes_graph.clusters()
-        new_bins = Bins( chrm, strand )
-        for g in genes_graph.clusters():
-            start_bin = gene_bndry_bins[ g[0] ]
-            stop_bin = gene_bndry_bins[ g[-1] ]
-            new_bins.append( 
-                Bin( start_bin.start, stop_bin.stop, 
-                     start_bin.left_label, stop_bin.right_label, "GENE")
-            )
+        # merge segments with lots of shared reads
+        all_edges = set()
+        for bin_1, bin_2s in edges.iteritems():
+            total = float( nodes[bin_1] )
+            # if the average coverage is too low, skip this node
+            #if total/(boundaries[bin_1+1]-boundaries[bin_1]+1) < MIN_BPK: 
+            #    continue
+            for bin_2, cnt in bin_2s.iteritems():
+                if bin_1 == bin_2: continue
+                if cnt/total > EDGE_THRESHOLD_RATIO:
+                    all_edges.add( (bin_1, bin_2) )
         
-        return new_bins
+        gene_graph = Graph( len(boundaries)-1 )
+        gene_graph.add_edges( all_edges )
+
+        segments = []
+        for g in gene_graph.clusters():
+            if len(g) == 1: continue
+            segments.append( (boundaries[min(g)], boundaries[max(g)+1]) )
+        
+        return flatten( segments )
     
     # find all of the junctions
     junctions = extract_junctions_in_contig( rnaseq_reads[0], chrm, strand )
@@ -410,45 +363,18 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads, polya_sites):
         chrm, strand, rnaseq_reads, polya_sites )
     if VERBOSE: print "Finished initial segmentation for %s %s" % (chrm, strand)
     
-    gene_segments = find_gene_segments( initial_segmentation )
-    if VERBOSE: print "Finished initial gene segments for %s %s" %(chrm, strand)
-    
-    if 0 == len( gene_segments  ):
-        return gene_segments
-
-    merged_gene_segments = merge_gene_segments( junctions, gene_segments )
-    
-    return merged_gene_segments
-    
-
-    gene_segments_graph = Graph(len(initial_segmentation)-1)
-    gene_segments_graph.add_edges( all_edges )
-        
-        # flatten the segments
-    gene_segments = []
-    for g in gene_segments_graph.components():
-        start = sorted_bnds[min(g)]
-        stop = sorted_bnds[max(g)+1]
-        gene_segments.append( (start, stop) )
-        
-    gene_segments.sort()
-    return flatten( gene_segments )
-
-    return initial_segmentation
-
-    if 0 == len( gene_bndry_bins  ):
-        return gene_bndry_bins
-
-    # cluster the segments
     clustered_segments = cluster_segments( initial_segmentation )
-    
+    if VERBOSE: print "Finished initial gene segments for %s %s" %(chrm, strand)
+
     polya_sites = numpy.array( sorted( polya_sites ) )
     # merge the segments
-    merged_segments = []
+    merged_segments = clustered_segments
+    """
     for segment_i, (start, stop) in enumerate(clustered_segments[1:]):
         polyas = [x for x in polya_sites if x > stop - 1000 and x < stop + 1000]
         if len(polyas) == 0: continue
         merged_segments.append( (start, max(polyas)) )
+    """
     
     # build the gene bins, and write them out to the elements file
     genes = Bins( chrm, strand, [] )
