@@ -350,24 +350,6 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end, \
     
     return
 
-def call_slide( out_prefix, fl_dist_norm, fl_dist_const, gtf_fn ):
-    """ Run slide on the simulated data and move the output to the output dir
-    
-    """
-    # create paricular files and directory paths for options to slide
-    slide_path = os.path.join( os.path.dirname(sys.argv[0]), '..', 'slide.py' )
-    bam_path = os.path.join( out_prefix, out_prefix + '.sorted.bam' )
-    fl_dist_norm_str = str(fl_dist_norm[0]) + ':' + str(fl_dist_norm[1]) \
-        if fl_dist_norm else str(fl_dist_const) + ':' + '1'
-    slide_out_dir = 'slide_' + out_prefix
-    
-    # call slide
-    call = 'python {0} {1} {2} --fl_dist_norm {3} --out_prefix {4} --plot ' + \
-        '--verbose --threads 1'
-    os.system( call.format( slide_path, gtf_fn, bam_path, fl_dist_norm_str, \
-                                slide_out_dir ) )
-    os.system( 'mv {0} {1}'.format( slide_out_dir, out_prefix ) )
-
 class Transcript( object ):
     def __init__( self, trans_name, data ):
         """Data contains chrm, strand, start, stop and freq (frac of major isoform)
@@ -764,8 +746,6 @@ if __name__ == "__main__":
     sys.exit()
     """
 
-    simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end, full_fragment, 
-                    read_len, out_prefix )
+    simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end, 
+                    full_fragment, read_len, out_prefix )
     
-    if run_slide:
-        call_slide( out_prefix, fl_dist_norm, fl_dist_const, gtf_fp.name )

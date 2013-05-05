@@ -70,6 +70,7 @@ DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
 ABS_TOL = 1e-5
 DEBUG = False
+DEBUG_VERBOSE = False
 
 def log_warning(text):
     print >> sys.stderr, text
@@ -85,6 +86,9 @@ class ThreadSafeFile( file ):
         file.write( self, string )
         self.flush()
         self.lock.release()
+
+class TooFewReadsError( ValueError ):
+    pass
 
 def calc_fpkm( gene, fl_dist, freqs, num_reads_in_bam, num_reads_in_gene ):
     fpkms = []
@@ -135,7 +139,45 @@ def build_expected_and_observed_arrays(
     
     return expected_mat, observed_mat, unobservable_transcripts
 
-def build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists ):
+def nnls( X, Y, fixed_indices_and_values={} ):    
+    X = matrix(X)
+    Y = matrix(Y)
+    
+    m, n = X.size
+    num_constraint = len( fixed_indices_and_values )
+    
+    G = matrix(0.0, (n,n))
+    G[::n+1] = -1.0
+    h = matrix(-MIN_TRANSCRIPT_FREQ, (n,1))
+
+    # Add the equality constraints
+    A=matrix(0., (1+num_constraint,n))
+    b=matrix(0., (1+num_constraint,1))
+
+    # Add the sum to one constraint
+    A[0,:] = 1.
+    b[0,0] = 1.
+    
+    # Add the fixed value constraints
+    for const_i, (i, val) in enumerate(fixed_indices_and_values.iteritems()):
+        A[const_i+1,i] = 1.
+        b[const_i+1,0] = val
+    
+    solvers.options['show_progress'] = DEBUG_OPTIMIZATION
+    res = solvers.qp(P=X.T*X, q=-X.T*Y, G=G, h=h, A=A, b=b)
+    x = numpy.array(res['x']).T[0,]
+    rss = ((numpy.array(X*res['x'] - Y)[0,])**2).sum()
+    
+    if DEBUG_OPTIMIZATION:
+        for key, val in res.iteritems():
+            if key in 'syxz': continue
+            print >> sys.stderr, "%s:\t%s" % ( key.ljust(22), val )
+        
+        print >> sys.stderr, "RSS: ".ljust(22), rss
+    
+    return x
+
+def build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists, reverse_strand=False ):
     # load the bam file
     reads = Reads(bam_fname)
     
@@ -148,9 +190,10 @@ def build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists ):
                 gene.transcripts, exon_boundaries ))
 
     binned_reads = bin_reads( 
-        reads, gene.chrm, gene.strand, exon_boundaries, False, True)
+        reads, gene.chrm, gene.strand, exon_boundaries, reverse_strand, True)
+    
     if sum( binned_reads.values() ) < MIN_NUM_READS:
-        raise ValueError, "Too Few Reads"
+        raise TooFewReadsError, "Too Few Reads"
     
     observed_cnts = build_observed_cnts( binned_reads, fl_dists )    
     read_groups_and_read_lens =  { (RG, read_len) for RG, read_len, bin 
@@ -218,12 +261,12 @@ def build_expected_and_observed_promoter_counts( gene, cage_array ):
     
     return expected_cnts, observed_cnts
 
-def build_design_matrices( gene, bam_fname, fl_dists, cage_array ):
+def build_design_matrices( gene, bam_fname, fl_dists, cage_array, reverse_strand=False ):
     # only do this if we are in debugging mode
     if num_threads == 1 and DEBUG:
         import cPickle
         
-        obj_name = "." + gene.id + "_" + hash_array(cage_array) \
+        obj_name = "." + str(gene.id) + "_" + hash_array(cage_array) \
             + "_" + os.path.basename(bam_fname) + ".obj"
         try:
             fp = open( obj_name )
@@ -237,7 +280,7 @@ def build_design_matrices( gene, bam_fname, fl_dists, cage_array ):
     
     # bin the rnaseq reads
     expected_rnaseq_cnts, observed_rnaseq_cnts = \
-        build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists )
+        build_expected_and_observed_rnaseq_counts( gene, bam_fname, fl_dists, reverse_strand=reverse_strand )
     expected_rnaseq_array, observed_rnaseq_array, unobservable_rnaseq_trans = \
         build_expected_and_observed_arrays( 
             expected_rnaseq_cnts, observed_rnaseq_cnts, True )
@@ -262,9 +305,7 @@ def build_design_matrices( gene, bam_fname, fl_dists, cage_array ):
     observed_prom_array = numpy.delete( observed_prom_array, 
                   numpy.array(list(unobservable_rnaseq_trans)) )
     observed_array = numpy.hstack((observed_prom_array, observed_rnaseq_array))
-    if observed_array.sum() < MIN_NUM_READS:
-        raise ValueError, "TOO FEW READS"
-
+    
     expected_rnaseq_array = numpy.delete( expected_rnaseq_array, 
                   numpy.array(list(unobservable_prom_trans)), axis=1 )
     expected_prom_array = numpy.delete( expected_prom_array, 
@@ -469,6 +510,7 @@ def estimate_transcript_frequencies(
     fp = open( "lhd_change.txt", "w" )
     if observed_array.sum() == 0:
         raise ValueError, "Too few reads."
+    
     n = full_expected_array.shape[1]
     if n == 1:
         return numpy.ones( 1, dtype=float )
@@ -522,8 +564,7 @@ def estimate_transcript_frequencies(
         
         start_time = time.time()
         if len( lhds ) < 500: break
-
-    fp.close()    
+    
     return x
 
 def estimate_confidence_bound_by_bisection( 

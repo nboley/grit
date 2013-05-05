@@ -188,7 +188,13 @@ get_line_info( char* line ) {
         return NULL;
     }
 
-
+    if( curr_line->element_type == TRANSCRIPT
+        || curr_line->element_type == GENE )
+    {
+        free( curr_line );
+        return NULL;
+    }
+    
     char* char_rpkm = NULL;
     get_id_ptr( line, "FPKM", &(char_rpkm) );
     if( NULL == char_rpkm ) {
@@ -468,7 +474,7 @@ parse_gtf_data( struct gtf_line** gtf_lines, int num_lines,
             curr_max_loc = -1;
             curr_min_loc = (1 << 30);            
         }
-       
+        
         /******** update the CDS *******/
         // if this is coding seqeunce
         if( line->element_type == CDS ) 
@@ -498,7 +504,7 @@ parse_gtf_data( struct gtf_line** gtf_lines, int num_lines,
         curr_trans_num_exons += 1;
 
     }
-
+        
     /* Add the final transcript */
     add_transcript( &transcripts, &num_transcripts, &num_allcd_trans,
                     prev_trans_id, curr_trans_num_exons, curr_trans_exons,

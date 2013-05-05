@@ -2,15 +2,32 @@ import sys, os
 from itertools import chain
 from collections import defaultdict
 
+import pysam
+import numpy
+
 DEBUG = False
 
 def clean_chr_name( chrm ):
     if chrm.startswith( "chr" ):
         chrm = chrm[3:]
     # convert the dmel chrm to M, to be consistent with ucsc
-    if chrm == 'dmel_mitochondrion_genome':
+    if chrm.endswith( 'mitochondrion_genome' ):
         chrm = "M"
     return chrm
+
+def guess_strand_from_fname( fname ):
+    if fname.lower().rfind( "plus" ) >= 0:
+        return '+'
+    elif fname.lower().rfind( "+" ) >= 0:
+        return '+'
+    elif fname.lower().rfind( "minus" ) >= 0:
+        return '-'
+    elif fname.lower().rfind( "-" ) >= 0:
+        return '-'
+    else:
+        raise ValueError, "Couldn't infer strand from filename '%s'" % fname
+    
+    assert False
 
 def get_chrm( read, bam_obj ):
     chrm = bam_obj.getrname( read.tid )
@@ -49,7 +66,7 @@ def get_read_group( r1, r2 ):
         return None
 
 
-def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=25000 ):
+def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=50000 ):
     # keep track of which fractiona re on the sam strand
     paired_cnts = {'no_mate': 0, 'same_strand': 1e-4, 'diff_strand': 1e-4}
     
@@ -85,25 +102,15 @@ def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=25000 ):
         print >> sys.stderr, "Paired Cnts:", paired_cnts, "Num Reads", num_observed_reads
         raise ValueError, "Reads appear to be a mix of reads on the same and different strands."
 
-def iter_coverage_regions_for_read( 
-    read, bam_obj, reverse_read_strand, pairs_are_opp_strand ):
-    """Find the regions covered by this read
-
-    """
-    strand = get_strand( read, reverse_read_strand, pairs_are_opp_strand )
-
-    # get the chromosome, correcting for alternate chrm names
-    chrm = get_chrm( read, bam_obj )
-
+def iter_coverage_intervals_for_read(read):
     # we loop through each contig in the cigar string to deal
     # with junctions reads.
     # add 1 to the start because bam files are 0 based
-    rv = []
     start = read.pos
     for contig_type, length in read.cigar:
         # if this is a match, add it 
         if contig_type == 0:
-            yield ( chrm, strand, start, start + length - 1 )
+            yield ( start, start + length - 1 )
             start += length
         # skip reference insertions
         elif contig_type == 1:
@@ -128,78 +135,112 @@ def iter_coverage_regions_for_read(
 
     return
 
-def clean_qname( qname ):
-    if qname[-2] == '/' and qname[-1] in '12':
-        return qname[:-2]
-    return qname
+def iter_coverage_regions_for_read( 
+    read, bam_obj, reverse_read_strand, pairs_are_opp_strand ):
+    """Find the regions covered by this read
 
-try:
-    import pysam
+    """
+    strand = get_strand( read, reverse_read_strand, pairs_are_opp_strand )
 
-    class Reads( pysam.Samfile ):
-        """Subclass the samfile object to include a method that returns reads 
-           and their pairs.
+    # get the chromosome, correcting for alternate chrm names
+    chrm = get_chrm( read, bam_obj )
+
+    for start, stop in iter_coverage_intervals_for_read( rd ):
+        yield chrm, strand, start, stop
+    
+    return
+
+class Reads( pysam.Samfile ):
+    """Subclass the samfile object to include a method that returns reads 
+       and their pairs.
 
 
-        """
-        def iter_paired_reads(self, chrm, strand, start, stop, 
-                              min_read_len=0, ignore_partial_alignments=True):
-            chrm = clean_chr_name( chrm )
-            if chrm not in self.references:
-                chrm = 'chr' + chrm
-            
-            # whether or not the gene is on the positive strand
-            gene_strnd_is_rev = ( strand == '-' )
-            #chrm = clean_chr_name( chrm )
+    """    
+    def is_indexed( self ):
+        return True
 
-            # get all of the first pairs
-            def iter_pair1_reads():
-                for read in self.fetch( chrm, start, stop  ):
-                    if read.alen < min_read_len: continue
-                    if ignore_partial_alignments and read.alen != read.qlen:
-                        continue
-                    if get_strand( read, False, False ) == strand:
-                        yield read
+    def iter_reads( self, chrm, strand, start=None, stop=None ):
+        for read in self.fetch( chrm, start, stop  ):
+            rd_strand = get_strand( 
+                read, self.reverse_read_strand, self.pairs_are_opp_strand )
+            if rd_strand == strand:
+                yield read
+        
+        return
 
-            # index the pair 2 reads
-            reads_pair2 = {}
-            for read in self.fetch( chrm, start, stop ):
-                if read.alen < min_read_len: continue
-                if ignore_partial_alignments and read.alen != read.qlen:
-                    continue
-                if get_strand( read, False, False ) != strand:
-                    if clean_qname(read.qname) in reads_pair2:
-                        if DEBUG:
-                            print "Multiple reads on the same strand"
-                    reads_pair2[ clean_qname(read.qname) ] = read
+    def iter_paired_reads( self, chrm, strand, start, stop ):
+        # whether or not the gene is on the positive strand
+        gene_strnd_is_rev = ( strand == '-' )
+        chrm = clean_chr_name( chrm )
 
-            # iterate through the read pairs
-            for read1 in iter_pair1_reads():
-                try:
-                    read2 = reads_pair2[ clean_qname(read1.qname) ]
-                # if there is no mate, skip this read
-                except KeyError:
-                    if DEBUG:
-                        print "No mate: ", read1.pos, read1.aend, clean_qname(read1.qname)
-                    continue
-                
-                assert ( read1.qlen == read1.aend - read1.pos ) \
-                       or ( len( read1.cigar ) > 1 )
-                assert ( read2.qlen == read2.aend - read2.pos ) \
-                       or ( len( read2.cigar ) > 1 )
+        # get all of the first pairs
+        def iter_pair1_reads():
+            for read in self.fetch( chrm, start, stop  ):
+                rd_strand = get_strand( 
+                    read, self.reverse_read_strand, self.pairs_are_opp_strand )
+                if rd_strand == strand:
+                    yield read
+        
+        # index the pair 2 reads
+        reads_pair2 = {}
+        for read in self.iter_reads(chrm, strand, start, stop):
+            rd_strand = get_strand( 
+                read, self.reverse_read_strand, self.pairs_are_opp_strand )
+            if rd_strand == strand:
+                reads_pair2[ read.qname ] = read
+        
+        # iterate through the read pairs
+        for read1 in iter_pair1_reads():
+            try:
+                read2 = reads_pair2[ read1.qname ]
+            # if there is no mate, skip this read
+            except KeyError:
+                if DEBUG:
+                    print "No mate: ", read1.pos, read1.aend
+                continue
 
-                if read1.qlen != read2.qlen:
-                    if DEBUG:
-                        print( "ERROR: unequal read lengths %i and %i\n", \
-                                   read1.qlen, read2.qlen )
-                    continue
+            assert ( read1.qlen == read1.aend - read1.pos ) \
+                   or ( len( read1.cigar ) > 1 )
+            assert ( read2.qlen == read2.aend - read2.pos ) \
+                   or ( len( read2.cigar ) > 1 )
 
-                yield read1, read2
+            if read1.qlen != read2.qlen:
+                print( "ERROR: unequal read lengths %i and %i\n", \
+                       read1.qlen, read2.qlen )
+                continue
 
-            return
+            yield read1, read2
 
-except ImportError:
-    pass
+        return
+
+    def build_read_coverage_array( self, chrm, strand, start, stop ):
+        full_region_len = stop - start + 1
+        cvg = numpy.zeros(full_region_len)
+        for rd in self.iter_reads( chrm, strand, start, stop ):
+            for region in iter_coverage_regions_for_read( 
+                    rd, self, self.RRR, self.PAOS):
+                cvg[max(0, start-region[2]):stop-region[3]] += 1
+        
+        return cvg
+
+class RNAseqReads(Reads):
+    def init(self, reverse_read_strand, pairs_are_opp_strand=None):
+        assert self.is_indexed()
+        self.reverse_read_strand = reverse_read_strand
+        # an abbrv to make the code mroe readable
+        self.RRR = reverse_read_strand
+        if pairs_are_opp_strand == None:
+            pairs_are_opp_strand = not read_pairs_are_on_same_strand( self )
+        self.pairs_are_opp_strand = pairs_are_opp_strand
+        # an abbrv to make the code mroe readable
+        self.PAOS = self.pairs_are_opp_strand
+        return self
+
+class CAGEReads(Reads):
+    def init(self, reverse_read_strand ):
+        assert self.is_indexed()
+        self.reverse_read_strand = reverse_read_strand
+        return self
 
 
 def find_nonoverlapping_exons_covered_by_segment(exon_bndrys, start, stop):

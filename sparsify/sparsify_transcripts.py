@@ -648,8 +648,7 @@ if __name__ == "__main__":
         fl_dists = build_normal_density( fl_min, fl_max, mean, sd )
     else:
         fl_dists, read_group_mappings = load_fl_dists( fl_dist_fns )
-
-
+    
     def foo():
         estimate_genes_expression( \
             genes.values(), gene_transcripts, bam_fns, \
