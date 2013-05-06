@@ -145,7 +145,7 @@ def iter_coverage_regions_for_read(
     # get the chromosome, correcting for alternate chrm names
     chrm = get_chrm( read, bam_obj )
 
-    for start, stop in iter_coverage_intervals_for_read( rd ):
+    for start, stop in iter_coverage_intervals_for_read( read ):
         yield chrm, strand, start, stop
     
     return
@@ -219,28 +219,57 @@ class Reads( pysam.Samfile ):
         for rd in self.iter_reads( chrm, strand, start, stop ):
             for region in iter_coverage_regions_for_read( 
                     rd, self, self.RRR, self.PAOS):
-                cvg[max(0, start-region[2]):stop-region[3]] += 1
+                cvg[max(0, region[2]-start):(region[3]-start)] += 1
         
         return cvg
 
 class RNAseqReads(Reads):
-    def init(self, reverse_read_strand, pairs_are_opp_strand=None):
+    def init(self, reverse_read_strand, pairs_are_opp_strand=None, reads_are_paired=True):
         assert self.is_indexed()
-        self.reverse_read_strand = reverse_read_strand
-        # an abbrv to make the code mroe readable
+        
+        assert reads_are_paired == True, "GRIT can only use paired RNAseq reads"
+        self.reads_are_paired = reads_are_paired
+        
+        self.reverse_read_strand = reverse_read_strand        
         self.RRR = reverse_read_strand
+        
         if pairs_are_opp_strand == None:
             pairs_are_opp_strand = not read_pairs_are_on_same_strand( self )
         self.pairs_are_opp_strand = pairs_are_opp_strand
-        # an abbrv to make the code mroe readable
         self.PAOS = self.pairs_are_opp_strand
+        
         return self
 
 class CAGEReads(Reads):
-    def init(self, reverse_read_strand ):
+    def init(self, reverse_read_strand, pairs_are_opp_strand=None, reads_are_paired=False ):
         assert self.is_indexed()
+
+        self.reads_are_paired=False
+        assert not self.reads_are_paired, "GRIT can not use paired CAGE reads."
+
+        # reads strandedness
+        if pairs_are_opp_strand == None:
+            pairs_are_opp_strand = True if not self.reads_are_paired \
+                else not read_pairs_are_on_same_strand( self )
+        self.pairs_are_opp_strand = pairs_are_opp_strand
+        self.PAOS = self.pairs_are_opp_strand
+        
         self.reverse_read_strand = reverse_read_strand
+        self.RRR = reverse_read_strand
+        
         return self
+    
+    def build_read_coverage_array( self, chrm, strand, start, stop ):
+        full_region_len = stop - start + 1
+        cvg = numpy.zeros(full_region_len)
+        for rd in self.fetch( chrm, start, stop ):
+            assert not rd.is_paired
+            if rd.mapq <= 1: continue
+            rd_strand = '-' if rd.is_reverse else '+'
+            if strand != rd_strand: continue
+            cvg[rd.pos-start] += 1
+        
+        return cvg
 
 
 def find_nonoverlapping_exons_covered_by_segment(exon_bndrys, start, stop):
