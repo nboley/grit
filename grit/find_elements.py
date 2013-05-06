@@ -8,6 +8,8 @@ from igraph import Graph
 from files.reads import RNAseqReads, CAGEReads, clean_chr_name, guess_strand_from_fname, iter_coverage_intervals_for_read
 from files.junctions import extract_junctions_in_contig
 
+USE_CACHE =True
+
 def flatten( regions ):
     new_regions = []
     curr_start = regions[0][0]
@@ -35,8 +37,8 @@ def flatten( regions ):
     else:
         return new_regions
 
-MIN_REGION_LEN = 100
-EDGE_THRESHOLD_RATIO = 0.01
+MIN_REGION_LEN = 50
+EDGE_THRESHOLD_RATIO = 0.001
 EMPTY_BPK = 0
 MIN_BPK = 1
 
@@ -350,12 +352,26 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads, polya_sites):
         segments = []
         for g in gene_graph.clusters():
             if len(g) == 1: continue
-            segments.append( (boundaries[min(g)], boundaries[max(g)+1]) )
+            segments.append( (boundaries[min(g)]-MIN_REGION_LEN, 
+                              boundaries[max(g)+1]+MIN_REGION_LEN) )
         
         return flatten( segments )
     
     # find all of the junctions
-    junctions = extract_junctions_in_contig( rnaseq_reads[0], chrm, strand )
+    if USE_CACHE:
+        import cPickle
+        fname = "tmp.junctions.%s.%s.obj" % ( chrm, strand )
+        try:
+            with open( fname ) as fp:
+                junctions = cPickle.load(fp)
+        except IOError:
+            junctions = extract_junctions_in_contig( 
+                rnaseq_reads[0], chrm, strand )
+            with open( fname, "w" ) as fp:
+                cPickle.dump(junctions, fp)
+    else:
+        junctions = extract_junctions_in_contig( 
+            rnaseq_reads[0], chrm, strand )
     if VERBOSE: print "Finished extracting junctions for %s %s" % (chrm, strand)
     
     # find segment boundaries
@@ -368,13 +384,11 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads, polya_sites):
 
     polya_sites = numpy.array( sorted( polya_sites ) )
     # merge the segments
-    merged_segments = clustered_segments
-    """
-    for segment_i, (start, stop) in enumerate(clustered_segments[1:]):
-        polyas = [x for x in polya_sites if x > stop - 1000 and x < stop + 1000]
+    merged_segments = []
+    for segment_i, (start, stop) in enumerate(clustered_segments):
+        polyas = [x for x in polya_sites if x > start and x < stop + 1000]
         if len(polyas) == 0: continue
-        merged_segments.append( (start, max(polyas)) )
-    """
+        merged_segments.append( (start-1500, max(polyas)) )
     
     # build the gene bins, and write them out to the elements file
     genes = Bins( chrm, strand, [] )
@@ -410,7 +424,7 @@ def main():
     contig_lens = get_contigs_and_lens( rnaseq_reads, cage_reads )
     for contig, contig_len in contig_lens.iteritems():
         if contig != '4': continue
-        for strand in '+':
+        for strand in '+-':
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, cage_reads, polya_sites)
     
