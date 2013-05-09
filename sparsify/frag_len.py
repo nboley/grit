@@ -543,17 +543,6 @@ def main():
     
     # load the bam file
     reads = Reads( bam_fn , "rb" )
-    # make sure that it is indexed by trying to get a read
-    try:
-        reads.fetch("X", 0, 1)
-    except ValueError:
-        raise RuntimeError, "The bam file must be indexed."
-    
-    for cnt, read in enumerate( reads.fetch() ):
-        if read.is_paired:
-            break
-        if cnt > 100:
-            raise RuntimeError, "GRIT is not compatible with single end reads"
     
     VERBOSE = True
     fl_dists, fragments = estimate_fl_dists( reads, exons )
