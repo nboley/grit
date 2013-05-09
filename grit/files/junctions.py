@@ -126,17 +126,21 @@ def read_spans_single_intron( read ):
 
 def extract_junctions_in_contig( reads, chrm, strand ):
     all_junctions = defaultdict(int)
-    for i, read in enumerate(reads.fetch(chrm)):
+    for i, read in enumerate(reads.fetch('chr'+clean_chr_name(chrm))):
         # increment the number of times we've seen this read
         if not read_spans_single_intron( read ):
             continue
         
-        if strand != get_strand( read, reads.reverse_read_strand, reads.pairs_are_opp_strand ):
+        if strand != get_strand( read, reads.reverse_read_strand, 
+                                 reads.pairs_are_opp_strand ):
             continue
         
         # add one to left_intron since bam files are 0-based
         upstrm_intron_pos = read.pos + read.cigar[0][1] + 1
         dnstrm_intron_pos = upstrm_intron_pos + read.cigar[1][1] - 1
+        
+        if abs( upstrm_intron_pos - dnstrm_intron_pos ) > 10000:
+            continue
         
         # increment count of junction reads at this read position
         # for this intron or initialize it to 1

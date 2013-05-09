@@ -1,5 +1,6 @@
 import sys
 import numpy
+from scipy import stats
 from collections import defaultdict
 from itertools import chain, izip
 from bisect import bisect
@@ -7,7 +8,7 @@ from copy import copy
 
 from igraph import Graph
 
-from files.reads import RNAseqReads, CAGEReads, clean_chr_name, guess_strand_from_fname, iter_coverage_intervals_for_read
+from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, clean_chr_name, guess_strand_from_fname, iter_coverage_intervals_for_read
 from files.junctions import extract_junctions_in_contig
 from files.bed import create_bed_line
 
@@ -113,7 +114,6 @@ def filter_exon( exon, wig, min_avg_cvg=0.01,
     '''Find all the exons that are sufficiently homogenous and expressed.
     
     '''
-    assert False
     start = exon.start
     end = exon.stop
     vals = wig[start:end+1]
@@ -146,6 +146,13 @@ def filter_exon( exon, wig, min_avg_cvg=0.01,
         return False
     
     return True
+
+def filter_exons( exons, rnaseq_cov ):
+    for exon in exons:
+        if not filter_exon( exon, rnaseq_cov ):
+            yield exon
+    
+    return
 
 def find_polya_sites( polya_sites_fnames ):
     locs = defaultdict( list )
@@ -506,12 +513,16 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
     if VERBOSE: print "Finished initial segmentation for %s %s" % (chrm, strand)
     
     merged_segments = merge_segments( initial_segmentation )
-
     clustered_segments = cluster_segments( merged_segments, junctions )
     
     # build the gene bins, and write them out to the elements file
     genes = Bins( chrm, strand, [] )
+    if len( clustered_segments ) == 2:
+        return genes
+    
     for start, stop in clustered_segments:
+        if stop - start < 100: continue
+        if stop - start > 10000000: continue
         genes.append( Bin(start, stop, "ESTART", "POLYA", "GENE" ) )
     
     return genes
@@ -970,6 +981,10 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         bin = Bin(start, stop, 'R_JN', 'D_JN', 'INTRON', cnt)
         jn_bins.append( bin )
 
+    tss_exons = filter_exons( tss_exons, rnaseq_cov )
+    tes_exons = filter_exons( tes_exons, rnaseq_cov )
+    internal_exons = filter_exons( internal_exons, rnaseq_cov )
+
     elements = Bins(chrm, strand, chain(
             jn_bins, cage_peaks, tss_exons, internal_exons, tes_exons) )
     if strand == '-':
@@ -1043,10 +1058,10 @@ def main():
 
     ofp.write('track name="discovered_elements" visibility=2 itemRgb="On"\n')
     
-    rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=False) 
+    rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=True) 
                      for fp in rnaseq_bams ]
     
-    cage_reads = [ CAGEReads(fp.name).init(reverse_read_strand=False) 
+    cage_reads = [ RAMPAGEReads(fp.name).init(reverse_read_strand=False) 
                    for fp in cage_bams ]
 
     if VERBOSE: print >> sys.stderr,  'Loading candidate polyA sites'
@@ -1056,7 +1071,7 @@ def main():
     
     contig_lens = get_contigs_and_lens( rnaseq_reads, cage_reads )
     for contig, contig_len in contig_lens.iteritems():
-        if contig != '4': continue
+        if contig != "4": continue
         for strand in '+-':
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, cage_reads, polya_sites)

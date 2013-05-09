@@ -66,7 +66,7 @@ def get_read_group( r1, r2 ):
         return None
 
 
-def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=50000 ):
+def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=500000 ):
     # keep track of which fractiona re on the sam strand
     paired_cnts = {'no_mate': 0, 'same_strand': 1e-4, 'diff_strand': 1e-4}
     
@@ -94,13 +94,13 @@ def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=50000 ):
     if paired_cnts['no_mate'] == num_reads_to_check:
         return True
     
-    if float(paired_cnts['same_strand'])/paired_cnts['diff_strand'] > 10:
+    if float(paired_cnts['same_strand'])/paired_cnts['diff_strand'] > 5:
         return True
-    elif float(paired_cnts['diff_strand'])/paired_cnts['same_strand'] > 10:
+    elif float(paired_cnts['diff_strand'])/paired_cnts['same_strand'] > 5:
         return False
     else:
         print >> sys.stderr, "Paired Cnts:", paired_cnts, "Num Reads", num_observed_reads
-        raise ValueError, "Reads appear to be a mix of reads on the same and different strands."
+        raise ValueError, "Reads appear to be a mix of reads on the same and different strands. (%s)" % paired_cnts
 
 def iter_coverage_intervals_for_read(read):
     # we loop through each contig in the cigar string to deal
@@ -160,7 +160,7 @@ class Reads( pysam.Samfile ):
         return True
 
     def iter_reads( self, chrm, strand, start=None, stop=None ):
-        for read in self.fetch( chrm, start, stop  ):
+        for read in self.fetch( 'chr'+chrm, start, stop  ):
             rd_strand = get_strand( 
                 read, self.reverse_read_strand, self.pairs_are_opp_strand )
             if rd_strand == strand:
@@ -263,8 +263,41 @@ class CAGEReads(Reads):
         full_region_len = stop - start + 1
         cvg = numpy.zeros(full_region_len)
         for rd in self.fetch( chrm, start, stop ):
-            assert not rd.is_paired
+            #assert not rd.is_paired
             if rd.mapq <= 1: continue
+            rd_strand = '-' if rd.is_reverse else '+'
+            if strand != rd_strand: continue
+            cvg[rd.pos-start] += 1
+        
+        return cvg
+
+class RAMPAGEReads(Reads):
+    def init(self, reverse_read_strand, pairs_are_opp_strand=None, reads_are_paired=True ):
+        assert self.is_indexed()
+
+        self.reads_are_paired=reads_are_paired
+        assert self.reads_are_paired
+        
+        # reads strandedness
+        if pairs_are_opp_strand == None:
+            pairs_are_opp_strand = True if not self.reads_are_paired \
+                else not read_pairs_are_on_same_strand( self )
+        self.pairs_are_opp_strand = pairs_are_opp_strand
+        self.PAOS = self.pairs_are_opp_strand
+        
+        self.reverse_read_strand = reverse_read_strand
+        self.RRR = reverse_read_strand
+        
+        return self
+    
+    def build_read_coverage_array( self, chrm, strand, start, stop ):
+        full_region_len = stop - start + 1
+        cvg = numpy.zeros(full_region_len)
+        for rd in self.fetch( chrm, start, stop ):
+            #assert not rd.is_paired
+            if rd.mapq <= 1: continue
+            if not rd.is_read1: continue
+            if rd.pos < start: continue
             rd_strand = '-' if rd.is_reverse else '+'
             if strand != rd_strand: continue
             cvg[rd.pos-start] += 1
