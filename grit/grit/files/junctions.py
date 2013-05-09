@@ -1,3 +1,4 @@
+
 # Copyright (c) 2011-2012 Nathan Boley
 
 import sys
@@ -22,8 +23,8 @@ def get_jn_type( chrm, upstrm_intron_pos, dnstrm_intron_pos,
     # splice junction strand by comparing to consensus seqs
     # subtract one from start since fasta is 0-based closed-open
     intron_seq = \
-        fasta.fetch( 'chr'+chrm , upstrm_intron_pos-1, upstrm_intron_pos+1) + \
-        fasta.fetch( 'chr'+chrm , dnstrm_intron_pos-2, dnstrm_intron_pos )
+        fasta.fetch( chrm , upstrm_intron_pos-1, upstrm_intron_pos+1) + \
+        fasta.fetch( chrm , dnstrm_intron_pos-2, dnstrm_intron_pos )
     
     # if junction matchs consensus set strand
     # else return non-canonical
@@ -125,8 +126,9 @@ def read_spans_single_intron( read ):
     return True
 
 def extract_junctions_in_contig( reads, chrm, strand ):
+
     all_junctions = defaultdict(int)
-    for i, read in enumerate(reads.fetch('chr'+clean_chr_name(chrm))):
+    for i, read in enumerate(reads.fetch(clean_chr_name(chrm))):
         # increment the number of times we've seen this read
         if not read_spans_single_intron( read ):
             continue

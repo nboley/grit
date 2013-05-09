@@ -160,7 +160,7 @@ class Reads( pysam.Samfile ):
         return True
 
     def iter_reads( self, chrm, strand, start=None, stop=None ):
-        for read in self.fetch( 'chr'+chrm, start, stop  ):
+        for read in self.fetch( chrm, start, stop  ):
             rd_strand = get_strand( 
                 read, self.reverse_read_strand, self.pairs_are_opp_strand )
             if rd_strand == strand:
@@ -241,7 +241,8 @@ class RNAseqReads(Reads):
         return self
 
 class CAGEReads(Reads):
-    def init(self, reverse_read_strand, pairs_are_opp_strand=None, reads_are_paired=False ):
+    def init(self, reverse_read_strand, pairs_are_opp_strand=None, 
+             reads_are_paired=False ):
         assert self.is_indexed()
 
         self.reads_are_paired=False
