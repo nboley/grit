@@ -11,7 +11,7 @@ from files.reads import RNAseqReads, CAGEReads, clean_chr_name, guess_strand_fro
 from files.junctions import extract_junctions_in_contig
 from files.bed import create_bed_line
 
-USE_CACHE =True
+USE_CACHE = False
 
 def flatten( regions ):
     new_regions = []
@@ -469,7 +469,7 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
             
             for reads in rnaseq_reads:
                 cvg = reads.build_read_coverage_array( 
-                    chrm, strand, bndry-50, bndry+50 )
+                    chrm, strand, max(0,bndry-50), bndry+50 )
                 pre_bndry_cnt += cvg[:50].sum()
                 post_bndry_cnt += cvg[50:].sum()
         
@@ -767,14 +767,10 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene,
         return [], [], [], []
 
     gene_bins = []
-    #if poss[0][0] != 0:
-    #     gene_bins.append( Bin(0, poss[0][0], "TSS", poss[0][1]) )
     for index, ((start, left_label), (stop, right_label)) in \
             enumerate(izip(poss[:-1], poss[1:])):
         gene_bins.append( Bin(start, stop, left_label, right_label) )
 
-    if poss[-1][0] != gene.stop - gene.start:
-        gene_bins.append( Bin(poss[-1][0], gene.stop-gene.start, poss[-1][1], "TES") )
         
     # find tss exons
         # overlaps a cage peak, then 
@@ -807,13 +803,12 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene,
         for bin_i, bin in enumerate(gene_bins):
             if bin.stop < peak.stop: continue
             if bin.right_label in ('D_JN', 'POLYA', 'ESTART') : break
-        
-        cage_peak_bin_indices.append( bin_i )
-        tss_exons.append( Bin( peak.start, bin.stop,
-                               "CAGE_PEAK", 
-                               bin.right_label, 
-                               "TSS_EXON"  ) )
-
+            cage_peak_bin_indices.append( bin_i )
+            tss_exons.append( Bin( peak.start, bin.stop,
+                                   "CAGE_PEAK", 
+                                   bin.right_label, 
+                                   "TSS_EXON"  ) )
+    
     for cage_peak_i in cage_peak_bin_indices:
         bin = gene_bins[cage_peak_i]
         pseudo_exons.extend( find_right_exon_extensions(
@@ -1052,7 +1047,6 @@ def main():
     
     contig_lens = get_contigs_and_lens( rnaseq_reads, cage_reads )
     for contig, contig_len in contig_lens.iteritems():
-        if contig != '4': continue
         for strand in '+-':
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, cage_reads, polya_sites)
