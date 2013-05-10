@@ -57,7 +57,7 @@ from f_matrix import calc_expected_cnts, find_nonoverlapping_boundaries, \
 
 from frag_len import load_fl_dists, FlDist, build_normal_density
 
-MAX_NUM_TRANSCRIPTS = 5000
+MAX_NUM_TRANSCRIPTS = 50000
 MIN_TRANSCRIPT_FREQ = 1e-12
 MIN_NUM_READS = 10
 
