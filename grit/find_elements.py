@@ -815,11 +815,12 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene,
         for bin_i, bin in enumerate(gene_bins):
             if bin.stop < peak.stop: continue
             if bin.right_label in ('D_JN', 'POLYA', 'ESTART') : break
-            cage_peak_bin_indices.append( bin_i )
-            tss_exons.append( Bin( peak.start, bin.stop,
-                                   "CAGE_PEAK", 
-                                   bin.right_label, 
-                                   "TSS_EXON"  ) )
+            
+        cage_peak_bin_indices.append( bin_i )
+        tss_exons.append( Bin( peak.start, bin.stop,
+                               "CAGE_PEAK", 
+                               bin.right_label, 
+                               "TSS_EXON"  ) )
     
     for cage_peak_i in cage_peak_bin_indices:
         bin = gene_bins[cage_peak_i]
@@ -1050,10 +1051,10 @@ def main():
 
     ofp.write('track name="discovered_elements" visibility=2 itemRgb="On"\n')
     
-    rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=True) 
+    rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=False) 
                      for fp in rnaseq_bams ]
     
-    cage_reads = [ RAMPAGEReads(fp.name).init(reverse_read_strand=False) 
+    cage_reads = [ RAMPAGEReads(fp.name).init(reverse_read_strand=True) 
                    for fp in cage_bams ]
 
     if VERBOSE: print >> sys.stderr,  'Loading candidate polyA sites'
