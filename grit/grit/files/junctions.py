@@ -10,7 +10,7 @@ import re
 import itertools
 from collections import defaultdict, namedtuple
 
-from reads import get_strand, clean_chr_name
+from reads import get_strand
 
 VERBOSE = False
 
@@ -128,7 +128,7 @@ def read_spans_single_intron( read ):
 def extract_junctions_in_contig( reads, chrm, strand ):
 
     all_junctions = defaultdict(int)
-    for i, read in enumerate(reads.fetch(clean_chr_name(chrm))):
+    for i, read in enumerate(reads.fetch(chrm)):
         # increment the number of times we've seen this read
         if not read_spans_single_intron( read ):
             continue
