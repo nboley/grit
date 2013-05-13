@@ -52,15 +52,24 @@ EXON_EXT_CVG_RATIO_THRESH = 4
 
 def get_contigs_and_lens( rnaseq_reads, cage_reads ):
     chrm_lengths = {}
+    contigs = None
     for bam in chain( rnaseq_reads, cage_reads ):
+        bam_contigs = set()
         for ref_name, ref_len in zip(bam.references, bam.lengths):
             if clean_chr_name( ref_name ) not in chrm_lengths:
                 chrm_lengths[clean_chr_name( ref_name )] = ref_len
             else:
                 assert chrm_lengths[clean_chr_name(ref_name)] == ref_len, \
                     "Chromosome lengths do not match between bam files"
+            bam_contigs.add( clean_chr_name(ref_name) )
+        
+        if contigs == None:
+            contigs = bam_contigs
+        else:
+            contigs = contigs.intersection( bam_contigs )
     
-    return chrm_lengths
+    return dict((key, val) for key, val in chrm_lengths.iteritems() 
+                if key in contigs)
 
 def build_empty_array():
     return numpy.array(())

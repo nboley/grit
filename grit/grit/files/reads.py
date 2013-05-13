@@ -155,7 +155,47 @@ class Reads( pysam.Samfile ):
        and their pairs.
 
 
-    """    
+    """ 
+    def _build_chrm_mapping(self):
+        self._canonical_to_chrm_name_mapping = {}
+        for ref_name in self.references:
+            self._canonical_to_chrm_name_mapping[clean_chr_name(ref_name)] =\
+                ref_name
+        
+        return
+    
+    def init(self, reads_are_paired, pairs_are_opp_strand, 
+                   reads_are_stranded, reverse_read_strand ):
+        assert self.is_indexed()
+        self._build_chrm_mapping()
+        
+        self.reads_are_paired = reads_are_paired
+        
+        self.pairs_are_opp_strand = pairs_are_opp_strand
+        self.PAOS = self.pairs_are_opp_strand
+
+        self.reads_are_stranded = reads_are_stranded
+        
+        self.reverse_read_strand = reverse_read_strand        
+        self.RRR = reverse_read_strand
+                
+        return self
+
+    def fix_chrm_name( self, chrm_name ):
+        return self._canonical_to_chrm_name_mapping[clean_chr_name(chrm_name)]
+    
+    def fetch(*args, **kwargs):
+        """Wrap fetch to fix the chrm name.
+
+        """
+        self = args[0]
+        args = list( args )
+        if len(args) > 1:
+            args[1] = self.fix_chrm_name( args[1] )
+        elif reference in kwargs:
+            kwargs['reference'] = self.fix_chrm_name( kwargs['reference'] )
+        return pysam.Samfile.fetch( *args, **kwargs )
+
     def is_indexed( self ):
         return True
 
@@ -224,39 +264,34 @@ class Reads( pysam.Samfile ):
         return cvg
 
 class RNAseqReads(Reads):
-    def init(self, reverse_read_strand, pairs_are_opp_strand=None, reads_are_paired=True):
+    def init(self, reverse_read_strand, reads_are_stranded=True, 
+                   pairs_are_opp_strand=None, reads_are_paired=True):
         assert self.is_indexed()
         
         assert reads_are_paired == True, "GRIT can only use paired RNAseq reads"
-        self.reads_are_paired = reads_are_paired
-        
-        self.reverse_read_strand = reverse_read_strand        
-        self.RRR = reverse_read_strand
+        assert reads_are_stranded == True, "GRIT can only use stranded RNAseq"
         
         if pairs_are_opp_strand == None:
             pairs_are_opp_strand = not read_pairs_are_on_same_strand( self )
-        self.pairs_are_opp_strand = pairs_are_opp_strand
-        self.PAOS = self.pairs_are_opp_strand
+        
+        Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
+                         reads_are_stranded, reverse_read_strand )
         
         return self
 
 class CAGEReads(Reads):
     def init(self, reverse_read_strand, pairs_are_opp_strand=None, 
              reads_are_paired=False ):
-        assert self.is_indexed()
-
-        self.reads_are_paired=False
+        reads_are_paired=False
         assert not self.reads_are_paired, "GRIT can not use paired CAGE reads."
 
         # reads strandedness
         if pairs_are_opp_strand == None:
             pairs_are_opp_strand = True if not self.reads_are_paired \
                 else not read_pairs_are_on_same_strand( self )
-        self.pairs_are_opp_strand = pairs_are_opp_strand
-        self.PAOS = self.pairs_are_opp_strand
-        
-        self.reverse_read_strand = reverse_read_strand
-        self.RRR = reverse_read_strand
+
+        Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
+                         reads_are_stranded, reverse_read_strand )
         
         return self
     
@@ -273,21 +308,18 @@ class CAGEReads(Reads):
         return cvg
 
 class RAMPAGEReads(Reads):
-    def init(self, reverse_read_strand, pairs_are_opp_strand=None, reads_are_paired=True ):
+    def init(self, reverse_read_strand, pairs_are_opp_strand=None ):
         assert self.is_indexed()
 
-        self.reads_are_paired=reads_are_paired
-        assert self.reads_are_paired
+        reads_are_paired = True
+        reads_are_stranded = True
         
         # reads strandedness
         if pairs_are_opp_strand == None:
-            pairs_are_opp_strand = True if not self.reads_are_paired \
-                else not read_pairs_are_on_same_strand( self )
-        self.pairs_are_opp_strand = pairs_are_opp_strand
-        self.PAOS = self.pairs_are_opp_strand
+            pairs_are_opp_strand = read_pairs_are_on_same_strand( self )
         
-        self.reverse_read_strand = reverse_read_strand
-        self.RRR = reverse_read_strand
+        Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
+                         reads_are_stranded, reverse_read_strand )
         
         return self
     
