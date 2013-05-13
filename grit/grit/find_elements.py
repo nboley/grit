@@ -812,10 +812,14 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene,
     tss_exons = []
     for peak in cage_peaks:
         # find the first donor junction right of the cage peaks
+        bin_i, bin = None, None
         for bin_i, bin in enumerate(gene_bins):
             if bin.stop < peak.stop: continue
             if bin.right_label in ('D_JN', 'POLYA', 'ESTART') : break
-            
+        
+        if bin_i == None: 
+            continue
+        
         cage_peak_bin_indices.append( bin_i )
         tss_exons.append( Bin( peak.start, bin.stop,
                                "CAGE_PEAK", 
@@ -1064,7 +1068,6 @@ def main():
     
     contig_lens = get_contigs_and_lens( rnaseq_reads, cage_reads )
     for contig, contig_len in contig_lens.iteritems():
-        if contig != "4": continue
         for strand in '+-':
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, cage_reads, polya_sites)
