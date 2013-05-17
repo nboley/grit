@@ -166,6 +166,13 @@ class Reads( pysam.Samfile ):
     
     def init(self, reads_are_paired, pairs_are_opp_strand, 
                    reads_are_stranded, reverse_read_strand ):
+        self._init_kwargs = {
+            'reads_are_paired': reads_are_paired,
+            'pairs_are_opp_strand': pairs_are_opp_strand, 
+            'reads_are_stranded': reads_are_stranded, 
+            'reverse_read_strand': reverse_read_strand 
+        }
+        
         assert self.is_indexed()
         self._build_chrm_mapping()
         
@@ -263,9 +270,12 @@ class Reads( pysam.Samfile ):
         
         return cvg
 
+    def reload( self ):
+        return type(self)(self.filename).init(**self._init_kwargs)
+
 class RNAseqReads(Reads):
     def init(self, reverse_read_strand, reads_are_stranded=True, 
-                   pairs_are_opp_strand=None, reads_are_paired=True):
+                   pairs_are_opp_strand=None, reads_are_paired=True):        
         assert self.is_indexed()
         
         assert reads_are_paired == True, "GRIT can only use paired RNAseq reads"
@@ -277,11 +287,18 @@ class RNAseqReads(Reads):
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
         
+        self._init_kwargs = {
+            'reverse_read_strand': reverse_read_strand, 
+            'reads_are_stranded': reads_are_stranded, 
+            'pairs_are_opp_strand': pairs_are_opp_strand, 
+            'reads_are_paired': reads_are_paired
+        }
+        
         return self
 
 class CAGEReads(Reads):
     def init(self, reverse_read_strand, pairs_are_opp_strand=None, 
-             reads_are_paired=False ):
+             reads_are_paired=False ):        
         reads_are_paired=False
         assert not self.reads_are_paired, "GRIT can not use paired CAGE reads."
 
@@ -292,6 +309,12 @@ class CAGEReads(Reads):
 
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
+        
+        self._init_kwargs = {
+            'reverse_read_strand': reverse_read_strand, 
+            'pairs_are_opp_strand': pairs_are_opp_strand, 
+            'reads_are_paired': reads_are_paired
+        }
         
         return self
     
@@ -308,7 +331,7 @@ class CAGEReads(Reads):
         return cvg
 
 class RAMPAGEReads(Reads):
-    def init(self, reverse_read_strand, pairs_are_opp_strand=None ):
+    def init(self, reverse_read_strand, pairs_are_opp_strand=None ):       
         assert self.is_indexed()
 
         reads_are_paired = True
@@ -320,6 +343,11 @@ class RAMPAGEReads(Reads):
         
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
+        
+        self._init_kwargs = {
+            'reverse_read_strand': reverse_read_strand, 
+            'pairs_are_opp_strand': pairs_are_opp_strand 
+        }
         
         return self
     
