@@ -1,18 +1,37 @@
 import sys
+
 import numpy
-from scipy import stats
+
 from collections import defaultdict
 from itertools import chain, izip
 from bisect import bisect
 from copy import copy
 
+import multiprocessing
+import Queue
+
 from igraph import Graph
 
-from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, clean_chr_name, guess_strand_from_fname, iter_coverage_intervals_for_read
+from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, clean_chr_name, \
+    guess_strand_from_fname, iter_coverage_intervals_for_read
 from files.junctions import extract_junctions_in_contig
 from files.bed import create_bed_line
 
 USE_CACHE = False
+NTHREADS = 1
+
+class ThreadSafeFile( file ):
+    def __init__( self, *args ):
+        args = list( args )
+        args.insert( 0, self )
+        file.__init__( *args )
+        self.lock = multiprocessing.Lock()
+
+    def write( self, line ):
+        self.lock.acquire()
+        file.write( self, line + "\n" )
+        self.flush()
+        self.lock.release()
 
 def flatten( regions ):
     new_regions = []
@@ -109,9 +128,8 @@ def get_qrange_long( np, w_step, w_window ):
     for pos in xrange(0, L, w_step):
         Q.append( np[pos:pos+w_window].mean() )
     Q = numpy.asarray(Q)
-    lower = stats.stats.scoreatpercentile(Q, 10)
-    upper = stats.stats.scoreatpercentile(Q, 90)
-    return lower, upper
+    Q.sort()
+    return Q[int(len(Q)*0.1)], Q[int(len(Q)*0.9)]
 
 def get_qrange_short( np ):
     L = len(np)
@@ -191,47 +209,6 @@ def find_polya_sites( polya_sites_fnames ):
         numpy_locs[(chrm, strand)] = numpy.array( polya_sites )
     
     return numpy_locs
-
-def parse_arguments():
-    import argparse
-
-    parser = argparse.ArgumentParser(\
-        description='Find exons from RNAseq, CAGE, and poly(A) assays.')
-
-    parser.add_argument( 'rnaseq_reads',type=argparse.FileType('rb'),nargs='+',\
-        help='BAM files containing mapped RNAseq reads ( must be indexed ).')
-    
-    parser.add_argument( '--cage-reads', type=file, default=[], nargs='*', \
-        help='BAM files containing mapped cage reads.')
-    
-    parser.add_argument( '--polya-candidate-sites', type=file, nargs='*', \
-        help='files with allowed polya sites.')
-    
-    parser.add_argument( '--out-filename', '-o', 
-                         default="discovered_elements.bed",\
-        help='Output file name. (default: discovered_elements.bed)')
-    
-    parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
-        help='Whether or not to print status information.')
-    parser.add_argument('--write-debug-data',default=False,action='store_true',\
-        help='Whether or not to print out gff files containing intermediate exon assembly data.')
-    parser.add_argument( '--threads', '-t', default=1, type=int,
-        help='The number of threads to use.')
-        
-    args = parser.parse_args()
-
-    global num_threads
-    num_threads = args.threads
-    
-    global WRITE_DEBUG_DATA
-    WRITE_DEBUG_DATA = args.write_debug_data
-    
-    global VERBOSE
-    VERBOSE = args.verbose
-        
-    ofp = open( args.out_filename, "w" )
-    
-    return args.rnaseq_reads, args.cage_reads, args.polya_candidate_sites, ofp
 
 class Bin( object ):
     def __init__( self, start, stop, left_label, right_label, 
@@ -1011,25 +988,21 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         
         
 
-def find_exons_in_contig( (chrm, strand, contig_len), ofp,
-                          rnaseq_reads, cage_reads, polya_sites):
-    junctions = load_junctions( rnaseq_reads, chrm, strand )
-    polya_sites = polya_sites[(chrm, strand)]
-    polya_bins = Bins( chrm, strand, [] )
-    for x in polya_sites:
-        polya_bins.append( Bin( x-10, x, "POLYA", "POLYA", "POLYA" ) )
-    write_unified_bed( polya_bins, ofp)
+def find_exons_worker( genes_queue, ofp, (chrm, strand, contig_len),
+                        jns, rnaseq_reads, cage_reads, polya_sites ):
+    jn_starts = [ i[0][0] for i in jns ]
+    jn_stops = [ i[0][1] for i in jns ]
+    jn_values = [ i[1] for i in jns ]
     
-    gene_bndry_bins = find_gene_boundaries( 
-       (chrm, strand, contig_len), rnaseq_reads, 
-       polya_sites, junctions)
+    rnaseq_reads = [ x.reload() for x in rnaseq_reads ]
+    cage_reads = [ x.reload() for x in cage_reads ]
+    
+    while not genes_queue.empty():
+        try:
+            gene = genes_queue.get()
+        except Queue.Empty:
+            break
         
-    sorted_jns = sorted( junctions )
-    jn_starts = [ i[0][0] for i in sorted_jns ]
-    jn_stops = [ i[0][1] for i in sorted_jns ]
-    jn_values = [ i[1] for i in sorted_jns ]
-    
-    for gene in gene_bndry_bins:
         # find the junctions associated with this gene
         gj_sa = bisect( jn_stops, gene.start )
         gj_so = bisect( jn_starts, gene.stop )
@@ -1046,7 +1019,7 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
             chrm, strand, gene.start, gene.stop )
 
         gene_cage_cov = cage_reads[0].build_read_coverage_array( 
-            'chr' + chrm, strand, gene.start, gene.stop+1 )
+            chrm, strand, gene.start, gene.stop+1 )
         
         elements = \
             find_exons_in_gene( ( chrm, strand, contig_len ), gene, 
@@ -1054,32 +1027,122 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
                                 gene_polyas, gene_jns )
         
         write_unified_bed( elements, ofp)
-        if VERBOSE: print "FINISHED ", gene
+        if VERBOSE: print "FINISHED ", chrm, strand, gene.start, gene.stop
+
+    pass
+
+def find_exons_in_contig( (chrm, strand, contig_len), ofp,
+                          rnaseq_reads, cage_reads, polya_sites):
+    junctions = load_junctions( rnaseq_reads, chrm, strand )
+    polya_sites = polya_sites[(chrm, strand)]
+    polya_bins = Bins( chrm, strand, [] )
+    for x in polya_sites:
+        polya_bins.append( Bin( x-10, x, "POLYA", "POLYA", "POLYA" ) )
+    write_unified_bed( polya_bins, ofp)
+    
+    gene_bndry_bins = find_gene_boundaries( 
+       (chrm, strand, contig_len), rnaseq_reads, 
+       polya_sites, junctions)
+
+    genes_queue = multiprocessing.Queue()
+    for gene in gene_bndry_bins:
+        genes_queue.put( gene )
+    
+    sorted_jns = sorted( junctions )
+
+    args = [ genes_queue, ofp, (chrm, strand, contig_len),
+             sorted_jns, rnaseq_reads, cage_reads, polya_sites ]
+
+    if NTHREADS == 1:
+        find_exons_worker(*args)
+    else:
+        ps = []
+        for i in xrange( NTHREADS ):
+            p = multiprocessing.Process(target=find_exons_worker, args=args)
+            p.start()
+            ps.append( p )
+
+        for p in ps:
+            p.join()
     
     return
 
+def parse_arguments():
+    import argparse
+
+    parser = argparse.ArgumentParser(\
+        description='Find exons from RNAseq, CAGE, and poly(A) assays.')
+
+    parser.add_argument( 'rnaseq_reads',type=argparse.FileType('rb'),nargs='+',\
+        help='BAM files containing mapped RNAseq reads ( must be indexed ).')
+
+    parser.add_argument( '--reverse-rnaseq-strand', type=bool, default=False,
+        help='Whether to reverse the RNAseq read strand (default False).')
+    
+    parser.add_argument( '--cage-reads', type=file, default=[], nargs='*', \
+        help='BAM files containing mapped cage reads.')
+
+    parser.add_argument( '--rampage-reads', type=file, default=[], nargs='*', \
+        help='BAM files containing mapped rampage reads.')
+    
+    parser.add_argument( '--polya-candidate-sites', type=file, nargs='*', \
+        help='files with allowed polya sites.')
+    
+    parser.add_argument( '--out-filename', '-o', 
+                         default="discovered_elements.bed",\
+        help='Output file name. (default: discovered_elements.bed)')
+    
+    parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
+        help='Whether or not to print status information.')
+    parser.add_argument('--write-debug-data',default=False,action='store_true',\
+        help='Whether or not to print out gff files containing intermediate exon assembly data.')
+    parser.add_argument( '--threads', '-t', default=1, type=int,
+        help='The number of threads to use.')
+        
+    args = parser.parse_args()
+
+    global NTHREADS
+    NTHREADS = args.threads
+    
+    global WRITE_DEBUG_DATA
+    WRITE_DEBUG_DATA = args.write_debug_data
+    
+    global VERBOSE
+    VERBOSE = args.verbose
+        
+    ofp = ThreadSafeFile( args.out_filename, "w" )
+    
+    return args.rnaseq_reads, args.reverse_rnaseq_strand, \
+        args.cage_reads, args.rampage_reads, \
+        args.polya_candidate_sites, ofp
+
 def main():
-    rnaseq_bams, cage_bams, polya_candidate_sites_fps, ofp \
+    rnaseq_bams, reverse_rnaseq_strand, cage_bams, rampage_bams, polya_candidate_sites_fps, ofp \
         = parse_arguments()
 
     ofp.write('track name="discovered_elements" visibility=2 itemRgb="On"\n')
     
-    rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=False) 
+    rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=reverse_rnaseq_strand) 
                      for fp in rnaseq_bams ]
     
-    cage_reads = [ RAMPAGEReads(fp.name).init(reverse_read_strand=True) 
+    cage_reads = [ CAGEReads(fp.name).init(reverse_read_strand=True) 
                    for fp in cage_bams ]
 
+    rampage_reads = [ RAMPAGEReads(fp.name).init(reverse_read_strand=True) 
+                      for fp in rampage_bams ]
+    
+    promoter_reads = [] + cage_reads + rampage_reads
+    
     if VERBOSE: print >> sys.stderr,  'Loading candidate polyA sites'
     polya_sites = find_polya_sites([x.name for x in polya_candidate_sites_fps])
     for fp in polya_candidate_sites_fps: fp.close()
     if VERBOSE: print >> sys.stderr, 'Finished loading candidate polyA sites'
     
-    contig_lens = get_contigs_and_lens( rnaseq_reads, cage_reads )
+    contig_lens = get_contigs_and_lens( rnaseq_reads, promoter_reads )
     for contig, contig_len in contig_lens.iteritems():
         for strand in '+-':
             find_exons_in_contig( (contig, strand, contig_len), ofp,
-                                  rnaseq_reads, cage_reads, polya_sites)
+                                  rnaseq_reads, promoter_reads, polya_sites)
     
 if __name__ == '__main__':
     main()
