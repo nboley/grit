@@ -38,19 +38,9 @@ import pysam
 
 from math import sqrt
 
-sys.path.append( os.path.join( os.path.dirname( __file__ ),
-                               "..", "file_types", "fast_gtf_parser" ) )
-from gtf import load_gtf, Transcript
-sys.path.append( os.path.join( os.path.dirname( __file__ ),
-                               "..", "file_types", "fast_wiggle_parser" ) )
-from bedgraph import load_bedgraph
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", 'file_types'))
-from wiggle import guess_strand_from_fname, fix_chr_name
-
-
-sys.path.append( os.path.join(os.path.dirname( __file__ ), "..", "file_types" ))
-                               
-from reads import Reads, bin_reads
+from files.gtf import load_gtf, Transcript                               
+from files.reads import Reads, bin_reads
+from transcript import cluster_exons
 
 from f_matrix import calc_expected_cnts, find_nonoverlapping_boundaries, \
     build_nonoverlapping_indices, find_nonoverlapping_contig_indices
@@ -658,11 +648,26 @@ def write_gene_to_gtf( ofp, gene, mles, lbs=None, ubs=None, fpkms=None,
     
     return
 
-def estimate_gene_expression_worker( work_type, (gene_id, bam_fn, trans_index),
+def estimate_gene_expression_worker( work_type, (gene_id, trans_index),
                                      input_queue, input_queue_lock,
                                      op_lock, output, 
                                      estimate_confidence_bounds ):
-    if work_type == 'design_matrices':
+    if work_type == 'gene':
+        op_lock.acquire()
+        contig = output_dict[ (gene_id, 'contig') ] = contig
+        strand = output_dict[ (gene_id, 'strand') ] = strand
+        tss_exons = output_dict[ (gene_id, 'tss_exons') ] = tss_es
+        internal_exons = output_dict[(gene_id, 'internal_exons')] = internal_es
+        tes_exons = output_dict[ (gene_id, 'tes_exons') ] = tes_es
+        se_transcripts = output_dict[ (gene_id, 'se_transcripts') ] = se_ts
+        introns = output_dict[ (gene_id, 'introns') ] = grpd_exons['intron']
+        op_lock.release()
+        
+        
+        input_queue_lock.acquire()
+        input_queue.append( ('design_matrices', (gene.id, bam_fn, None)) )
+        input_queue_lock.release()
+    elif work_type == 'design_matrices':
         op_lock.acquire()
         gene = output[((gene_id, bam_fn), 'gene')]
         fl_dists = output[((gene_id, bam_fn), 'fl_dists')]
@@ -863,10 +868,10 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description='Determine valid transcripts and estimate frequencies.')
     parser.add_argument( 'ofname', help='Output filename.')
-    parser.add_argument( 'gtf', type=file,
-        help='GTF file processed for expression')
-
-    parser.add_argument( 'bam_fn', metavar='bam', type=file,
+    parser.add_argument( 'exons', type=file,
+        help='Bed file containing elements')
+    
+    parser.add_argument( 'bam_fn', metavar='bam', nargs=1, type=file,
         help='list of bam files to for which to produce expression')    
     
     parser.add_argument( '--fl-dists', type=file, nargs='+', 
@@ -927,7 +932,7 @@ def parse_arguments():
     # each sub-process for thread safety, so we get the absokute path while we 
     # can. We allow for multiple bams at this stage, but insist upon one in the
     # arguments
-    bam_fns = [ os.path.abspath( args.bam_fn.name ),  ]
+    bam_fn = os.path.abspath( args.bam_fn[0].name )
     
     global PROCESS_SEQUENTIALLY
     if args.threads == 1:
@@ -937,23 +942,37 @@ def parse_arguments():
     num_threads = args.threads
     
     log_fp = open( args.ofname + ".log", "w" )
-    
-    ofps = {}
-    for bam_fn in bam_fns:
-        ofps[bam_fn] = ThreadSafeFile( args.ofname, "w" )
-        ofps[bam_fn].write(
-            "track name=transcripts.%s useScore=1\n" % os.path.basename(bam_fn))
+    ofp = ThreadSafeFile( args.ofname, "w" )
+    ofp.write( "track name=transcripts.%s useScore=1\n" % os.path.basename(bam_fn) )            
     
     cage_fns = [] if args.cage_fns == None else [ 
         fp.name for fp in args.cage_fns ]    
     
-    return args.gtf, bam_fns, cage_fns, ofps, log_fp, \
+    return args.exons, bam_fn, cage_fns, ofp, log_fp, \
         fl_dists, read_group_mappings, \
         args.estimate_confidence_bounds, args.write_design_matrices
     
+def load_elements( fp ):
+    all_elements = defaultdict( lambda: defaultdict(set) )
+    for line in fp:
+        if line.startswith( 'track' ): continue
+        chrm, start, stop, element_type, score, strand = line.split()[:6]
+        all_elements[(chrm, strand)][element_type].add( 
+            (int(start), int(stop)) )
+    
+    # convert into array
+    all_array_elements = defaultdict( 
+        lambda: defaultdict(lambda: numpy.zeros(0)) )
+    for key, elements in all_elements.iteritems():
+        for element_type, contig_elements in elements.iteritems():
+            all_array_elements[key][element_type] \
+                = numpy.array( sorted( contig_elements ) )
+
+    return all_array_elements
+
 def main():
     # Get file objects from command line
-    gtf_fp, bam_fns, cage_fns, ofps, log_fp, fl_dists, rg_mappings, \
+    exons_bed_fp, bam_fn, cage_fns, ofps, log_fp, fl_dists, rg_mappings, \
         estimate_confidence_bounds, write_design_matrices = parse_arguments()
     abs_filter_value = 1e-12 + 1e-16
     rel_filter_value = 0
@@ -978,50 +997,62 @@ def main():
         print >> sys.stderr, "Finished Loading CAGE"
     
     # add all the genes, in order of longest first. 
-    genes = load_gtf( gtf_fp.name )
+    elements = load_elements( exons_bed_fp )
     if VERBOSE:
-        print >> sys.stderr, "Finished Loading %s" % gtf_fp.name
+        print >> sys.stderr, "Finished Loading %s" % exons_bed_fp.name
+    
+    samfile = pysam.Samfile( bam_fn, "rb" )
+    global NUMBER_OF_READS_IN_BAM
+    NUMBER_OF_READS_IN_BAM = samfile.mapped
+    samfile.close()
 
     # add the genes in reverse sorted order so that the longer genes are dealt
     # with first
-    for gene in sorted( genes, key=lambda x: len(x.transcripts) ):
-        if len(gene.transcripts) > MAX_NUM_TRANSCRIPTS:
-            log_warning( "Skipping %s: too many transcripts ( %i )" % ( 
-                    gene.id, len(gene.transcripts ) ) )
-            continue
-        
-        if (gene.strand, gene.chrm) not in cage:
-            if cage != {}:
-                log_warning( "WARNING: Could not find CAGE signal for gene %s (strand %s chr %s)"% (
-                        gene.id, gene.strand, gene.chrm ) )
-            gene_cage = None
-        else:
-            gene_cage = cage[(gene.strand, gene.chrm)][
-                gene.start:gene.stop+1].copy()
-        
-        assert len(bam_fns ) == 1
-        samfile = pysam.Samfile( bam_fns[0], "rb" )
-        global NUMBER_OF_READS_IN_BAM
-        NUMBER_OF_READS_IN_BAM = samfile.mapped
-        samfile.close()
-        
-        for bam_fn in bam_fns:
+    gene_id = 0
+    for (contig, strand), grpd_exons in elements.iteritems():
+        for tss_es, tes_es, internal_es, se_ts in cluster_exons( 
+                set(map(tuple, grpd_exons['tss_exon'].tolist())), 
+                set(map(tuple, grpd_exons['internal_exon'].tolist())), 
+                set(map(tuple, grpd_exons['tes_exon'].tolist())), 
+                set(), # TODO - add the se transcripts
+                set(map(tuple, grpd_exons['intron'].tolist())), 
+                strand):
+            # skip genes without all of the element types
+            if len(se_ts) == 0 and (
+                    len(tes_es) == 0 
+                    or len( tss_es ) == 0 
+                    or len( internal_es ) == 0 ):
+                continue
+            
+            gene_id += 1
+            
             input_queue_lock.acquire()
-            input_queue.append(('design_matrices', (gene.id, bam_fn, None)))
+            input_queue.append(('gene', gene_id))
+            #input_queue.append(('design_matrices', (gene.id, bam_fn, None)))
             input_queue_lock.release()
             
-            key = (gene.id, bam_fn)
-            output_dict[ (key, 'gene') ] = gene
-            output_dict[ (key, 'cage') ] = gene_cage
-            output_dict[ (key, 'fl_dists') ] = fl_dists
-            output_dict[ (key, 'lbs') ] = {}
-            output_dict[ (key, 'ubs') ] = {}
-            output_dict[ (key, 'mle') ] = None
-            output_dict[ (key, 'fpkm') ] = None
-            output_dict[ (key, 'design_matrices') ] = None
+            output_dict[ (gene_id, 'contig') ] = contig
+            output_dict[ (gene_id, 'strand') ] = strand
+
+            output_dict[ (gene_id, 'bam_fn') ] = bam_fn
+            output_dict[ (gene_id, 'cage_fn') ] = None
+            
+            output_dict[ (gene_id, 'tss_exons') ] = tss_es
+            output_dict[ (gene_id, 'internal_exons') ] = internal_es
+            output_dict[ (gene_id, 'tes_exons') ] = tes_es
+            output_dict[ (gene_id, 'se_transcripts') ] = se_ts
+            output_dict[ (gene_id, 'introns') ] = grpd_exons['intron']
+
+            output_dict[ (gene_id, 'gene') ] = None
+
+            output_dict[ (gene_id, 'fl_dists') ] = fl_dists
+            output_dict[ (gene_id, 'lbs') ] = {}
+            output_dict[ (gene_id, 'ubs') ] = {}
+            output_dict[ (gene_id, 'mle') ] = None
+            output_dict[ (gene_id, 'fpkm') ] = None
+            output_dict[ (gene_id, 'design_matrices') ] = None
+        
     
-    del cage
-    del genes
     del fl_dists
     
     write_p = Process(target=write_finished_data_to_disk, args=(
@@ -1101,6 +1132,4 @@ def main():
     return
 
 if __name__ == "__main__":
-    #import cProfile
-    #cProfile.run( 'main()' )
     main()

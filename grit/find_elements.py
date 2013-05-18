@@ -29,7 +29,7 @@ class ThreadSafeFile( file ):
 
     def write( self, line ):
         self.lock.acquire()
-        file.write( self, line + "\n" )
+        file.write( self, line )
         self.flush()
         self.lock.release()
 
