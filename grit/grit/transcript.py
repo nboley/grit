@@ -1,9 +1,13 @@
+import sys
+
 from itertools import chain
 from collections import namedtuple, defaultdict
 CategorizedExons = namedtuple( "CategorizedExons", ["TSS", "TES", "internal", 
                                                     "full_transcript"] )
 
 import igraph
+
+VERBOSE = False
 
 def find_paths(g, n, m, path=[]):
     "Find paths from node index n to m using adjacency list a."
@@ -83,7 +87,7 @@ def cluster_exons( tss_exons, internal_exons, tes_exons, se_transcripts,
     return
 
 def build_transcripts( tss_exons, internal_exons, tes_exons, se_transcripts, 
-                       jns, strand ):
+                       jns, strand, max_num_transcripts=100 ):
     import networkx as nx
     # build a directed graph, with edges leading from exon to exon via junctions
     all_exons = sorted(chain(tss_exons, internal_exons, tes_exons))
@@ -101,10 +105,10 @@ def build_transcripts( tss_exons, internal_exons, tes_exons, se_transcripts,
         for tes in tes_exons:
             for transcript in nx.all_simple_paths(graph, tss, tes):
                 num_transcripts += 1
-                if num_transcripts > MAX_NUM_TRANSCRIPTS: 
-                    print >> sys.stderr, "TOO COMPLEX"
+                if num_transcripts > max_num_transcripts: 
+                    if VERBOSE: print >> sys.stderr, "TOO COMPLEX"
                     return []
 
-                transcripts.append( transcript )
+                transcripts.append( sorted(transcript) )
     
-    return transcripts + se_transcripts
+    return transcripts + list(se_transcripts)

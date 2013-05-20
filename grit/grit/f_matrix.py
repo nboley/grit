@@ -11,7 +11,10 @@ DEBUG=False
 
 import frag_len
 
-from itertools import product, izip
+from itertools import product, izip, chain
+from collections import defaultdict
+
+from files.reads import iter_coverage_regions_for_read, get_read_group
 
 ################################################################################
 #
@@ -452,6 +455,252 @@ def convert_f_matrices_into_arrays( f_mats, normalize=True ):
     assert  expected_cnts.sum(1).min() > 0
     
     return expected_cnts, observed_cnts, zero_entries.tolist()
+
+def build_observed_cnts( binned_reads, fl_dists ):
+    rv = {}
+    for ( read_len, read_group, bin ), value in binned_reads.iteritems():
+        rv[ ( read_len, hash(fl_dists[read_group]), bin ) ] = value
+    
+    return rv
+
+def build_expected_and_observed_arrays( 
+        expected_cnts, observed_cnts, normalize=True ):
+    expected_mat = []
+    observed_mat = []
+    unobservable_transcripts = set()
+    
+    for key, val in sorted(expected_cnts.iteritems()):
+        # skip bins with 0 expected reads
+        if sum( val) == 0:
+            continue
+        
+        expected_mat.append( val )
+        try:
+            observed_mat.append( observed_cnts[key] )
+        except KeyError:
+            observed_mat.append( 0 )
+    
+    if len( expected_mat ) == 0:
+        raise ValueError, "No expected reads."
+    
+    expected_mat = numpy.array( expected_mat, dtype=numpy.double )
+    
+    if normalize:
+        nonzero_entries = expected_mat.sum(0).nonzero()[0]
+        unobservable_transcripts = set(range(expected_mat.shape[1])) \
+            - set(nonzero_entries.tolist())
+        observed_mat = numpy.array( observed_mat, dtype=numpy.int )
+        expected_mat = expected_mat[:,nonzero_entries]
+        expected_mat = expected_mat/expected_mat.sum(0)
+    
+    return expected_mat, observed_mat, unobservable_transcripts
+
+def build_expected_and_observed_rnaseq_counts( gene, reads, fl_dists ):    
+    # find the set of non-overlapping exons, and convert the transcripts to 
+    # lists of these non-overlapping indices. All of the f_matrix code uses
+    # this representation.     
+    exon_boundaries = find_nonoverlapping_boundaries(gene.transcripts)
+    transcripts_non_overlapping_exon_indices = \
+        list(build_nonoverlapping_indices( 
+                gene.transcripts, exon_boundaries ))
+    
+    binned_reads = bin_reads( 
+        reads, gene.chrm, gene.strand, exon_boundaries)
+        
+    observed_cnts = build_observed_cnts( binned_reads, fl_dists )    
+    read_groups_and_read_lens =  { (RG, read_len) for RG, read_len, bin 
+                                   in binned_reads.iterkeys() }
+    
+    fl_dists_and_read_lens = [ (fl_dists[RG], read_len) for read_len, RG  
+                               in read_groups_and_read_lens ]
+    
+    expected_cnts = calc_expected_cnts( 
+        exon_boundaries, transcripts_non_overlapping_exon_indices, 
+        fl_dists_and_read_lens)
+    
+    return expected_cnts, observed_cnts
+
+def build_expected_and_observed_promoter_counts( gene, cage_reads ):
+    # find the promoters
+    promoters = list()
+    for transcript in gene.transcripts:
+        if transcript.strand == '+':
+            promoter = [ transcript.exons[0][0], 
+                         min( transcript.exons[0][0] + PROMOTER_SIZE, 
+                              transcript.exons[0][1]) ]
+        else:
+            assert transcript.strand == '-'
+            promoter = [ max( transcript.exons[-1][1] - PROMOTER_SIZE, 
+                              transcript.exons[-1][0] ),
+                         transcript.exons[-1][1] ]
+        promoters.append( tuple( promoter ) )
+    
+    promoter_boundaries = set()
+    for start, stop in promoters:
+        promoter_boundaries.add( start )
+        promoter_boundaries.add( stop + 1 )
+    promoter_boundaries = numpy.array( sorted( promoter_boundaries ) )
+    pseudo_promoters = zip(promoter_boundaries[:-1], promoter_boundaries[1:])
+    
+    # build the design matrix. XXX FIXME
+    expected_cnts = defaultdict( lambda: [0.]*len(gene.transcripts) )
+    for transcript_i, promoter in enumerate(promoters):
+        nonoverlapping_indices = \
+            find_nonoverlapping_contig_indices( 
+                [promoter,], promoter_boundaries )
+        # calculate the count probabilities, adding a fudge to deal with 0
+        # frequency bins
+        tag_cnt = cage_array[
+            promoter[0]-gene.start:promoter[1]-gene.start].sum() \
+            + 1e-6*len(nonoverlapping_indices)
+        for i in nonoverlapping_indices:
+            ps_promoter = pseudo_promoters[i]
+            ps_tag_cnt = cage_array[
+                ps_promoter[0]-gene.start:ps_promoter[1]-gene.start].sum()
+            expected_cnts[ ps_promoter ][transcript_i] \
+                = (ps_tag_cnt+1e-6)/tag_cnt
+        
+    # count the reads in each non-overlaping promoter
+    observed_cnts = {}
+    for (start, stop) in expected_cnts.keys():
+        observed_cnts[ (start, stop) ] \
+            = int(round(cage_array[start-gene.start:stop-gene.start].sum()))
+    
+    return expected_cnts, observed_cnts
+
+def build_design_matrices( gene, rnaseq_reads, fl_dists, promoter_reads=[], 
+                           write_design_matrices_to_file=False  ):
+    if len( gene.transcripts ) == 0:
+        return numpy.zeros(0), numpy.zeros(0), []
+    
+    # only do this if we are in debugging mode
+    if write_design_matrices_to_file:
+        import cPickle
+        
+        obj_name = "." + str(gene.id) + "_" + hash_array(promoter_reads) \
+            + "_" + os.path.basename(rnaseq_reads.filename) + ".obj"
+        try:
+            fp = open( obj_name )
+            expected_array, observed_array, unobservable_transcripts = \
+                cPickle.load( fp )
+            fp.close()
+            return expected_array, observed_array, unobservable_transcripts
+        except IOError:
+            if DEBUG_VERBOSE: 
+                print "Couldnt load cached"
+    
+    # bin the rnaseq reads
+    expected_rnaseq_cnts, observed_rnaseq_cnts = \
+        build_expected_and_observed_rnaseq_counts( 
+            gene, rnaseq_reads, fl_dists )
+    expected_rnaseq_array, observed_rnaseq_array, unobservable_rnaseq_trans = \
+        build_expected_and_observed_arrays( 
+            expected_rnaseq_cnts, observed_rnaseq_cnts, True )
+    del expected_rnaseq_cnts, observed_rnaseq_cnts
+    
+    if len(promoter_reads) == 0:
+        return expected_rnaseq_array, \
+            observed_rnaseq_array, \
+            unobservable_rnaseq_trans
+    
+    # bin the CAGE data
+    expected_promoter_cnts, observed_promoter_cnts = \
+        build_expected_and_observed_promoter_counts( gene, cage_array )
+    expected_prom_array, observed_prom_array, unobservable_prom_trans = \
+        build_expected_and_observed_arrays( 
+        expected_promoter_cnts, observed_promoter_cnts, False )
+    del expected_promoter_cnts, observed_promoter_cnts
+    
+    # combine the arrays
+    observed_rnaseq_array = numpy.delete( observed_rnaseq_array, 
+                  numpy.array(list(unobservable_prom_trans)) )
+    observed_prom_array = numpy.delete( observed_prom_array, 
+                  numpy.array(list(unobservable_rnaseq_trans)) )
+    observed_array = numpy.hstack((observed_prom_array, observed_rnaseq_array))
+    
+    expected_rnaseq_array = numpy.delete( expected_rnaseq_array, 
+                  numpy.array(list(unobservable_prom_trans)), axis=1 )
+    expected_prom_array = numpy.delete( expected_prom_array, 
+                  numpy.array(list(unobservable_rnaseq_trans)), axis=1 )   
+    
+    expected_array = numpy.vstack((expected_prom_array, expected_rnaseq_array))
+    unobservable_transcripts \
+        = unobservable_rnaseq_trans.union(unobservable_prom_trans)
+        
+    return expected_array, observed_array, unobservable_transcripts
+
+def find_nonoverlapping_exons_covered_by_segment(exon_bndrys, start, stop):
+    """Return the pseudo bins that a given segment has at least one basepair in.
+
+    """
+    # BUG XXX
+    start += 1
+    stop +=1 
+    
+    bin_1 = exon_bndrys.searchsorted(start, side='right')-1
+    # if the start falls before all bins
+    if bin_1 == -1: return ()
+
+    bin_2 = exon_bndrys.searchsorted(stop, side='right')-1
+    # if the stop falls after all bins
+    if bin_2 == len( exon_bndrys ) - 1: return ()
+    
+    if DEBUG:
+        assert bin_1 == -1 or start >= exon_bndrys[ bin_1  ]
+        assert stop < exon_bndrys[ bin_2 + 1  ]
+
+    return tuple(xrange( bin_1, bin_2+1 ))
+ 
+
+def bin_reads( reads, chrm, strand, exon_boundaries ):
+    """Bin reads into non-overlapping exons.
+
+    exon_boundaries should be a numpy array that contains
+    pseudo exon starts.
+    """
+    # first get the paired reads
+    gene_start = int(exon_boundaries[0])
+    gene_stop = int(exon_boundaries[-1])
+    paired_reads = list( reads.iter_paired_reads(
+            chrm, strand, gene_start, gene_stop) )
+    
+    # find the unique subset of contiguous read sub-locations
+    read_locs = set()
+    for r in chain(*paired_reads):
+        for chrm, strand, start, stop in iter_coverage_regions_for_read( 
+                r, reads, reads.reverse_read_strand,reads.pairs_are_opp_strand):
+            read_locs.add( (start, stop) )
+    
+    # build a mapping from contiguous regions into the non-overlapping exons (
+    # ie, exon segments ) that they overlap
+    read_locs_into_bins = {}
+    for start, stop in read_locs:
+        read_locs_into_bins[(start, stop)] = \
+            find_nonoverlapping_exons_covered_by_segment( 
+                exon_boundaries, start, stop )
+
+    def build_bin_for_read( read ):
+        bin = set()
+        for chrm, strand, start, stop in iter_coverage_regions_for_read(
+                read, reads, 
+                reads.reverse_read_strand, reads.pairs_are_opp_strand):
+            bin.update( read_locs_into_bins[(start, stop)] )
+        return tuple(sorted(bin))
+    
+    # finally, aggregate the bins
+    binned_reads = defaultdict( int )
+    for r1, r2 in paired_reads:
+        if r1.rlen != r2.rlen:
+            print >> sys.stderr, "WARNING: read lengths are then same"
+            continue
+        
+        rlen = r1.rlen
+        rg = get_read_group( r1, r2 )
+        bin1 = build_bin_for_read( r1 )
+        bin2 = build_bin_for_read( r2 )
+        binned_reads[( rlen, rg, tuple(sorted((bin1,bin2))))] += 1
+    
+    return dict(binned_reads)
 
 
 def tests( ):
