@@ -13,12 +13,7 @@ import random
 
 import os
 
-from old_reads import Reads
-sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
-                                      "../file_types/" ))
-
-from gene_models import GeneBoundaries, GenomicInterval
-
+from files.reads import Reads
 
 VERBOSE = False
 MIN_FLS_FOR_FL_DIST = 100
