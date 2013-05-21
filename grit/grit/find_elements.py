@@ -14,7 +14,7 @@ from igraph import Graph
 
 from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, clean_chr_name, \
     guess_strand_from_fname, iter_coverage_intervals_for_read
-from files.junctions import extract_junctions_in_contig
+from files.junctions import extract_junctions_in_region
 from files.bed import create_bed_line
 
 USE_CACHE = False
@@ -419,7 +419,15 @@ class Bins( list ):
         
         return
 
-def load_junctions( rnaseq_reads, chrm, strand ):
+def load_junctions_worker(all_jns, all_jns_lock, args):
+    jns = extract_junctions_in_region( *args )
+    all_jns_lock.acquire()
+    all_jns.extend( jns )
+    all_jns_lock.release()
+    del jns
+    return
+
+def load_junctions( rnaseq_reads, (chrm, strand, contig_len) ):
     if USE_CACHE:
         import cPickle
         fname = "tmp.junctions.%s.%s.obj" % ( chrm, strand )
@@ -432,9 +440,40 @@ def load_junctions( rnaseq_reads, chrm, strand ):
             with open( fname, "w" ) as fp:
                 cPickle.dump(junctions, fp)
     else:
-        junctions = extract_junctions_in_contig( 
-            rnaseq_reads[0], chrm, strand )
-    
+        if NTHREADS == 1:
+            junctions = extract_junctions_in_contig( 
+                rnaseq_reads[0], chrm, strand )
+        else:
+            seg_len = int(contig_len/NTHREADS)
+            segments =  [ [i*seg_len, (i+1)*seg_len] for i in xrange(NTHREADS) ]
+            segments[0][0] = 0
+            segments[-1][1] = contig_len
+            
+            from multiprocessing import Process, Manager
+            manager = Manager()
+            all_jns = manager.list()
+            all_jns_lock = manager.Lock()
+            
+            ps = []
+            for start, stop in segments:
+                p = Process(target=load_junctions_worker,
+                            args=( all_jns, all_jns_lock, 
+                                   (rnaseq_reads[0], chrm, strand, start, stop, True) 
+                                   ) )
+                
+                p.start()
+                ps.append( p )
+            
+            import time
+            while True:
+                if all( not p.is_alive() for p in ps ):
+                    break
+                time.sleep( 0.1 )
+            
+            junctions = sorted( all_jns )
+            # make sure the junctions are unique
+            assert len( all_jns ) == len( set( x for x,y in all_jns ) )
+            
     if VERBOSE: print "Finished extracting junctions for %s %s" % (chrm, strand)
     return junctions
 
@@ -496,7 +535,7 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
     
     # find all of the junctions
     if None == junctions:
-        junctions = load_junctions( rnaseq_reads, chrm, strand )
+        junctions = load_junctions( rnaseq_reads, (chrm, strand, contig_len) )
     
     # find segment boundaries
     initial_segmentation = find_initial_segmentation( 
@@ -890,11 +929,8 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         gpd_pseudo_exons.append( pseudo_exons[start:stop] )
         
     if len( gpd_pseudo_exons ) == 0:
-        print "============================================= NO EXONS IN REGION"
-        print gene
         return Bins(chrm, strand, [] )
-            
-    
+        
     internal_exons = Bins(chrm, strand, [] )
     for pseudo_exons_grp in gpd_pseudo_exons:
         internal_exons.extend( 
@@ -1027,13 +1063,13 @@ def find_exons_worker( genes_queue, ofp, (chrm, strand, contig_len),
                                 gene_polyas, gene_jns )
         
         write_unified_bed( elements, ofp)
-        if VERBOSE: print "FINISHED ", chrm, strand, gene.start, gene.stop
+        if DEBUG_VERBOSE: print "FINISHED ", chrm, strand, gene.start, gene.stop
 
     pass
 
 def find_exons_in_contig( (chrm, strand, contig_len), ofp,
                           rnaseq_reads, cage_reads, polya_sites):
-    junctions = load_junctions( rnaseq_reads, chrm, strand )
+    junctions = load_junctions( rnaseq_reads, (chrm, strand, contig_len) )
     polya_sites = polya_sites[(chrm, strand)]
     polya_bins = Bins( chrm, strand, [] )
     for x in polya_sites:
@@ -1094,6 +1130,8 @@ def parse_arguments():
     
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
         help='Whether or not to print status information.')
+    parser.add_argument( '--debug-verbose', default=False, action='store_true',\
+        help='Whether or not to print debugging information.')
     parser.add_argument('--write-debug-data',default=False,action='store_true',\
         help='Whether or not to print out gff files containing intermediate exon assembly data.')
     parser.add_argument( '--threads', '-t', default=1, type=int,
@@ -1109,7 +1147,9 @@ def parse_arguments():
     
     global VERBOSE
     VERBOSE = args.verbose
-        
+    global DEBUG_VERBOSE
+    DEBUG_VERBOSE = args.debug_verbose
+    
     ofp = ThreadSafeFile( args.out_filename, "w" )
     
     return args.rnaseq_reads, args.reverse_rnaseq_strand, \
