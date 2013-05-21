@@ -6,6 +6,7 @@ import numpy
 MAX_NUM_UNMAPPABLE_BASES = 0
 RUN_INLINE_TESTS = False
 LET_READS_OVERLAP = True
+PROMOTER_SIZE = 50
 
 DEBUG=False
 
@@ -521,6 +522,11 @@ def build_expected_and_observed_rnaseq_counts( gene, reads, fl_dists ):
     return expected_cnts, observed_cnts
 
 def build_expected_and_observed_promoter_counts( gene, cage_reads ):
+    cage_array = numpy.zeros(gene.stop-gene.start+1)
+    for reads in cage_reads:
+        cage_array += reads.build_read_coverage_array( 
+            gene.chrm, gene.strand, gene.start, gene.stop )
+    
     # find the promoters
     promoters = list()
     for transcript in gene.transcripts:
@@ -605,7 +611,7 @@ def build_design_matrices( gene, rnaseq_reads, fl_dists, promoter_reads=[],
     
     # bin the CAGE data
     expected_promoter_cnts, observed_promoter_cnts = \
-        build_expected_and_observed_promoter_counts( gene, cage_array )
+        build_expected_and_observed_promoter_counts( gene, promoter_reads )
     expected_prom_array, observed_prom_array, unobservable_prom_trans = \
         build_expected_and_observed_arrays( 
         expected_promoter_cnts, observed_promoter_cnts, False )

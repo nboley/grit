@@ -21,6 +21,5 @@ def create_bed_line( chrm, strand, start, stop,
 def parse_bed_line(line):
     data = line.split()
     if len(data) < 6: return
-    if data[3] != 'single_exon_gene': return
     return GenomicInterval( clean_chr_name(data[0]), data[5], 
                             int(data[1]), int(data[2]) )
