@@ -142,14 +142,17 @@ def extract_junctions_in_region( reads, chrm, strand, start=None, end=None,
         # add one to left_intron since bam files are 0-based
         upstrm_intron_pos = read.pos + read.cigar[0][1] + 1
         dnstrm_intron_pos = upstrm_intron_pos + read.cigar[1][1] - 1
+
+        # Filter out reads that aren't fully in the region
+        if start != None:
+            if dnstrm_intron_pos < start: continue
+            if False == allow_introns_to_span_start and upstrm_intron_pos < start:
+                continue
         
-        if upstrm_intron_pos < end: continue
-        if dnstrm_intron_pos > start: continue
-        
-        if upstrm_intron_pos < start and not allow_introns_to_span_start:
-            continue
-        if dnstrm_intron_pos > end and not allow_introns_to_span_end:
-            continue
+        if end != None:
+            if upstrm_intron_pos > end: continue
+            if False == allow_introns_to_span_end and dnstrm_intron_pos > end:
+                continue
         
         # increment count of junction reads at this read position
         # for this intron or initialize it to 1

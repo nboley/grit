@@ -357,7 +357,8 @@ def build_fl_dists( elements, rnaseq_reads, analyze_pdf_fname=None ):
                 yield GenomicInterval(chrm, strand, start, stop)
         return
     
-    good_exons = iter_good_exons()
+    good_exons = list(iter_good_exons())
+    print good_exons
     fl_dists, fragments = estimate_fl_dists( rnaseq_reads, good_exons )
     if None != analyze_pdf_fname:
         analyze_fl_dists( fragments, analyze_pdf_fname )
