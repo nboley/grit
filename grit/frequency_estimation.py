@@ -29,6 +29,9 @@ DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
 ABS_TOL = 1e-5
 
+class TooFewReadsError( ValueError ):
+    pass
+
 def nnls( X, Y, fixed_indices_and_values={} ):    
     X = matrix(X)
     Y = matrix(Y)

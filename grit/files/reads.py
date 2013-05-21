@@ -164,6 +164,13 @@ class Reads( pysam.Samfile ):
         
         return
     
+    def contig_len( self, contig ):
+        try:
+            return self._contig_lens[self.fix_chrm_name(contig)]
+        except AttributeError:
+            self._contig_lens = dict( zip(self.references, self.lengths) )
+            return self._contig_lens[self.fix_chrm_name(contig)]
+    
     def init(self, reads_are_paired, pairs_are_opp_strand, 
                    reads_are_stranded, reverse_read_strand ):
         self._init_kwargs = {
@@ -185,7 +192,7 @@ class Reads( pysam.Samfile ):
         
         self.reverse_read_strand = reverse_read_strand        
         self.RRR = reverse_read_strand
-                
+        
         return self
 
     def fix_chrm_name( self, chrm_name ):

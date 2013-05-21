@@ -10,6 +10,7 @@ from collections import defaultdict
 import copy
 import pickle
 import random
+from itertools import chain
 
 import os
 
@@ -262,12 +263,14 @@ def find_fragments_in_exon( reads, exon ):
     exon_len = exon.stop - exon.start + 1
 
     # iterate through read pairs in exon to get fragment lengths
-    for cnt, (read1, read2) in enumerate(reads.iter_paired_reads( *exon )):
+    cnt = 0
+    for read1, read2 in reads.iter_paired_reads( *exon ):
         # skip all secondary alignments
         if read1.is_secondary or read2.is_secondary:
             continue
-        
-        if len( read1.cigar ) > 1 or len( read2.cigar ) > 1:
+
+        # skip reads with insertions into the reference
+        if any( x[0] == 3 for x in chain( read1.cigar, read2.cigar ) ):
             continue
         
         # get read group from tags
@@ -287,6 +290,7 @@ def find_fragments_in_exon( reads, exon ):
         key = ( read_group, strand, exon_len )
         fragment_sizes.append( ( key, frag_len ) )
         
+        cnt += 1
         if cnt > MAX_NUM_FRAGMENTS_PER_EXON:
             break
         
