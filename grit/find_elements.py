@@ -14,7 +14,7 @@ from igraph import Graph
 
 from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, clean_chr_name, \
     guess_strand_from_fname, iter_coverage_intervals_for_read
-from files.junctions import extract_junctions_in_region
+from files.junctions import extract_junctions_in_region, extract_junctions_in_contig
 from files.bed import create_bed_line
 
 USE_CACHE = False
@@ -552,7 +552,6 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
     
     for start, stop in clustered_segments:
         if stop - start < 100: continue
-        if stop - start > 10000000: continue
         genes.append( Bin(max(0,start-10), min(stop+10,contig_len), 
                           "ESTART", "POLYA", "GENE" ) )
     
@@ -1050,7 +1049,7 @@ def find_exons_worker( genes_queue, ofp, (chrm, strand, contig_len),
         gene_polya_sa_i = polya_sites.searchsorted( gene.start )
         gene_polya_so_i = polya_sites.searchsorted( gene.stop, side='right' )
         gene_polyas = polya_sites[gene_polya_sa_i:gene_polya_so_i]
-    
+        
         gene_rnaseq_cov = rnaseq_reads[0].build_read_coverage_array( 
             chrm, strand, gene.start, gene.stop )
 
@@ -1062,6 +1061,8 @@ def find_exons_worker( genes_queue, ofp, (chrm, strand, contig_len),
                                 gene_rnaseq_cov, gene_cage_cov, 
                                 gene_polyas, gene_jns )
         
+        elements.extend( Bin( x-10, x, "POLYA", "POLYA", "POLYA" ) 
+                         for x in sorted(gene_polyas) )
         write_unified_bed( elements, ofp)
         if DEBUG_VERBOSE: print "FINISHED ", chrm, strand, gene.start, gene.stop
 
@@ -1071,10 +1072,6 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
                           rnaseq_reads, cage_reads, polya_sites):
     junctions = load_junctions( rnaseq_reads, (chrm, strand, contig_len) )
     polya_sites = polya_sites[(chrm, strand)]
-    polya_bins = Bins( chrm, strand, [] )
-    for x in polya_sites:
-        polya_bins.append( Bin( x-10, x, "POLYA", "POLYA", "POLYA" ) )
-    write_unified_bed( polya_bins, ofp)
     
     gene_bndry_bins = find_gene_boundaries( 
        (chrm, strand, contig_len), rnaseq_reads, 
