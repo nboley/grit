@@ -198,7 +198,7 @@ def find_orfs( sequence ):
     
     return orfs
 
-def find_cds_for_gene( gene, fasta ):                    
+def find_cds_for_gene( gene, fasta ):
     """Find all of the unique open reading frames in a gene
     """
     annotated_transcripts = []
