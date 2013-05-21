@@ -125,12 +125,13 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
         op_lock.acquire()
         gene = output[(gene_id, 'gene')]
         fl_dists = output[(gene_id, 'fl_dists')]
-        promoter_reads = output[(gene_id, 'promoter_reads')]
+        promoter_reads_init_data = output[(gene_id, 'promoter_reads')]
         rnaseq_reads_init_data = output[(gene_id, 'rnaseq_reads')]
         op_lock.release()
         rnaseq_reads = [ RNAseqReads(fname).init(**kwargs) 
                          for fname, kwargs in rnaseq_reads_init_data ][0]
-        cage = None
+        promoter_reads = [ readsclass(fname).init(**kwargs) 
+                         for readsclass, fname, kwargs in promoter_reads_init_data ]
         try:
             expected_array, observed_array, unobservable_transcripts \
                 = build_design_matrices( gene, rnaseq_reads, 
@@ -346,6 +347,74 @@ def load_elements( fp ):
 
     return all_array_elements
 
+def build_fl_dists( elements, rnaseq_reads, analyze_pdf_fname=None ):
+    from frag_len import estimate_fl_dists, analyze_fl_dists
+    from transcript import iter_nonoverlapping_exons
+    from files.gtf import GenomicInterval
+    def iter_good_exons():
+        for (chrm, strand), exons in elements.iteritems():
+            for start, stop in iter_nonoverlapping_exons(exons['internal_exon']):
+                yield GenomicInterval(chrm, strand, start, stop)
+        return
+    
+    good_exons = iter_good_exons()
+    fl_dists, fragments = estimate_fl_dists( rnaseq_reads, good_exons )
+    if None != analyze_pdf_fname:
+        analyze_fl_dists( fragments, analyze_pdf_fname )
+    
+    return fl_dists
+
+def initialize_processing_data( elements, fl_dists,
+                                rnaseq_reads, promoter_reads,
+                                input_queue, input_queue_lock, 
+                                output_dict, output_dict_lock ):
+    gene_id = 0
+    for (contig, strand), grpd_exons in elements.iteritems():
+        for tss_es, tes_es, internal_es, se_ts in cluster_exons( 
+                set(map(tuple, grpd_exons['tss_exon'].tolist())), 
+                set(map(tuple, grpd_exons['internal_exon'].tolist())), 
+                set(map(tuple, grpd_exons['tes_exon'].tolist())), 
+                set(), # TODO - add the se transcripts
+                set(map(tuple, grpd_exons['intron'].tolist())), 
+                strand):
+            # skip genes without all of the element types
+            if len(se_ts) == 0 and (
+                    len(tes_es) == 0 
+                    or len( tss_es ) == 0 
+                    or len( internal_es ) == 0 ):
+                continue
+            
+            gene_id += 1
+            
+            input_queue_lock.acquire()
+            input_queue.append(('gene', (gene_id, None, None)))
+            input_queue_lock.release()
+            
+            output_dict[ (gene_id, 'contig') ] = contig
+            output_dict[ (gene_id, 'strand') ] = strand
+            
+            output_dict[ (gene_id, 'rnaseq_reads') ] = \
+                [(x.filename, x._init_kwargs) for x in rnaseq_reads]
+            output_dict[ (gene_id, 'promoter_reads') ] = \
+                [(type(x), x.filename, x._init_kwargs) for x in promoter_reads]
+            
+            output_dict[ (gene_id, 'tss_exons') ] = tss_es
+            output_dict[ (gene_id, 'internal_exons') ] = internal_es
+            output_dict[ (gene_id, 'tes_exons') ] = tes_es
+            output_dict[ (gene_id, 'se_transcripts') ] = se_ts
+            output_dict[ (gene_id, 'introns') ] = grpd_exons['intron']
+
+            output_dict[ (gene_id, 'gene') ] = None
+
+            output_dict[ (gene_id, 'fl_dists') ] = fl_dists
+            output_dict[ (gene_id, 'lbs') ] = {}
+            output_dict[ (gene_id, 'ubs') ] = {}
+            output_dict[ (gene_id, 'mle') ] = None
+            output_dict[ (gene_id, 'fpkm') ] = None
+            output_dict[ (gene_id, 'design_matrices') ] = None
+    
+    return
+
 def parse_arguments():
     import argparse
 
@@ -367,13 +436,7 @@ def parse_arguments():
 
     parser.add_argument( '--rampage-reads', type=file, default=[], nargs='*', \
         help='BAM files containing mapped rampage reads.')
-    
-    parser.add_argument( '--fl-dists', type=file, nargs='+', 
-       help='a pickled fl_dist object(default:generate fl_dist from input bam)')
-    parser.add_argument( '--fl-dist-norm', \
-        help='mean and standard deviation (format "mn:sd") from which to ' \
-            +'produce a fl_dist_norm (default:generate fl_dist from input bam)')
-    
+        
     parser.add_argument( '--threads', '-t', type=int , default=1,
         help='Number of threads spawn for multithreading (default=1)')
     
@@ -391,28 +454,7 @@ def parse_arguments():
                              help='Prints the optimization path updates.')
     
     args = parser.parse_args()
-    
-    if not args.fl_dists and not args.fl_dist_norm:
-        raise ValueError, "Must specific either --fl-dists or --fl-dist-norm."
-    
-    if args.fl_dist_norm != None:
-        try:
-            mean, sd = args.fl_dist_norm.split(':')
-            mean = int(mean)
-            sd = int(sd)
-            fl_dist_norm = (mean, sd)
-        except ValueError:
-            raise ValueError, "Mean and SD for normal fl_dist are not properly formatted. Expected '--fl-dist-norm MEAN:SD'."
         
-        mean, sd = fl_dist_norm
-        fl_min = max( 0, mean - (4 * sd) )
-        fl_max = mean + (4 * sd)
-        fl_dists = { 'mean': build_normal_density( fl_min, fl_max, mean, sd ) }
-        read_group_mappings = []
-    else:
-        fl_dists, read_group_mappings = load_fl_dists( 
-            fp.name for fp in args.fl_dists )
-    
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
     frequency_estimation.DEBUG_VERBOSE = DEBUG_VERBOSE
@@ -434,14 +476,13 @@ def parse_arguments():
                    % os.path.basename(args.rnaseq_reads[0].name) )
         
     return args.exons, args.rnaseq_reads, args.cage_reads, args.rampage_reads, \
-        args.reverse_rnaseq_strand, fl_dists, read_group_mappings, \
-        ofp, log_fp, \
+        args.reverse_rnaseq_strand, ofp, log_fp, \
         args.estimate_confidence_bounds, args.write_design_matrices
 
 def main():
     # Get file objects from command line
     exons_bed_fp, rnaseq_bams, cage_bams, rampage_bams, \
-        reverse_rnaseq_strand, fl_dists, rg_mappings, ofp, log_fp, \
+        reverse_rnaseq_strand, ofp, log_fp, \
         estimate_confidence_bounds, write_design_matrices = parse_arguments()
     abs_filter_value = 1e-12 + 1e-16
     rel_filter_value = 0
@@ -473,57 +514,16 @@ def main():
                       for fp in rampage_bams ]
     promoter_reads = [] + cage_reads + rampage_reads
     assert len(promoter_reads) <= 1
-    
-    # add the genes in reverse sorted order so that the longer genes are dealt
-    # with first
-    gene_id = 0
-    for (contig, strand), grpd_exons in elements.iteritems():
-        for tss_es, tes_es, internal_es, se_ts in cluster_exons( 
-                set(map(tuple, grpd_exons['tss_exon'].tolist())), 
-                set(map(tuple, grpd_exons['internal_exon'].tolist())), 
-                set(map(tuple, grpd_exons['tes_exon'].tolist())), 
-                set(), # TODO - add the se transcripts
-                set(map(tuple, grpd_exons['intron'].tolist())), 
-                strand):
-            # skip genes without all of the element types
-            if len(se_ts) == 0 and (
-                    len(tes_es) == 0 
-                    or len( tss_es ) == 0 
-                    or len( internal_es ) == 0 ):
-                continue
-            
-            gene_id += 1
-            
-            input_queue_lock.acquire()
-            input_queue.append(('gene', (gene_id, None, None)))
-            #input_queue.append(('design_matrices', (gene.id, bam_fn, None)))
-            input_queue_lock.release()
-            
-            output_dict[ (gene_id, 'contig') ] = contig
-            output_dict[ (gene_id, 'strand') ] = strand
-            
-            output_dict[ (gene_id, 'rnaseq_reads') ] = \
-                [(x.filename, x._init_kwargs) for x in rnaseq_reads]
-            output_dict[ (gene_id, 'promoter_reads') ] = \
-                [(type(x), x.filename, x._init_kwargs) for x in promoter_reads]
-            
-            output_dict[ (gene_id, 'tss_exons') ] = tss_es
-            output_dict[ (gene_id, 'internal_exons') ] = internal_es
-            output_dict[ (gene_id, 'tes_exons') ] = tes_es
-            output_dict[ (gene_id, 'se_transcripts') ] = se_ts
-            output_dict[ (gene_id, 'introns') ] = grpd_exons['intron']
 
-            output_dict[ (gene_id, 'gene') ] = None
-
-            output_dict[ (gene_id, 'fl_dists') ] = fl_dists
-            output_dict[ (gene_id, 'lbs') ] = {}
-            output_dict[ (gene_id, 'ubs') ] = {}
-            output_dict[ (gene_id, 'mle') ] = None
-            output_dict[ (gene_id, 'fpkm') ] = None
-            output_dict[ (gene_id, 'design_matrices') ] = None
-        
+    # estimate the fragment length distribution
+    fl_dists = build_fl_dists( 
+        elements, rnaseq_reads[0], log_fp.name + ".fldist.pdf" )
     
-    del fl_dists
+    initialize_processing_data( elements, fl_dists,
+                                rnaseq_reads, promoter_reads,
+                                input_queue, input_queue_lock, 
+                                output_dict, output_dict_lock )    
+    
     
     write_p = multiprocessing.Process(target=write_finished_data_to_disk, args=(
             output_dict, output_dict_lock, 
@@ -534,7 +534,7 @@ def main():
     write_p.start()    
     
     ps = [None]*num_threads
-    while True:
+    while True:        
         # get the data to process
         try:
             input_queue_lock.acquire()
@@ -545,7 +545,11 @@ def main():
                 input_queue_lock.release()
                 break
             input_queue_lock.release()
+            # if the queue is empty but processing is still going on,
+            # then just sleep
+            time.sleep(1.0)
             continue
+        
         input_queue_lock.release()
         
         if work_type == 'ERROR':
@@ -561,13 +565,14 @@ def main():
             continue
 
         if work_type == 'mle':
-            finished_queue.put( ('design_matrix', gene_id) )
+            if write_design_matrices:
+                finished_queue.put( ('design_matrix', gene_id) )
             log_fp.write( str(key[0]) + "\tFinished MLE\n" )
-
-        # get a process index
+        
+        # sleep until we have a free process index
         while True:
             if all( p != None and p.is_alive() for p in ps ):
-                time.sleep(2)
+                time.sleep(0.1)
                 continue
             break
         

@@ -222,19 +222,15 @@ class Reads( pysam.Samfile ):
 
         # get all of the first pairs
         def iter_pair1_reads():
-            for read in self.fetch( chrm, start, stop  ):
-                rd_strand = get_strand( 
-                    read, self.reverse_read_strand, self.pairs_are_opp_strand )
-                if rd_strand == strand:
+            for read in self.iter_reads(chrm, strand, start, stop):
+                if read.is_read1: 
                     yield read
         
         # index the pair 2 reads
         reads_pair2 = {}
         for read in self.iter_reads(chrm, strand, start, stop):
-            rd_strand = get_strand( 
-                read, self.reverse_read_strand, self.pairs_are_opp_strand )
-            if rd_strand == strand:
-                reads_pair2[ read.qname ] = read
+            if not read.is_read1: 
+                reads_pair2[read.qname] = read
         
         # iterate through the read pairs
         for read1 in iter_pair1_reads():

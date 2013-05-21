@@ -13,8 +13,6 @@ import random
 
 import os
 
-from files.reads import Reads
-
 VERBOSE = False
 MIN_FLS_FOR_FL_DIST = 100
 
@@ -264,9 +262,12 @@ def find_fragments_in_exon( reads, exon ):
     exon_len = exon.stop - exon.start + 1
 
     # iterate through read pairs in exon to get fragment lengths
-    for cnt, (read1, read2) in enumerate(reads.iter_paired_reads( exon )):
+    for cnt, (read1, read2) in enumerate(reads.iter_paired_reads( *exon )):
         # skip all secondary alignments
         if read1.is_secondary or read2.is_secondary:
+            continue
+        
+        if len( read1.cigar ) > 1 or len( read2.cigar ) > 1:
             continue
         
         # get read group from tags
@@ -279,10 +280,9 @@ def find_fragments_in_exon( reads, exon ):
         
         strand = '-' if read1.is_reverse else '+'
 
-        if not read1.is_reverse:
-            frag_len = read2.aend - read1.pos
-        else:
-            frag_len = read1.aend - read2.pos
+        frag_start = min( read1.pos, read2.pos, read1.aend, read2.aend )
+        frag_stop = max( read1.pos, read2.pos, read1.aend, read2.aend )
+        frag_len = frag_stop - frag_start + 1
         
         key = ( read_group, strand, exon_len )
         fragment_sizes.append( ( key, frag_len ) )
@@ -485,7 +485,6 @@ def merge_clustered_fl_dists( clustered_read_groups, grouped_fragments ):
     return clustered_fl_dists
 
 def estimate_fl_dists( reads, exons ):
-    
     fragments = find_fragments( reads, exons )
     if len( fragments ) == 0:
         err_str = "There are no reads for this data file in the " \
@@ -501,7 +500,7 @@ def estimate_fl_dists( reads, exons ):
             continue
         fl_dist = build_robust_fl_dist_with_stats( fragment_lengths )
         fl_dists[ read_group ] = fl_dist
-
+    
     return fl_dists, fragments
 
 def parse_arguments():
@@ -525,7 +524,8 @@ def parse_arguments():
 def main():
     gff_fp, bam_fn, ofname, analyze = parse_arguments()
     
-    from bed import parse_bed_line
+    from files.bed import parse_bed_line
+    from files.reads import Reads
     
     exons = []
     for line in gff_fp:
@@ -538,7 +538,7 @@ def main():
     gff_fp.close()
     
     # load the bam file
-    reads = Reads( bam_fn , "rb" )
+    reads = RNASeqReads( bam_fn , "rb" )
     
     VERBOSE = True
     fl_dists, fragments = estimate_fl_dists( reads, exons )
