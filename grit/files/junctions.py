@@ -125,10 +125,12 @@ def read_spans_single_intron( read ):
     
     return True
 
-def extract_junctions_in_contig( reads, chrm, strand ):
-
+def extract_junctions_in_region( reads, chrm, strand, start=None, end=None, 
+                                 allow_introns_to_span_start=False,
+                                 allow_introns_to_span_end=False):
+    reads.reload()
     all_junctions = defaultdict(int)
-    for i, read in enumerate(reads.fetch(chrm)):
+    for i, read in enumerate(reads.fetch(chrm, start, end)):
         # increment the number of times we've seen this read
         if not read_spans_single_intron( read ):
             continue
@@ -141,7 +143,12 @@ def extract_junctions_in_contig( reads, chrm, strand ):
         upstrm_intron_pos = read.pos + read.cigar[0][1] + 1
         dnstrm_intron_pos = upstrm_intron_pos + read.cigar[1][1] - 1
         
-        if abs( upstrm_intron_pos - dnstrm_intron_pos ) > 10000:
+        if upstrm_intron_pos < end: continue
+        if dnstrm_intron_pos > start: continue
+        
+        if upstrm_intron_pos < start and not allow_introns_to_span_start:
+            continue
+        if dnstrm_intron_pos > end and not allow_introns_to_span_end:
             continue
         
         # increment count of junction reads at this read position
@@ -149,3 +156,7 @@ def extract_junctions_in_contig( reads, chrm, strand ):
         all_junctions[ (upstrm_intron_pos, dnstrm_intron_pos) ] += 1
     
     return sorted( all_junctions.iteritems() )
+
+def extract_junctions_in_contig( reads, chrm, strand ):
+    return extract_junctions_in_region( 
+        reads, chrm, strand, start=None, end=None )
