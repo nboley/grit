@@ -206,7 +206,7 @@ class Reads( pysam.Samfile ):
         args = list( args )
         if len(args) > 1:
             args[1] = self.fix_chrm_name( args[1] )
-        elif reference in kwargs:
+        elif 'reference' in kwargs:
             kwargs['reference'] = self.fix_chrm_name( kwargs['reference'] )
         return pysam.Samfile.fetch( *args, **kwargs )
 
@@ -303,11 +303,13 @@ class CAGEReads(Reads):
     def init(self, reverse_read_strand, pairs_are_opp_strand=None, 
              reads_are_paired=False ):        
         reads_are_paired=False
-        assert not self.reads_are_paired, "GRIT can not use paired CAGE reads."
-
+        assert not reads_are_paired, "GRIT can not use paired CAGE reads."
+        
+        reads_are_stranded = True
+        
         # reads strandedness
         if pairs_are_opp_strand == None:
-            pairs_are_opp_strand = True if not self.reads_are_paired \
+            pairs_are_opp_strand = True if not reads_are_paired \
                 else not read_pairs_are_on_same_strand( self )
 
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
@@ -329,7 +331,13 @@ class CAGEReads(Reads):
             if rd.mapq <= 1: continue
             rd_strand = '-' if rd.is_reverse else '+'
             if strand != rd_strand: continue
-            cvg[rd.pos-start] += 1
+            if strand == '-':
+                peak_pos = rd.aend
+            else:
+                peak_pos = rd.pos
+            if peak_pos < start or peak_pos > stop:
+                continue
+            cvg[peak_pos-start] += 1
         
         return cvg
 

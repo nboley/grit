@@ -198,7 +198,7 @@ def find_orfs( sequence ):
     
     return orfs
 
-def find_cds_for_gene( gene, fasta ):
+def find_cds_for_gene( gene, fasta, only_longest_orf=ONLY_USE_LONGEST_ORF ):
     """Find all of the unique open reading frames in a gene
     """
     annotated_transcripts = []
@@ -213,7 +213,7 @@ def find_cds_for_gene( gene, fasta ):
             continue
         
         filtered_orfs = []
-        if ONLY_USE_LONGEST_ORF:
+        if only_longest_orf:
             max_orf_length = max( stop - start + 1 for start, stop in orfs )
             for start, stop in orfs:
                 if stop - start + 1 == max_orf_length:

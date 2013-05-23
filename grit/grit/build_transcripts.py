@@ -20,7 +20,7 @@ from f_matrix import build_design_matrices
 import frequency_estimation
 from frag_len import load_fl_dists, FlDist, build_normal_density
 
-MAX_NUM_TRANSCRIPTS = 5000
+MAX_NUM_TRANSCRIPTS = 50000
 MIN_NUM_READS = 10
 
 log_fp = sys.stderr
@@ -104,7 +104,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             transcripts.append( Transcript(
                     "%s_%i" % ( gene_id, i ), contig, strand, 
                     exons, cds_region=None, gene_id=gene_id) )
-                
+        
         gene_min = min( min(e) for e in chain(
                 tss_exons, tes_exons, se_transcripts))
         gene_max = max( max(e) for e in chain(
@@ -113,7 +113,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
 
         if fasta_fn != None:
             fasta = Fastafile( fasta_fn )
-            gene.transcripts = find_cds_for_gene( gene, fasta )
+            gene.transcripts = find_cds_for_gene( gene, fasta, only_longest_orf=True )
         
         op_lock.acquire()
         output[(gene_id, 'gene')] = gene
@@ -342,8 +342,9 @@ def load_elements( fp ):
     for line in fp:
         if line.startswith( 'track' ): continue
         chrm, start, stop, element_type, score, strand = line.split()[:6]
+        # subtract 1 from stop becausee beds are closed open
         all_elements[(chrm, strand)][element_type].add( 
-            (int(start), int(stop)) )
+            (int(start), int(stop)-1) )
     
     # convert into array
     all_array_elements = defaultdict( 
@@ -374,7 +375,7 @@ def build_fl_dists( elements, rnaseq_reads,
     
     good_exons = iter_good_exons()
     fl_dists, fragments = estimate_fl_dists( rnaseq_reads, good_exons )
-    if None != analyze_pdf_fname:
+    if None != fragments and  None != analyze_pdf_fname:
         analyze_fl_dists( fragments, analyze_pdf_fname )
     
     return fl_dists
@@ -496,7 +497,7 @@ def parse_arguments():
     ofp = ThreadSafeFile( args.ofname, "w" )
     ofp.write( "track name=transcripts.%s useScore=1\n" \
                    % os.path.basename(args.rnaseq_reads[0].name) )
-        
+    
     return args.elements, args.rnaseq_reads, args.cage_reads, args.rampage_reads, \
         ofp, args.fasta, args.reverse_rnaseq_strand, \
         args.estimate_confidence_bounds, args.write_design_matrices

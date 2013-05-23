@@ -4,7 +4,8 @@ import re
 def main():
     min_rpkm = float( sys.argv[1] )
     for line in open( sys.argv[2] ):
-        if line.startswith( "track" ): continue
+        if line.startswith( "track" ): 
+            print line.strip()
         frac = float(re.findall( '.*?frac "(.*?)";', line )[0])
         if frac >= min_rpkm:
             print line.strip()
