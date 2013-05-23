@@ -256,58 +256,6 @@ def analyze_fl_dists( fragments, out_filename='diagnostic_plots.pdf'):
 
     return
 
-def find_fragments_in_exon( reads, exon ):
-    fragment_sizes = []
-    
-    # calculate the length of the exon
-    exon_len = exon.stop - exon.start + 1
-
-    # iterate through read pairs in exon to get fragment lengths
-    cnt = 0
-    for read1, read2 in reads.iter_paired_reads( *exon ):
-        # skip all secondary alignments
-        if read1.is_secondary or read2.is_secondary:
-            continue
-
-        # skip reads with insertions into the reference
-        if any( x[0] == 3 for x in chain( read1.cigar, read2.cigar ) ):
-            continue
-        
-        # get read group from tags
-        # put all frags w/o a read group into mean read group
-        try:
-            read_group = [ val for key, val in read1.tags if key == 'RG' ][0]
-        except IndexError:
-            read_group = 'mean'
-        read_group = 'mean'
-        
-        strand = '-' if read1.is_reverse else '+'
-
-        frag_start = min( read1.pos, read2.pos, read1.aend, read2.aend )
-        frag_stop = max( read1.pos, read2.pos, read1.aend, read2.aend )
-        frag_len = frag_stop - frag_start + 1
-        
-        key = ( read_group, strand, exon_len )
-        fragment_sizes.append( ( key, frag_len ) )
-        
-        cnt += 1
-        if cnt > MAX_NUM_FRAGMENTS_PER_EXON:
-            break
-        
-    return fragment_sizes
-
-def find_fragments( reads, exons ):
-    fragment_sizes = []
-    for exon_i, exon in enumerate(exons):
-        if (exon.stop - exon.start + 1) < MIN_EXON_LENGTH:
-            continue
-        
-        fragment_sizes.extend( find_fragments_in_exon( reads, exon ) )
-        if len( fragment_sizes ) > MAX_NUM_FRAGMENTS:
-            break
-    
-    return fragment_sizes
-
 def build_robust_fl_dist_with_stats( fragment_lengths ):
     """Trim outliers from a numpy array of fragment lengths.
 
@@ -488,22 +436,116 @@ def merge_clustered_fl_dists( clustered_read_groups, grouped_fragments ):
     
     return clustered_fl_dists
 
-def estimate_fl_dists( reads, exons ):
-    fragments = find_fragments( reads, exons )
-    if len( fragments ) == 0:
-        err_str = "There are no reads for this data file in the " \
-            + "high read depth exons."
+def find_frag_len( rd1, rd2 ):
+    """Find a fragment length for a rd pair, assumign they dont skip any introns.
+    
+    """
+    frag_start = min( rd1.pos, rd2.pos, rd1.aend, rd2.aend )
+    frag_stop = max( rd1.pos, rd2.pos, rd1.aend, rd2.aend )
+
+    # find the intron lengths, so that we can remove them from the fragmnet
+    rd1_intron_len = sum( length for code, length in rd1.cigar if code == 3 )
+    rd2_intron_len = sum( length for code, length in rd2.cigar if code == 3 )
+    intron_len = rd1_intron_len + rd2_intron_len
+    # if both of the intron lengths are the same, assume they are overlapping
+    # and continue
+    if rd1_intron_len == rd2_intron_len:
+        intron_len -= rd1_intron_len
+    
+    return frag_stop - frag_start + 1 - intron_len
+    
+
+def find_fragments_in_exon( reads, exon ):
+    fragment_sizes = []
+    
+    # calculate the length of the exon
+    exon_len = exon.stop - exon.start + 1
+
+    # iterate through read pairs in exon to get fragment lengths
+    cnt = 0
+    for read1, read2 in reads.iter_paired_reads( *exon ):
+        # skip all secondary alignments
+        if read1.is_secondary or read2.is_secondary:
+            continue
+
+        # skip reads with insertions into the reference
+        if any( x[0] == 3 for x in chain( read1.cigar, read2.cigar ) ):
+            continue
+        
+        # get read group from tags
+        # put all frags w/o a read group into mean read group
+        try:
+            read_group = [ val for key, val in read1.tags if key == 'RG' ][0]
+        except IndexError:
+            read_group = 'mean'
+        read_group = 'mean'
+        
+        strand = '-' if read1.is_reverse else '+'
+        
+        frag_len = find_frag_len( read1, read2 )
+        if frag_len == None:
+            continue
+        
+        key = ( read_group, strand, exon_len )
+        fragment_sizes.append( ( key, frag_len ) )
+        
+        cnt += 1
+        if cnt > MAX_NUM_FRAGMENTS_PER_EXON:
+            break
+        
+    return fragment_sizes
+
+def find_fragments( reads, exons ):
+    fragment_sizes = []
+    for exon_i, exon in enumerate(exons):
+        if (exon.stop - exon.start + 1) < MIN_EXON_LENGTH:
+            continue
+        
+        fragment_sizes.extend( find_fragments_in_exon( reads, exon ) )
+        if len( fragment_sizes ) > MAX_NUM_FRAGMENTS:
+            break
+    
+    return fragment_sizes
+
+def estimate_normal_fl_dist_from_reads( reads, max_num_fragments_to_sample=500 ):
+    frag_lens = []
+    for rd1 in reads.fetch():
+        if not rd1.is_paired or not rd1.is_read1: 
+            continue
+        try:
+            rd2 = reads.mate(rd1)
+        except ValueError: continue
+        frag_len = find_frag_len(rd1, rd2)
+        frag_lens.append( frag_len )
+        if len( frag_lens ) > max_num_fragments_to_sample: break
+
+    if len( frag_lens ) < 50:
+        err_str = "There are not enough reads to estimate an fl dist"
         raise ValueError, err_str
     
-    # distributions of individual read_groups is not currently used
-    # only clustered distributions are used for downstream analysis
-    fl_dists = {}
-    grouped_fragments = group_fragments_by_readgroup( fragments )
-    for read_group, fragment_lengths in grouped_fragments.iteritems():
-        if len( fragment_lengths ) < MIN_FLS_FOR_FL_DIST:
-            continue
-        fl_dist = build_robust_fl_dist_with_stats( fragment_lengths )
-        fl_dists[ read_group ] = fl_dist
+    frag_lens = numpy.array( frag_lens )
+    frag_lens.sort()
+    bnd = int(0.15*len(frag_lens))
+    trimmed_fragments = frag_lens[bnd:len(frag_lens)-bnd]
+    min_fl, max_fl = int(trimmed_fragments[0]), int(trimmed_fragments[-1])
+    mean, sd = trimmed_fragments.mean(), trimmed_fragments.std()
+    return build_normal_density( min_fl, max_fl, mean, sd ), None
+    
+def estimate_fl_dists( reads, exons ):
+    fragments = find_fragments( reads, exons )
+    if len(fragments) > 5000:
+        # distributions of individual read_groups is not currently used
+        # only clustered distributions are used for downstream analysis
+        fl_dists = {}
+        grouped_fragments = group_fragments_by_readgroup( fragments )
+        for read_group, fragment_lengths in grouped_fragments.iteritems():
+            if len( fragment_lengths ) < MIN_FLS_FOR_FL_DIST:
+                continue
+            fl_dist = build_robust_fl_dist_with_stats( fragment_lengths )
+            fl_dists[ read_group ] = fl_dist        
+    else:
+        fl_dist, fragments = estimate_normal_fl_dist_from_reads(reads)
+        fl_dists = { 'mean': fl_dist }
     
     return fl_dists, fragments
 
