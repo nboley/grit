@@ -63,9 +63,8 @@ def flatten( regions ):
 MIN_REGION_LEN = 50
 MIN_EMPTY_REGION_LEN = 100
 EMPTY_BPK = 0
-MIN_BPK = 1
 MIN_NUM_CAGE_TAGS = 20
-MIN_EXON_BPKM = 1.0
+MIN_EXON_BPKM = 0.1
 MAX_CAGE_FRAC = 0.05
 EXON_EXT_CVG_RATIO_THRESH = 2
 
@@ -119,6 +118,7 @@ def build_empty_array():
     return numpy.array(())
 
 def find_empty_regions( cov, thresh=1 ):
+    return []
     x = numpy.diff( numpy.asarray( cov >= thresh, dtype=int ) )
     return zip(numpy.nonzero(x==1)[0],numpy.nonzero(x==-1)[0])
 
@@ -160,7 +160,7 @@ def get_qrange_short( np ):
     return np.min(), np.max()
 
 def filter_exon( exon, wig, min_avg_cvg=0.01, 
-                 min_short_cvg=1.0, short_exon_length=400,
+                 min_short_cvg=1, short_exon_length=400,
                  min_long_cvg=10 ):
     '''Find all the exons that are sufficiently homogenous and expressed.
     
@@ -507,31 +507,32 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
         locs = {0: 'SEGMENT', contig_len-1:'SEGMENT'}
         for polya in polya_sites:
             locs[ polya ] = "POLYA"
-        
         return locs
     
-    def merge_segments( segments ):
-        bndries = numpy.array( sorted( segments ) )
+    def merge_segments( segments, strand, window_len = 10 ):
+        bndries = numpy.array( sorted(segments, reverse=(strand!='-')) )
         bndries_to_delete = set()
-        for i, bndry in enumerate(bndries[:-1]):
-            if bndries[i+1]-bndry > 10000:
+        for i, bndry in enumerate(bndries[1:-1]):
+            if bndry - bndries[i+1-1] > 1000000:
                 continue
             pre_bndry_cnt = 0
             post_bndry_cnt = 0
             
             for reads in rnaseq_reads:
                 cvg = reads.build_read_coverage_array( 
-                    chrm, strand, max(0,bndry-50), bndry+50 )
-                pre_bndry_cnt += cvg[:50].sum()
-                post_bndry_cnt += cvg[50:].sum()
-        
-            if post_bndry_cnt > 50 and \
-                (post_bndry_cnt)/(post_bndry_cnt+pre_bndry_cnt+1e-6) > 0.20:
+                    chrm, strand, max(0,bndry-window_len), bndry+window_len )
+                pre_bndry_cnt += cvg[:window_len].sum()
+                post_bndry_cnt += cvg[window_len:].sum()
+            
+            if strand == '-':
+                pre_bndry_cnt, post_bndry_cnt = post_bndry_cnt, pre_bndry_cnt
+            if (post_bndry_cnt)/(post_bndry_cnt+pre_bndry_cnt+1e-6) > 0.20:
                 bndries_to_delete.add( bndry )
         
         for bndry_to_delete in bndries_to_delete:
             del segments[bndry_to_delete]
         
+        print segments
         return segments
     
     def cluster_segments( segments, jns ):
@@ -560,7 +561,7 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
     initial_segmentation = find_initial_segmentation( 
         chrm, strand, rnaseq_reads, polya_sites )
     if VERBOSE: print "Finished initial segmentation for %s %s" % (chrm, strand)    
-    merged_segments = merge_segments( initial_segmentation )
+    merged_segments = merge_segments( initial_segmentation, strand )
     if VERBOSE: print "Finished merging segments for %s %s" % (chrm, strand)
     clustered_segments = cluster_segments( merged_segments, junctions )
     if VERBOSE: print "Finished clustering segments for %s %s" % (chrm, strand)    
@@ -698,21 +699,21 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
     start_bin_cvg = start_bin.mean_cov( rnaseq_cov )
     for i in xrange( start_index-1, 0, -1 ):
         bin = gene_bins[i]
-
+        
         # break at canonical exons
         if bin.left_label == 'R_JN' and bin.right_label == 'D_JN':
             break
         
         # make sure the average coverage is high enough
         bin_cvg = bin.mean_cov(rnaseq_cov)
-        
+                
         if bin_cvg < MIN_EXON_BPKM:
             break
-        
-        if bin.stop - bin.start > 20 and \
-                start_bin_cvg/(bin_cvg+1) >EXON_EXT_CVG_RATIO_THRESH:
-            break
 
+        if bin.stop - bin.start > 20 and \
+                (start_bin_cvg+1e-6)/(bin_cvg+1e-6) > EXON_EXT_CVG_RATIO_THRESH:
+            break
+        
         # update the bin coverage. In cases where the coverage increases from
         # the canonical exon, we know that the increase is due to inhomogeneity
         # so we take the conservative choice
@@ -737,13 +738,15 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
             break
         
         # make sure the average coverage is high enough
-        bin_cvg = rnaseq_cov[bin.start:bin.stop].mean()
+        bin_cvg = bin.mean_cov(rnaseq_cov)
         if bin_cvg < MIN_EXON_BPKM:
             break
         
         if bin.stop - bin.start > 20 and \
-                start_bin_cvg/(bin_cvg+1) >EXON_EXT_CVG_RATIO_THRESH:
+                (start_bin_cvg+1e-6)/(bin_cvg+1e-6) > EXON_EXT_CVG_RATIO_THRESH:
             break
+        
+        #print start_bin, start_bin_cvg, bin_cvg, (start_bin_cvg+1e-6)/(bin_cvg+1e-6)
         
         # update the bin coverage. In cases where the coverage increases from
         # the canonical exon, we know that the increase is due to inhomogeneity
@@ -753,8 +756,8 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
         ee_indices.append( i )
                 
         exons.append( Bin( bin.start, bin.stop, 
-                                    bin.left_label, bin.right_label, 
-                                    "EXON_EXT"  ) )
+                           bin.left_label, bin.right_label, 
+                           "EXON_EXT"  ) )
     
     return exons
 
@@ -799,9 +802,7 @@ def find_tss_exons_from_pseudo_exons( tss_exon, pseudo_exons ):
     
     return tss_exons
 
-def find_pseudo_exons_in_gene( ( chrm, strand ), gene, 
-                               cage_peaks, polya_sites, jns,
-                               rnaseq_cov, cage_cov ):        
+def build_labeled_segments( rnaseq_cov, jns, cage_peaks=[], polya_sites=[] ):
     locs = defaultdict(set)    
     for start, stop in find_empty_regions( rnaseq_cov ):
         if stop - start < MIN_EMPTY_REGION_LEN: continue
@@ -812,13 +813,14 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene,
         #assert start-1 not in locs, "%i in locs" % (start-1)
         locs[start-1].add( "D_JN" )
         locs[stop+1].add( "R_JN" )
+
+    for polya in sorted(polya_sites, reverse=True):
+        locs[ polya ].add( "POLYA" )
     
     # build all of the bins
     poss = sorted( locs.iteritems() )
     poss = merge_empty_labels( poss )
-    if len( poss ) == 0:
-        return [], [], [], [], []
-    
+
     gene_bins = []
     for index, ((start, left_labels), (stop, right_labels)) in \
             enumerate(izip(poss[:-1], poss[1:])):
@@ -826,9 +828,14 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene,
             for right_label in right_labels:
                 gene_bins.append( Bin(start, stop, left_label, right_label) )
     
-    # find tss exons
-        # overlaps a cage peak, then 
-    # find exon starts pseudo exons ( spliced_to, ... )
+    return gene_bins
+
+def find_pseudo_exons_in_gene( ( chrm, strand ), gene, 
+                               cage_peaks, polya_sites, jns,
+                               rnaseq_cov, cage_cov ):
+    # fiund internal exons
+    gene_bins = build_labeled_segments( rnaseq_cov, jns )    
+    
     pseudo_exons = Bins( chrm, strand )
     canonical_exon_starts = [ i for i, bin in enumerate( gene_bins )
                               if bin.left_label == 'R_JN' 
@@ -849,17 +856,8 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene,
         pseudo_exons.extend( find_right_exon_extensions(
                 ce_i, canonical_bin, gene_bins, rnaseq_cov))
 
-    # add in polyas
-    for polya in sorted(polya_sites, reverse=True):
-        locs[ polya ].add( "POLYA" )
-    poss = sorted( locs.iteritems() )
-    
-    gene_bins = []
-    for index, ((start, left_labels), (stop, right_labels)) in \
-            enumerate(izip(poss[:-1], poss[1:])):
-        for left_label in left_labels:
-            for right_label in right_labels:
-                gene_bins.append( Bin(start, stop, left_label, right_label) )
+    # find tes exons
+    gene_bins = build_labeled_segments( rnaseq_cov, jns, polya_sites=polya_sites )    
     
     cage_peak_bin_indices = []
     tss_exons = []
@@ -879,19 +877,21 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene,
                                bin.right_label, 
                                "TSS_EXON"  ) )
     
-    for cage_peak_i in cage_peak_bin_indices:
-        bin = gene_bins[cage_peak_i]
-        pseudo_exons.extend( find_right_exon_extensions(
-                cage_peak_i, bin, gene_bins, rnaseq_cov))
+        #print peak, bin, bin_i, tss_exons[-1]
+
+    for bin, cage_peak_i in zip( tss_exons, cage_peak_bin_indices):
+        extensions = find_right_exon_extensions(
+            cage_peak_i, bin, gene_bins, rnaseq_cov)
+        pseudo_exons.extend( extensions )
     
     # find tes exons
     tes_exon_indices = [ i for i, bin in enumerate( gene_bins )
-                         if bin.right_label in ('POLYA', ) ]
-
+                         if bin.right_label in ('POLYA', )
+                         and bin.left_label != 'POLYA' ]
+    
     tes_exons = []
     for tes_exon_i in tes_exon_indices:
         bin = gene_bins[tes_exon_i]
-        
         tes_exons.append( Bin( bin.start, bin.stop,
                                bin.left_label, 
                                bin.right_label, 
@@ -900,6 +900,16 @@ def find_pseudo_exons_in_gene( ( chrm, strand ), gene,
         pseudo_exons.append( tes_exons[-1] )
         pseudo_exons.extend( find_left_exon_extensions(
                 tes_exon_i, bin, gene_bins, rnaseq_cov ))
+
+        right_extensions = find_right_exon_extensions(
+                tes_exon_i, bin, gene_bins, rnaseq_cov )
+        
+        for r_bin in right_extensions:
+            if r_bin.right_label != 'POLYA': break
+            tes_exons.append( Bin( bin.start, r_bin.stop,
+                                   bin.left_label, 
+                                   r_bin.right_label, 
+                                   "TES_EXON"  ) )
     
     # build exons from the pseudo exon set
     pseudo_exons = list( set( pseudo_exons ) )
@@ -1015,12 +1025,12 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
                 continue
             
             # now we know that the tes exon overlaps the pseudo exon grp
-            #print tes_exon, [ (pe.left_label, pe.right_label) for pe in pe_grp ]
-            #print pe_grp
+            # print tes_exon, [ (pe.left_label, pe.right_label) for pe in pe_grp ]
+            # print pe_grp
             
             # find the psuedo exon that shares a boundary
-            last_pe_i = max( i for i, pe in enumerate( pe_grp ) 
-                             if pe.stop == tes_exon.start )
+            last_pe_i = ([-1,] + [ i for i, pe in enumerate( pe_grp ) 
+                                   if pe.stop == tes_exon.start ] )[-1]
 
             for pe in pe_grp[:last_pe_i+1]:
                 # we had this earlier, buyt I think we want tes exons to
@@ -1159,7 +1169,8 @@ def parse_arguments():
     parser.add_argument( 'rnaseq_reads',type=argparse.FileType('rb'),nargs='+',\
         help='BAM files containing mapped RNAseq reads ( must be indexed ).')
 
-    parser.add_argument( '--reverse-rnaseq-strand', type=bool, default=False,
+    parser.add_argument( '--reverse-rnaseq-strand', default=False,
+                         action='store_true',
         help='Whether to reverse the RNAseq read strand (default False).')
     
     parser.add_argument( '--cage-reads', type=file, default=[], nargs='*', \
@@ -1171,7 +1182,7 @@ def parse_arguments():
     parser.add_argument( '--polya-candidate-sites', type=file, nargs='*', \
         help='files with allowed polya sites.')
     
-    parser.add_argument( '--out-filename', '-o', 
+    parser.add_argument( '--ofname', '-o', 
                          default="discovered_elements.bed",\
         help='Output file name. (default: discovered_elements.bed)')
     
@@ -1197,7 +1208,7 @@ def parse_arguments():
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
     
-    ofp = ThreadSafeFile( args.out_filename, "w" )
+    ofp = ThreadSafeFile( args.ofname, "w" )
     
     return args.rnaseq_reads, args.reverse_rnaseq_strand, \
         args.cage_reads, args.rampage_reads, \
@@ -1207,7 +1218,7 @@ def main():
     rnaseq_bams, reverse_rnaseq_strand, cage_bams, rampage_bams, polya_candidate_sites_fps, ofp \
         = parse_arguments()
 
-    ofp.write('track name="discovered_elements" visibility=2 itemRgb="On"\n')
+    ofp.write('track name="%s" visibility=2 itemRgb="On"\n' % ofp.name)
     
     rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=reverse_rnaseq_strand) 
                      for fp in rnaseq_bams ]
