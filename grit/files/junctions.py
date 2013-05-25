@@ -17,6 +17,8 @@ VERBOSE = False
 CONSENSUS_PLUS = 'GTAG'
 CONSENSUS_MINUS = 'CTAC'
 
+MIN_INTRON_LEN = 20
+
 def get_jn_type( chrm, upstrm_intron_pos, dnstrm_intron_pos, 
                  fasta, jn_strand="UNKNOWN" ):
     # get first 2 bases from 5' and 3' ends of intron to determine 
@@ -134,15 +136,35 @@ def extract_junctions_in_region( reads, chrm, strand, start=None, end=None,
         # increment the number of times we've seen this read
         if not read_spans_single_intron( read ):
             continue
-        
+
         if strand != get_strand( read, reads.reverse_read_strand, 
                                  reads.pairs_are_opp_strand ):
             continue
         
+        # find the introns
+        gaps = [ (i, size) for i, (code, size) in enumerate(read.cigar)
+                 if code == 3 and size > MIN_INTRON_LEN]
+        
+        # skip reads without exactly 1 substatnial gap
+        if len( gaps ) != 1: continue        
+        intron_index, intron_len = gaps[0]
+        
+        # Find the start base of the intron. We need to add all of the 
+        # match and skip bases, and delete the deletions
+        n_pre_intron_bases = 0
+        for code, size in read.cigar[:intron_index]:
+            if code == 0: n_pre_intron_bases += size
+            elif code == 1: n_pre_intron_bases -= size
+            elif code == 2: n_pre_intron_bases += size
+            elif code == 3: n_pre_intron_bases += size
+            elif code == 4: n_pre_intron_bases += size
+        
         # add one to left_intron since bam files are 0-based
-        upstrm_intron_pos = read.pos + read.cigar[0][1] + 1
-        dnstrm_intron_pos = upstrm_intron_pos + read.cigar[1][1] - 1
-
+        upstrm_intron_pos = read.pos + n_pre_intron_bases + 1
+        dnstrm_intron_pos = upstrm_intron_pos + read.cigar[intron_index][1] - 1
+        
+        assert upstrm_intron_pos - dnstrm_intron_pos + 1 < MIN_INTRON_LEN
+        
         # Filter out reads that aren't fully in the region
         if start != None:
             if dnstrm_intron_pos < start: continue
