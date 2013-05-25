@@ -60,12 +60,16 @@ class MaxIterError( ValueError ):
 def write_gene_to_gtf( ofp, gene, mles, lbs=None, ubs=None, fpkms=None,
                        abs_filter_value=0, rel_filter_value=0 ):
     max_ub = max(ubs) if ubs != None else max(fpkms)
+    if max_ub == 0: max_ub = 1e-6
     for index, transcript in enumerate(gene.transcripts):
         ub = ubs[index] if ubs != None else fpkms[index]
         if ub <= abs_filter_value: continue
         if ub/max_ub <= rel_filter_value: continue 
-        transcript.score = min ( 1000, max( 1, int((1000.*ub)/max_ub) ) )
-       
+        try:
+            transcript.score = min( 1000, max( 1, int((1000.*ub)/max_ub) ) )
+        except:
+            transcript.score = 1000
+        
         meta_data = { "frac": "%.2e" % mles[index] }
         
         if lbs != None:

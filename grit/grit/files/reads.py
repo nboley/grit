@@ -193,6 +193,11 @@ class Reads( pysam.Samfile ):
         self.reverse_read_strand = reverse_read_strand        
         self.RRR = reverse_read_strand
         
+        try:
+            self.fetch( self.references[0], 10000 )
+        except ValueError, inst:
+            raise ValueError, "BAM Files must be indexed."
+        
         return self
 
     def fix_chrm_name( self, chrm_name ):
@@ -254,10 +259,10 @@ class Reads( pysam.Samfile ):
             assert ( read2.qlen == read2.aend - read2.pos ) \
                    or ( len( read2.cigar ) > 1 )
 
-            if read1.qlen != read2.qlen:
-                print( "ERROR: unequal read lengths %i and %i\n", \
-                       read1.qlen, read2.qlen )
-                continue
+            #if read1.qlen != read2.qlen:
+            #    print( "ERROR: unequal read lengths %i and %i\n", \
+            #           read1.qlen, read2.qlen )
+            #    continue
 
             yield read1, read2
 

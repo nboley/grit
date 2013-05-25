@@ -6,6 +6,8 @@ def main():
     for line in open( sys.argv[2] ):
         if line.startswith( "track" ): 
             print line.strip()
+            continue
+
         frac = float(re.findall( '.*?frac "(.*?)";', line )[0])
         if frac >= min_rpkm:
             print line.strip()
