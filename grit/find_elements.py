@@ -66,7 +66,7 @@ EMPTY_BPK = 0
 MIN_NUM_CAGE_TAGS = 20
 MIN_EXON_BPKM = 0.1
 MAX_CAGE_FRAC = 0.05
-EXON_EXT_CVG_RATIO_THRESH = 2
+EXON_EXT_CVG_RATIO_THRESH = 5
 POLYA_MERGE_SIZE = 100
 
 def get_contigs_and_lens( rnaseq_reads, cage_reads ):
@@ -394,7 +394,7 @@ class Bins( list ):
             rev_bins.append( bin.reverse_strand( contig_len ) )
         return rev_bins
 
-    def shift( self, shift_amnt ):
+    def shift(self, shift_amnt ):
         shifted_bins = Bins( self.chrm, self.strand )
         for bin in self:
             shifted_bins.append( bin.shift( shift_amnt ) )
@@ -510,7 +510,7 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
         return [ start + i*segment_len for i in xrange(1,n_splits+1) ]
     
     def find_initial_segmentation( chrm, strand, rnaseq_reads, polya_sites ):
-        locs = {0: 'SEGMENT', contig_len-1:'SEGMENT'}
+        locs = {0: 'SEGMENT', contig_len:'SEGMENT'}
         for polya in polya_sites:
             locs[ polya ] = "POLYA"
         return locs
@@ -579,7 +579,7 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
     for start, stop in clustered_segments:
         if stop - start < 100: continue
         if stop - start > 1000000: continue
-        genes.append( Bin(max(0,start-10), min(stop+10,contig_len), 
+        genes.append( Bin(max(1,start-10), min(stop+10,contig_len), 
                           "ESTART", "POLYA", "GENE" ) )
     
     return genes
@@ -837,7 +837,7 @@ def find_canonical_and_internal_exons( (chrm, strand), rnaseq_cov, jns  ):
     bins = build_labeled_segments( rnaseq_cov, jns )    
     
     def iter_canonical_exons_and_indices():
-        for i, bin in enumerate( gene_bins ):
+        for i, bin in enumerate( bins ):
             if bin.left_label == 'R_JN' and bin.right_label == 'D_JN':
                 yield i, bin
     
@@ -849,17 +849,17 @@ def find_canonical_and_internal_exons( (chrm, strand), rnaseq_cov, jns  ):
         internal_exons.append( ce_bin )
         
         for r_ext in find_right_exon_extensions(
-                ce_i, ce, bins, rnaseq_cov):
+                ce_i, ce_bin, bins, rnaseq_cov):
             exon = copy(ce_bin)
             exon.right_label = r_ext.right_label
             exon.stop = r_ext.stop
             internal_exons.append( exon )
 
         for l_ext in find_left_exon_extensions(
-                ce_i, ce, bins, rnaseq_cov):
+                ce_i, ce_bin, bins, rnaseq_cov):
             exon = copy(ce_bin)
-            exon.left_label = r_ext.left_label
-            exon.start = r_ext.start
+            exon.left_label = l_ext.left_label
+            exon.start = l_ext.start
             internal_exons.append( exon )
     
     return canonical_exons, internal_exons
@@ -867,13 +867,16 @@ def find_canonical_and_internal_exons( (chrm, strand), rnaseq_cov, jns  ):
 def find_tss_exons( (chrm, strand), rnaseq_cov, jns, polya_sites, cage_peaks ):
     bins = build_labeled_segments( rnaseq_cov, jns, polya_sites=polya_sites )
     tss_exons = Bins( chrm, strand )
+    if len(bins) == 0: return tss_exons
+
     for peak in cage_peaks:
-        # skip peaks that lie past the start
-        if peak.start > bin[-1].stop: continue
-        
         # should this be peak start
-        tss_index, tss_bin = next( (i, bin) for i, bin in enumerate(bins)
-                                   if bin.start > peak.stop )
+        try:
+            tss_index, tss_bin = next( (i, bin) for i, bin in enumerate(bins)
+                                       if bin.stop > peak.stop )
+        except StopIteration:
+            continue
+        
         tss_exon = Bin( 
             peak.start, tss_bin.stop, 
             "CAGE_PEAK", tss_bin.right_label, "TSS_EXON" )
@@ -890,27 +893,26 @@ def find_tss_exons( (chrm, strand), rnaseq_cov, jns, polya_sites, cage_peaks ):
 def find_tes_exons( (chrm, strand), rnaseq_cov, jns, polya_sites ):
     bins = build_labeled_segments( rnaseq_cov, jns, polya_sites=polya_sites )
     
-    canonical_tes_exon_indices = [ i for i, bin in enumerate( gene_bins )
-                                   if bin.right_label == 'POLYA' ]
-    
+    canonical_tes_exon_indices = [ i for i, bin in enumerate( bins )
+                                   if bin.right_label == 'POLYA'
+                                   and bin.left_label in ('R_JN', 'D_JN')]
+
     tes_exons = Bins( chrm, strand )
     for tes_exon_i in canonical_tes_exon_indices:
-        tes_bin = gene_bins[tes_exon_i]
-        tes_bin.type = "TES_EXON"
-        if tes_bin.left_label == 'D_JN':
-            tes_exon = Bin( 
-                peak.start, r_ext.stop, 
-                "CAGE_PEAK", r_ext.right_label, "TSS_EXON" )
-            tss_exons.append( tss_exon )
-
+        tes_bin = bins[tes_exon_i]
+        tes_bin.type = 'TES_EXON'
+        if tes_bin.left_label == 'R_JN':
+            tes_exons.append( tes_bin )
+        
         for l_ext in find_left_exon_extensions(
                 tes_exon_i, tes_bin, bins, rnaseq_cov):
-            tes_exon = Bin( 
-                peak.start, r_ext.stop, 
-                "CAGE_PEAK", r_ext.right_label, "TSS_EXON" )
-            tes_exons.append( tss_exon )
+            if l_ext.left_label == 'R_JN':
+                tes_exon = Bin( 
+                    l_ext.start, tes_bin.stop, 
+                    l_ext.left_label, tes_bin.right_label, "TES_EXON" )
+                tes_exons.append( tes_exon )
     
-    return tes_exons
+    return Bins( chrm, strand, sorted(set(tes_exons)))
 
 def find_exons_in_gene( ( chrm, strand, contig_len ), gene, 
                         rnaseq_cov, cage_cov, 
@@ -937,11 +939,14 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     cage_peaks = find_cage_peaks_in_gene( 
         ( chrm, strand ), gene, cage_cov, rnaseq_cov )
     canonical_exons, internal_exons = \
-        find_canonical_and_internal_exon_bins((chrm, strand), rnaseq_cov, jns)
+        find_canonical_and_internal_exons((chrm, strand), rnaseq_cov, jns)
     tss_exons = find_tss_exons( 
         (chrm, strand), rnaseq_cov, jns, polya_sites, cage_peaks)
     tes_exons = find_tes_exons( 
         (chrm, strand), rnaseq_cov, jns, polya_sites)
+
+    gene_bins = Bins(chrm, strand, build_labeled_segments( 
+            rnaseq_cov, jns, polya_sites=polya_sites ) )
     
     jn_bins = Bins(chrm, strand, [])
     for start, stop, cnt in jns:
@@ -1235,7 +1240,6 @@ def main():
     
     contig_lens = get_contigs_and_lens( rnaseq_reads, promoter_reads )
     for contig, contig_len in contig_lens.iteritems():
-        if contig != '20': continue
         for strand in '+-':
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, promoter_reads, polya_sites)
