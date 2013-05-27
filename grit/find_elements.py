@@ -63,11 +63,13 @@ def flatten( regions ):
 MIN_REGION_LEN = 50
 MIN_EMPTY_REGION_LEN = 100
 EMPTY_BPK = 0
-MIN_NUM_CAGE_TAGS = 20
 MIN_EXON_BPKM = 0.1
-MAX_CAGE_FRAC = 0.05
 EXON_EXT_CVG_RATIO_THRESH = 5
 POLYA_MERGE_SIZE = 100
+
+CAGE_PEAK_WIN_SIZE = 10
+MIN_NUM_CAGE_TAGS = 20
+MAX_CAGE_FRAC = 0.05
 
 def get_contigs_and_lens( rnaseq_reads, cage_reads ):
     """Get contigs and their lengths from a set of bam files.
@@ -547,7 +549,8 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
             start_bin = boundaries.searchsorted( start-1 )-1
             stop_bin = boundaries.searchsorted( stop+1 )-1
             if start_bin != stop_bin:
-                edges.add((min(start_bin, stop_bin), max(start_bin, stop_bin)))
+                edges.add((int(min(start_bin, stop_bin)), 
+                           int(max(start_bin, stop_bin))))
         
         genes_graph = Graph( len( boundaries )-1 )
         genes_graph.add_edges( list( edges ) )
@@ -585,7 +588,7 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
     return genes
 
 def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
-     raw_peaks = find_peaks( cage_cov, window_len=5, 
+     raw_peaks = find_peaks( cage_cov, window_len=CAGE_PEAK_WIN_SIZE, 
                              min_score=MIN_NUM_CAGE_TAGS,
                              max_score_frac=MAX_CAGE_FRAC, 
                              max_num_peaks=20 )
@@ -731,7 +734,9 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
     
     return internal_exons
 
-def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
+def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov,
+                                min_ext_ratio=EXON_EXT_CVG_RATIO_THRESH, 
+                                min_bpkm=MIN_EXON_BPKM):
     exons = []
     ee_indices = []
     start_bin_cvg = start_bin.mean_cov( rnaseq_cov )
@@ -744,11 +749,11 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
         
         # make sure the average coverage is high enough
         bin_cvg = bin.mean_cov(rnaseq_cov)
-        if bin_cvg < MIN_EXON_BPKM:
+        if bin_cvg < min_bpkm:
             break
         
         if bin.stop - bin.start > 20 and \
-                (start_bin_cvg+1e-6)/(bin_cvg+1e-6) > EXON_EXT_CVG_RATIO_THRESH:
+                (start_bin_cvg+1e-6)/(bin_cvg+1e-6) > min_ext_ratio:
             break
                 
         # update the bin coverage. In cases where the coverage increases from
@@ -893,31 +898,47 @@ def find_tss_exons( (chrm, strand), rnaseq_cov, jns, polya_sites, cage_peaks ):
 def find_tes_exons( (chrm, strand), rnaseq_cov, jns, polya_sites ):
     bins = build_labeled_segments( rnaseq_cov, jns, polya_sites=polya_sites )
     
+    # find the segments that contain a 
     canonical_tes_exon_indices = [ i for i, bin in enumerate( bins )
                                    if bin.right_label == 'POLYA'
                                    and bin.left_label in ('R_JN', 'D_JN')]
 
     tes_exons = Bins( chrm, strand )
+    tes_exon_indices = []
     for tes_exon_i in canonical_tes_exon_indices:
         tes_bin = bins[tes_exon_i]
         tes_bin.type = 'TES_EXON'
         if tes_bin.left_label == 'R_JN':
             tes_exons.append( tes_bin )
+            tes_exon_indices.append( (tes_exon_i, tes_exon_i) )
         
-        for l_ext in find_left_exon_extensions(
-                tes_exon_i, tes_bin, bins, rnaseq_cov):
+        for l_ext_i, l_ext in enumerate(find_left_exon_extensions(
+                tes_exon_i, tes_bin, bins, rnaseq_cov)):
             if l_ext.left_label == 'R_JN':
                 tes_exon = Bin( 
                     l_ext.start, tes_bin.stop, 
                     l_ext.left_label, tes_bin.right_label, "TES_EXON" )
                 tes_exons.append( tes_exon )
+                tes_exon_indices.append( (tes_exon_i, tes_exon_i+(l_ext_i+1)) )
+    
+    for tes_exon, (start_i, stop_i) in izip( tes_exons, tes_exon_indices ):
+        for r_ext in bins[stop_i+1:]:
+            if r_ext.right_label != 'POLYA': break
+            if r_ext.mean_cov(rnaseq_cov) < MIN_EXON_BPKM: break
+            # filter extensions with a sufficiently low coverage ratio
+            #if (tes_exon.mean_cov(rnaseq_cov)+1e-6)/\
+            #        (r_ext.mean_cov(rnaseq_cov)+1e-6) > 10:
+            #    continue
+            tes_exon.stop = r_ext.stop
     
     return Bins( chrm, strand, sorted(set(tes_exons)))
 
 def find_exons_in_gene( ( chrm, strand, contig_len ), gene, 
                         rnaseq_cov, cage_cov, 
                         polya_sites, jns ):
-    if DEBUG_VERBOSE: print "STARTING Chrm %s Strand %s Pos %i-%i" % (chrm, strand, gene.start, gene.stop)
+    if DEBUG_VERBOSE: 
+        print "STARTING Chrm %s Strand %s Pos %i-%i" % (
+            chrm, strand, gene.start, gene.stop)
     ###########################################################
     # Shift all of the input data to eb in the gene region, and 
     # reverse it when necessary
@@ -953,9 +974,9 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         bin = Bin(start, stop, 'R_JN', 'D_JN', 'INTRON', cnt)
         jn_bins.append( bin )
     
-    tss_exons = filter_exons( tss_exons, rnaseq_cov )
-    tes_exons = filter_exons( tes_exons, rnaseq_cov )
-    internal_exons = filter_exons( internal_exons, rnaseq_cov )
+    #tss_exons = filter_exons( tss_exons, rnaseq_cov )
+    #tes_exons = filter_exons( tes_exons, rnaseq_cov )
+    #internal_exons = filter_exons( internal_exons, rnaseq_cov )
     #print len(tss_exons), len(internal_exons), len(tes_exons)
     
     elements = Bins(chrm, strand, chain(
