@@ -14,11 +14,17 @@ config = {
     'download_url': 'http://grit-bio.org/git/',
     'author_email': 'npboley@gmail.com',
     'version': '1.0',
-    'install_requires': [''],
     'packages': ['grit'],
+    'requires': ['Cython', 'numpy', 'scipy'],
     'scripts': [],
     'name': 'GRIT'
 }
+
+for_ubuntu = """
+sudo aptitude install cython  python-dev python-numpy python-scipy python-igraph python-pip python-networkx
+easy_install pysam
+"""
+
 
 setup(**config)
 
