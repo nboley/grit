@@ -63,8 +63,9 @@ def find_jn_connected_exons(exons, jns, strand, use_names=False):
 
 def iter_nonoverlapping_exons(exons):
     genes_graph = igraph.Graph()
-    genes_graph.add_vertices(len(exons)-1)
-    genes_graph.add_edges( find_overlapping_exons(exons) )
+    genes_graph.add_vertices(len(exons))
+    overlapping_exons = find_overlapping_exons(exons)
+    genes_graph.add_edges( overlapping_exons )
     genes = genes_graph.components()
     for gene in genes:
         clustered_exons = [ exons[exon_i] for exon_i in gene ]
@@ -84,7 +85,7 @@ def cluster_exons( tss_exons, internal_exons, tes_exons, se_transcripts,
                               tes_exons, se_transcripts) )
     
     genes_graph = igraph.Graph()
-    genes_graph.add_vertices( len(all_exons)-1 )
+    genes_graph.add_vertices( len(all_exons) )
     genes_graph.add_edges( find_overlapping_exons(all_exons) )
     genes_graph.add_edges( find_jn_connected_exons(all_exons, jns, strand ) )
     
