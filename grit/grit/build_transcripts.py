@@ -316,10 +316,14 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
             if VERBOSE: print "FINISHED GENE", key
             
             gene = output_dict[(key, 'gene')]
-            mles = output_dict[(key, 'mle')] if ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
-            fpkms = output_dict[(key, 'fpkm')] if ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
-            lbs = output_dict[(key, 'lbs')] if compute_confidence_bounds else None
-            ubs = output_dict[(key, 'ubs')] if compute_confidence_bounds else None
+            mles = output_dict[(key, 'mle')] \
+                if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
+            fpkms = output_dict[(key, 'fpkm')] \
+                if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
+            lbs = output_dict[(key, 'lbs')] \
+                if compute_confidence_bounds else None
+            ubs = output_dict[(key, 'ubs')] \
+                if compute_confidence_bounds else None
             write_gene_to_gtf( ofp, gene, mles, lbs, ubs, fpkms )
             
             del output_dict[(key, 'gene')]

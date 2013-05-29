@@ -123,7 +123,6 @@ def build_empty_array():
     return numpy.array(())
 
 def find_empty_regions( cov, thresh=1 ):
-    return []
     x = numpy.diff( numpy.asarray( cov >= thresh, dtype=int ) )
     return zip(numpy.nonzero(x==1)[0],numpy.nonzero(x==-1)[0])
 
@@ -502,7 +501,22 @@ def load_junctions( rnaseq_reads, (chrm, strand, contig_len) ):
             assert len( all_jns ) == len( set( x for x,y in all_jns ) )
             
     if VERBOSE: print "Finished extracting junctions for %s %s" % (chrm, strand)
-    return junctions
+    
+    # filter junctions
+    jn_starts = defaultdict( int )
+    jn_stops = defaultdict( int )
+    for (start, stop), cnt in junctions:
+        jn_starts[start] = max( jn_starts[start], cnt )
+        jn_stops[stop] = max( jn_stops[stop], cnt )
+    
+    filtered_junctions = []
+    for (start, stop), cnt in junctions:
+        if float(cnt)/jn_starts[start] < 0.01: continue
+        if float(cnt)/jn_stops[stop] < 0.01: continue
+        if stop - start > 10000000: continue
+        filtered_junctions.append( ((start, stop), cnt) )
+    
+    return filtered_junctions
 
 def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads, 
                          polya_sites, junctions=None):
