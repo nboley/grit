@@ -57,21 +57,12 @@ def calc_fpkm( gene, fl_dist, freqs, num_reads_in_bam, num_reads_in_gene ):
 class MaxIterError( ValueError ):
     pass
 
-def write_gene_to_gtf( ofp, gene, mles, lbs=None, ubs=None, fpkms=None,
-                       abs_filter_value=0, rel_filter_value=0 ):
-    max_ub = max(ubs) if ubs != None else max(fpkms)
-    if max_ub == 0: max_ub = 1e-6
+def write_gene_to_gtf( ofp, gene, mles=None, lbs=None, ubs=None, fpkms=None ):
     for index, transcript in enumerate(gene.transcripts):
-        ub = ubs[index] if ubs != None else fpkms[index]
-        if ub <= abs_filter_value: continue
-        if ub/max_ub <= rel_filter_value: continue 
-        try:
-            transcript.score = min( 1000, max( 1, int((1000.*ub)/max_ub) ) )
-        except:
-            transcript.score = 1000
-        
-        meta_data = { "frac": "%.2e" % mles[index] }
-        
+        meta_data = {}
+        if mles != None:
+            transcript.score = int((1000.*mles[index])/max(mles))
+            meta_data["frac"] = ("%.2e" % mles[index])
         if lbs != None:
             meta_data["conf_lo"] = "%.2e" % lbs[index]
         if ubs != None:
@@ -183,7 +174,10 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             op_lock.release()
         
         input_queue_lock.acquire()
-        input_queue.append( ('mle', (gene_id, None, None)) )
+        if ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+            input_queue.append(('FINISHED', (gene_id, None, None)))
+        else:
+            input_queue.append( ('mle', (gene_id, None, None)) )
         input_queue_lock.release()
     elif work_type == 'mle':
         op_lock.acquire()
@@ -287,9 +281,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
 def write_finished_data_to_disk( output_dict, output_dict_lock, 
                                  finished_genes_queue, ofp,
                                  compute_confidence_bounds=True, 
-                                 write_design_matrices=False,
-                                 abs_filter_value=0.0,
-                                 rel_filter_value=0.0 ):
+                                 write_design_matrices=False ):
     while True:
         try:
             write_type, key = finished_genes_queue.get(timeout=1.0)
@@ -324,13 +316,12 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
             if VERBOSE: print "FINISHED GENE", key
             
             gene = output_dict[(key, 'gene')]
-            mles = output_dict[(key, 'mle')]
-            fpkms = output_dict[(key, 'fpkm')]
+            mles = output_dict[(key, 'mle')] if ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
+            fpkms = output_dict[(key, 'fpkm')] if ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
             lbs = output_dict[(key, 'lbs')] if compute_confidence_bounds else None
             ubs = output_dict[(key, 'ubs')] if compute_confidence_bounds else None
-            write_gene_to_gtf( ofp, gene, mles, lbs, ubs, fpkms,
-                               abs_filter_value, rel_filter_value)
-
+            write_gene_to_gtf( ofp, gene, mles, lbs, ubs, fpkms )
+            
             del output_dict[(key, 'gene')]
             del output_dict[(key, 'mle')]
             del output_dict[(key, 'design_matrices')]
@@ -462,6 +453,9 @@ def parse_arguments():
     parser.add_argument( '--reverse-rnaseq-strand', 
                          default=False, action="store_true",
         help='Whether to reverse the RNAseq read strand (default False).')
+    parser.add_argument( '--only-build-candidate-transcripts', default=False,
+        action="store_true",
+        help='If set, we will output all possible transcripts without expression estimates.')
     parser.add_argument( '--estimate-confidence-bounds', '-c', default=False,
         action="store_true",
         help='Whether or not to calculate confidence bounds ( this is slow )')
@@ -492,6 +486,9 @@ def parse_arguments():
     global PROCESS_SEQUENTIALLY
     if args.threads == 1:
         PROCESS_SEQUENTIALLY = True
+
+    global ONLY_BUILD_CANDIDATE_TRANSCRIPTS
+    ONLY_BUILD_CANDIDATE_TRANSCRIPTS = args.only_build_candidate_transcripts
     
     global num_threads
     num_threads = args.threads
@@ -510,11 +507,9 @@ def main():
     # Get file objects from command line
     exons_bed_fp, rnaseq_bams, cage_bams, rampage_bams, \
         ofp, fasta, reverse_rnaseq_strand, \
-        estimate_confidence_bounds, write_design_matrices = parse_arguments()
-    
-    abs_filter_value = 1e-12 + 1e-16
-    rel_filter_value = 0
-        
+        estimate_confidence_bounds, write_design_matrices, \
+        = parse_arguments()
+            
     manager = multiprocessing.Manager()
     input_queue = manager.list()
     input_queue_lock = manager.Lock()
@@ -563,9 +558,8 @@ def main():
     write_p = multiprocessing.Process(target=write_finished_data_to_disk, args=(
             output_dict, output_dict_lock, 
             finished_queue, ofp,
-            estimate_confidence_bounds, write_design_matrices,
-            abs_filter_value, rel_filter_value)  )
-
+            estimate_confidence_bounds, write_design_matrices ) )
+    
     write_p.start()    
     
     ps = [None]*num_threads

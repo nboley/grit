@@ -974,9 +974,9 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         bin = Bin(start, stop, 'R_JN', 'D_JN', 'INTRON', cnt)
         jn_bins.append( bin )
     
-    #tss_exons = filter_exons( tss_exons, rnaseq_cov )
-    #tes_exons = filter_exons( tes_exons, rnaseq_cov )
-    #internal_exons = filter_exons( internal_exons, rnaseq_cov )
+    tss_exons = filter_exons( tss_exons, rnaseq_cov )
+    tes_exons = filter_exons( tes_exons, rnaseq_cov )
+    internal_exons = filter_exons( internal_exons, rnaseq_cov )
     #print len(tss_exons), len(internal_exons), len(tes_exons)
     
     elements = Bins(chrm, strand, chain(
@@ -1261,6 +1261,7 @@ def main():
     
     contig_lens = get_contigs_and_lens( rnaseq_reads, promoter_reads )
     for contig, contig_len in contig_lens.iteritems():
+        if contig != '20': continue
         for strand in '+-':
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, promoter_reads, polya_sites)

@@ -1,4 +1,3 @@
-__author__ = 'urvishparikh'
 import sys, os
 import pysam
 import numpy
@@ -15,7 +14,7 @@ from reads import iter_coverage_regions_for_read, clean_chr_name, \
 
 
 from multiprocessing import Process
-num_threads = 10
+num_threads = 1
 buffer_size = 5000000
 bedGraphToBigWig_script = "/usr/local/bin/bedGraphToBigWig"
 
@@ -201,9 +200,15 @@ def generate_wiggle(reads_fname, op_prefix, reverse_read_strand, reads_opp_stran
 
        # call the bed graph conversion program
 
-        res1 = subprocess.call([os.path.abspath(bedGraphToBigWig_script), os.path.abspath("{0}.{1}.bedGraph".format( op_prefix, "plus")), os.path.abspath(chrm_sizes_file.name), os.path.abspath("{0}.{1}.bw".format( op_prefix, "plus"))])
-        res2 = subprocess.call([os.path.abspath(bedGraphToBigWig_script), os.path.abspath("{0}.{1}.bedGraph".format( op_prefix, "minus")), os.path.abspath(chrm_sizes_file.name), os.path.abspath("{0}.{1}.bw".format( op_prefix, "minus"))])
-
+        res1 = subprocess.call([os.path.abspath(bedGraphToBigWig_script), 
+                                os.path.abspath("{0}.{1}.bedGraph".format( op_prefix, "plus")), 
+                                os.path.abspath(chrm_sizes_file.name), 
+                                os.path.abspath("{0}.{1}.bw".format( op_prefix, "plus"))])
+        res2 = subprocess.call([os.path.abspath(bedGraphToBigWig_script), 
+                                os.path.abspath("{0}.{1}.bedGraph".format( op_prefix, "minus")), 
+                                os.path.abspath(chrm_sizes_file.name), 
+                                os.path.abspath("{0}.{1}.bw".format( op_prefix, "minus"))])
+        
         #clean up
         chrm_sizes_file.delete
         if res1 == 0 and res2 == 0:
@@ -220,7 +225,10 @@ def generate_wiggle(reads_fname, op_prefix, reverse_read_strand, reads_opp_stran
         chrm_sizes_file.close()
 
         # call the bed graph conversion program
-        res1 = subprocess.call([os.path.abspath(bedGraphToBigWig_script), os.path.abspath("{0}.bedGraph".format( op_prefix)), os.path.abspath(chrm_sizes_file.name), os.path.abspath("{0}.bw".format( op_prefix))])
+        res1 = subprocess.call([os.path.abspath(bedGraphToBigWig_script), 
+                                os.path.abspath("{0}.bedGraph".format( op_prefix)), 
+                                os.path.abspath(chrm_sizes_file.name), 
+                                os.path.abspath("{0}.bw".format( op_prefix))])
 
         #clean up
         chrm_sizes_file.delete
