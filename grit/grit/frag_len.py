@@ -21,7 +21,7 @@ MIN_FLS_FOR_FL_DIST = 100
 # have observed at least MAX_NUM_FRAGMENTS/10 exons
 MAX_NUM_FRAGMENTS = 25000
 MAX_NUM_FRAGMENTS_PER_EXON = 1000
-MIN_EXON_LENGTH = 1000
+MIN_EXON_LENGTH = 200
 
 class FlDist( object ):
     """Store a fragment length dist.
@@ -232,13 +232,14 @@ def analyze_fl_dists( fragments, out_filename='diagnostic_plots.pdf'):
     plt.clf()
 
     # Compare fl_dists separated by strand
-    strand_grouped_frag_lengths = group_fragments_by_strand( fragments )
     strand_fl_dists = {}
+    strand_grouped_frag_lengths = group_fragments_by_strand( fragments )
     for strand, strand_grouped_frag_lengths in \
             strand_grouped_frag_lengths.iteritems():
         strand_fl_dists[ strand ] = build_robust_fl_dist_with_stats( \
             strand_grouped_frag_lengths )
-    
+
+    """
     # plot scatter plots on the same plot for both forward and reverse strand.
     plt.scatter( range(strand_fl_dists['+'].fl_min, strand_fl_dists['+'].fl_max+1), \
                      strand_fl_dists['+'].fl_density , s=10, c='b' )
@@ -248,6 +249,7 @@ def analyze_fl_dists( fragments, out_filename='diagnostic_plots.pdf'):
     plt.xlabel('Fragment Size')
     plt.ylabel('Proportion of Fragments')
     plt.suptitle('Fragement Size Distribution Separated by Strand')
+    """
     
     pp.savefig()
     plt.clf()

@@ -20,13 +20,13 @@ from f_matrix import build_design_matrices
 import frequency_estimation
 from frag_len import load_fl_dists, FlDist, build_normal_density
 
-MAX_NUM_TRANSCRIPTS = 50000
+MAX_NUM_TRANSCRIPTS = 500
 MIN_NUM_READS = 10
 
 log_fp = sys.stderr
 num_threads = 1
 
-DEBUG = False
+DEBUG = True
 DEBUG_VERBOSE = False
 
 def log(text):
@@ -57,18 +57,25 @@ def calc_fpkm( gene, fl_dist, freqs, num_reads_in_bam, num_reads_in_gene ):
 class MaxIterError( ValueError ):
     pass
 
-def write_gene_to_gtf( ofp, gene, mles=None, lbs=None, ubs=None, fpkms=None ):
+def write_gene_to_gtf( ofp, gene, mles=None, lbs=None, ubs=None, fpkms=None,
+                       unobservable_transcripts=set()):
+    if mles != None:
+        assert len(gene.transcripts) == len(mles) + len(unobservable_transcripts)
+    n_skipped_ts = 0
     for index, transcript in enumerate(gene.transcripts):
+        if index in unobservable_transcripts:
+            n_skipped_ts += 1
+            continue
         meta_data = {}
         if mles != None:
-            transcript.score = int((1000.*mles[index])/max(mles))
-            meta_data["frac"] = ("%.2e" % mles[index])
+            transcript.score = max(1,int((1000.*mles[index-n_skipped_ts])/max(mles)))
+            meta_data["frac"] = ("%.2e" % mles[index-n_skipped_ts])
         if lbs != None:
-            meta_data["conf_lo"] = "%.2e" % lbs[index]
+            meta_data["conf_lo"] = "%.2e" % lbs[index-n_skipped_ts]
         if ubs != None:
-            meta_data["conf_hi"] = "%.2e" % ubs[index]
+            meta_data["conf_hi"] = "%.2e" % ubs[index-n_skipped_ts]
         if fpkms != None:
-            meta_data["FPKM"] = "%.2e" % fpkms[index]
+            meta_data["FPKM"] = "%.2e" % fpkms[index-n_skipped_ts]
         
         ofp.write( transcript.build_gtf_lines(
                 gene.id, meta_data, source="grit") + "\n" )
@@ -141,7 +148,8 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             log( error_msg )
             if DEBUG: raise
             input_queue_lock.acquire()
-            input_queue.append(('ERROR', ((gene_id, rnaseq_reads.filename, trans_index), error_msg)))
+            input_queue.append(
+                ('ERROR', ((gene_id, rnaseq_reads.filename, trans_index), error_msg)))
             input_queue_lock.release()
             return
         except MemoryError, inst:
@@ -149,7 +157,8 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             log( error_msg )
             if DEBUG: raise
             input_queue_lock.acquire()
-            input_queue.append(('ERROR', ((gene_id, rnaseq_reads.filename, trans_index), error_msg)))
+            input_queue.append(
+                ('ERROR', ((gene_id, rnaseq_reads.filename, trans_index), error_msg)))
             input_queue_lock.release()
             return
         
@@ -167,7 +176,8 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 os.getpid(), gene_id, inst )
             log( error_msg )
             input_queue_lock.acquire()
-            input_queue.append(('ERROR', ((gene_id, rnaseq_reads.filename, trans_index), error_msg)))
+            input_queue.append(
+                ('ERROR', ((gene_id, rnaseq_reads.filename, trans_index), error_msg)))
             input_queue_lock.release()
             return
         else:
@@ -193,7 +203,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                          for fname, args in rnaseq_reads_init_data ][0]
         
         try:
-            mle_estimate =frequency_estimation.estimate_transcript_frequencies( 
+            mle_estimate = frequency_estimation.estimate_transcript_frequencies( 
                 observed_array, expected_array)
             num_reads_in_gene = observed_array.sum()
             num_reads_in_bam = NUMBER_OF_READS_IN_BAM
@@ -316,6 +326,7 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
             if VERBOSE: print "FINISHED GENE", key
             
             gene = output_dict[(key, 'gene')]
+            unobservable_transcripts = output_dict[(key, 'design_matrices')][2]
             mles = output_dict[(key, 'mle')] \
                 if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
             fpkms = output_dict[(key, 'fpkm')] \
@@ -324,7 +335,8 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                 if compute_confidence_bounds else None
             ubs = output_dict[(key, 'ubs')] \
                 if compute_confidence_bounds else None
-            write_gene_to_gtf( ofp, gene, mles, lbs, ubs, fpkms )
+            write_gene_to_gtf( ofp, gene, mles, lbs, ubs, fpkms, 
+                               unobservable_transcripts=unobservable_transcripts )
             
             del output_dict[(key, 'gene')]
             del output_dict[(key, 'mle')]
