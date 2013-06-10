@@ -20,8 +20,7 @@ from f_matrix import build_design_matrices
 import frequency_estimation
 from frag_len import load_fl_dists, FlDist, build_normal_density
 
-MAX_NUM_TRANSCRIPTS = 500
-MIN_NUM_READS = 10
+MAX_NUM_TRANSCRIPTS = 50000
 
 log_fp = sys.stderr
 num_threads = 1
@@ -402,7 +401,7 @@ def initialize_processing_data( elements, fl_dists,
                 set(map(tuple, grpd_exons['tss_exon'].tolist())), 
                 set(map(tuple, grpd_exons['internal_exon'].tolist())), 
                 set(map(tuple, grpd_exons['tes_exon'].tolist())), 
-                set(), # TODO - add the se transcripts
+                set(map(tuple, grpd_exons['single_exon_gene'].tolist())),
                 set(map(tuple, grpd_exons['intron'].tolist())), 
                 strand):
             # skip genes without all of the element types

@@ -111,7 +111,7 @@ def build_transcripts( tss_exons, internal_exons, tes_exons, se_transcripts,
     
     edges = find_jn_connected_exons(all_exons, jns, strand, use_names=True )
     graph.add_edges_from( edges  )
-    
+        
     transcripts = []
     num_transcripts = 0
     for tss in tss_exons:
@@ -124,4 +124,4 @@ def build_transcripts( tss_exons, internal_exons, tes_exons, se_transcripts,
 
                 transcripts.append( sorted(transcript) )
     
-    return transcripts + list(se_transcripts)
+    return transcripts + [ [x,] for x in se_transcripts ]
