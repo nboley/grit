@@ -281,7 +281,8 @@ class Bin( object ):
         return "%s:%i-%i" % ( self.type, self.start, self.stop )
     
     def __hash__( self ):
-        return hash( (self.start, self.stop, self.type, self.left_label, self.right_label) )
+        return hash( (self.start, self.stop, self.type, 
+                      self.left_label, self.right_label) )
     
     def __eq__( self, other ):
         return ( self.start == other.start and self.stop == other.stop )
@@ -768,6 +769,8 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov,
         bin = gene_bins[i]
 
         # if we've reached a canonical intron, break
+        #if bin.left_label == 'D_JN' and bin.right_label == 'R_JN':
+        #    break
         if bin.left_label == 'D_JN' and bin.right_label == 'R_JN':
             break
         
@@ -793,46 +796,6 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov,
     
     return exons
 
-def find_internal_exons_from_pseudo_exons( pseudo_exons ):
-    """Find all of the possible exons from the set of pseudo exons.
-    
-    """
-    internal_exons = []
-    # condition on the number of pseudo exons
-    for exon_len in xrange(1, len(pseudo_exons)+1):
-        for start in xrange(len(pseudo_exons)-exon_len+1):
-            start_ps_exon = pseudo_exons[start]
-            stop_ps_exon = pseudo_exons[start+exon_len-1]
-
-            if stop_ps_exon.right_label != 'D_JN': continue
-
-            if start_ps_exon.left_label != 'R_JN': continue
-
-            # each potential exon must have a canonical exon in it
-            if not any ( exon.type == 'EXON' 
-                         for exon in pseudo_exons[start:start+exon_len] ):
-                continue
-            internal_exons.append( Bin(start_ps_exon.start, stop_ps_exon.stop,
-                                       start_ps_exon.left_label, 
-                                       stop_ps_exon.right_label,
-                                       'EXON') )
-    
-    internal_exons = sorted( internal_exons )
-    
-    return internal_exons
-
-def find_tss_exons_from_pseudo_exons( tss_exon, pseudo_exons ):
-    tss_exons = []
-    # find the first pseudo exon that the tss exon connects to
-    for i, pse in enumerate( pseudo_exons ):
-        if pse.start == tss_exon.stop: 
-            break
-    
-    for pse in pseudo_exons[i:]:
-        tss_exons.append( Bin(tss_exon.start, pse.stop,
-                              tss_exon.left_label, pse.right_label, "TSS_EXON"))
-    
-    return tss_exons
 
 def build_labeled_segments( rnaseq_cov, jns, cage_peaks=[], polya_sites=[] ):
     locs = defaultdict(set)    
@@ -1000,6 +963,17 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         rnaseq_cov = rnaseq_cov[::-1]
         cage_cov = cage_cov[::-1]
     
+    filtered_junctions = []
+    for (start, stop, cnt) in jns:
+        if start < 0 or stop > contig_len: continue
+        left_ratio = rnaseq_cov[start-30:start-10].sum()/(rnaseq_cov[start+10:start+30].sum()+1e-6)
+        right_ratio = rnaseq_cov[stop+11:stop+31].sum()/(rnaseq_cov[stop-30:stop-10].sum()+1e-6)
+        if min(right_ratio, left_ratio)/cnt > 5: continue
+        if right_ratio < 1.2 or left_ratio < 1.2: continue        
+        filtered_junctions.append( (start, stop, cnt) )
+
+    jns = filtered_junctions
+    
     ### END Prepare input data #########################################
     
     cage_peaks = find_cage_peaks_in_gene( 
@@ -1036,103 +1010,6 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     gene_bins = gene_bins.shift( gene.start )
     
     return elements, gene_bins
-    
-    # find the contiguous set of adjoining exons
-    slices = [[0,],]
-    for i, ( start_ps_exon, stop_ps_exon ) in enumerate( 
-            zip(pseudo_exons[:-1], pseudo_exons[1:]) ):
-        # if there is a gap...
-        if start_ps_exon.stop < stop_ps_exon.start:
-            slices[-1].append(i+1)
-            slices.append([i+1,])
-    
-    # add in the last segment
-    if slices[-1][0] < len( pseudo_exons ):
-        slices[-1].append( len(pseudo_exons) )
-    else:
-        slices.pop()
-    
-    gpd_pseudo_exons = []    
-    for start, stop in slices:
-        gpd_pseudo_exons.append( pseudo_exons[start:stop] )
-        
-    if len( gpd_pseudo_exons ) == 0:
-        return Bins(chrm, strand, [] ), Bins(chrm, strand, [] )
-        
-    internal_exons = Bins(chrm, strand, [] )
-    for pseudo_exons_grp in gpd_pseudo_exons:
-        internal_exons.extend( 
-            find_internal_exons_from_pseudo_exons( pseudo_exons_grp ) )
-
-    tss_exons = Bins(chrm, strand, [] )
-    for tss_exon in tss_pseudo_exons:
-        if tss_exon.right_label in 'D_JN':
-            tss_exons.append( tss_exon )
-        elif tss_exon.right_label == 'POLYA':
-            tss_exons.append( tss_exon )
-        else:
-            pass
-            #try:
-            #    assert tss_exon.stop >= gpd_pseudo_exons[0][0].start
-            #except:
-            #    print tss_exon
-            #    print gpd_pseudo_exons[0][0]
-            #    raise
-        
-        for pe_grp in gpd_pseudo_exons:
-            if pe_grp[0].start > tss_exon.stop:  
-                continue
-            if pe_grp[-1].stop <= tss_exon.start:
-                break
-            
-            tss_exons.extend( find_tss_exons_from_pseudo_exons( 
-                    tss_exon, pe_grp ) )
-
-    single_exon_genes = set()
-    for exon in tss_exons:
-        if exon.right_label == 'POLYA':
-            se_gene = copy(exon)
-            se_gene.type = 'SE_GENE'
-            single_exon_genes.add( se_gene )
-    
-    tes_exons = Bins(chrm, strand, [] )
-    for tes_exon in tes_pseudo_exons:
-        if tes_exon.left_label == 'R_JN':
-            tes_exons.append( tes_exon )
-        elif tes_exon.left_label == 'POLYA':
-            pass
-        else:
-            assert tes_exon.start <= gpd_pseudo_exons[-1][-1].stop
-        
-        # find the overlapping intervals
-        for pe_grp in gpd_pseudo_exons:
-            if pe_grp[0].start >= tes_exon.stop:  
-                break
-            if pe_grp[-1].stop <= tes_exon.start:
-                continue
-            if tes_exon == pe_grp[0]:
-                continue
-            
-            # now we know that the tes exon overlaps the pseudo exon grp
-            # print tes_exon, [ (pe.left_label, pe.right_label) for pe in pe_grp ]
-            # print pe_grp
-            
-            # find the psuedo exon that shares a boundary
-            last_pe_i = ([-1,] + [ i for i, pe in enumerate( pe_grp ) 
-                                   if pe.stop == tes_exon.start ] )[-1]
-
-            for pe in pe_grp[:last_pe_i+1]:
-                # we had this earlier, buyt I think we want tes exons to
-                # extend into real exons ( although this gives us fragments )
-                #if pe.left_label != 'R_JN':
-                #    continue
-
-                tes_exons.append( 
-                    Bin( pe.start, tes_exon.stop, pe.left_label, 
-                         tes_exon.right_label, "TES_EXON" )
-                    )
-
-    pass
         
 
 def find_exons_worker( (genes_queue, genes_queue_lock), ofp, (chrm, strand, contig_len),
