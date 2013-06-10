@@ -37,27 +37,26 @@ class ProcessSafeOPStream( object ):
 
 def update_buffer_array_from_rnaseq_read( buffer_array, 
                                           buffer_offset, 
-                                          read, reads, 
+                                          read, strand,
+                                          reads, 
                                           reverse_read_strand, 
                                           pairs_are_opp_strand ):
                                           
     """populate buffer with histogram of contiguous read regions
 
     """
-    for chrm, strand, start, stop in iter_coverage_regions_for_read(
+    for chrm, rd_strand, start, stop in iter_coverage_regions_for_read(
             read, reads, reverse_read_strand, pairs_are_opp_strand):
-        if stop >= chrm_len:
-            return
-        else:
-            buffer_array[(start-buffer_offset):(stop-buffer_offset) + 1] += 1
+        if rd_strand != strand: continue
+        buffer_array[(start-buffer_offset):(stop-buffer_offset) + 1] += 1
     return
 
 def update_buffer_array_from_rnaseq_read_generator( 
         reads, reverse_read_strand, pairs_are_opp_strand ):
-    def update_buffer_array_from_read(buffer_array, buffer_offset, read):
+    def update_buffer_array_from_read(buffer_array, buffer_offset, strand, read):
         return update_buffer_array_from_rnaseq_read( 
             buffer_array, buffer_offset, 
-            read, reads, 
+            read, strand, reads, 
             reverse_read_strand, pairs_are_opp_strand )
     
     return update_buffer_array_from_read
@@ -211,10 +210,15 @@ def build_chrm_sizes_file(reads):
     
     return chrm_sizes_file
 
-def generate_wiggle(reads_fname, op_prefix, assay ):
+def generate_wiggle(reads_fname, op_prefix, assay, stranded=True ):
+    reads = pysam.Samfile( reads_fname, "rb" )
+    
     if assay == 'polya':
         update_buffer_array_from_read = update_buffer_array_from_polya_read
         stranded = True
+    elif assay == 'rnaseq':
+        update_buffer_array_from_read = \
+            update_buffer_array_from_rnaseq_read_generator(reads, False, False)
     else:
         raise ValueError, "Unrecognized assay: '%s'" % assay
     
@@ -232,13 +236,13 @@ def generate_wiggle(reads_fname, op_prefix, assay ):
                       % ( os.path.basename(op_prefix), strand_str ) )
     
     all_args = []
-    with pysam.Samfile( reads_fname, "rb" ) as reads:
-        for chrm_length, chrm  in sorted(izip(reads.lengths, reads.references)):
-            strands = ['+', '-'] if stranded else [None,]
-            for strand in strands:
-                ofp = ofps[strand]
-                all_args.append((ofp, reads.filename, chrm, strand, 
-                                 update_buffer_array_from_read))
+    
+    for chrm_length, chrm  in sorted(izip(reads.lengths, reads.references)):
+        strands = ['+', '-'] if stranded else [None,]
+        for strand in strands:
+            ofp = ofps[strand]
+            all_args.append((ofp, reads.filename, chrm, strand, 
+                             update_buffer_array_from_read))
     
     if num_threads == 1:
         for args in reversed(all_args):
@@ -303,7 +307,7 @@ def main():
     reads_fnames, op_prefixes, reverse_read_strand, reads_opp_strand, stranded\
         = parse_arguments()
     
-    generate_wiggle( reads_fnames, op_prefixes, "polya" )
+    generate_wiggle( reads_fnames, op_prefixes, "rnaseq" )
 
 if __name__ == "__main__":
     main()
