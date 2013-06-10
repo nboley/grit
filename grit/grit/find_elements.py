@@ -372,7 +372,7 @@ def write_unified_bed( elements, ofp ):
     color_mapping = { 
         'GENE': '200,200,200',
         'CAGE_PEAK': '153,255,000',
-        'SE_GENE': '000,000,000',
+        'SE_GENE': '000,000,200',
         'TSS_EXON': '140,195,59',
         'EXON': '000,000,000',
         'TES_EXON': '255,51,255',
@@ -942,7 +942,7 @@ def find_tes_exons( (chrm, strand), rnaseq_cov, jns, polya_sites ):
     return Bins( chrm, strand, sorted(set(tes_exons)))
 
 def find_exons_in_gene( ( chrm, strand, contig_len ), gene, 
-                        rnaseq_cov, cage_cov, 
+                        rnaseq_reads, cage_reads, 
                         polya_sites, jns ):
     if DEBUG_VERBOSE: 
         print "STARTING Chrm %s Strand %s Pos %i-%i" % (
@@ -955,6 +955,12 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         
     jns = [ (x1 - gene.start, x2 - gene.start, cnt)  
             for x1, x2, cnt in jns ]
+
+    rnaseq_cov = rnaseq_reads[0].build_read_coverage_array( 
+        chrm, strand, gene.start, gene.stop )
+    
+    cage_cov = cage_reads[0].build_read_coverage_array( 
+        chrm, strand, gene.start, gene.stop+1 )
     
     if strand == '-':
         gene_len = gene.stop - gene.start + 1
@@ -966,10 +972,10 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     filtered_junctions = []
     for (start, stop, cnt) in jns:
         if start < 0 or stop > contig_len: continue
-        left_ratio = rnaseq_cov[start-30:start-10].sum()/(rnaseq_cov[start+10:start+30].sum()+1e-6)
-        right_ratio = rnaseq_cov[stop+11:stop+31].sum()/(rnaseq_cov[stop-30:stop-10].sum()+1e-6)
-        if min(right_ratio, left_ratio)/cnt > 5: continue
-        if right_ratio < 1.2 or left_ratio < 1.2: continue        
+        left_intron_cvg = rnaseq_cov[start+10:start+30].sum()/20
+        right_intron_cvg = rnaseq_cov[stop-30:stop-10].sum()/20        
+        if cnt*10 < left_intron_cvg or cnt*10 < right_intron_cvg:
+            continue
         filtered_junctions.append( (start, stop, cnt) )
 
     jns = filtered_junctions
@@ -1046,16 +1052,10 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp, (chrm, strand, cont
         gene_polya_sa_i = polya_sites.searchsorted( gene.start )
         gene_polya_so_i = polya_sites.searchsorted( gene.stop, side='right' )
         gene_polyas = polya_sites[gene_polya_sa_i:gene_polya_so_i]
-        
-        gene_rnaseq_cov = rnaseq_reads[0].build_read_coverage_array( 
-            chrm, strand, gene.start, gene.stop )
-
-        gene_cage_cov = cage_reads[0].build_read_coverage_array( 
-            chrm, strand, gene.start, gene.stop+1 )
-        
+                
         elements, pseudo_exons = \
             find_exons_in_gene( ( chrm, strand, contig_len ), gene, 
-                                gene_rnaseq_cov, gene_cage_cov, 
+                                rnaseq_reads, cage_reads,
                                 gene_polyas, gene_jns )
     
         elements.extend( Bin( x-10, x, "POLYA", "POLYA", "POLYA" ) 
