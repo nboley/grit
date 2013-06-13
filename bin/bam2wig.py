@@ -8,8 +8,8 @@ import time
 from itertools import izip
 
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), ".." ) )
-from grit.files.reads import iter_coverage_regions_for_read, clean_chr_name, \
-    read_pairs_are_on_same_strand, get_strand, CAGEReads, RNAseqReads
+from grit.files.reads import iter_coverage_intervals_for_read, clean_chr_name, \
+    get_strand, CAGEReads, RNAseqReads
 
 import multiprocessing
 
@@ -36,28 +36,26 @@ class ProcessSafeOPStream( object ):
 def update_buffer_array_from_rnaseq_read( buffer_array, 
                                           buffer_offset, 
                                           read, strand,
-                                          reads, 
                                           pairs_are_opp_strand ):
                                           
     """populate buffer with histogram of contiguous read regions
 
     """
-    for chrm, rd_strand, start, stop in iter_coverage_regions_for_read(
-            read, reads, 
-            # we set this to false, but reverse later if necessary
-            reverse_read_strand=False, 
-            pairs_are_opp_strand=pairs_are_opp_strand):
+    for start, stop in iter_coverage_intervals_for_read(read):
+        rd_strand = get_strand( read, 
+                                reverse_read_strand=False, 
+                                pairs_are_opp_strand=pairs_are_opp_strand )
         if rd_strand != strand: continue
         buffer_array[(start-buffer_offset):(stop-buffer_offset) + 1] += 1
+    
     return
 
-def update_buffer_array_from_rnaseq_read_generator( 
-        reads, pairs_are_opp_strand ):
-    def update_buffer_array_from_read(buffer_array, buffer_offset, strand, read):
+def update_buffer_array_from_rnaseq_read_generator( reads ):
+    def update_buffer_array_from_read(buffer_array,buffer_offset,strand,read):
         return update_buffer_array_from_rnaseq_read( 
             buffer_array, buffer_offset, 
-            read, strand, reads, 
-            pairs_are_opp_strand )
+            read, strand, 
+            reads.pairs_are_opp_strand )
     
     return update_buffer_array_from_read
 
@@ -220,8 +218,8 @@ def generate_wiggle(reads_fname, op_prefix, assay,
         reads = RNAseqReads( reads_fname, "rb" )
         reads.init(reverse_read_strand=reverse_read_strand)
         update_buffer_array_from_read = \
-            update_buffer_array_from_rnaseq_read_generator(
-                reads, not reads.pairs_are_opp_strand)
+            update_buffer_array_from_rnaseq_read_generator(reads)
+                
     else:
         raise ValueError, "Unrecognized assay: '%s'" % assay
     
