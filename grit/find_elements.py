@@ -68,8 +68,8 @@ EXON_EXT_CVG_RATIO_THRESH = 5
 POLYA_MERGE_SIZE = 100
 
 CAGE_PEAK_WIN_SIZE = 20
-MIN_NUM_CAGE_TAGS = 20
-MAX_CAGE_FRAC = 0.001
+MIN_NUM_CAGE_TAGS = 10
+MAX_CAGE_FRAC = 0.01
 
 def get_contigs_and_lens( rnaseq_reads, cage_reads ):
     """Get contigs and their lengths from a set of bam files.
@@ -202,11 +202,11 @@ def filter_exon( exon, wig, min_avg_cvg=0.01,
     
     IQ_ratio = high / max(low, min_avg_cvg)
     # if the IQ range is < 100, chalk it up to inhomogeneity and accept it
-    if IQ_ratio < 100:
+    if IQ_ratio < 20:
         return False
     
     # if the IQ range is "boarder line", but the low is high, keep it, what the hell
-    if IQ_ratio >= 100 and IQ_ratio < 500 and low > 50:
+    if IQ_ratio >= 20 and IQ_ratio < 100 and low > 50:
         return False
     
     return True
@@ -613,6 +613,35 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
     
     return genes
 
+def filter_polya_sites( (chrm, strand), gene, polya_sites, rnaseq_cov ):
+    if len(polya_sites) == 0:
+        return polya_sites
+    
+    polya_sites.sort()
+
+    new_polya_sites = []
+    for site in polya_sites[:-1]:
+        pre_cvg = rnaseq_cov[max(0,site-10):site].sum()       
+        post_cvg = rnaseq_cov[site+10:site+20].sum()
+        if pre_cvg > 10 and pre_cvg/(post_cvg+1.0) < 5:
+            continue
+        else:
+            new_polya_sites.append( site )
+    
+    new_polya_sites.append( polya_sites[-1] )
+    polya_sites = new_polya_sites
+
+    # merge sites that are close
+    new_polya_sites = [polya_sites[0],]
+    for site in polya_sites[1:]:
+        if site - new_polya_sites[-1] < 20:
+            new_polya_sites[-1] = site
+        else:
+            new_polya_sites.append( site )
+    
+    return new_polya_sites
+
+
 def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
      raw_peaks = find_peaks( cage_cov, window_len=CAGE_PEAK_WIN_SIZE, 
                              min_score=MIN_NUM_CAGE_TAGS,
@@ -623,6 +652,12 @@ def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
      
      cage_peaks = Bins( chrm, strand )
      for peak_st, peak_sp in raw_peaks:
+         # make sure there is *some* rnaseq coverage post peak
+         if rnaseq_cov[peak_st:peak_sp+10].sum() < MIN_NUM_CAGE_TAGS: continue
+         # make sure that there is an increase in coverage from pre to post peak
+         pre_peak_cov = rnaseq_cov[peak_st-10:peak_st].sum()
+         post_peak_cov = rnaseq_cov[peak_st:peak_sp+10].sum()
+         if post_peak_cov/(pre_peak_cov+1e-6) < 5: continue
          cage_peaks.append( Bin( peak_st, peak_sp+1,
                                  "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK") )
      return cage_peaks
@@ -833,7 +868,7 @@ def build_labeled_segments( rnaseq_cov, jns, cage_peaks=[], polya_sites=[] ):
     
     return bins
 
-def find_canonical_and_internal_exons( (chrm, strand), rnaseq_cov, jns  ):
+def find_canonical_and_internal_exons( (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_sites  ):
     bins = build_labeled_segments( rnaseq_cov, jns )    
     
     def iter_canonical_exons_and_indices():
@@ -934,9 +969,9 @@ def find_tes_exons( (chrm, strand), rnaseq_cov, jns, polya_sites ):
             if r_ext.right_label != 'POLYA': break
             if r_ext.mean_cov(rnaseq_cov) < MIN_EXON_BPKM: break
             # filter extensions with a sufficiently low coverage ratio
-            #if (tes_exon.mean_cov(rnaseq_cov)+1e-6)/\
-            #        (r_ext.mean_cov(rnaseq_cov)+1e-6) > 10:
-            #    continue
+            if (tes_exon.mean_cov(rnaseq_cov)+1e-6)/\
+                    (r_ext.mean_cov(rnaseq_cov)+1e-6) > 10:
+                continue
             tes_exon.stop = r_ext.stop
     
     return Bins( chrm, strand, sorted(set(tes_exons)))
@@ -984,8 +1019,10 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     
     cage_peaks = find_cage_peaks_in_gene( 
         (chrm, strand), gene, cage_cov, rnaseq_cov )
+    #polya_sites = filter_polya_sites( (chrm, strand), gene, polya_sites, rnaseq_cov )
+    
     canonical_exons, internal_exons = find_canonical_and_internal_exons(
-        (chrm, strand), rnaseq_cov, jns)
+        (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_sites)
     tss_exons, se_genes = find_tss_exons_and_se_genes( 
         (chrm, strand), rnaseq_cov, jns, polya_sites, cage_peaks)
     tes_exons = find_tes_exons( 
@@ -1002,6 +1039,8 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     tss_exons = filter_exons( tss_exons, rnaseq_cov )
     tes_exons = filter_exons( tes_exons, rnaseq_cov )
     internal_exons = filter_exons( internal_exons, rnaseq_cov )
+    se_genes = filter_exons( se_genes, rnaseq_cov )
+
     #print len(tss_exons), len(internal_exons), len(tes_exons)
     
     elements = Bins(chrm, strand, chain(
