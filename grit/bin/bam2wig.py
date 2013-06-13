@@ -9,12 +9,11 @@ from itertools import izip
 
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), ".." ) )
 from grit.files.reads import iter_coverage_regions_for_read, clean_chr_name, \
-    read_pairs_are_on_same_strand, get_strand
+    read_pairs_are_on_same_strand, get_strand, CAGEReads, RNAseqReads
 
 import multiprocessing
 
-num_threads = 1
-buffer_size = 5000000
+BUFFER_SIZE = 50000000
 bedGraphToBigWig_script = "/usr/local/bin/bedGraphToBigWig"
 
 
@@ -129,7 +128,7 @@ def populate_cvg_array_for_contig(
     # size must be larger than the gap between reads for this to work. For a 
     # normal RNA experiment, 1MB should be more than enough, so we set it to 
     # 5MB to be extra safe.
-    buffer_array = numpy.zeros( buffer_size*2 )
+    buffer_array = numpy.zeros( BUFFER_SIZE*2 )
     # stores after how many bases in the current contig ( chrm, strand ) the 
     # current buffer starts.
     buffer_offset = None
@@ -143,22 +142,22 @@ def populate_cvg_array_for_contig(
         # if this read extends past the current buffer, then we need to write
         # it out to disk and move the unwritten portion tot he start of the 
         # buffer
-        if read.pos > buffer_offset + buffer_size:
+        if read.pos > buffer_offset + BUFFER_SIZE:
             write_array_to_opstream( 
-                ofp, buffer_array[:buffer_size], 
+                ofp, buffer_array[:BUFFER_SIZE], 
                 buffer_offset, chrm)
             
             # move the unwritten portion to the start of the buffer,
             # and zero out the end
-            buffer_array[:buffer_size] = buffer_array[buffer_size:]
-            buffer_array[buffer_size:] = 0
-            buffer_offset += buffer_size
+            buffer_array[:BUFFER_SIZE] = buffer_array[BUFFER_SIZE:]
+            buffer_array[BUFFER_SIZE:] = 0
+            buffer_offset += BUFFER_SIZE
 
         update_buffer_array_from_read( 
             buffer_array, buffer_offset, rd_strand, read )
     
     #to make sure the rest of the buffer is stored on disk
-    write_array_to_opstream( ofp, buffer_array[:buffer_size], 
+    write_array_to_opstream( ofp, buffer_array[:BUFFER_SIZE], 
                              buffer_offset, chrm)
     reads.close()
 
@@ -206,18 +205,21 @@ def build_chrm_sizes_file(reads):
     return chrm_sizes_file
 
 def generate_wiggle(reads_fname, op_prefix, assay, 
-                    stranded=True, 
+                    num_threads=1, stranded=True, 
                     reverse_read_strand=None, 
                     read_pairs_are_on_same_strand=None ):
-    reads = pysam.Samfile( reads_fname, "rb" )
-    
     if assay == 'cage':
+        reads = CAGEReads( reads_fname, "rb" )
+        reads.init(reverse_read_strand=reverse_read_strand)
         update_buffer_array_from_read = update_buffer_array_from_CAGE_read
         stranded = True
     elif assay == 'polya':
+        reads = pysam.Samfile( reads_fname, "rb" )
         update_buffer_array_from_read = update_buffer_array_from_polya_read
         stranded = True
     elif assay == 'rnaseq':
+        reads = RNAseqReads( reads_fname, "rb" )
+        reads.init(reverse_read_strand=reverse_read_strand)
         update_buffer_array_from_read = \
             update_buffer_array_from_rnaseq_read_generator(
                 reads, read_pairs_are_on_same_strand)
@@ -271,6 +273,8 @@ def generate_wiggle(reads_fname, op_prefix, assay,
     return
 
 def parse_arguments():
+    global BUFFER_SIZE
+
     import argparse
     parser = argparse.ArgumentParser(
         description='Get coverage bedgraphs from aligned reads.')
@@ -288,32 +292,27 @@ def parse_arguments():
     
     parser.add_argument( '--reverse-read-strand', '-r', default=False, action='store_true',
                          help='Whether or not to reverse the strand of the read. default: False')
-    parser.add_argument('--stranded', type=bool,
-                        help="true if reads are stranded")
     
-    parser.add_argument('--buffer-size', '-b', default=20000000, type=int,
+    parser.add_argument('--buffer-size', '-b', default=BUFFER_SIZE, type=int,
                         help='The amount of memory(in base pairs) to use before flushing to disk')
     
     args = parser.parse_args()
-    global buffer_size
-    buffer_size = args.buffer_size
-    global num_threads
-    num_threads = args.threads    
     global VERBOSE
     VERBOSE = args.verbose
+    BUFFER_SIZE = args.buffer_size
     
     assay = {'c': 'cage', 'r': 'rnaseq', 'p': 'polya'}[args.assay.lower()[0]]
     if assay not in ('cage', 'rnaseq', 'polya'):
         raise ValueError, "Unrecongized assay (%s)" % args.assay
     
     return assay, args.mapped_reads_fname, args.out_fname_prefix, \
-        args.reverse_read_strand, args.stranded
+        args.reverse_read_strand, args.threads
 
 def main():
-    assay, reads_fnames, op_prefix, reverse_read_strand, stranded \
+    assay, reads_fnames, op_prefix, reverse_read_strand, num_threads \
         = parse_arguments()
     
-    generate_wiggle( reads_fnames, op_prefix, assay, 
+    generate_wiggle( reads_fnames, op_prefix, assay, num_threads,
                      reverse_read_strand=reverse_read_strand )
 
 if __name__ == "__main__":
