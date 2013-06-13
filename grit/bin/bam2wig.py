@@ -7,8 +7,7 @@ import tempfile
 import time
 from itertools import izip
 
-sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
-                                      ".." ) )
+sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), ".." ) )
 from grit.files.reads import iter_coverage_regions_for_read, clean_chr_name, \
     read_pairs_are_on_same_strand, get_strand
 
@@ -39,25 +38,27 @@ def update_buffer_array_from_rnaseq_read( buffer_array,
                                           buffer_offset, 
                                           read, strand,
                                           reads, 
-                                          reverse_read_strand, 
                                           pairs_are_opp_strand ):
                                           
     """populate buffer with histogram of contiguous read regions
 
     """
     for chrm, rd_strand, start, stop in iter_coverage_regions_for_read(
-            read, reads, reverse_read_strand, pairs_are_opp_strand):
+            read, reads, 
+            # we set this to false, but reverse later if necessary
+            reverse_read_strand=False, 
+            pairs_are_opp_strand=pairs_are_opp_strand):
         if rd_strand != strand: continue
         buffer_array[(start-buffer_offset):(stop-buffer_offset) + 1] += 1
     return
 
 def update_buffer_array_from_rnaseq_read_generator( 
-        reads, reverse_read_strand, pairs_are_opp_strand ):
+        reads, pairs_are_opp_strand ):
     def update_buffer_array_from_read(buffer_array, buffer_offset, strand, read):
         return update_buffer_array_from_rnaseq_read( 
             buffer_array, buffer_offset, 
             read, strand, reads, 
-            reverse_read_strand, pairs_are_opp_strand )
+            pairs_are_opp_strand )
     
     return update_buffer_array_from_read
 
@@ -77,6 +78,29 @@ def update_buffer_array_from_polya_read(
     # find the statmap posterior probabiliy, if available
     res = [ val for key, val in read.tags if key == 'XP' ]
     post_prb = 1.0 if len(res) == 0 else res[0]
+    
+    # update the array
+    buffer_array[pos-buffer_offset] += post_prb
+    
+    return
+
+
+def update_buffer_array_from_CAGE_read(
+        buffer_array, buffer_offset, strand, read):
+    rd_strand = '+' if read.is_reverse else '-'
+    
+    # skip reads that dont match the filtering criterion
+    if strand != rd_strand: return
+    
+    # determine which pos of the read corresponds to the 
+    # poly(a) site
+    if rd_strand == '+': pos = read.pos
+    else: pos = read.aend
+    
+    # find the statmap posterior probabiliy, if available
+    res = [ val for key, val in read.tags if key == 'XP' ]
+    try: post_prb = float(res[0])
+    except Exception: post_prb = 1.0
     
     # update the array
     buffer_array[pos-buffer_offset] += post_prb
@@ -120,13 +144,19 @@ urvish_crap = """
 """
 
 def populate_cvg_array_for_contig( 
-        merged_ofp, reads_fname, chrm, strand, update_buffer_array_from_read ):
+        merged_ofp, reads_fname, chrm, strand, 
+        reverse_read_strand, update_buffer_array_from_read ):
     if VERBOSE: print "Starting ", chrm, strand
     
     # open the reads file - we pass in a filename and re-open to make 
     # this multi-process safe
     reads = pysam.Samfile( reads_fname, "rb" )
-        
+    
+    # if we need to reverse the read strand, then set the matching
+    # read strand to be the opposite
+    rd_strand = strand
+    if reverse_read_strand: rd_strand = '+' if strand == '-' else '-'
+    
     # open a tempory file to write this to
     ofp = tempfile.NamedTemporaryFile(delete=False)
     
@@ -141,8 +171,10 @@ def populate_cvg_array_for_contig(
     buffer_offset = None
     for read in reads.fetch(chrm):
         # optimize the writing process by skipping regions that start before 
-        # the first read
-        if buffer_offset == None: buffer_offset = read.pos
+        # the first read. We subtract an additional megabase to account for 
+        # weird potential read offsets
+        if buffer_offset == None: 
+            buffer_offset = max(0, read.pos-1e6)
         
         # if this read extends past the current buffer, then we need to write
         # it out to disk and move the unwritten portion tot he start of the 
@@ -159,7 +191,7 @@ def populate_cvg_array_for_contig(
             buffer_offset += buffer_size
 
         update_buffer_array_from_read( 
-            buffer_array, buffer_offset, strand, read )
+            buffer_array, buffer_offset, rd_strand, read )
     
     #to make sure the rest of the buffer is stored on disk
     write_array_to_opstream( ofp, buffer_array[:buffer_size], 
@@ -173,7 +205,6 @@ def populate_cvg_array_for_contig(
     if VERBOSE: print "Finished ", chrm, strand
     
     return
-
 
 
 def write_array_to_opstream(ofp, buffer, buff_start, chrm ):
@@ -210,15 +241,22 @@ def build_chrm_sizes_file(reads):
     
     return chrm_sizes_file
 
-def generate_wiggle(reads_fname, op_prefix, assay, stranded=True ):
+def generate_wiggle(reads_fname, op_prefix, assay, 
+                    stranded=True, 
+                    reverse_read_strand=None, 
+                    read_pairs_are_on_same_strand=None ):
     reads = pysam.Samfile( reads_fname, "rb" )
     
-    if assay == 'polya':
+    if assay == 'cage':
+        update_buffer_array_from_read = update_buffer_array_from_CAGE_read
+        stranded = True
+    elif assay == 'polya':
         update_buffer_array_from_read = update_buffer_array_from_polya_read
         stranded = True
     elif assay == 'rnaseq':
         update_buffer_array_from_read = \
-            update_buffer_array_from_rnaseq_read_generator(reads, False, False)
+            update_buffer_array_from_rnaseq_read_generator(
+                reads, read_pairs_are_on_same_strand)
     else:
         raise ValueError, "Unrecognized assay: '%s'" % assay
     
@@ -242,6 +280,7 @@ def generate_wiggle(reads_fname, op_prefix, assay, stranded=True ):
         for strand in strands:
             ofp = ofps[strand]
             all_args.append((ofp, reads.filename, chrm, strand, 
+                             reverse_read_strand,
                              update_buffer_array_from_read))
     
     if num_threads == 1:
@@ -275,23 +314,22 @@ def parse_arguments():
                          help='BAM or SAM file(s) containing the mapped reads.')
     parser.add_argument( '--out-fname-prefix', '-o', required=True, 
                          help='Output file(s) will be bigWig')
+    parser.add_argument( '--assay', '-a', required=True, 
+                         help='The assay type [(r)naseq, (c)age, (p)olya]')    
     
     parser.add_argument( '--verbose', '-v', default=False, action='store_true', 
                          help='Whether or not to print status information.')
-    parser.add_argument( '--threads', '-t', default=10, type=int,
+    parser.add_argument( '--threads', '-t', default=1, type=int,
                          help='The number of threads to run.')
-
-    parser.add_argument( '--reverse-read-strand', '-r', type=bool,
-                         help='Whether or not to reverse the strand of the read. default: infer from junction reads')
+    
+    parser.add_argument( '--reverse-read-strand', '-r', default=False, action='store_true',
+                         help='Whether or not to reverse the strand of the read. default: False')
     parser.add_argument('--stranded', type=bool,
                         help="true if reads are stranded")
-    parser.add_argument('--reads-opp-strand', type=bool, 
-                        help='True if reads are opp strand for each BAM file')
-    parser.add_argument('--buffer-size', '-b', default=5000000, type=int,
+    
+    parser.add_argument('--buffer-size', '-b', default=20000000, type=int,
                         help='The amount of memory(in base pairs) to use before flushing to disk')
-    parser.add_argument('--force', '-f', default=False, action='store_true', 
-                        help='force recreate of bigwig even if it exists')
-
+    
     args = parser.parse_args()
     global buffer_size
     buffer_size = args.buffer_size
@@ -300,14 +338,19 @@ def parse_arguments():
     global VERBOSE
     VERBOSE = args.verbose
     
-    return args.mapped_reads_fname, args.out_fname_prefix, \
-        args.reverse_read_strand, args.reads_opp_strand, args.stranded
+    assay = {'c': 'cage', 'r': 'rnaseq', 'p': 'polya'}[args.assay.lower()[0]]
+    if assay not in ('cage', 'rnaseq', 'polya'):
+        raise ValueError, "Unrecongized assay (%s)" % args.assay
+    
+    return assay, args.mapped_reads_fname, args.out_fname_prefix, \
+        args.reverse_read_strand, args.stranded
 
 def main():
-    reads_fnames, op_prefixes, reverse_read_strand, reads_opp_strand, stranded\
+    assay, reads_fnames, op_prefix, reverse_read_strand, stranded \
         = parse_arguments()
     
-    generate_wiggle( reads_fnames, op_prefixes, "rnaseq" )
+    generate_wiggle( reads_fnames, op_prefix, assay, 
+                     reverse_read_strand=reverse_read_strand )
 
 if __name__ == "__main__":
     main()
