@@ -206,8 +206,7 @@ def build_chrm_sizes_file(reads):
 
 def generate_wiggle(reads_fname, op_prefix, assay, 
                     num_threads=1, stranded=True, 
-                    reverse_read_strand=None, 
-                    read_pairs_are_on_same_strand=None ):
+                    reverse_read_strand=None ):
     if assay == 'cage':
         reads = CAGEReads( reads_fname, "rb" )
         reads.init(reverse_read_strand=reverse_read_strand)
@@ -222,7 +221,7 @@ def generate_wiggle(reads_fname, op_prefix, assay,
         reads.init(reverse_read_strand=reverse_read_strand)
         update_buffer_array_from_read = \
             update_buffer_array_from_rnaseq_read_generator(
-                reads, read_pairs_are_on_same_strand)
+                reads, not reads.pairs_are_opp_strand)
     else:
         raise ValueError, "Unrecognized assay: '%s'" % assay
     
