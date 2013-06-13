@@ -107,42 +107,6 @@ def update_buffer_array_from_CAGE_read(
     
     return
 
-urvish_crap = """
-    # check if the chromosome exists in the references
-    ref_index = reads.references.index( chrm )
-    if ref_index == -1:
-        reads.close()
-        return
-
-    # try to get one read. If we cant, then skip this chromosome
-    try:
-        next( iter(reads.fetch(chrm)) )
-    except StopIteration:
-        reads.close()
-        return
-
-
-    #create file for output
-    if strand:
-        ofp = file(os.path.abspath("/tmp/{0}.{1}.bedGraph".format(clean_chr_name(chrm), strand)), "w")
-    else:
-        ofp = file(os.path.abspath("/tmp/{0}.bedGraph".format(clean_chr_name(chrm))), "w")
-
-
-
-
-        # skip reads with the incorrect strand
-        rd_strand = get_strand(read, reverse_read_strand, pairs_are_opp_strand )
-        if strand != None and rd_strand != strand:                 
-            continue            
-        
-        # skip reads that aren't mapped in pair
-        if not read.is_proper_pair:
-            continue
-        
-
-"""
-
 def populate_cvg_array_for_contig( 
         merged_ofp, reads_fname, chrm, strand, 
         reverse_read_strand, update_buffer_array_from_read ):
