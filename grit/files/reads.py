@@ -274,7 +274,7 @@ class Reads( pysam.Samfile ):
         for rd in self.iter_reads( chrm, strand, start, stop ):
             for region in iter_coverage_regions_for_read( 
                     rd, self, self.RRR, self.PAOS):
-                cvg[max(0, region[2]-start):(region[3]-start)] += 1
+                cvg[max(0, region[2]-start):max(0, region[3]-start)] += 1
         
         return cvg
 
