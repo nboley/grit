@@ -207,7 +207,7 @@ def generate_wiggle(reads_fname, op_prefix, assay,
                     reverse_read_strand=None ):
     if assay == 'cage':
         reads = CAGEReads( reads_fname, "rb" )
-        reads.init(reverse_read_strand=reverse_read_strand)
+        reads.init(reverse_read_strand=False)
         update_buffer_array_from_read = update_buffer_array_from_CAGE_read
         stranded = True
     elif assay == 'polya':
@@ -216,7 +216,7 @@ def generate_wiggle(reads_fname, op_prefix, assay,
         stranded = True
     elif assay == 'rnaseq':
         reads = RNAseqReads( reads_fname, "rb" )
-        reads.init(reverse_read_strand=reverse_read_strand)
+        reads.init(reverse_read_strand=False)
         update_buffer_array_from_read = \
             update_buffer_array_from_rnaseq_read_generator(reads)
                 

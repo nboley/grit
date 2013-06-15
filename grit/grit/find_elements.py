@@ -508,10 +508,12 @@ def load_junctions( rnaseq_reads, (chrm, strand, contig_len) ):
                     break
                 time.sleep( 0.1 )
             
-            junctions = sorted( all_jns )
-            # make sure the junctions are unique
-            assert len( all_jns ) == len( set( x for x,y in all_jns ) )
+            junctions = defaultdict( int )
+            for jn, cnt in all_jns:
+                junctions[jn] += cnt
             
+            junctions = sorted(junctions.iteritems())
+    
     if VERBOSE: print "Finished extracting junctions for %s %s" % (chrm, strand)
     
     # filter junctions
@@ -1269,7 +1271,6 @@ def main():
     if VERBOSE: print >> sys.stderr, 'Finished loading gtf'
     
     for contig, contig_len in contig_lens.iteritems():
-        if contig != '20': continue
         for strand in '+-':
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, promoter_reads, polya_sites,
