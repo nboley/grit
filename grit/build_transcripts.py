@@ -3,7 +3,7 @@ import numpy
 
 import time
 
-from pysam import Fastafile
+from pysam import Fastafile, Samfile
 
 from itertools import izip, chain
 from collections import defaultdict
@@ -368,15 +368,17 @@ def load_elements( fp ):
 
 def build_fl_dists( elements, rnaseq_reads,
                     analyze_pdf_fname=None ):
-    from frag_len import estimate_fl_dists, analyze_fl_dists
+    from frag_len import estimate_fl_dists, analyze_fl_dists, estimate_normal_fl_dist_from_reads
     from transcript import iter_nonoverlapping_exons
     from files.gtf import GenomicInterval
+    assert len( rnaseq_reads ) == 1
+    reads = rnaseq_reads[0]
     
     def iter_good_exons():
         num = 0
         for (chrm, strand), exons in sorted( 
                 elements.iteritems(), 
-                key=lambda x: rnaseq_reads.contig_len(x[0][0]) ):
+                key=lambda x: reads.contig_len(x[0][0]) ):
             for start,stop in iter_nonoverlapping_exons(exons['internal_exon']):
                 num += 1
                 yield GenomicInterval(chrm, strand, start, stop)
@@ -384,7 +386,12 @@ def build_fl_dists( elements, rnaseq_reads,
         return
     
     good_exons = iter_good_exons()
-    fl_dists, fragments = estimate_fl_dists( rnaseq_reads, good_exons )
+    fl_dists, fragments = estimate_fl_dists( reads, good_exons )
+    if len( fragments ) == 0:
+        x = reads.filename
+        tmp_reads = Samfile( x )
+        fl_dists, fragments = estimate_normal_fl_dist_from_reads( tmp_reads )
+        tmp_reads.close()
     if None != fragments and  None != analyze_pdf_fname:
         analyze_fl_dists( fragments, analyze_pdf_fname )
     
@@ -407,8 +414,7 @@ def initialize_processing_data( elements, fl_dists,
             # skip genes without all of the element types
             if len(se_ts) == 0 and (
                     len(tes_es) == 0 
-                    or len( tss_es ) == 0 
-                    or len( internal_es ) == 0 ):
+                    or len( tss_es ) == 0 ):
                 continue
             
             gene_id += 1
@@ -454,8 +460,7 @@ def parse_arguments():
     parser.add_argument( '--elements', type=file,
         help='Bed file containing elements')
 
-    parser.add_argument( '--rnaseq-reads',
-                         type=argparse.FileType('rb'), nargs='+',
+    parser.add_argument( '--rnaseq-reads', type=file, nargs='+',
         help='BAM files containing mapped RNAseq reads ( must be indexed ).')
     parser.add_argument( '--cage-reads', type=file, default=[], nargs='*', 
         help='BAM files containing mapped cage reads.')
@@ -504,6 +509,8 @@ def parse_arguments():
 
     global ONLY_BUILD_CANDIDATE_TRANSCRIPTS
     ONLY_BUILD_CANDIDATE_TRANSCRIPTS = args.only_build_candidate_transcripts
+    if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS and len( args.rnaseq_reads ) == 0:
+        raise ValueError, "Must provide RNAseq data to estimate transcript frequencies"
     
     global num_threads
     num_threads = args.threads
@@ -539,14 +546,18 @@ def main():
     
     rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=reverse_rnaseq_strand) 
                      for fp in rnaseq_bams ]
+    for fp in rnaseq_bams: fp.close()    
+    
     global NUMBER_OF_READS_IN_BAM
     NUMBER_OF_READS_IN_BAM = sum( x.mapped for x in rnaseq_reads )
-    assert len(rnaseq_reads) == 1
+    assert ONLY_BUILD_CANDIDATE_TRANSCRIPTS or len(rnaseq_reads) == 1
 
     cage_reads = [ CAGEReads(fp.name).init(reverse_read_strand=True) 
                    for fp in cage_bams ]    
+    for fp in cage_bams: fp.close()
     rampage_reads = [ RAMPAGEReads(fp.name).init(reverse_read_strand=True) 
                       for fp in rampage_bams ]
+    for fp in rampage_bams: fp.close()
     promoter_reads = [] + cage_reads + rampage_reads
     assert len(promoter_reads) <= 1
 
@@ -555,7 +566,7 @@ def main():
 
     # estimate the fragment length distribution
     fl_dists = build_fl_dists( 
-        elements, rnaseq_reads[0], log_fp.name + ".fldist.pdf" )
+        elements, rnaseq_reads, log_fp.name + ".fldist.pdf" )
     
     if VERBOSE:
         print >> sys.stderr, "Finished estimating the fragment length distribution"

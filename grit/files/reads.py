@@ -197,11 +197,13 @@ class Reads( pysam.Samfile ):
             self.fetch( self.references[0], 10000 )
         except ValueError, inst:
             raise ValueError, "BAM Files must be indexed."
+        self.seek(0)
         
         return self
 
     def fix_chrm_name( self, chrm_name ):
         return self._canonical_to_chrm_name_mapping[clean_chr_name(chrm_name)]
+    
     
     def fetch(*args, **kwargs):
         """Wrap fetch to fix the chrm name.
@@ -279,7 +281,11 @@ class Reads( pysam.Samfile ):
         return cvg
 
     def reload( self ):
-        return type(self)(self.filename).init(**self._init_kwargs)
+        fname = self.filename
+        self.close()
+        reads = type(self)(fname)
+        reads.init(**self._init_kwargs)
+        return reads
 
 class RNAseqReads(Reads):
     def init(self, reverse_read_strand, reads_are_stranded=True, 
