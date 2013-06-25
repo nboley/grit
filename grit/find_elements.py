@@ -1,4 +1,7 @@
-import sys
+__version__ = "0.1.1"
+
+import sys, os
+import time
 
 import numpy
 
@@ -20,6 +23,98 @@ from files.gtf import parse_gtf_line
 
 USE_CACHE = False
 NTHREADS = 1
+
+import curses
+def manage_curses_display(stdscr, msg_queue, msg_queue_lock):
+    curses.curs_set(0)    
+    stdscr.timeout(0)
+    header = stdscr.derwin(2, 80, 0, 0)
+
+    thread_data = stdscr.derwin(NTHREADS+2, 80, 3, 0)
+    thread_data.insstr( 0, 0, "Main:".ljust(11) )
+    for i in xrange(NTHREADS):
+        thread_data.insstr( i+1, 0, ("Thread %i:" % (i+1)).ljust(11) )
+    
+    stdscr.addstr(NTHREADS+2+2+1, 0, "Log:" )
+    
+    log_border = stdscr.derwin(20+2, 80, NTHREADS+2+2+2, 0)
+    log_border.border()
+    log = log_border.derwin( 20, 78, 1, 1 )
+    
+    header.addstr(0, 0, "GRIT (version %s)" % (__version__, ) )
+    stdscr.refresh()    
+    while True:
+        try:
+            msg_queue_lock.acquire()
+            thread_index, msg = msg_queue.pop()
+        except IndexError, inst:
+            msg_queue_lock.release()
+            time.sleep(0.1)
+            continue
+
+        if thread_index in (0, None ):
+            log.insertln()
+            log.insstr( msg )
+            log.refresh()
+        
+        if 0 == thread_index:
+            thread_data.addstr(0, 0, "Main:".ljust(13) + msg.ljust(80-13) )
+            thread_data.refresh()            
+        elif thread_index != None:
+            thread_data.addstr(thread_index, 0, ("Thread %i:" % (thread_index)).ljust(13) + msg.ljust(80-13) )
+            thread_data.refresh()
+        
+        msg_queue_lock.release()
+        stdscr.refresh()
+        if msg == 'BREAK': break
+    
+    return
+
+class Logger( object ):
+    def __init__(self, nthreads):
+        self.manager = multiprocessing.Manager()
+        self.ofp = open( "GRIT_errors.log", "w" )
+        self.msgs_lock = self.manager.Lock()
+        self.msgs = self.manager.list()
+        p = multiprocessing.Process( target=curses.wrapper, 
+                     args=(manage_curses_display, self.msgs, self.msgs_lock) )
+        p.start()
+        self.curses_p = p
+        self.main_pid = os.getpid()
+
+        self.pid_to_index_mapping = self.manager.list()
+        self.pid_to_index_mapping.append( self.main_pid )
+        for loop in xrange(nthreads):
+            self.pid_to_index_mapping.append( None )
+        
+        return
+    
+    def __call__( self, message, ONLY_LOG=False ):
+        self.ofp.write(message.strip() + "\n" )
+        self.ofp.flush()
+        
+        self.msgs_lock.acquire()
+        if ONLY_LOG: 
+            p_index = None
+        else:
+            try: 
+                p_index = self.pid_to_index_mapping.index( os.getpid() )
+            except ValueError:
+                p_index = min( i for i, pid in enumerate(self.pid_to_index_mapping) 
+                               if pid == None or not os.path.exists("/proc/%i" % pid) )
+                self.pid_to_index_mapping[p_index] = os.getpid()
+        
+        self.msgs.append( (p_index, message) )
+        self.msgs_lock.release()
+        # make sure that the message has time to be displayed
+        time.sleep(0.1)
+    
+    def close(self):
+        self.ofp.close()
+        self.msgs.append( (None, 'BREAK') )
+        self.curses_p.join()
+    
+log_statement = None
 
 class ThreadSafeFile( file ):
     def __init__( self, *args ):
@@ -67,8 +162,8 @@ MIN_EXON_BPKM = 1
 EXON_EXT_CVG_RATIO_THRESH = 5
 POLYA_MERGE_SIZE = 100
 
-CAGE_PEAK_WIN_SIZE = 20
-MIN_NUM_CAGE_TAGS = 10
+CAGE_PEAK_WIN_SIZE = 10
+MIN_NUM_CAGE_TAGS = 5
 MAX_CAGE_FRAC = 0.01
 
 def get_contigs_and_lens( rnaseq_reads, cage_reads ):
@@ -458,11 +553,13 @@ class Bins( list ):
         return
 
 def load_junctions_worker(all_jns, all_jns_lock, args):
+    log_statement( "Finding jns in '%s:%s:%i-%i'" % args[1:5] )
     jns = extract_junctions_in_region( *args )
     all_jns_lock.acquire()
     all_jns.extend( jns )
     all_jns_lock.release()
     del jns
+    log_statement( "" )
     return
 
 def load_junctions( rnaseq_reads, (chrm, strand, contig_len) ):
@@ -502,7 +599,7 @@ def load_junctions( rnaseq_reads, (chrm, strand, contig_len) ):
                 p.start()
                 ps.append( p )
             
-            import time
+            log_statement( "Waiting on jn finding children in contig '%s' on '%s' strand" % ( chrm, strand ) )
             while True:
                 if all( not p.is_alive() for p in ps ):
                     break
@@ -513,9 +610,7 @@ def load_junctions( rnaseq_reads, (chrm, strand, contig_len) ):
                 junctions[jn] += cnt
             
             junctions = sorted(junctions.iteritems())
-    
-    if VERBOSE: print "Finished extracting junctions for %s %s" % (chrm, strand)
-    
+        
     # filter junctions
     jn_starts = defaultdict( int )
     jn_stops = defaultdict( int )
@@ -596,11 +691,11 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
     # find segment boundaries
     initial_segmentation = find_initial_segmentation( 
         chrm, strand, rnaseq_reads, polya_sites )
-    if VERBOSE: print "Finished initial segmentation for %s %s" % (chrm, strand)    
+    if VERBOSE: log_statement( "Finished initial segmentation for %s %s" % (chrm, strand) )
     merged_segments = merge_segments( initial_segmentation, strand )
-    if VERBOSE: print "Finished merging segments for %s %s" % (chrm, strand)
+    if VERBOSE: log_statement( "Finished merging segments for %s %s" % (chrm, strand) )
     clustered_segments = cluster_segments( merged_segments, junctions )
-    if VERBOSE: print "Finished clustering segments for %s %s" % (chrm, strand)    
+    if VERBOSE: log_statement( "Finished clustering segments for %s %s" % (chrm, strand) )
     
     # build the gene bins, and write them out to the elements file
     genes = Bins( chrm, strand, [] )
@@ -699,9 +794,8 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
                 start = max(0, start - grow_size )
         
         if VERBOSE:
-            print "Warning: reached max peak iteration at %i-%i ( signal %.2f )"\
-                % (start, stop, cov[start:stop+1].sum() )
-            print 
+            log_statement( "Warning: reached max peak iteration at %i-%i ( signal %.2f )" \
+                               % (start, stop, cov[start:stop+1].sum() ) )
         return (start, stop )
     
     peaks = []
@@ -981,9 +1075,6 @@ def find_tes_exons( (chrm, strand), rnaseq_cov, jns, polya_sites ):
 def find_exons_in_gene( ( chrm, strand, contig_len ), gene, 
                         rnaseq_reads, cage_reads, 
                         polya_sites, jns ):
-    if DEBUG_VERBOSE: 
-        print "STARTING Chrm %s Strand %s Pos %i-%i" % (
-            chrm, strand, gene.start, gene.stop)
     ###########################################################
     # Shift all of the input data to eb in the gene region, and 
     # reverse it when necessary
@@ -1043,8 +1134,6 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     internal_exons = filter_exons( internal_exons, rnaseq_cov )
     se_genes = filter_exons( se_genes, rnaseq_cov )
 
-    #print len(tss_exons), len(internal_exons), len(tes_exons)
-    
     elements = Bins(chrm, strand, chain(
             jn_bins, cage_peaks, tss_exons, internal_exons, tes_exons, se_genes) )
     if strand == '-':
@@ -1069,6 +1158,7 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp, (chrm, strand, cont
     cage_reads = [ x.reload() for x in cage_reads ]
     
     while True:
+        log_statement( "Waiting for genes queue lock" )
         if genes_queue_lock != None:
             genes_queue_lock.acquire()
             if len(genes_queue) == 0:
@@ -1081,7 +1171,10 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp, (chrm, strand, cont
                 break
             assert NTHREADS == 1
             gene = genes_queue.pop()
-        
+    
+        log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" % 
+                       (chrm, strand, gene.start, gene.stop) )
+    
         # find the junctions associated with this gene
         gj_sa = bisect( jn_stops, gene.start )
         gj_so = bisect( jn_starts, gene.stop )
@@ -1105,9 +1198,9 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp, (chrm, strand, cont
         
         if WRITE_DEBUG_DATA:
             pseudo_exons.writeBed( ofp )
+
+        log_statement( "" )
         
-        if DEBUG_VERBOSE: print "FINISHED Chrm %s Strand %s Pos %i-%i" % (chrm, strand, gene.start, gene.stop)
-    
     return
 
 def find_exons_in_contig( (chrm, strand, contig_len), ofp,
@@ -1117,10 +1210,12 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     polya_sites = polya_sites[(chrm, strand)]
     
     if gene_bndry_bins == None:
+        log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" % ( chrm, strand ) )
         gene_bndry_bins = find_gene_boundaries( 
             (chrm, strand, contig_len), rnaseq_reads, 
             polya_sites, junctions)
     
+    log_statement( "Finding exons in contig '%s' on '%s' strand" % ( chrm, strand ) )
     if NTHREADS > 1:
         manager = multiprocessing.Manager()
         genes_queue = manager.list()
@@ -1132,20 +1227,24 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     sorted_jns = sorted( junctions )
     args = [ (genes_queue, genes_queue_lock), ofp, (chrm, strand, contig_len),
              sorted_jns, rnaseq_reads, cage_reads, polya_sites ]
-
+    
     if NTHREADS == 1:
         find_exons_worker(*args)
     else:
+        log_statement( "Waiting on exon finding children in contig '%s' on '%s' strand" % ( chrm, strand ) )
         ps = []
         for i in xrange( NTHREADS ):
             p = multiprocessing.Process(target=find_exons_worker, args=args)
             p.start()
             ps.append( p )
-
-        for p in ps:
-            p.join()
+        
+        while True:
+            if all( not p.is_alive() for p in ps ):
+                break
+            time.sleep( 0.1 )
     
     return
+
 def load_gene_bndry_bins( gtf_fname, contig_lens ):
     gene_bndry_bins = {}
     with open(gtf_fname) as fp:
@@ -1233,6 +1332,7 @@ def parse_arguments():
     DEBUG_VERBOSE = args.debug_verbose
     
     ofp = ThreadSafeFile( args.ofname, "w" )
+    ofp.write('track name="%s" visibility=2 itemRgb="On"\n' % ofp.name)
     
     return args.rnaseq_reads, args.reverse_rnaseq_strand, \
         args.cage_reads, args.rampage_reads, \
@@ -1243,7 +1343,8 @@ def main():
         polya_candidate_sites_fps, ofp, gtf_fname \
         = parse_arguments()
 
-    ofp.write('track name="%s" visibility=2 itemRgb="On"\n' % ofp.name)
+    global log_statement
+    log_statement = Logger(NTHREADS)
     
     rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=reverse_rnaseq_strand) 
                      for fp in rnaseq_bams ]
@@ -1257,24 +1358,24 @@ def main():
     promoter_reads = [] + cage_reads + rampage_reads
     assert len(promoter_reads) > 0, "Must have either CAGE or RAMPAGE reads."
     
-    if VERBOSE: print >> sys.stderr,  'Loading candidate polyA sites'
+    if VERBOSE: log_statement( 'Loading candidate polyA sites' )
     polya_sites = find_polya_sites([x.name for x in polya_candidate_sites_fps])
     for fp in polya_candidate_sites_fps: fp.close()
-    if VERBOSE: print >> sys.stderr, 'Finished loading candidate polyA sites'
 
     contig_lens = get_contigs_and_lens( rnaseq_reads, promoter_reads )
-    
+
+    if VERBOSE: log_statement( 'Loading gtf' )    
     gene_bndry_bins = defaultdict( lambda: None )
     if gtf_fname != None:
         gene_bndry_bins = load_gene_bndry_bins( gtf_fname, contig_lens )
-    
-    if VERBOSE: print >> sys.stderr, 'Finished loading gtf'
     
     for contig, contig_len in contig_lens.iteritems():
         for strand in '+-':
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, promoter_reads, polya_sites,
                                   gene_bndry_bins = gene_bndry_bins[(contig, strand)])
+    
+    log_statement.close()
     
 if __name__ == '__main__':
     main()
