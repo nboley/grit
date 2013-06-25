@@ -282,7 +282,7 @@ class Reads( pysam.Samfile ):
 
     def reload( self ):
         fname = self.filename
-        self.close()
+        #self.close()
         reads = type(self)(fname)
         reads.init(**self._init_kwargs)
         return reads
