@@ -404,6 +404,7 @@ def initialize_processing_data( elements, fl_dists,
                                 output_dict, output_dict_lock ):
     gene_id = 0
     for (contig, strand), grpd_exons in elements.iteritems():
+        print (contig, strand), grpd_exons
         for tss_es, tes_es, internal_es, se_ts in cluster_exons( 
                 set(map(tuple, grpd_exons['tss_exon'].tolist())), 
                 set(map(tuple, grpd_exons['internal_exon'].tolist())), 
