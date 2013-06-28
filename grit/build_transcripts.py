@@ -22,6 +22,11 @@ from frag_len import load_fl_dists, FlDist, build_normal_density
 
 MAX_NUM_TRANSCRIPTS = 50000
 
+from lib.logging import Logger
+# log statement is set in the main init, and is a global
+# function which facilitates smart, ncurses based logging
+log_statement = None
+
 log_fp = sys.stderr
 num_threads = 1
 
@@ -144,7 +149,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                                          fl_dists, promoter_reads )
         except ValueError, inst:
             error_msg = "%i: Skipping %s: %s" % ( os.getpid(), gene_id, inst )
-            log( error_msg )
+            log_statement( error_msg )
             if DEBUG: raise
             input_queue_lock.acquire()
             input_queue.append(
@@ -153,7 +158,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             return
         except MemoryError, inst:
             error_msg =  "%i: Skipping %s: %s" % ( os.getpid(), gene_id, inst )
-            log( error_msg )
+            log_statement( error_msg )
             if DEBUG: raise
             input_queue_lock.acquire()
             input_queue.append(
@@ -161,10 +166,8 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             input_queue_lock.release()
             return
         
-        if VERBOSE: 
-            log( "FINISHED DESIGN MATRICES %s\t%s" % ( 
-                    gene_id, rnaseq_reads.filename ) )
-
+        log_statement( "FINISHED DESIGN MATRICES %s" % gene_id )
+        
         op_lock.acquire()
         try:
             output[(gene_id, 'design_matrices')] = \
@@ -173,7 +176,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             op_lock.release()
             error_msg =  "SYSTEM ERROR: %i: Skipping %s: %s" % ( 
                 os.getpid(), gene_id, inst )
-            log( error_msg )
+            log_statement( error_msg )
             input_queue_lock.acquire()
             input_queue.append(
                 ('ERROR', ((gene_id, rnaseq_reads.filename, trans_index), error_msg)))
@@ -210,7 +213,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                                num_reads_in_bam, num_reads_in_gene )
         except ValueError, inst:
             error_msg = "Skipping %s: %s" % ( gene_id, inst )
-            log( error_msg )
+            log_statement( error_msg )
             if DEBUG: raise
             input_queue_lock.acquire()
             input_queue.append(('ERROR', (
@@ -221,9 +224,8 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
         
         log_lhd = frequency_estimation.calc_lhd( 
             mle_estimate, observed_array, expected_array)
-        if VERBOSE: 
-            log( "FINISHED MLE %s\t%s\t%.2f" % ( 
-                    gene_id, rnaseq_reads.filename, log_lhd ) )
+        log_statement( "FINISHED MLE %s\t%.2f" % ( 
+                gene_id, log_lhd ) )
         
         op_lock.acquire()
         output[(gene_id, 'mle')] = mle_estimate
@@ -253,12 +255,12 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
 
         bnd_type = 'LOWER' if work_type == 'lb' else 'UPPER'
 
-        p_value, bnd = estimate_confidence_bound( 
+        p_value, bnd = frequency_estimation.estimate_confidence_bound( 
             observed_array, expected_array, 
             trans_index, mle_estimate, bnd_type )
-        if VERBOSE: print "FINISHED %s BOUND %s\t%s\t%i\t%.2e\t%.2e" % ( 
-            bnd_type, gene_id, None, trans_index, bnd, p_value )
-
+        log_statement( "FINISHED %s BOUND %s\t%s\t%i\t%.2e\t%.2e" % ( 
+            bnd_type, gene_id, None, trans_index, bnd, p_value ) )
+        
         op_lock.acquire()
         bnds = output[(gene_id, work_type+'s')]
         bnds[trans_index] = bnd
@@ -291,6 +293,7 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                                  finished_genes_queue, ofp,
                                  compute_confidence_bounds=True, 
                                  write_design_matrices=False ):
+    log_statement("Initializing background writer")
     while True:
         try:
             write_type, key = finished_genes_queue.get(timeout=1.0)
@@ -303,9 +306,11 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
         # write out the design matrix
         if write_type == 'design_matrix':
             if write_design_matrices:
+                if DEBUG_VERBOSE: 
+                    log_statement("Writing design matrix mat to '%s'" % ofname)
                 observed,expected,missed = output_dict[(key,'design_matrices')]
                 ofname = "./%s_%s.mat" % ( key[0], os.path.basename(key[1]) )
-                if DEBUG_VERBOSE: print "Writing mat to '%s'" % ofname
+                if DEBUG_VERBOSE: log_statement("Writing mat to '%s'" % ofname)
                 savemat( ofname, {'observed': observed, 'expected': expected}, 
                          oned_as='column' )
                 ofname = "./%s_%s.observed.txt" % ( 
@@ -317,12 +322,11 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                 with open( ofname, "w" ) as ofp:
                     ofp.write("\n".join( "\t".join( "%e" % y for y in x ) 
                                          for x in expected ))
-                
-                if DEBUG_VERBOSE: print "Finished writing mat to '%s'" % ofname
+                log_statement("" % ofname)
             continue
         elif write_type == 'gtf':
             output_dict_lock.acquire()
-            if VERBOSE: print "FINISHED GENE", key
+            log_statement( "Writing GENE %s to gtf" % key )
             
             gene = output_dict[(key, 'gene')]
             unobservable_transcripts = output_dict[(key, 'design_matrices')][2]
@@ -368,7 +372,8 @@ def load_elements( fp ):
 
 def build_fl_dists( elements, rnaseq_reads,
                     analyze_pdf_fname=None ):
-    from frag_len import estimate_fl_dists, analyze_fl_dists, estimate_normal_fl_dist_from_reads
+    from frag_len import estimate_fl_dists, analyze_fl_dists, \
+        estimate_normal_fl_dist_from_reads
     from transcript import iter_nonoverlapping_exons
     from files.gtf import GenomicInterval
     assert len( rnaseq_reads ) == 1
@@ -382,7 +387,8 @@ def build_fl_dists( elements, rnaseq_reads,
             for start,stop in iter_nonoverlapping_exons(exons['internal_exon']):
                 num += 1
                 yield GenomicInterval(chrm, strand, start, stop)
-            if DEBUG_VERBOSE: print "FL ESTIMATION: ", (chrm, strand), num
+            if DEBUG_VERBOSE: 
+                log_statement("FL ESTIMATION: %s %s" % ((chrm, strand), num ))
         return
     
     good_exons = iter_good_exons()
@@ -404,7 +410,6 @@ def initialize_processing_data( elements, fl_dists,
                                 output_dict, output_dict_lock ):
     gene_id = 0
     for (contig, strand), grpd_exons in elements.iteritems():
-        print (contig, strand), grpd_exons
         for tss_es, tes_es, internal_es, se_ts in cluster_exons( 
                 set(map(tuple, grpd_exons['tss_exon'].tolist())), 
                 set(map(tuple, grpd_exons['internal_exon'].tolist())), 
@@ -515,9 +520,7 @@ def parse_arguments():
     
     global num_threads
     num_threads = args.threads
-
-    global log_fp
-    log_fp = ThreadSafeFile( args.ofname + ".log", "w" )
+    
     ofp = ThreadSafeFile( args.ofname, "w" )
     ofp.write( "track name=transcripts.%s useScore=1\n" \
                    % os.path.basename(args.rnaseq_reads[0].name) )
@@ -532,7 +535,12 @@ def main():
         ofp, fasta, reverse_rnaseq_strand, \
         estimate_confidence_bounds, write_design_matrices, \
         = parse_arguments()
-            
+        
+    global log_statement
+    # add an extra thread for the background writer
+    log_statement = Logger(num_threads+1, use_ncurses=True )
+    frequency_estimation.log_statement = log_statement
+    
     manager = multiprocessing.Manager()
     input_queue = manager.list()
     input_queue_lock = manager.Lock()
@@ -542,10 +550,10 @@ def main():
         
     # add all the genes, in order of longest first. 
     elements = load_elements( exons_bed_fp )
-    if VERBOSE:
-        print >> sys.stderr, "Finished Loading %s" % exons_bed_fp.name
+    log_statement( "Finished Loading %s" % exons_bed_fp.name )
     
-    rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=reverse_rnaseq_strand) 
+    rnaseq_reads = [ RNAseqReads(fp.name).init(
+                         reverse_read_strand=reverse_rnaseq_strand) 
                      for fp in rnaseq_bams ]
     for fp in rnaseq_bams: fp.close()    
     
@@ -561,16 +569,12 @@ def main():
     for fp in rampage_bams: fp.close()
     promoter_reads = [] + cage_reads + rampage_reads
     assert len(promoter_reads) <= 1
-
-    if VERBOSE:
-        print >> sys.stderr, "Finished loading data files."
+    log_statement( "Finished loading data files." )
 
     # estimate the fragment length distribution
     fl_dists = build_fl_dists( 
-        elements, rnaseq_reads, log_fp.name + ".fldist.pdf" )
-    
-    if VERBOSE:
-        print >> sys.stderr, "Finished estimating the fragment length distribution"
+        elements, rnaseq_reads, ofp.name + ".fldist.pdf" )    
+    log_statement( "Finished estimating the fragment length distribution" )
 
     initialize_processing_data(             
         elements, fl_dists,
@@ -578,9 +582,7 @@ def main():
         fasta,
         input_queue, input_queue_lock, 
         output_dict, output_dict_lock )    
-    
-    if VERBOSE:
-        print >> sys.stderr, "Finished initializing processing data"
+    log_statement( "Finished initializing processing data" )
     
     write_p = multiprocessing.Process(target=write_finished_data_to_disk, args=(
             output_dict, output_dict_lock, 
@@ -590,6 +592,8 @@ def main():
     write_p.start()    
     
     ps = [None]*num_threads
+    time.sleep(0.1)
+    log_statement( "Waiting on children" )
     while True:        
         # get the data to process
         try:
@@ -610,8 +614,7 @@ def main():
         
         if work_type == 'ERROR':
             ( gene_id, bam_fn, trans_index ), msg = key
-            log_fp.write( str(gene_id) + "\tERROR\t" + msg + "\n" )
-            print "ERROR", gene_id, key[1]
+            log_statement( str(gene_id) + "\tERROR\t" + msg, only_log=True ) 
             continue
         else:
             gene_id, bam_fn, trans_index = key
@@ -643,9 +646,6 @@ def main():
             p = multiprocessing.Process(
                 target=estimate_gene_expression_worker, args=args )
             p.start()
-            if DEBUG_VERBOSE: 
-                print "Replacing slot %i, process %s with %i" % ( 
-                    proc_i, ps[proc_i], p.pid )
             if ps[proc_i] != None: ps[proc_i].join()
             ps[proc_i] = p
         else:
@@ -653,8 +653,8 @@ def main():
     
     finished_queue.put( ('FINISHED', None) )
     write_p.join()
-    
-    log_fp.close()
+
+    log_statement.close()
     ofp.close()
     
     return

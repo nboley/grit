@@ -21,6 +21,9 @@ def make_time_str(et):
 VERBOSE = False
 DEBUG_VERBOSE = False
 
+def log_statement(message, only_log=False ):
+    print >> sys.stderr, message
+
 MIN_TRANSCRIPT_FREQ = 1e-12
 # finite differences step size
 FD_SS = 1e-8
@@ -64,9 +67,9 @@ def nnls( X, Y, fixed_indices_and_values={} ):
     if DEBUG_OPTIMIZATION:
         for key, val in res.iteritems():
             if key in 'syxz': continue
-            print >> sys.stderr, "%s:\t%s" % ( key.ljust(22), val )
+            log_statement( "%s:\t%s" % ( key.ljust(22), val ) )
         
-        print >> sys.stderr, "RSS: ".ljust(22), rss
+        log_statement( "RSS: ".ljust(22) + str(rss) )
     
     return x
 
@@ -112,18 +115,18 @@ def estimate_confidence_bounds_directly(
 def project_onto_simplex( x, debug=False ):
     if ( x >= MIN_TRANSCRIPT_FREQ ).all() and abs( 1-x.sum()  ) < 1e-6: return x
     sorted_x = numpy.sort(x)[::-1]
-    if debug: print >> sys.stderr, "sorted x:", sorted_x
+    if debug: log_statement( "sorted x: %s" % sorted_x )
     n = len(sorted_x)
-    if debug: print >> sys.stderr, "cumsum:", sorted_x.cumsum()
-    if debug: print >> sys.stderr, "arange:", numpy.arange(1,n+1)
+    if debug: log_statement( "cumsum: %s" % sorted_x.cumsum() )
+    if debug: log_statement( "arange: %s" % numpy.arange(1,n+1) )
     rhos = sorted_x - (1./numpy.arange(1,n+1))*( sorted_x.cumsum() - 1 )
-    if debug: print >> sys.stderr, "rhos:", rhos
+    if debug: log_statement( "rhos: %s" % rhos )
     rho = (rhos > 0).nonzero()[0].max() + 1
-    if debug: print >> sys.stderr, "rho:", rho
+    if debug: log_statement( "rho: %s" % rho )
     theta = (1./rho)*( sorted_x[:rho].sum()-1)
-    if debug: print >> sys.stderr, "theta:", theta
+    if debug: log_statement( "theta: %s" % theta )
     x_minus_theta = x - theta
-    if debug: print >> sys.stderr, "x - theta:", x_minus_theta
+    if debug: log_statement( "x - theta: %s" % x_minus_theta )
     x_minus_theta[ x_minus_theta < 0 ] = MIN_TRANSCRIPT_FREQ
     return x_minus_theta
 
@@ -248,8 +251,8 @@ def estimate_transcript_frequencies_line_search(
         lhd = f_lhd(x)
         lhds.append( lhd )
         if DEBUG_OPTIMIZATION:
-            print >> sys.stderr, "%i\t%.2f\t%.6e\t%i" % ( 
-                i, lhd, lhd - prev_lhd, len(x) )
+            log_statement( "%i\t%.2f\t%.6e\t%i" % ( 
+                    i, lhd, lhd - prev_lhd, len(x) ) )
     
     final_x = numpy.ones(n)*MIN_TRANSCRIPT_FREQ
     final_x[ numpy.array(sorted(set(range(n))-zeros)) ] = x
@@ -272,8 +275,7 @@ def estimate_transcript_frequencies(
         x[i] = v
     eps = 10.
     start_time = time.time()
-    if DEBUG_VERBOSE:
-        print >> sys.stderr, "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)"
+    #log_statement( "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)" )
     for i in xrange( 500 ):
         prev_x = x.copy()
         
@@ -285,9 +287,9 @@ def estimate_transcript_frequencies(
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
         if DEBUG_VERBOSE:
-            print >> sys.stderr, "Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
+            log_statement( "Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
                 i, lhd, (lhd - prev_lhd)/len(lhds), len(lhds ), eps, 
-                make_time_str((time.time()-start_time)/len(lhds)) )
+                make_time_str((time.time()-start_time)/len(lhds)) ) )
             
         start_time = time.time()
         
@@ -306,9 +308,9 @@ def estimate_transcript_frequencies(
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
         if DEBUG_VERBOSE:
-            print >> sys.stderr, "Non-Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
+            log_statement( "Non-Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
                 i, lhd, (lhd - prev_lhd)/len(lhds), len(lhds), eps,
-                make_time_str((time.time()-start_time)/len(lhds)))
+                make_time_str((time.time()-start_time)/len(lhds))) )
         
         start_time = time.time()
         if len( lhds ) < 500: break
