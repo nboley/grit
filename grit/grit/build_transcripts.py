@@ -133,6 +133,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             input_queue_lock.release()
         
     elif work_type == 'design_matrices':
+        log_statement( "Finding design matrix for Gene %s" % gene_id  )
         op_lock.acquire()
         gene = output[(gene_id, 'gene')]
         fl_dists = output[(gene_id, 'fl_dists')]
@@ -166,8 +167,9 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             input_queue_lock.release()
             return
         
-        log_statement( "FINISHED DESIGN MATRICES %s" % gene_id )
-        
+        #log_statement( "FINISHED DESIGN MATRICES %s" % gene_id )
+        log_statement( "" )
+
         op_lock.acquire()
         try:
             output[(gene_id, 'design_matrices')] = \
@@ -192,6 +194,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             input_queue.append( ('mle', (gene_id, None, None)) )
         input_queue_lock.release()
     elif work_type == 'mle':
+        log_statement( "Finding MLE for Gene %s" % gene_id  )
         op_lock.acquire()
         observed_array, expected_array, unobservable_transcripts = \
             output[(gene_id, 'design_matrices')]
@@ -224,9 +227,9 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
         
         log_lhd = frequency_estimation.calc_lhd( 
             mle_estimate, observed_array, expected_array)
-        log_statement( "FINISHED MLE %s\t%.2f" % ( 
-                gene_id, log_lhd ) )
-        
+        #log_statement( "FINISHED MLE %s\t%.2f" % ( gene_id, log_lhd ) )
+        log_statement("")
+
         op_lock.acquire()
         output[(gene_id, 'mle')] = mle_estimate
         output[(gene_id, 'fpkm')] = fpkms
@@ -296,11 +299,12 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
     log_statement("Initializing background writer")
     while True:
         try:
-            write_type, key = finished_genes_queue.get(timeout=1.0)
+            write_type, key = finished_genes_queue.get(timeout=0.1)
             if write_type == 'FINISHED':
                 break
         except Queue.Empty:
-            time.sleep( 2 )
+            log_statement( "Waiting for write queue to fill." )
+            time.sleep( 1 )
             continue
         
         # write out the design matrix
@@ -348,6 +352,7 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
             del output_dict[(key, 'ubs')]
             
             output_dict_lock.release()
+            log_statement( "" )
         
     return
 
