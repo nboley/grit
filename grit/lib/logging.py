@@ -4,7 +4,7 @@ import curses
 import multiprocessing
 
 __version__ = "0.1.1"
-MAX_REFRESH_TIME = 1e-1
+MAX_REFRESH_TIME = 1e-2
 MAX_NCOL = 120
 
 def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
@@ -12,10 +12,12 @@ def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
     stdscr.timeout(0)
     header = stdscr.derwin(2, MAX_NCOL, 0, 0)
 
-    thread_data = stdscr.derwin(nthreads+2, MAX_NCOL, 3, 0)
-    thread_data.insstr( 0, 0, "Main:".ljust(11) )
+    thread_data_windows = []
+    thread_data_windows.append( stdscr.derwin(1, MAX_NCOL, 3, 0) )
+    thread_data_windows[-1].insstr( 0, 0, "Thread 0:".ljust(11) )
     for i in xrange(nthreads):
-        thread_data.insstr( i+1, 0, ("Thread %i:" % (i+1)).ljust(11) )
+        thread_data_windows.append( stdscr.derwin(1, MAX_NCOL+i, 3+i+1, 0))
+        thread_data_windows[i+1].insstr(0, 0, ("Thread %i:" % (i+1)).ljust(11))
 
     stdscr.addstr(nthreads+2+2+1, 0, "Log:" )
 
@@ -25,6 +27,7 @@ def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
 
     header.addstr(0, 0, "GRIT (version %s)" % (__version__, ) )
     stdscr.refresh()
+
     while True:
         start_time = time.time()
         while True:
@@ -54,27 +57,18 @@ def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
             if do_log:
                 log.insertln()
                 log.insstr( msg )
-
+                log.refresh()
+            
             # truncate the message so that it doesnt extend past 80 charcters
-            msg = msg[:MAX_NCOL-13]
-            
-            # if it's the main thread...
-            if 0 == thread_index:
-                thread_data.addstr(0, 0, "Main:".ljust(13) \
-                                       + msg.ljust(MAX_NCOL-13) )
-            # otherwise, it's a thread message
-            elif thread_index != None:
-                line = ("Thread %i:" % (thread_index)).ljust(13) \
-                    + msg.ljust(MAX_NCOL-13)
-                thread_data.addstr(thread_index, 0, line )
-            
-            time.sleep(0.1)
-            break
+            msg = msg[:MAX_NCOL-11]
+            if thread_index != None:
+                line = ("Thread %i:" % (thread_index)).ljust(11) \
+                    + msg.ljust(MAX_NCOL-11)
+                thread_data_windows[thread_index].erase()
+                thread_data_windows[thread_index].insstr(0, 0, line )
+                thread_data_windows[thread_index].refresh()
         
-        log.refresh()
-        thread_data.refresh()
         stdscr.refresh()
-        time.sleep(MAX_REFRESH_TIME)
     
     return
 
@@ -129,9 +123,10 @@ class Logger( object ):
             do_log = True if p_index == 0 else False
             self.msgs.append( (p_index, only_log or do_log, message) )
             self.msgs_lock.release()
+        
+        time.sleep(1e-2)
     
     def close(self):
         if self.use_ncurses:
             self.msgs.append( (None, False, 'BREAK') )
             self.curses_p.join()
-        
