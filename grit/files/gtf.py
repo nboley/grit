@@ -259,6 +259,21 @@ class Gene( list ):
         
         return base_cov/length
         
+    def extract_elements(self):
+        """Extract the different element types.
+        
+        """
+        for t in gene.transcripts:
+            if len( t.exons ) == 1:
+                single_exon_genes.add( ( t.chrm, t.strand, t.exons[0][0], t.exons[0][1] ) )
+            else:
+                tss_exon = t.exons[0] if t.strand == '+' else t.exons[-1]
+                tss_exons.add( (t.chrm, t.strand, tss_exon[0], tss_exon[1]) )
+                internal_exons.update( (t.chrm, t.strand, x1, x2) for x1, x2 in t.exons[1:-1] )
+                introns.update( (t.chrm, t.strand, x1, x2) for x1, x2 in t.introns )
+                tes_exon = t.exons[-1] if t.strand == '+' else t.exons[0] 
+                tes_exons.add( (t.chrm, t.strand, tes_exon[0], tes_exon[1]) )
+
 
 
 def parse_gff_line( line, fix_chrm=True ):
