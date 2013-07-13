@@ -1271,6 +1271,7 @@ def main():
     if VERBOSE: print >> sys.stderr, 'Finished loading gtf'
     
     for contig, contig_len in contig_lens.iteritems():
+        if contig != '4': continue
         for strand in '+-':
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, promoter_reads, polya_sites,

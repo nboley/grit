@@ -453,8 +453,10 @@ def parse_arguments():
                          default="discovered_transcripts.gtf")
     parser.add_argument( '--elements', type=file,
         help='Bed file containing elements')
-
-    parser.add_argument( '--rnaseq-reads',
+    parser.add_argument( '--transcripts', type=file,
+        help='GTF file containing transcripts for which to estimate expression')
+    
+    parser.add_argument( '--rnaseq-reads', 
                          type=argparse.FileType('rb'), nargs='+',
         help='BAM files containing mapped RNAseq reads ( must be indexed ).')
     parser.add_argument( '--cage-reads', type=file, default=[], nargs='*', 
@@ -490,6 +492,20 @@ def parse_arguments():
     
     args = parser.parse_args()
         
+    if args.elements == None and args.transcripts == None:
+        raise ValueError, "--elements or --transcripts must be set"
+
+    if args.elements != None and args.transcripts != None:
+        raise ValueError, "--elements and --transcripts must not both be set"
+
+    if args.transcripts != None  and args.rnaseq_reads == None:
+        raise ValueError, "--rnaseq-reads must be set if --transcripts is set"
+
+    if args.only_build_candidate_transcripts == True and args.elements == None:
+        raise ValueError, "--elements must be set if --only-build-transcripts is set"
+    if args.only_build_candidate_transcripts == True and args.rnaseq_reads == None:
+        raise ValueError, "--rnaseq-reads and --only-build-transcripts must not both be set"
+    
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
     frequency_estimation.DEBUG_VERBOSE = DEBUG_VERBOSE
@@ -511,16 +527,18 @@ def parse_arguments():
     global log_fp
     log_fp = ThreadSafeFile( args.ofname + ".log", "w" )
     ofp = ThreadSafeFile( args.ofname, "w" )
-    ofp.write( "track name=transcripts.%s useScore=1\n" \
-                   % os.path.basename(args.rnaseq_reads[0].name) )
+    track_name = "." + os.path.basename(args.rnaseq_reads[0].name) \
+        if args.rnaseq_reads != None else ""
+    ofp.write( "track name=transcripts.%s useScore=1\n" % track_name )
     
-    return args.elements, args.rnaseq_reads, args.cage_reads, args.rampage_reads, \
+    return args.elements, args.transcripts, \
+        args.rnaseq_reads, args.cage_reads, args.rampage_reads, \
         ofp, args.fasta, args.reverse_rnaseq_strand, \
         args.estimate_confidence_bounds, args.write_design_matrices
 
 def main():
     # Get file objects from command line
-    exons_bed_fp, rnaseq_bams, cage_bams, rampage_bams, \
+    exons_bed_fp, transcripts_gtf_fp, rnaseq_bams, cage_bams, rampage_bams, \
         ofp, fasta, reverse_rnaseq_strand, \
         estimate_confidence_bounds, write_design_matrices, \
         = parse_arguments()
@@ -532,11 +550,6 @@ def main():
     output_dict_lock = manager.Lock()    
     output_dict = manager.dict()
         
-    # add all the genes, in order of longest first. 
-    elements = load_elements( exons_bed_fp )
-    if VERBOSE:
-        print >> sys.stderr, "Finished Loading %s" % exons_bed_fp.name
-    
     rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=reverse_rnaseq_strand) 
                      for fp in rnaseq_bams ]
     global NUMBER_OF_READS_IN_BAM
@@ -552,16 +565,29 @@ def main():
 
     if VERBOSE:
         print >> sys.stderr, "Finished loading data files."
-
+        
+    elements, transcripts = None, None
+    if exons_bed_fp != None:
+        elements = load_elements( exons_bed_fp )
+        print elements
+        
+        if VERBOSE:
+            print >> sys.stderr, "Finished Loading %s" % exons_bed_fp.name
+    else:
+        assert transcripts_gtf_fp != None
+        genes = load_gtf( transcripts_gtf_fp )
+        print genes
+        elements = extract_elements_from_transcripts(transcripts)
+    
     # estimate the fragment length distribution
     fl_dists = build_fl_dists( 
         elements, rnaseq_reads[0], log_fp.name + ".fldist.pdf" )
-    
-    if VERBOSE:
-        print >> sys.stderr, "Finished estimating the fragment length distribution"
 
+    if VERBOSE: print >> sys.stderr, \
+            "Finished estimating the fragment length distribution"
+    
     initialize_processing_data(             
-        elements, fl_dists,
+        elements, transcripts, fl_dists,
         rnaseq_reads, promoter_reads,
         fasta,
         input_queue, input_queue_lock, 
