@@ -21,6 +21,9 @@ def make_time_str(et):
 VERBOSE = False
 DEBUG_VERBOSE = False
 
+def log_statement(message, only_log=False ):
+    print >> sys.stderr, message
+
 MIN_TRANSCRIPT_FREQ = 1e-12
 # finite differences step size
 FD_SS = 1e-8
@@ -64,9 +67,9 @@ def nnls( X, Y, fixed_indices_and_values={} ):
     if DEBUG_OPTIMIZATION:
         for key, val in res.iteritems():
             if key in 'syxz': continue
-            print >> sys.stderr, "%s:\t%s" % ( key.ljust(22), val )
+            log_statement( "%s:\t%s" % ( key.ljust(22), val ) )
         
-        print >> sys.stderr, "RSS: ".ljust(22), rss
+        log_statement( "RSS: ".ljust(22) + str(rss) )
     
     return x
 
@@ -112,18 +115,18 @@ def estimate_confidence_bounds_directly(
 def project_onto_simplex( x, debug=False ):
     if ( x >= MIN_TRANSCRIPT_FREQ ).all() and abs( 1-x.sum()  ) < 1e-6: return x
     sorted_x = numpy.sort(x)[::-1]
-    if debug: print >> sys.stderr, "sorted x:", sorted_x
+    if debug: log_statement( "sorted x: %s" % sorted_x )
     n = len(sorted_x)
-    if debug: print >> sys.stderr, "cumsum:", sorted_x.cumsum()
-    if debug: print >> sys.stderr, "arange:", numpy.arange(1,n+1)
+    if debug: log_statement( "cumsum: %s" % sorted_x.cumsum() )
+    if debug: log_statement( "arange: %s" % numpy.arange(1,n+1) )
     rhos = sorted_x - (1./numpy.arange(1,n+1))*( sorted_x.cumsum() - 1 )
-    if debug: print >> sys.stderr, "rhos:", rhos
+    if debug: log_statement( "rhos: %s" % rhos )
     rho = (rhos > 0).nonzero()[0].max() + 1
-    if debug: print >> sys.stderr, "rho:", rho
+    if debug: log_statement( "rho: %s" % rho )
     theta = (1./rho)*( sorted_x[:rho].sum()-1)
-    if debug: print >> sys.stderr, "theta:", theta
+    if debug: log_statement( "theta: %s" % theta )
     x_minus_theta = x - theta
-    if debug: print >> sys.stderr, "x - theta:", x_minus_theta
+    if debug: log_statement( "x - theta: %s" % x_minus_theta )
     x_minus_theta[ x_minus_theta < 0 ] = MIN_TRANSCRIPT_FREQ
     return x_minus_theta
 
@@ -248,8 +251,8 @@ def estimate_transcript_frequencies_line_search(
         lhd = f_lhd(x)
         lhds.append( lhd )
         if DEBUG_OPTIMIZATION:
-            print >> sys.stderr, "%i\t%.2f\t%.6e\t%i" % ( 
-                i, lhd, lhd - prev_lhd, len(x) )
+            log_statement( "%i\t%.2f\t%.6e\t%i" % ( 
+                    i, lhd, lhd - prev_lhd, len(x) ) )
     
     final_x = numpy.ones(n)*MIN_TRANSCRIPT_FREQ
     final_x[ numpy.array(sorted(set(range(n))-zeros)) ] = x
@@ -272,8 +275,7 @@ def estimate_transcript_frequencies(
         x[i] = v
     eps = 10.
     start_time = time.time()
-    if DEBUG_VERBOSE:
-        print >> sys.stderr, "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)"
+    #log_statement( "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)" )
     for i in xrange( 500 ):
         prev_x = x.copy()
         
@@ -285,9 +287,9 @@ def estimate_transcript_frequencies(
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
         if DEBUG_VERBOSE:
-            print >> sys.stderr, "Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
+            log_statement( "Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
                 i, lhd, (lhd - prev_lhd)/len(lhds), len(lhds ), eps, 
-                make_time_str((time.time()-start_time)/len(lhds)) )
+                make_time_str((time.time()-start_time)/len(lhds)) ) )
             
         start_time = time.time()
         
@@ -306,9 +308,9 @@ def estimate_transcript_frequencies(
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
         if DEBUG_VERBOSE:
-            print >> sys.stderr, "Non-Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
+            log_statement( "Non-Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
                 i, lhd, (lhd - prev_lhd)/len(lhds), len(lhds), eps,
-                make_time_str((time.time()-start_time)/len(lhds)))
+                make_time_str((time.time()-start_time)/len(lhds))) )
         
         start_time = time.time()
         if len( lhds ) < 500: break
@@ -364,12 +366,153 @@ def estimate_confidence_bound( observed_array,
                                mle_estimate,
                                bound_type,
                                alpha = 0.025):
-    try:
-        return estimate_confidence_bounds_directly( 
-            observed_array,  expected_array, fixed_index,
-            calc_lhd(mle_estimate, observed_array, expected_array), 
-            (bound_type=='UPPER'), alpha )
-    except ValueError:
-        return estimate_confidence_bound_by_bisection( 
-            observed_array,  expected_array, fixed_index,
-            mle_estimate, bound_type, alpha )
+    global DEBUG_OPTIMIZATION
+    DEBUG_OPTIMIZATION = True
+    
+    def f_lhd(x):
+        log_lhd = calc_lhd(x, observed_array, expected_array)
+        return log_lhd
+
+    max_lhd = f_lhd(mle_estimate)
+    max_test_stat = chi2.ppf( 1 - alpha, 1 )/2.    
+    min_lhd = max_lhd-max_test_stat
+    
+    def f_gradient(x):
+        return calc_gradient( x, observed_array, expected_array )
+        
+    def calc_max_feasible_step_size_and_limiting_index( x0, gradient ):
+        """Calculate the maximum step size to stay in the feasible region.
+        
+        solve y - x*gradient = MIN_TRANSCRIPT_FREQ for x
+        x = (y - MIN_TRANSCRIPT_FREQ)/gradient
+        """
+        # we use minus because we return a positive step
+        steps = (x0-MIN_TRANSCRIPT_FREQ)/(gradient+1e-12)
+        step_size = -steps[ steps < 0 ].max()
+        step_size_i = ( steps == -step_size ).nonzero()[0]
+        return step_size, step_size_i
+    
+    def calc_projected_gradient( x ):
+        gradient = f_gradient( x )
+        gradient = gradient/gradient.sum()
+        x_next = project_onto_simplex( x + 1.*gradient )
+        gradient = (x_next - x)
+        return gradient
+
+    def maximum_step_is_optimal( x, gradient, max_feasible_step_size ):
+        """Check the derivative at the maximum step to determine whether or 
+           not the maximum step is a maximum along the gradient line.
+
+        """
+        max_feasible_step_size, max_index = \
+            calc_max_feasible_step_size_and_limiting_index(x, gradient)
+        if max_feasible_step_size > FD_SS and \
+                f_lhd( x + (max_feasible_step_size-FD_SS)*gradient ) \
+                > f_lhd( x + max_feasible_step_size*gradient ):
+            return False
+        else:
+            return True
+    
+    def line_search( x, gradient, max_feasible_step_size ):
+        def brentq_fmin(alpha):
+            return f_lhd(x + (alpha+FD_SS)*gradient) - min_lhd
+        
+        min_step_size = FD_SS
+        max_step_size = max_feasible_step_size-FD_SS
+        if brentq_fmin(max_step_size) >= 0:
+            return max_step_size, False
+
+        # do a line search with brent
+        step_size = brentq(brentq_fmin, min_step_size, max_step_size )
+        print "BRENT", step_size, f_lhd(x+step_size*gradient)
+        
+        return step_size, True
+    
+    n = expected_array.shape[1]
+    x = mle_estimate.copy()
+    prev_lhd = 1e-10
+    print max_lhd, max_test_stat, max_lhd-max_test_stat
+    
+    # first, decrease the fixed index until we have reached the lower bound
+    x = mle_estimate
+    while True:
+        gradient = numpy.zeros(n)+MIN_TRANSCRIPT_FREQ
+        gradient[fixed_index] = -1
+        print "gradient", gradient
+        gradient = project_onto_simplex( x + 1.*gradient ) - x
+        gradient /= numpy.absolute(gradient).sum()        
+        print "proj grad", gradient 
+
+        max_feasible_step_size, max_index = \
+            calc_max_feasible_step_size_and_limiting_index(x, gradient)
+
+        print max_feasible_step_size, max_index
+        
+        step_size, what = line_search( x, gradient, max_feasible_step_size )
+        print step_size*gradient
+        x_new = x + step_size*gradient
+        print "x", x
+        print "x new", x_new
+        x = x_new
+        if abs(f_lhd(x) - min_lhd) < 1e-2: 
+            print "DONE with INITIAL OPTIMIZATION"
+            break
+        
+    # now, while True, walk along the gradient with grad[fixed_index] = 0
+    for i in xrange( 500 ):
+        # calculate the gradient and the maximum feasible step size
+        gradient = calc_projected_gradient( x )
+        print gradient
+        gradient[fixed_index] = 0
+        gradient /= numpy.absolute(gradient).sum()
+        max_feasible_step_size, max_index = \
+            calc_max_feasible_step_size_and_limiting_index(x, gradient)
+        
+        # perform the line search
+        alpha, is_full_step = line_search(
+            x, gradient, max_feasible_step_size)
+        x += alpha*gradient
+        
+        if abs( 1-x.sum() ) > 1e-6:
+            x = project_onto_simplex(x)
+            continue
+     
+        if i > 30 and (alpha == 0 or f_lhd(x) - prev_lhd < abs_tol):
+            zeros_counter += 1
+            if zeros_counter > 3:
+                break            
+        else:
+            zeros_counter = 0
+            if not dont_zero:
+                current_nonzero_entries = (x > 1e-12).nonzero()[0]
+                if len( current_nonzero_entries ) < len(x):
+                    n = full_expected_array.shape[1]
+                    full_x = numpy.ones(n)*MIN_TRANSCRIPT_FREQ
+                    full_x[ numpy.array(sorted(set(range(n))-zeros)) ] = x
+                    
+                    zeros = set( (full_x <= 1e-12).nonzero()[0] )
+                    # build the x set
+                    x = x[ current_nonzero_entries ]
+                    expected_array = expected_array[:, current_nonzero_entries]
+            
+        
+        prev_lhd = lhd
+        lhd = f_lhd(x)
+        lhds.append( lhd )
+        if DEBUG_OPTIMIZATION:
+            log_statement( "%i\t%.2f\t%.6e\t%i" % ( 
+                    i, lhd, lhd - prev_lhd, len(x) ) )
+    
+    final_x = numpy.ones(n)*MIN_TRANSCRIPT_FREQ
+    final_x[ numpy.array(sorted(set(range(n))-zeros)) ] = x
+    final_lhd = calc_lhd(final_x, observed_array, full_expected_array)
+    assert final_lhd >= f_lhd(x) - abs_tol
+    return final_x, lhds
+
+    rv = estimate_confidence_bounds_directly( 
+        observed_array,  expected_array, fixed_index,
+        calc_lhd(mle_estimate, observed_array, expected_array), 
+        (bound_type=='UPPER'), alpha )
+    print "DIRECT APPROACH", bound_type, rv
+    assert False
+    

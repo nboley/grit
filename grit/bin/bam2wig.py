@@ -36,6 +36,7 @@ class ProcessSafeOPStream( object ):
 def update_buffer_array_from_rnaseq_read( buffer_array, 
                                           buffer_offset, 
                                           read, strand,
+                                          reverse_read_strand,
                                           pairs_are_opp_strand ):
                                           
     """populate buffer with histogram of contiguous read regions
@@ -51,17 +52,20 @@ def update_buffer_array_from_rnaseq_read( buffer_array,
     return
 
 def update_buffer_array_from_rnaseq_read_generator( reads ):
-    def update_buffer_array_from_read(buffer_array,buffer_offset,strand,read):
+    def update_buffer_array_from_read(buffer_array, buffer_offset,
+                                      strand, reverse_read_strand, read):
         return update_buffer_array_from_rnaseq_read( 
             buffer_array, buffer_offset, 
-            read, strand, 
+            read, strand, reverse_read_strand,
             reads.pairs_are_opp_strand )
     
     return update_buffer_array_from_read
 
 def update_buffer_array_from_polya_read(
-        buffer_array, buffer_offset, strand, read):
+        buffer_array, buffer_offset, strand, reverse_read_strand, read):
     rd_strand = '+' if read.is_reverse else '-'
+    if reverse_read_strand:
+        rd_strand = '-' if rd_strand == '+' else '+'
     
     # skip reads that dont match the filtering criterion
     if not read.is_read1: return
@@ -83,8 +87,10 @@ def update_buffer_array_from_polya_read(
 
 
 def update_buffer_array_from_CAGE_read(
-        buffer_array, buffer_offset, strand, read):
+        buffer_array, buffer_offset, strand, reverse_read_strand, read):
     rd_strand = '+' if read.is_reverse else '-'
+    if reverse_read_strand:
+        rd_strand = '-' if rd_strand == '+' else '+'
     
     # skip reads that dont match the filtering criterion
     if strand != rd_strand: return
@@ -105,18 +111,13 @@ def update_buffer_array_from_CAGE_read(
     return
 
 def populate_cvg_array_for_contig( 
-        merged_ofp, reads_fname, chrm, strand, 
+        merged_ofp, reads_fname, chrm, chrm_length, strand, 
         reverse_read_strand, update_buffer_array_from_read ):
     if VERBOSE: print "Starting ", chrm, strand
     
     # open the reads file - we pass in a filename and re-open to make 
     # this multi-process safe
     reads = pysam.Samfile( reads_fname, "rb" )
-    
-    # if we need to reverse the read strand, then set the matching
-    # read strand to be the opposite
-    rd_strand = strand
-    if reverse_read_strand: rd_strand = '+' if strand == '-' else '-'
     
     # open a tempory file to write this to
     ofp = tempfile.NamedTemporaryFile(delete=False)
@@ -143,7 +144,7 @@ def populate_cvg_array_for_contig(
         if read.pos > buffer_offset + BUFFER_SIZE:
             write_array_to_opstream( 
                 ofp, buffer_array[:BUFFER_SIZE], 
-                buffer_offset, chrm)
+                buffer_offset, chrm, chrm_length)
             
             # move the unwritten portion to the start of the buffer,
             # and zero out the end
@@ -152,11 +153,11 @@ def populate_cvg_array_for_contig(
             buffer_offset += BUFFER_SIZE
 
         update_buffer_array_from_read( 
-            buffer_array, buffer_offset, rd_strand, read )
+            buffer_array, buffer_offset, strand, reverse_read_strand, read )
     
     #to make sure the rest of the buffer is stored on disk
     write_array_to_opstream( ofp, buffer_array[:BUFFER_SIZE], 
-                             buffer_offset, chrm)
+                             buffer_offset, chrm, chrm_length)
     reads.close()
 
     ofp.seek(0)
@@ -168,7 +169,7 @@ def populate_cvg_array_for_contig(
     return
 
 
-def write_array_to_opstream(ofp, buffer, buff_start, chrm ):
+def write_array_to_opstream(ofp, buffer, buff_start, chrm, chrm_length ):
     """write buffer to disk, buff_start determines the start of buffer in 
        genomic coordinates.
     """
@@ -177,6 +178,11 @@ def write_array_to_opstream(ofp, buffer, buff_start, chrm ):
     prev_pos = 0
     prev_val = buffer[0]
     for pos, val in enumerate(buffer[1:]):
+        # make sure this doesn't extend past the end of the chromosome
+        # bedGraphs are 0-based, so use chrm_length-1
+        if buff_start+pos+1 >= chrm_length:
+            pos = chrm_length-buff_start-1
+            break
         if val != prev_val:
             if prev_val > 1e-12:
                 line = "chr%s\t%i\t%i\t%.2f" % (
@@ -194,56 +200,25 @@ def write_array_to_opstream(ofp, buffer, buff_start, chrm ):
 
 def build_chrm_sizes_file(reads):
     chrm_sizes_file = tempfile.NamedTemporaryFile(delete=False)
-    chrm_names = reads.references
-    chrm_lengths = zip(chrm_names, reads.lengths)
+    # find the chrm names and their associated lengths
+    chrm_lengths = zip(reads.references, reads.lengths)
     #write out the chromosomes and its corrosponding size to disk
     for chrm, chrm_length in chrm_lengths:
         chrm_sizes_file.write(chrm + "   " + str(chrm_length) +"\n")
+    chrm_sizes_file.flush()
     
     return chrm_sizes_file
 
-def generate_wiggle(reads_fname, op_prefix, assay, 
-                    num_threads=1, stranded=True, 
-                    reverse_read_strand=None ):
-    if assay == 'cage':
-        reads = CAGEReads( reads_fname, "rb" )
-        reads.init(reverse_read_strand=False)
-        update_buffer_array_from_read = update_buffer_array_from_CAGE_read
-        stranded = True
-    elif assay == 'polya':
-        reads = pysam.Samfile( reads_fname, "rb" )
-        update_buffer_array_from_read = update_buffer_array_from_polya_read
-        stranded = True
-    elif assay == 'rnaseq':
-        reads = RNAseqReads( reads_fname, "rb" )
-        reads.init(reverse_read_strand=False)
-        update_buffer_array_from_read = \
-            update_buffer_array_from_rnaseq_read_generator(reads)
-                
-    else:
-        raise ValueError, "Unrecognized assay: '%s'" % assay
-    
-    if stranded:
-        ofps = { '+' : ProcessSafeOPStream(
-                open(op_prefix+".plus.bedgraph","w")), 
-                 '-' : ProcessSafeOPStream(
-                open(op_prefix+".minus.bedgraph", "w"))
-               }
-    else:
-        ofps = { None: ProcessSafeOPStream(open(op_prefix+".bedgraph", "w")) }
-    for key, fp in ofps.iteritems():
-        strand_str = "" if key == None else {'+': '.plus', '-': '.minus'}[key]
-        fp.write( "track name=%s.%s type=bedGraph\n" \
-                      % ( os.path.basename(op_prefix), strand_str ) )
-    
+def generate_wiggle(reads, ofps, update_buffer_array_from_read, 
+                    num_threads=1, reverse_read_strand=None ):
     all_args = []
     
     for chrm_length, chrm  in sorted(izip(reads.lengths, reads.references)):
-        strands = ['+', '-'] if stranded else [None,]
+        strands = ['+', '-'] if len(ofps) == 2 else [None,]
         for strand in strands:
             ofp = ofps[strand]
-            all_args.append((ofp, reads.filename, chrm, strand, 
-                             reverse_read_strand,
+            all_args.append((ofp, reads.filename, chrm, chrm_length,
+                             strand, reverse_read_strand,
                              update_buffer_array_from_read))
     
     if num_threads == 1:
@@ -270,8 +245,6 @@ def generate_wiggle(reads_fname, op_prefix, assay,
     return
 
 def parse_arguments():
-    global BUFFER_SIZE
-
     import argparse
     parser = argparse.ArgumentParser(
         description='Get coverage bedgraphs from aligned reads.')
@@ -281,6 +254,8 @@ def parse_arguments():
                          help='Output file(s) will be bigWig')
     parser.add_argument( '--assay', '-a', required=True, 
                          help='The assay type [(r)naseq, (c)age, (p)olya]')    
+    parser.add_argument( '--bigwig', '-b', default=False, action='store_true', 
+                         help='Build a bigwig instead of bedgraph.')
     
     parser.add_argument( '--verbose', '-v', default=False, action='store_true', 
                          help='Whether or not to print status information.')
@@ -289,28 +264,90 @@ def parse_arguments():
     
     parser.add_argument( '--reverse-read-strand', '-r', default=False, action='store_true',
                          help='Whether or not to reverse the strand of the read. default: False')
-    
-    parser.add_argument('--buffer-size', '-b', default=BUFFER_SIZE, type=int,
-                        help='The amount of memory(in base pairs) to use before flushing to disk')
-    
+        
     args = parser.parse_args()
     global VERBOSE
     VERBOSE = args.verbose
-    BUFFER_SIZE = args.buffer_size
     
     assay = {'c': 'cage', 'r': 'rnaseq', 'p': 'polya'}[args.assay.lower()[0]]
     if assay not in ('cage', 'rnaseq', 'polya'):
         raise ValueError, "Unrecongized assay (%s)" % args.assay
     
-    return assay, args.mapped_reads_fname, args.out_fname_prefix, \
+    return assay, args.mapped_reads_fname, args.out_fname_prefix, args.bigwig, \
         args.reverse_read_strand, args.threads
 
 def main():
-    assay, reads_fnames, op_prefix, reverse_read_strand, num_threads \
+    assay, reads_fname, op_prefix, build_bigwig, reverse_read_strand, num_threads \
         = parse_arguments()
+
+    # initialize the assay specific options
+    if assay == 'cage':
+        reads = CAGEReads( reads_fname, "rb" )
+        reads.init(reverse_read_strand=False)
+        update_buffer_array_from_read = update_buffer_array_from_CAGE_read
+        stranded = True
+    elif assay == 'polya':
+        reads = pysam.Samfile( reads_fname, "rb" )
+        update_buffer_array_from_read = update_buffer_array_from_polya_read
+        stranded = True
+    elif assay == 'rnaseq':
+        reads = RNAseqReads( reads_fname, "rb" )
+        reads.init(reverse_read_strand=False)
+        update_buffer_array_from_read = \
+            update_buffer_array_from_rnaseq_read_generator(reads)
+        stranded = reads.reads_are_stranded
+    else:
+        raise ValueError, "Unrecognized assay: '%s'" % assay
     
-    generate_wiggle( reads_fnames, op_prefix, assay, num_threads,
+    # if we want to build a bigwig, make sure that the script is on the path
+    if build_bigwig:
+        try: 
+            subprocess.check_call(["which", "bedGraphToBigWigs"], stdout=None)
+        except subprocess.CalledProcessError:
+            raise ValueError, "bedGraphToBigWig does not exist on $PATH. " + \
+                "You can still build a bedGraph by removing the --bigwig(-b) option."
+        
+        # build the chrm sizes file.
+        chrm_sizes_file = build_chrm_sizes_file(reads)
+    
+    # Open the output files
+    if stranded:
+        ofps = { '+' : ProcessSafeOPStream(
+                open(op_prefix+".plus.bedgraph","w")), 
+                 '-' : ProcessSafeOPStream(
+                open(op_prefix+".minus.bedgraph", "w"))
+               }
+    else:
+        ofps = { None: ProcessSafeOPStream(open(op_prefix+".bedgraph", "w")) }
+
+    # write the header information
+    for key, fp in ofps.iteritems():
+        strand_str = "" if key == None else {'+': '.plus', '-': '.minus'}[key]
+        fp.write( "track name=%s.%s type=bedGraph\n" \
+                      % ( os.path.basename(op_prefix), strand_str ) )
+    
+    generate_wiggle( reads, ofps, update_buffer_array_from_read, num_threads,
                      reverse_read_strand=reverse_read_strand )
+
+    # finally, if we are building a bigwig, build it, and then remove the bedgraph files
+    if build_bigwig:
+        for strand, bedgraph_fp in ofps.iteritems():
+            strand_str = "" if key == None else {'+': '.plus', '-': '.minus'}[key]
+            bedgraph_fname = bedgraph_fp.name
+            # first, sort
+            sorted_ofp = tempfile.NamedTemporaryFile(delete=False)
+            subprocess.call( ["sort" "-k1,1" "-k2,2n" "tmp.readcov.plus.bedgraph"], 
+                             stdout=sorted_ofp )
+            sorted_ofp.flush()
+            
+            subprocess.check_call( [ "bedGraphToBigWig", 
+                                     sorted_ofp.name, 
+                                     chrm_sizes_file.name, 
+                                     op_prefix + strand_str + ".bw"] )
+        
+        chrm_sizes_file.close()
+    else:
+        for fp in ofps.values(): fp.close()
 
 if __name__ == "__main__":
     main()

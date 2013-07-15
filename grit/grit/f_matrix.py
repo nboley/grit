@@ -599,6 +599,9 @@ def build_design_matrices( gene, rnaseq_reads, fl_dists, promoter_reads=[],
     expected_rnaseq_cnts, observed_rnaseq_cnts = \
         build_expected_and_observed_rnaseq_counts( 
             gene, rnaseq_reads, fl_dists )
+    if len( expected_rnaseq_cnts ) == 0:
+        return numpy.zeros(0), numpy.zeros(0), []
+    
     expected_rnaseq_array, observed_rnaseq_array, unobservable_rnaseq_trans = \
         build_expected_and_observed_arrays( 
             expected_rnaseq_cnts, observed_rnaseq_cnts, True )
