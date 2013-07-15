@@ -232,7 +232,7 @@ def flatten( regions ):
     else:
         return new_regions
     
-class Gene( list ):
+class Gene( object ):
     def __init__(self, id,chrm, strand, start, stop, transcripts, meta_data={}):
         self.id = id
         self.chrm = chrm
@@ -241,9 +241,8 @@ class Gene( list ):
         self.stop = stop
         self.transcripts = transcripts
         self.meta_data = meta_data
-        list.extend( self, ( id, chrm, strand, start, stop, transcripts ) )
         return    
-
+    
     def find_transcribed_regions( self ):
         exons = set()
         for transcript in self.transcripts:
@@ -263,17 +262,31 @@ class Gene( list ):
         """Extract the different element types.
         
         """
-        for t in gene.transcripts:
+        elements = {'gene': set(),
+                    'internal_exon': set(),
+                    'intron': set(),
+                    'polya': set(),
+                    'promoter': set(),
+                    'single_exon_gene': set(),
+                    'tes_exon': set(),
+                    'tss_exon': set() }
+        elements['gene'].add( (self.start, self.stop) )
+        for t in self.transcripts:
             if len( t.exons ) == 1:
-                single_exon_genes.add( ( t.chrm, t.strand, t.exons[0][0], t.exons[0][1] ) )
+                elements['single_exon_gene'].add(
+                    (t.exons[0][0], t.exons[0][1]))
             else:
                 tss_exon = t.exons[0] if t.strand == '+' else t.exons[-1]
-                tss_exons.add( (t.chrm, t.strand, tss_exon[0], tss_exon[1]) )
-                internal_exons.update( (t.chrm, t.strand, x1, x2) for x1, x2 in t.exons[1:-1] )
-                introns.update( (t.chrm, t.strand, x1, x2) for x1, x2 in t.introns )
+                elements['tss_exon'].add(tss_exon)
+                elements['internal_exon'].update( t.exons[1:-1] )
+                elements['intron'].update( t.introns )
                 tes_exon = t.exons[-1] if t.strand == '+' else t.exons[0] 
-                tes_exons.add( (t.chrm, t.strand, tes_exon[0], tes_exon[1]) )
-
+                elements['tss_exon'].add(tes_exon)
+                polya = (tes_exon[1], tes_exon[1]) \
+                    if t.strand == '+' else (tes_exon[0], tes_exon[0])
+                elements['polya'].add(polya)
+        
+        return elements
 
 
 def parse_gff_line( line, fix_chrm=True ):

@@ -133,7 +133,7 @@ def build_multi_modal_density( mean_sd_freq ):
             density_array[ index ] += \
                 norms[ norms_index ].pdf( index ) * mean_sd_freq[2]
 
-    return FlDist( fl_min, fl_max, density_array )
+    return { 'mean': FlDist( fl_min, fl_max, density_array ) }
 
 def group_fragments_by_readgroup( fragments ):
     grouped_fragments = {}
@@ -511,12 +511,11 @@ def find_fragments( reads, exons ):
 
 def estimate_normal_fl_dist_from_reads( reads, max_num_fragments_to_sample=500 ):
     frag_lens = []
-    for rd1 in reads.fetch():
-        if not rd1.is_paired or not rd1.is_read1: 
-            continue
+    for rd1 in reads:
         try:
             rd2 = reads.mate(rd1)
-        except ValueError: continue
+        except ValueError: 
+            continue
         frag_len = find_frag_len(rd1, rd2)
         frag_lens.append( frag_len )
         if len( frag_lens ) > max_num_fragments_to_sample: break
@@ -531,10 +530,12 @@ def estimate_normal_fl_dist_from_reads( reads, max_num_fragments_to_sample=500 )
     trimmed_fragments = frag_lens[bnd:len(frag_lens)-bnd]
     min_fl, max_fl = int(trimmed_fragments[0]), int(trimmed_fragments[-1])
     mean, sd = trimmed_fragments.mean(), trimmed_fragments.std()
-    return build_normal_density( min_fl, max_fl, mean, sd ), None
+    return { 'mean': build_normal_density( min_fl, max_fl, mean, sd ) }, None
     
 def estimate_fl_dists( reads, exons ):
     fragments = find_fragments( reads, exons )
+    if len( fragments ) == 0:
+        return None, fragments
     if len(fragments) > 5000:
         # distributions of individual read_groups is not currently used
         # only clustered distributions are used for downstream analysis
