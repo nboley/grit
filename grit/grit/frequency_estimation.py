@@ -367,8 +367,6 @@ def estimate_confidence_bound( observed_array,
                                mle_estimate,
                                bound_type,
                                alpha = 0.025):
-    global DEBUG_OPTIMIZATION
-    DEBUG_OPTIMIZATION = True
     n = expected_array.shape[1]
     
     def f_lhd(x):
@@ -463,10 +461,10 @@ def estimate_confidence_bound( observed_array,
         
         # do a line search with brent
         step_size = brentq(brentq_fmin, min_step_size, max_step_size )
-        while brentq_fmin(step_size) < 0 and step_size > 2*FD_SS:
+        while brentq_fmin(step_size) < 0 and step_size > FD_SS:
             step_size -= FD_SS
-        
-        return step_size-FD_SS, True
+            
+        return max(0, step_size-FD_SS), True
     
     def calc_joint_gradient(x, theta):
         # find the simple lhd gradient at this point
@@ -476,11 +474,11 @@ def estimate_confidence_bound( observed_array,
         # find teh projected gradient to minimize x[fixed_index]
         coord_gradient = numpy.zeros(n)
         coord_gradient[fixed_index] = -1 if bound_type == 'LOWER' else 1
-        coord_gradient = project_onto_simplex( x + 1.*coord_gradient ) - x
+        coord_gradient = project_onto_simplex( x + 0.1*coord_gradient ) - x
         coord_gradient /= numpy.absolute(coord_gradient).sum()        
 
         gradient = (1-theta)*lhd_gradient + theta*coord_gradient
-        gradient = project_onto_simplex( x + 1.*gradient ) - x
+        gradient = project_onto_simplex( x + 0.1*gradient ) - x
         gradient /= numpy.absolute(gradient).sum()                
         
         return gradient
@@ -490,28 +488,28 @@ def estimate_confidence_bound( observed_array,
     
     x = mle_estimate
     prev_x = mle_estimate[fixed_index]
-    
-    prev_theta = 0.0
-    theta = 1.0
+
+    n_successes = 0
     while True:        
-        gradient = calc_joint_gradient( x, theta )
-        if gradient[fixed_index] < 0:
-            print "FAILED TO REDUCE x AT theta", theta
-            theta = theta + (1.0-theta)/2
-            continue
+        # take a downhill step
+        if True:
+            gradient = calc_joint_gradient( x, 1.0 )
+            max_feasible_step_size, max_index = \
+                calc_max_feasible_step_size_and_limiting_index(x, gradient)
+            alpha, is_full_step = min_line_search(
+                x, gradient, max_feasible_step_size)
+            x += alpha*gradient    
+            if DEBUG_OPTIMIZATION:
+                print "DOWNHILL", x[fixed_index], f_lhd(x) - min_lhd, \
+                    "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
+                    
+
         
-        max_feasible_step_size, max_index = \
-            calc_max_feasible_step_size_and_limiting_index(x, gradient)
-        
-        alpha, is_full_step = min_line_search(
-            x, gradient, max_feasible_step_size)
-        
-        if alpha == 0:
-            print "FAILED TO TAKE STEP AT theta", theta
+        if True:
             # find the maximum theta st gradient[fixed_index] >= 0
             def brentq_theta_min(theta):
                 return calc_joint_gradient( x, theta )[fixed_index]
-
+            
             theta = brentq(brentq_theta_min, 0., 1. )
             gradient = calc_joint_gradient( x, theta )
             max_feasible_step_size, max_index = \
@@ -519,31 +517,23 @@ def estimate_confidence_bound( observed_array,
             alpha, is_full_step = line_search(
                 x, gradient, max_feasible_step_size)
             x = x + alpha*gradient
-            print "FOUND NEW THETA AT", theta
-            continue
-
+            if DEBUG_OPTIMIZATION:
+                print "MAX LHD ", x[fixed_index], f_lhd(x) - min_lhd, \
+                    "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
         
-        x += alpha*gradient    
-        print "SUCCEEDED AT theta", theta, x[fixed_index]
         
-        # if we were able to take a full step, we can probably 
-        # be more aggressive
-        if not is_full_step:
-            theta = theta + (1-theta)/10.
-        else:
-            theta /= 2
-        
-        print x[fixed_index], f_lhd(x) - min_lhd, "MAX STEP:", \
-            max_feasible_step_size, "REAL STEP", alpha, "THETA", theta
-                
-        if abs( prev_x - x[fixed_index] ) < 1e-9 and theta > 0.99: break
-        else: prev_x = x[fixed_index]
+        if abs( prev_x - x[fixed_index] ) < 1e-9: 
+            n_successes += 1
+            if n_successes > 10:
+                break
+        else: 
+            prev_x = x[fixed_index]
+            n_successes = 0
         
         
 
     rv = chi2.sf( 2*(max_lhd-f_lhd(x)), 1), x[fixed_index]
     print "DIRECT APPROACH", bound_type, rv
-    assert False
     return rv
     
     final_x = numpy.ones(n)*MIN_TRANSCRIPT_FREQ
