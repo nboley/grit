@@ -511,7 +511,7 @@ def find_fragments( reads, exons ):
 
 def estimate_normal_fl_dist_from_reads( reads, max_num_fragments_to_sample=500 ):
     frag_lens = []
-    for rd1 in reads:
+    for rd1 in reads.fetch():
         try:
             rd2 = reads.mate(rd1)
         except ValueError: 
@@ -530,7 +530,7 @@ def estimate_normal_fl_dist_from_reads( reads, max_num_fragments_to_sample=500 )
     trimmed_fragments = frag_lens[bnd:len(frag_lens)-bnd]
     min_fl, max_fl = int(trimmed_fragments[0]), int(trimmed_fragments[-1])
     mean, sd = trimmed_fragments.mean(), trimmed_fragments.std()
-    return { 'mean': build_normal_density( min_fl, max_fl, mean, sd ) }, None
+    return { 'mean': build_normal_density( min_fl, max_fl, mean, sd ) }, frag_lens
     
 def estimate_fl_dists( reads, exons ):
     fragments = find_fragments( reads, exons )
@@ -547,8 +547,7 @@ def estimate_fl_dists( reads, exons ):
             fl_dist = build_robust_fl_dist_with_stats( fragment_lengths )
             fl_dists[ read_group ] = fl_dist        
     else:
-        fl_dist, fragments = estimate_normal_fl_dist_from_reads(reads)
-        fl_dists = { 'mean': fl_dist }
+        fl_dists, fragments = estimate_normal_fl_dist_from_reads(reads)
     
     return fl_dists, fragments
 
