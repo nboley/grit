@@ -243,7 +243,6 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             op_lock.release()        
 
             for i in xrange(expected_array.shape[1]):
-                if i != 1: continue
                 input_queue.append( ('lb', (gene_id, None, i)) )
                 input_queue.append( ('ub', (gene_id, None, i)) )
         else:
@@ -414,6 +413,8 @@ def build_fl_dists( elements, rnaseq_reads,
     
     good_exons = iter_good_exons()
     fl_dists, fragments = estimate_fl_dists( reads, good_exons )
+    # if we can't estiamte it from the good exons, then use all reads to 
+    # estiamte the fragment length distribution
     if len( fragments ) == 0:
         x = reads.filename
         tmp_reads = Samfile( x )

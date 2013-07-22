@@ -26,7 +26,7 @@ def log_statement(message, only_log=False ):
 
 MIN_TRANSCRIPT_FREQ = 1e-12
 # finite differences step size
-FD_SS = 1e-8
+FD_SS = 1e-12
 NUM_ITER_FOR_CONV = 5
 DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
@@ -422,19 +422,20 @@ def estimate_confidence_bound( observed_array,
                 - f_lhd(x + (alpha-FD_SS)*gradient)
         
         def downhill_search(step_size):
-            step_size = min_step_size
+            step_size = FD_SS
             curr_lhd = f_lhd( x )
-            while step_size > FD_SS and curr_lhd > f_lhd( x+step_size*gradient ):
+            while step_size > FD_SS and curr_lhd > f_lhd(x+step_size*gradient):
                 step_size /= 1.5
             return int(step_size> FD_SS)*step_size
         
         min_step_size = FD_SS
         max_step_size = max_feasible_step_size-FD_SS
+        if max_step_size < 0: 
+            return 0, True        
         if brentq_fmin(max_step_size) >= 0:
             return max_step_size, False
-        elif brentq_fmin(min_step_size) <= 0:
-            step_size = downhill_search(min_step_size)
-            return step_size, True
+        if brentq_fmin(min_step_size) <= 0:
+            return 0, True
 
         # do a line search with brent
         step_size = brentq(brentq_fmin, min_step_size, max_step_size )
@@ -446,10 +447,10 @@ def estimate_confidence_bound( observed_array,
 
     def min_line_search( x, gradient, max_feasible_step_size ):
         def brentq_fmin(alpha):
-            return f_lhd(x + (alpha-FD_SS)*gradient) - min_lhd
+            return f_lhd(x + alpha*gradient) - min_lhd
                 
-        min_step_size = FD_SS
-        max_step_size = max_feasible_step_size-FD_SS
+        min_step_size = 0
+        max_step_size = max_feasible_step_size
 
         if brentq_fmin(min_step_size) < 0:
             print x
@@ -461,10 +462,12 @@ def estimate_confidence_bound( observed_array,
         
         # do a line search with brent
         step_size = brentq(brentq_fmin, min_step_size, max_step_size )
-        while brentq_fmin(step_size) < 0 and step_size > FD_SS:
-            step_size -= FD_SS
-            
-        return max(0, step_size-FD_SS), True
+        while brentq_fmin(step_size) < 0 and step_size > 0:
+            step_size -= 1e-12
+
+        rv = max(0, step_size)
+        assert f_lhd(x+rv*gradient) >= min_lhd
+        return rv, True
     
     def calc_joint_gradient(x, theta):
         # find the simple lhd gradient at this point
@@ -483,44 +486,62 @@ def estimate_confidence_bound( observed_array,
         
         return gradient
     
+    def take_param_decreasing_step(x):
+        gradient = calc_joint_gradient( x, 1.0 )
+        max_feasible_step_size, max_index = \
+            calc_max_feasible_step_size_and_limiting_index(x, gradient)
+        alpha, is_full_step = min_line_search(
+            x, gradient, max_feasible_step_size)
+        x += alpha*gradient    
+        lhd = f_lhd(x)
+        assert lhd >= min_lhd
+        if DEBUG_OPTIMIZATION:
+            print "DOWNHILL", x[fixed_index], lhd - min_lhd, \
+                "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
+        return x, lhd
+    
+    def take_lhd_decreasing_step(x):
+        # find the maximum theta st gradient[fixed_index] >= 0
+        def brentq_theta_min(theta):
+            return calc_joint_gradient( x, theta )[fixed_index]
+
+        try:
+            theta = brentq(brentq_theta_min, 0., 1. )
+        except:
+            theta = 0
+
+        gradient = calc_joint_gradient( x, theta )
+        max_feasible_step_size, max_index = \
+            calc_max_feasible_step_size_and_limiting_index(x, gradient)
+        alpha, is_full_step = line_search(
+            x, gradient, max_feasible_step_size)
+        assert alpha >= 0
+        x = x + alpha*gradient
+        if DEBUG_OPTIMIZATION:
+            print "MAX LHD ", x[fixed_index], f_lhd(x) - min_lhd, \
+                "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
+        assert f_lhd(x) >= min_lhd
+        return x
+    
     x = mle_estimate.copy()
     prev_lhd = 1e-10
     
     x = mle_estimate
     prev_x = mle_estimate[fixed_index]
-
     n_successes = 0
     while True:        
         # take a downhill step
-        if True:
-            gradient = calc_joint_gradient( x, 1.0 )
-            max_feasible_step_size, max_index = \
-                calc_max_feasible_step_size_and_limiting_index(x, gradient)
-            alpha, is_full_step = min_line_search(
-                x, gradient, max_feasible_step_size)
-            x += alpha*gradient    
-            if DEBUG_OPTIMIZATION:
-                print "DOWNHILL", x[fixed_index], f_lhd(x) - min_lhd, \
-                    "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
-                    
-
+        x, curr_lhd = take_param_decreasing_step(x)
+        if bound_type == 'LOWER' \
+                and abs(x[fixed_index] - MIN_TRANSCRIPT_FREQ) < 1e-13 \
+                and curr_lhd >= min_lhd:
+            break
+        if bound_type == 'UPPER' \
+                and abs(x[fixed_index] - (1.0-MIN_TRANSCRIPT_FREQ)) < 1e-13 \
+                and curr_lhd >= min_lhd:
+            break
         
-        if True:
-            # find the maximum theta st gradient[fixed_index] >= 0
-            def brentq_theta_min(theta):
-                return calc_joint_gradient( x, theta )[fixed_index]
-            
-            theta = brentq(brentq_theta_min, 0., 1. )
-            gradient = calc_joint_gradient( x, theta )
-            max_feasible_step_size, max_index = \
-                calc_max_feasible_step_size_and_limiting_index(x, gradient)
-            alpha, is_full_step = line_search(
-                x, gradient, max_feasible_step_size)
-            x = x + alpha*gradient
-            if DEBUG_OPTIMIZATION:
-                print "MAX LHD ", x[fixed_index], f_lhd(x) - min_lhd, \
-                    "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
-        
+        x = take_lhd_decreasing_step(x)
         
         if abs( prev_x - x[fixed_index] ) < 1e-9: 
             n_successes += 1
@@ -533,7 +554,6 @@ def estimate_confidence_bound( observed_array,
         
 
     rv = chi2.sf( 2*(max_lhd-f_lhd(x)), 1), x[fixed_index]
-    print "DIRECT APPROACH", bound_type, rv
     return rv
     
     final_x = numpy.ones(n)*MIN_TRANSCRIPT_FREQ
