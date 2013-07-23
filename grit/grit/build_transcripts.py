@@ -122,7 +122,8 @@ def write_gene_to_fpkm_tracking( ofp, gene, lbs=None, ubs=None, fpkms=None,
 def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                                      input_queue, input_queue_lock,
                                      op_lock, output, 
-                                     estimate_confidence_bounds ):
+                                     estimate_confidence_bounds,
+                                     cb_alpha=0.1):
     
     if work_type == 'gene':
         op_lock.acquire()
@@ -295,7 +296,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             bnd_type, gene_id, trans_index ) )
         p_value, bnd = frequency_estimation.estimate_confidence_bound( 
             observed_array, expected_array, 
-            trans_index, mle_estimate, bnd_type )
+            trans_index, mle_estimate, bnd_type, cb_alpha )
         log_statement( "FINISHED %s BOUND %s\t%s\t%i\t%.2e\t%.2e" % ( 
             bnd_type, gene_id, None, trans_index, bnd, p_value ), do_log=True )
         
