@@ -500,7 +500,7 @@ def estimate_confidence_bound( observed_array,
                 "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
         return x, lhd
     
-    def take_lhd_decreasing_step(x):
+    def take_lhd_decreasing_step_wth_bisection(x):
         # find the maximum theta st gradient[fixed_index] >= 0
         def brentq_theta_min(theta):
             return calc_joint_gradient( x, theta )[fixed_index]
@@ -511,6 +511,46 @@ def estimate_confidence_bound( observed_array,
             theta = 0
 
         gradient = calc_joint_gradient( x, theta )
+        max_feasible_step_size, max_index = \
+            calc_max_feasible_step_size_and_limiting_index(x, gradient)
+        alpha, is_full_step = line_search(
+            x, gradient, max_feasible_step_size)
+        assert alpha >= 0
+        x = x + alpha*gradient
+        if DEBUG_OPTIMIZATION:
+            print "MAX LHD ", x[fixed_index], f_lhd(x) - min_lhd, \
+                "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
+        assert f_lhd(x) >= min_lhd
+        return x
+
+    def take_lhd_decreasing_step(x):
+        # find the maximum theta st gradient[fixed_index] >= 0
+        def brentq_theta_min(theta):
+            return calc_joint_gradient( x, theta )[fixed_index]
+
+        try:
+            theta = brentq(brentq_theta_min, 0., 1. )
+        except:
+            theta = 0
+
+        # find the simple lhd gradient at this point
+        lhd_gradient = calc_projected_gradient( x )
+        lhd_gradient /= numpy.absolute(lhd_gradient).sum()
+        
+        # find teh projected gradient to minimize x[fixed_index]
+        coord_gradient = numpy.zeros(n)
+        coord_gradient[fixed_index] = -1 if bound_type == 'LOWER' else 1
+        coord_gradient = project_onto_simplex( x + 0.1*coord_gradient ) - x
+        coord_gradient /= numpy.absolute(coord_gradient).sum()        
+
+        # find the theta that makes the paramater we are optimizing fixed
+        theta = lhd_gradient[fixed_index]/(
+            lhd_gradient[fixed_index] - coord_gradient[fixed_index])
+        
+        gradient = (1-theta)*lhd_gradient + theta*coord_gradient
+        gradient = project_onto_simplex( x + 0.1*gradient ) - x
+        gradient /= numpy.absolute(gradient).sum()                
+        
         max_feasible_step_size, max_index = \
             calc_max_feasible_step_size_and_limiting_index(x, gradient)
         alpha, is_full_step = line_search(
@@ -545,7 +585,7 @@ def estimate_confidence_bound( observed_array,
         
         if abs( prev_x - x[fixed_index] ) < 1e-9: 
             n_successes += 1
-            if n_successes > 10:
+            if n_successes > 3:
                 break
         else: 
             prev_x = x[fixed_index]
