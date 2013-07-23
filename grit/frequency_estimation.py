@@ -88,7 +88,7 @@ except ImportError:
 
 def estimate_confidence_bounds_directly( 
         observed_array, expected_array, fixed_i, 
-        mle_log_lhd, upper_bound=True, alpha=0.05 ):
+        mle_log_lhd, upper_bound=True, alpha=0.10 ):
     assert upper_bound in ( True, False )
     from cvxpy import matrix, variable, geq, log, eq, program, maximize, minimize, sum
     lower_lhd_bound = mle_log_lhd - chi2.ppf( 1 - alpha, 1 )/2.
@@ -366,7 +366,7 @@ def estimate_confidence_bound( observed_array,
                                fixed_index,
                                mle_estimate,
                                bound_type,
-                               alpha = 0.025):
+                               alpha):
     n = expected_array.shape[1]
     
     def f_lhd(x):
@@ -561,15 +561,6 @@ def estimate_confidence_bound( observed_array,
     final_lhd = calc_lhd(final_x, observed_array, full_expected_array)
     assert final_lhd >= f_lhd(x) - abs_tol
     return final_x, lhds
-
-    rv = estimate_confidence_bounds_directly( 
-        observed_array,  expected_array, fixed_index,
-        calc_lhd(mle_estimate, observed_array, expected_array), 
-        (bound_type=='UPPER'), alpha )
-    print "DIRECT APPROACH", bound_type, rv
-    assert False
-
-
 
 
 def estimate_confidence_bound_CVXOPT( observed_array, 

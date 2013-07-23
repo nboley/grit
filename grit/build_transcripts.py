@@ -64,15 +64,15 @@ class MaxIterError( ValueError ):
 def write_gene_to_gtf( ofp, gene, mles=None, lbs=None, ubs=None, fpkms=None,
                        unobservable_transcripts=set()):
     if mles != None:
-        assert len(gene.transcripts) == len(mles) + len(unobservable_transcripts)
+        assert len(gene.transcripts) == len(mles)+len(unobservable_transcripts)
     n_skipped_ts = 0
+    
     for index, transcript in enumerate(gene.transcripts):
         if index in unobservable_transcripts:
             n_skipped_ts += 1
             continue
         meta_data = {}
         if mles != None:
-            transcript.score = max(1,int((1000.*mles[index-n_skipped_ts])/max(mles)))
             meta_data["frac"] = ("%.2e" % mles[index-n_skipped_ts])
         if lbs != None:
             meta_data["conf_lo"] = "%.2e" % lbs[index-n_skipped_ts]
@@ -80,10 +80,43 @@ def write_gene_to_gtf( ofp, gene, mles=None, lbs=None, ubs=None, fpkms=None,
             meta_data["conf_hi"] = "%.2e" % ubs[index-n_skipped_ts]
         if fpkms != None:
             meta_data["FPKM"] = "%.2e" % fpkms[index-n_skipped_ts]
-        
+        # choose the score to be the 1% confidence bound ratio, ie 
+        # the current transcripts upper bound over all transcripts'
+        # lower bound
+        if lbs != None and ubs != None:
+            frac = int((1000.*ubs[index-n_skipped_ts])/max(lbs))
+            transcript.score = max(1,min(1000,frac))
+
         ofp.write( transcript.build_gtf_lines(
                 gene.id, meta_data, source="grit") + "\n" )
     
+    return
+
+def write_gene_to_fpkm_tracking( ofp, gene, lbs=None, ubs=None, fpkms=None,
+                       unobservable_transcripts=set()):
+    n_skipped_ts = 0
+    lines = []
+    for index, transcript in enumerate(gene.transcripts):
+        if index in unobservable_transcripts:
+            n_skipped_ts += 1
+            continue
+        line = ['-']*12
+        line[0] = gene.id
+        line[5] = transcript.id
+        line[6] = '%s:%i-%i' % ( gene.chrm, transcript.start, transcript.stop)
+        line[7] = str( transcript.calc_length() )
+        line[11] = 'OK'
+        
+        if fpkms != None:
+            line[8] =  "%.2e" % fpkms[index-n_skipped_ts]
+        if lbs != None:
+            line[9] = "%.2e" % lbs[index-n_skipped_ts]
+        if ubs != None:
+            line[10] = "%.2e" % ubs[index-n_skipped_ts]
+        
+        lines.append( "\t".join(line) )
+    
+    ofp.write( "\n".join(lines)+"\n" )
     return
 
 def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
@@ -295,9 +328,10 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
     return
 
 def write_finished_data_to_disk( output_dict, output_dict_lock, 
-                                 finished_genes_queue, ofp,
-                                 compute_confidence_bounds=True, 
-                                 write_design_matrices=False ):
+                                 finished_genes_queue, 
+                                 gtf_ofp, expression_ofp,
+                                 compute_confidence_bounds, 
+                                 write_design_matrices ):
     log_statement("Initializing background writer")
     while True:
         try:
@@ -344,8 +378,14 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                 if compute_confidence_bounds else None
             ubs = output_dict[(key, 'ubs')] \
                 if compute_confidence_bounds else None
-            write_gene_to_gtf( ofp, gene, mles, lbs, ubs, fpkms, 
-                               unobservable_transcripts=unobservable_transcripts )
+
+            write_gene_to_gtf(gtf_ofp, gene, mles, lbs, ubs, fpkms, 
+                              unobservable_transcripts=unobservable_transcripts)
+            
+            if expression_ofp != None:
+                write_gene_to_fpkm_tracking( 
+                    expression_ofp, gene, lbs, ubs, fpkms, 
+                    unobservable_transcripts=unobservable_transcripts)
             
             del output_dict[(key, 'gene')]
             del output_dict[(key, 'mle')]
@@ -502,7 +542,10 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description='Determine valid transcripts and estimate frequencies.')
     parser.add_argument( '--ofname', help='Output filename.', 
-                         default="discovered_transcripts.gtf")
+                         default="transcripts.gtf")
+    parser.add_argument( '--expression-ofname', 
+                         help='Output filename for expression levels.', 
+                         default="isoforms.fpkm_tracking")
     parser.add_argument( '--elements', type=file,
         help='Bed file containing elements')
 
@@ -581,21 +624,28 @@ def parse_arguments():
     global num_threads
     num_threads = args.threads
     
-    ofp = ThreadSafeFile( args.ofname, "w" )
+    gtf_ofp = ThreadSafeFile( args.ofname, "w" )
     track_name = "." + os.path.basename(args.rnaseq_reads[0].name) \
         if args.rnaseq_reads != None else ""
-    ofp.write( "track name=transcripts.%s useScore=1\n" % track_name )
+    gtf_ofp.write( "track name=transcripts.%s useScore=1\n" % track_name )
+
+    expression_ofp = ThreadSafeFile( args.expression_ofname, "w" )
+    columns = [ "tracking_id", "class_code", "nearest_ref_id", "gene_id", 
+                "gene_short_name", "tss_id", "locus", "length", "coverageFPKM", 
+                "FPKM_conf_lo", "FPKM_conf_hi", "FPKM_status" ]
+
+    expression_ofp.write( "\t".join(columns) + "\n" )
     
     return args.elements, args.transcripts, \
         args.rnaseq_reads, args.cage_reads, args.rampage_reads, \
-        ofp, args.fasta, args.reverse_rnaseq_strand, \
+        gtf_ofp, expression_ofp, args.fasta, args.reverse_rnaseq_strand, \
         args.estimate_confidence_bounds, args.write_design_matrices, \
         not args.dont_use_ncurses
 
 def main():
     # Get file objects from command line
     exons_bed_fp, transcripts_gtf_fp, rnaseq_bams, cage_bams, rampage_bams, \
-        ofp, fasta, reverse_rnaseq_strand, \
+        gtf_ofp, expression_ofp, fasta, reverse_rnaseq_strand, \
         estimate_confidence_bounds, write_design_matrices, \
         use_ncurses \
         = parse_arguments()
@@ -657,7 +707,7 @@ def main():
     
     write_p = multiprocessing.Process(target=write_finished_data_to_disk, args=(
             output_dict, output_dict_lock, 
-            finished_queue, ofp,
+            finished_queue, gtf_ofp, expression_ofp,
             estimate_confidence_bounds, write_design_matrices ) )
     
     write_p.start()    
@@ -726,7 +776,8 @@ def main():
     write_p.join()
 
     log_statement.close()
-    ofp.close()
+    gtf_ofp.close()
+    expression_ofp.close()
     
     return
 

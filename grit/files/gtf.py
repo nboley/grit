@@ -203,6 +203,9 @@ class Transcript( object ):
                     ds_exons, ds_label, False ) )
         
         return "\n".join( ret_lines )
+    
+    def calc_length(self):
+        return sum( x[1]-x[0]+1 for x in self.exons )
 
 def flatten( regions ):
     regions.sort()
