@@ -1230,6 +1230,9 @@ def parse_arguments():
         help='Whether or not to print debugging information.')
     parser.add_argument('--write-debug-data',default=False,action='store_true',\
         help='Whether or not to print out gff files containing intermediate exon assembly data.')
+    parser.add_argument( '--dont-use-ncurses', default=False, action='store_true',
+                             help='Whether or not to use the ncurses display.')
+    
     parser.add_argument( '--threads', '-t', default=1, type=int,
         help='The number of threads to use.')
         
@@ -1251,15 +1254,16 @@ def parse_arguments():
     
     return args.rnaseq_reads, args.reverse_rnaseq_strand, \
         args.cage_reads, args.rampage_reads, \
-        args.polya_candidate_sites, ofp, args.reference
+        args.polya_candidate_sites, ofp, args.reference, \
+        not args.dont_use_ncurses
 
 def main():
     rnaseq_bams, reverse_rnaseq_strand, cage_bams, rampage_bams, \
-        polya_candidate_sites_fps, ofp, gtf_fname \
+        polya_candidate_sites_fps, ofp, gtf_fname, use_ncurses \
         = parse_arguments()
 
     global log_statement
-    log_statement = Logger(NTHREADS)
+    log_statement = Logger(nthreads=NTHREADS, use_ncurses=use_ncurses)
     
     rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=reverse_rnaseq_strand) 
                      for fp in rnaseq_bams ]

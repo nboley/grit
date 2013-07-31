@@ -150,9 +150,13 @@ def estimate_transcript_frequencies_line_search(
         x = (y - MIN_TRANSCRIPT_FREQ)/gradient
         """
         # we use minus because we return a positive step
-        steps = (x0-MIN_TRANSCRIPT_FREQ)/(gradient+1e-12)
-        step_size = -steps[ steps < 0 ].max()
-        step_size_i = ( steps == -step_size ).nonzero()[0]
+        try:
+            steps = (x0-MIN_TRANSCRIPT_FREQ)/(gradient+1e-12)
+            step_size = -steps[ steps < 0 ].max()
+            step_size_i = ( steps == -step_size ).nonzero()[0]
+        except:
+            print steps
+            raise
         return step_size, step_size_i
     
     def calc_projected_gradient( x ):
@@ -237,7 +241,11 @@ def estimate_transcript_frequencies_line_search(
             zeros_counter = 0
             if not dont_zero:
                 current_nonzero_entries = (x > 1e-12).nonzero()[0]
-                if len( current_nonzero_entries ) < len(x):
+                # if there are new non-zero entries, then remove them
+                # ( unless that would drop us down to 1 parameter, which
+                #   doesn't make sense )
+                if len( current_nonzero_entries ) > 1 \
+                        and len( current_nonzero_entries ) < len(x):
                     n = full_expected_array.shape[1]
                     full_x = numpy.ones(n)*MIN_TRANSCRIPT_FREQ
                     full_x[ numpy.array(sorted(set(range(n))-zeros)) ] = x
@@ -246,8 +254,7 @@ def estimate_transcript_frequencies_line_search(
                     # build the x set
                     x = x[ current_nonzero_entries ]
                     expected_array = expected_array[:, current_nonzero_entries]
-            
-        
+                
         prev_lhd = lhd
         lhd = f_lhd(x)
         lhds.append( lhd )
@@ -262,8 +269,7 @@ def estimate_transcript_frequencies_line_search(
     return final_x, lhds
 
 def estimate_transcript_frequencies(  
-        observed_array, full_expected_array,
-        fixed_indices=[], fixed_values=[]):
+        observed_array, full_expected_array ):
     if observed_array.sum() == 0:
         raise TooFewReadsError, "Too few reads (%i)" % observed_array.sum()
     
@@ -271,9 +277,7 @@ def estimate_transcript_frequencies(
     if n == 1:
         return numpy.ones( 1, dtype=float )
     
-    x = numpy.array([(1.-sum(fixed_values))/n]*n)
-    for i, v in zip( fixed_indices, fixed_values ):
-        x[i] = v
+    x = numpy.array([1./n]*n)
     eps = 10.
     start_time = time.time()
     #log_statement( "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)" )
@@ -282,8 +286,7 @@ def estimate_transcript_frequencies(
         
         x, lhds = estimate_transcript_frequencies_line_search(  
             observed_array, full_expected_array, x, 
-            dont_zero=False, abs_tol=eps,
-            fixed_indices=fixed_indices, fixed_values=fixed_values)
+            dont_zero=False, abs_tol=eps )
         
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
@@ -304,8 +307,7 @@ def estimate_transcript_frequencies(
         prev_x = x.copy()
         x, lhds = estimate_transcript_frequencies_line_search(  
             observed_array, full_expected_array, x, 
-            dont_zero=True, abs_tol=ABS_TOL,
-            fixed_indices=fixed_indices, fixed_values=fixed_values)
+            dont_zero=True, abs_tol=ABS_TOL )
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
         if DEBUG_VERBOSE:
@@ -318,49 +320,6 @@ def estimate_transcript_frequencies(
     
     return x
 
-def estimate_confidence_bound_by_bisection( 
-        observed_array, expected_array,
-        fixed_i, optimal_est, 
-        bound_type, alpha ):    
-    n_transcripts = expected_array.shape[1]
-    max_test_stat = chi2.ppf( 1 - alpha, 1 )/2.
-            
-    def calc_test_statistic(x):
-        return calc_lhd( x, observed_array, expected_array )
-        
-    def etf_wrapped( x ):
-        constrained_est = estimate_transcript_frequencies( 
-            observed_array, expected_array, 
-            [fixed_i,], fixed_values=[x,] )
-        return constrained_est
-    
-    def estimate_bound( ):
-        optimum_bnd = optimal_est[fixed_i]
-        if bound_type=='UPPER': 
-            other_bnd = 1.0 - n_transcripts*MIN_TRANSCRIPT_FREQ
-        else: 
-            other_bnd = MIN_TRANSCRIPT_FREQ
-        
-        # check to see if the far bound is sufficiently bad ( this 
-        # is really an identifiability check 
-        test_stat = calc_test_statistic(etf_wrapped(other_bnd))
-        if max_test_stat - test_stat > 0:
-            return other_bnd
-        
-        lower_bnd, upper_bnd = \
-            min( optimum_bnd, other_bnd ), max( optimum_bnd, other_bnd )
-        def obj( x ):
-            rv = max_test_stat - calc_test_statistic(etf_wrapped(x))
-            return rv
-        
-        return brentq( obj, lower_bnd, upper_bnd)
-                       
-    
-    bnd = estimate_bound()
-    test_stat = calc_test_statistic(etf_wrapped(bnd))
-    
-    return test_stat, bnd
-
 def estimate_confidence_bound( observed_array, 
                                expected_array, 
                                fixed_index,
@@ -368,6 +327,8 @@ def estimate_confidence_bound( observed_array,
                                bound_type,
                                alpha):
     n = expected_array.shape[1]
+    if n == 1:
+        return 1.0, 1.0
     
     def f_lhd(x):
         log_lhd = calc_lhd(x, observed_array, expected_array)
@@ -391,7 +352,11 @@ def estimate_confidence_bound( observed_array,
         """
         # we use minus because we return a positive step
         steps = (x0-MIN_TRANSCRIPT_FREQ)/(gradient+1e-12)
-        step_size = -steps[ steps < 0 ].max()
+        try:
+            step_size = -steps[ steps < 0 ].max()
+        except:
+            print steps
+            raise
         step_size_i = ( steps == -step_size ).nonzero()[0]
         return step_size, step_size_i
     
