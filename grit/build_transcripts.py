@@ -101,8 +101,8 @@ def write_gene_to_fpkm_tracking( ofp, gene, lbs=None, ubs=None, fpkms=None,
             n_skipped_ts += 1
             continue
         line = ['-']*12
-        line[0] = gene.id
-        line[5] = transcript.id
+        line[0] = str(gene.id)
+        line[5] = str(transcript.id)
         line[6] = '%s:%i-%i' % ( gene.chrm, transcript.start, transcript.stop)
         line[7] = str( transcript.calc_length() )
         line[11] = 'OK'
