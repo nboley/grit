@@ -31,6 +31,9 @@ def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
     while True:
         start_time = time.time()
         while True:
+            # make sure that we refresh at least every 10 messages
+            counter = 0
+            
             # make sure that we refresh every one in a while
             if start_time - time.time() > MAX_REFRESH_TIME:
                 break
@@ -38,18 +41,12 @@ def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
             # try to acquire a message. If none exists, brak
             # to refresh and sleep
             try:
-                msg_queue_lock.acquire()
-                if len( msg_queue ) == 0:
-                    msg_queue_lock.release()
-                    break
-                else:
-                    thread_index, do_log, msg = msg_queue.pop()
+                thread_index, do_log, msg = msg_queue.pop()
+            except IndexError, inst:
+                break
             except IOError, inst:
                 break
             
-            # release the message queue lock
-            msg_queue_lock.release()
-
             # if the message is BREAK, then we are done so exit the thread
             if msg == 'BREAK': 
                 return
@@ -67,6 +64,9 @@ def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
                 thread_data_windows[thread_index].erase()
                 thread_data_windows[thread_index].insstr(0, 0, line )
                 thread_data_windows[thread_index].refresh()
+            
+            counter += 1
+            if counter >= 10: break
         
         stdscr.refresh()
     
@@ -75,7 +75,7 @@ def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
 class Logger( object ):
     def _init_ncurses_manager(self):
         self.manager = multiprocessing.Manager()
-        self.msgs_lock = self.manager.Lock()
+        self.msgs_lock = multiprocessing.Lock()
         self.msgs = self.manager.list()
         p = multiprocessing.Process( target=curses.wrapper, 
                      args=(manage_curses_display, 
@@ -107,8 +107,9 @@ class Logger( object ):
     
     def __call__( self, message, only_log=False, do_log=None ):
         if self.log_ofstream != None:
-            self.log_ofstream.write(message.strip() + "\n" )
-            self.log_ofstream.flush()
+            if message != "":
+                self.log_ofstream.write(message.strip() + "\n" )
+                self.log_ofstream.flush()
 
         if self.use_ncurses:
             self.msgs_lock.acquire()
