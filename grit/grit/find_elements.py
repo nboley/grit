@@ -1295,6 +1295,7 @@ def main():
     
     for contig, contig_len in contig_lens.iteritems():
         for strand in '+-':
+            if contig != '4': continue
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, promoter_reads, polya_sites,
                                   gene_bndry_bins = gene_bndry_bins[(contig, strand)])

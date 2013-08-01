@@ -664,9 +664,9 @@ def main():
     
     manager = multiprocessing.Manager()
     input_queue = manager.list()
-    input_queue_lock = manager.Lock()
+    input_queue_lock = multiprocessing.Lock()
     finished_queue = manager.Queue()
-    output_dict_lock = manager.Lock()    
+    output_dict_lock = multiprocessing.Lock()    
     output_dict = manager.dict()
         
     rnaseq_reads = [ RNAseqReads(fp.name).init(
