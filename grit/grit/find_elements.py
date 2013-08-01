@@ -501,7 +501,7 @@ def load_junctions( rnaseq_reads, (chrm, strand, contig_len) ):
             from multiprocessing import Process, Manager
             manager = Manager()
             all_jns = manager.list()
-            all_jns_lock = manager.Lock()
+            all_jns_lock = multiprocessing.Lock()
             
             ps = []
             for start, stop in segments:
@@ -1074,16 +1074,19 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp, (chrm, strand, cont
     while True:
         log_statement( "Waiting for genes queue lock" )
         if genes_queue_lock != None:
-            genes_queue_lock.acquire()
+            i = 1
+            while not genes_queue_lock.acquire(timeout=1.0):
+                log_statement( "Waited %.2f sec for gene queue lock" % i )
+                i += 1
             if len(genes_queue) == 0:
                 genes_queue_lock.release()
                 break
             gene = genes_queue.pop()
             genes_queue_lock.release()
         else:
+            assert NTHREADS == 1
             if len( genes_queue ) == 0: 
                 break
-            assert NTHREADS == 1
             gene = genes_queue.pop()
     
         log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" % 
@@ -1113,8 +1116,10 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp, (chrm, strand, cont
         if WRITE_DEBUG_DATA:
             pseudo_exons.writeBed( ofp )
 
-        log_statement( "" )
-        
+        log_statement( "FINISHED Finding Exons in Chrm %s Strand %s Pos %i-%i" %
+                       (chrm, strand, gene.start, gene.stop) )
+
+    time.sleep(0.1)        
     log_statement( "" )
     return
 
@@ -1134,7 +1139,7 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     if NTHREADS > 1:
         manager = multiprocessing.Manager()
         genes_queue = manager.list()
-        genes_queue_lock = manager.Lock()
+        genes_queue_lock = multiprocessing.Lock()
     else:
         genes_queue, genes_queue_lock = [], None
         
@@ -1289,7 +1294,6 @@ def main():
         gene_bndry_bins = load_gene_bndry_bins( gtf_fname, contig_lens )
     
     for contig, contig_len in contig_lens.iteritems():
-        if contig != '4': continue
         for strand in '+-':
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, promoter_reads, polya_sites,
