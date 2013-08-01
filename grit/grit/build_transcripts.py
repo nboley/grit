@@ -292,13 +292,14 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
 
         bnd_type = 'LOWER' if work_type == 'lb' else 'UPPER'
 
-        log_statement( "Estimating %s confidence bound for gene %s transcript %i" % ( 
-            bnd_type, gene_id, trans_index ) )
+        log_statement( "Estimating %s confidence bound for gene %s transcript %i/%i" % ( 
+            bnd_type, gene_id, trans_index+1, mle_estimate.shape[0] ) )
         p_value, bnd = frequency_estimation.estimate_confidence_bound( 
             observed_array, expected_array, 
             trans_index, mle_estimate, bnd_type, cb_alpha )
-        log_statement( "FINISHED %s BOUND %s\t%s\t%i\t%.2e\t%.2e" % ( 
-            bnd_type, gene_id, None, trans_index, bnd, p_value ), do_log=True )
+        log_statement( "FINISHED %s BOUND %s\t%s\t%i/%i\t%.2e\t%.2e" % ( 
+            bnd_type, gene_id, None, trans_index+1, mle_estimate.shape[0], 
+            bnd, p_value ), do_log=True )
         
         op_lock.acquire()
         bnds = output[(gene_id, work_type+'s')]
@@ -600,10 +601,15 @@ def parse_arguments():
     if args.transcripts != None  and args.rnaseq_reads == None:
         raise ValueError, "--rnaseq-reads must be set if --transcripts is set"
 
-    if args.only_build_candidate_transcripts == True and args.elements == None:
+    if args.only_build_candidate_transcripts == True \
+            and args.elements == None:
         raise ValueError, "--elements must be set if --only-build-transcripts is set"
-    if args.only_build_candidate_transcripts == True and args.rnaseq_reads == None:
+    if args.only_build_candidate_transcripts == True \
+            and args.rnaseq_reads == None:
         raise ValueError, "--rnaseq-reads and --only-build-transcripts must not both be set"
+    if args.only_build_candidate_transcripts == True \
+            and args.estimate_confidence_bounds == True:
+        raise ValueError, "--only-build-candidate-transcripts and --estimate-confidence-bounds may not both be set"
     
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
