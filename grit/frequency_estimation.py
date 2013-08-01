@@ -129,7 +129,7 @@ def line_search( x, f, gradient, max_feasible_step_size ):
     return step_size, True
 
 def project_onto_simplex( x, debug=False ):
-    if ( x >= MIN_TRANSCRIPT_FREQ ).all() and abs( 1-x.sum()  ) < 1e-6: return x
+    if ( x >= 0 ).all() and abs( 1-x.sum()  ) < 1e-6: return x
     sorted_x = numpy.sort(x)[::-1]
     if debug: log_statement( "sorted x: %s" % sorted_x )
     n = len(sorted_x)
@@ -155,28 +155,11 @@ def calc_projected_gradient( x, expected_array, observed_array  ):
 
 
 def calc_max_feasible_step_size_and_limiting_index_BAD( x0, gradient ):
-    """Calculate the maximum step size to stay in the feasible region.
-
-    solve y - x*gradient = MIN_TRANSCRIPT_FREQ for x
-    x = (y - MIN_TRANSCRIPT_FREQ)/gradient
-    """
-    # we use minus because we return a positive step
-    max_ss, max_i = 0, 0
-    for i, (x, dx) in enumerate(izip(x0, gradient)):
-        if dx == 0: continue
-        ss = (x - MIN_TRANSCRIPT_FREQ)/dx
-        if ss > max_ss: 
-            max_ss = ss
-            max_i = i
-    
-    return max_ss, max_i
-
-def calc_max_feasible_step_size_and_limiting_index( x0, gradient ):
-    """Calculate the maximum step size to stay in the feasible region.
-
-    solve y - x*gradient = MIN_TRANSCRIPT_FREQ for x
-    x = (y - MIN_TRANSCRIPT_FREQ)/gradient
-    """
+    #Calculate the maximum step size to stay in the feasible region.
+    #
+    #solve y - x*gradient = MIN_TRANSCRIPT_FREQ for x
+    #x = (y - MIN_TRANSCRIPT_FREQ)/gradient
+    #
     # we use minus because we return a positive step
     try:
         steps = (x0-MIN_TRANSCRIPT_FREQ)/(gradient+1e-12)
@@ -187,6 +170,25 @@ def calc_max_feasible_step_size_and_limiting_index( x0, gradient ):
         raise
     return step_size, step_size_i
 
+def calc_max_feasible_step_size_and_limiting_index( x0, gradient ):
+    """Calculate the maximum step size to stay in the feasible region.
+
+    solve y - x*gradient = MIN_TRANSCRIPT_FREQ for x
+    x = (y - MIN_TRANSCRIPT_FREQ)/gradient
+    """
+    # we use minus because we return a positive step
+    max_ss, max_i = -1e50, None
+    for i, (x, dx) in enumerate(izip(x0, gradient)):
+        if dx == 0: continue
+        ss = (x - MIN_TRANSCRIPT_FREQ)/dx
+        if ss >= 0: continue
+        if ss > max_ss: 
+            max_ss = ss
+            max_i = i
+    
+    if max_i == None:
+        return 0, 0
+    return -max_ss, max_i
 
 def build_zero_eliminated_matrices(x, full_expected_array, curr_zeros):
     """Return x and an expected array without boundry points.
@@ -371,24 +373,40 @@ def estimate_confidence_bound( observed_array,
         # find the simple lhd gradient at this point
         lhd_gradient = calc_projected_gradient( 
             x, expected_array, observed_array )
-        lhd_gradient /= numpy.absolute(lhd_gradient).sum()
+        lhd_gradient /= ( numpy.absolute(lhd_gradient).sum() + 1e-12 )
         
         # find teh projected gradient to minimize x[fixed_index]
         coord_gradient = numpy.zeros(n)
         coord_gradient[fixed_index] = -1 if bound_type == 'LOWER' else 1
         coord_gradient = project_onto_simplex( x + 0.1*coord_gradient ) - x
-        coord_gradient /= numpy.absolute(coord_gradient).sum()        
+        coord_gradient /= ( numpy.absolute(coord_gradient).sum() + 1e-12 )
 
         # find the theta that makes the paramater we are optimizing fixed
-        theta = lhd_gradient[fixed_index]/(
-            lhd_gradient[fixed_index] - coord_gradient[fixed_index])
-        print lhd_gradient
-        print coord_gradient
-        gradient = (1-theta)*lhd_gradient + theta*coord_gradient
-        print gradient
-        print x
-        gradient = project_onto_simplex( x + 1.*gradient ) - x
+        denominator = lhd_gradient[fixed_index] - coord_gradient[fixed_index]
+        if denominator == 0: theta = 1.
+        else: theta = lhd_gradient[fixed_index]/denominator
+        try:
+            gradient = (1-theta)*lhd_gradient + theta*coord_gradient
+            projection = project_onto_simplex( x + 1.*gradient )
+        except:
+            print "LHD V", lhd_gradient
+            print "COORD V", coord_gradient
+            print "GRAD", gradient
+            print "EXT PNT", x + 1.*gradient
+            print "X", x
+            raise
+
+        gradient = projection - x
         gradient /= numpy.absolute(gradient).sum()                
+        gradient[fixed_index] = max(0, gradient[fixed_index])
+        try:
+            assert gradient[fixed_index] >= 0
+        except:
+            print lhd_gradient
+            print coord_gradient
+            print theta, fixed_index
+            print gradient
+            raise
         
         max_feasible_step_size, max_index = \
             calc_max_feasible_step_size_and_limiting_index(x, gradient)
