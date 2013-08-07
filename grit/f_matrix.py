@@ -610,25 +610,27 @@ def build_design_matrices( gene, rnaseq_reads, fl_dists, promoter_reads=[],
     del expected_rnaseq_cnts, observed_rnaseq_cnts
 
     # clsuter and join rows
-    edges = set()
-    row, col = (numpy.corrcoef(expected_rnaseq_array) == 1).nonzero()
-    for row_i, col_i in zip( row, col ):
-        edges.add((row_i, col_i))
+    corr_coefs = numpy.corrcoef(expected_rnaseq_array)
+    if isinstance(corr_coefs, numpy.ndarray):
+        edges = set()
+        row, col = (corr_coefs == 1).nonzero()
+        for row_i, col_i in zip( row, col ):
+            edges.add((row_i, col_i))
 
-    graph = Graph( expected_rnaseq_array.shape[0] )
-    graph.add_edges( list( edges ) )
-    clusters = graph.clusters()
-    
-    new_expected_array = numpy.zeros( 
-        (len(clusters), expected_rnaseq_array.shape[1]) )
-    new_observed_array = numpy.zeros( len(clusters), dtype=int )
-    for i, node in enumerate(graph.clusters()):
-        new_expected_array[i,:] = expected_rnaseq_array[node,].sum(0)
-        new_observed_array[i] = observed_rnaseq_array[node].sum()
+        graph = Graph( expected_rnaseq_array.shape[0] )
+        graph.add_edges( list( edges ) )
+        clusters = graph.clusters()
 
-    expected_rnaseq_array = new_expected_array
-    observed_rnaseq_array = new_observed_array
-    
+        new_expected_array = numpy.zeros( 
+            (len(clusters), expected_rnaseq_array.shape[1]) )
+        new_observed_array = numpy.zeros( len(clusters), dtype=int )
+        for i, node in enumerate(graph.clusters()):
+            new_expected_array[i,:] = expected_rnaseq_array[node,].sum(0)
+            new_observed_array[i] = observed_rnaseq_array[node].sum()
+
+        expected_rnaseq_array = new_expected_array
+        observed_rnaseq_array = new_observed_array
+        
     if len(promoter_reads) == 0:
         return expected_rnaseq_array, \
             observed_rnaseq_array, \

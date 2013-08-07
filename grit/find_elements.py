@@ -5,7 +5,7 @@ import time
 
 import numpy
 
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from itertools import chain, izip
 from bisect import bisect
 from copy import copy
@@ -72,7 +72,7 @@ def flatten( regions ):
 
 MIN_REGION_LEN = 50
 MIN_EMPTY_REGION_LEN = 100
-MIN_EXON_BPKM = 1
+MIN_EXON_BPKM = 0.1
 EXON_EXT_CVG_RATIO_THRESH = 5
 POLYA_MERGE_SIZE = 100
 
@@ -534,8 +534,8 @@ def load_junctions( rnaseq_reads, (chrm, strand, contig_len) ):
     
     filtered_junctions = []
     for (start, stop), cnt in junctions:
-        if float(cnt)/jn_starts[start] < 0.01: continue
-        if float(cnt)/jn_stops[stop] < 0.01: continue
+        if float(cnt)/jn_starts[start] < 0.001: continue
+        if float(cnt)/jn_stops[stop] < 0.001: continue
         if stop - start > 10000000: continue
         filtered_junctions.append( ((start, stop), cnt) )
     
@@ -1126,14 +1126,14 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp, (chrm, strand, cont
 def find_exons_in_contig( (chrm, strand, contig_len), ofp,
                           rnaseq_reads, cage_reads, polya_sites,
                           ref_gtf_fname, ref_elements_to_include):
-    if VERBOSE: log_statement( 'Loading gtf' )    
-    gene_bndry_bins = defaultdict( lambda: None )
+    gene_bndry_bins = None
     if ref_gtf_fname != None:
+        if VERBOSE: log_statement( 'Loading gtf' )    
         gene_bndry_bins = load_gene_bndry_bins( ref_gtf_fname, contig_lens )
     
     junctions = load_junctions( rnaseq_reads, (chrm, strand, contig_len) )
     polya_sites = polya_sites[(chrm, strand)]
-    
+
     if gene_bndry_bins == None:
         log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" % ( chrm, strand ) )
         gene_bndry_bins = find_gene_boundaries( 
@@ -1230,16 +1230,16 @@ def parse_arguments():
     parser.add_argument( '--reference', help='Reference GTF')
     parser.add_argument( '--use-reference-genes', 
                          help='Use genes boundaries from the reference annotation.', 
-                         default=False, action='set_true')
+                         default=False, action='store_true')
     parser.add_argument( '--use-reference-junctions', 
                          help='Include junctions from the reference annotation.',
-                         default=False, action='set_true')
+                         default=False, action='store_true')
     parser.add_argument( '--use-reference-tss', 
                          help='Use TSS\'s taken from the reference annotation.',
-                         default=False, action='set_true')
+                         default=False, action='store_true')
     parser.add_argument( '--use-reference-tes', 
                          help='Use TES\'s taken from the reference annotation.',
-                         default=False, action='set_true')
+                         default=False, action='store_true')
     
     parser.add_argument( '--ofname', '-o', 
                          default="discovered_elements.bed",\
@@ -1320,7 +1320,7 @@ def main():
     for fp in polya_candidate_sites_fps: fp.close()
 
     contig_lens = get_contigs_and_lens( rnaseq_reads, promoter_reads )
-    
+
     for contig, contig_len in contig_lens.iteritems():
         for strand in '+-':
             #if contig != '4': continue
