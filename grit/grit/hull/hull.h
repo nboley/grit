@@ -18,7 +18,7 @@
 #include "points.h"
 #include "stormacs.h"
 
-#define MAXDIM 8
+#define MAXDIM 2000
 #define BLOCKSIZE 100000
 #define MAXBLOCKS 1000
 #define DEBUG -7

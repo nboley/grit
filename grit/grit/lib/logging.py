@@ -110,7 +110,10 @@ class Logger( object ):
             if message != "":
                 self.log_ofstream.write(message.strip() + "\n" )
                 self.log_ofstream.flush()
-
+        if not self.use_ncurses:
+            if message != "":
+                sys.stderr.write(message.strip() + "\n" )
+            
         if self.use_ncurses:
             self.msgs_lock.acquire()
             try: 

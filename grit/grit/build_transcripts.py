@@ -185,23 +185,21 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             except ValueError, inst:
                 error_msg = "%i: Skipping %s: %s" % ( os.getpid(), gene_id, inst )
                 log_statement( error_msg )
-                if DEBUG: raise
                 input_queue_lock.acquire()
                 input_queue.append(
-                    ('ERROR', ((gene_id, rnaseq_reads.filename, trans_index), error_msg)))
+                    ('ERROR', ((gene_id, trans_index), error_msg)))
                 input_queue_lock.release()
                 return
             except MemoryError, inst:
                 error_msg =  "%i: Skipping %s: %s" % ( os.getpid(), gene_id, inst )
                 log_statement( error_msg )
-                if DEBUG: raise
                 input_queue_lock.acquire()
                 input_queue.append(
-                    ('ERROR', ((gene_id, rnaseq_reads.filename, trans_index), error_msg)))
+                    ('ERROR', ((gene_id, trans_index), error_msg)))
                 input_queue_lock.release()
                 return
-
-            #log_statement( "FINISHED DESIGN MATRICES %s" % gene_id )
+            
+            log_statement( "FINISHED DESIGN MATRICES %s" % gene_id )
             log_statement( "" )
 
             op_lock.acquire()
@@ -215,7 +213,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 log_statement( error_msg )
                 input_queue_lock.acquire()
                 input_queue.append(
-                    ('ERROR', ((gene_id, rnaseq_reads.filename, trans_index), error_msg)))
+                    ('ERROR', ((gene_id, trans_index), error_msg)))
                 input_queue_lock.release()
                 return
 
@@ -250,18 +248,17 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             except ValueError, inst:
                 error_msg = "Skipping %s: %s" % ( gene_id, inst )
                 log_statement( error_msg )
-                if DEBUG: raise
                 input_queue_lock.acquire()
                 input_queue.append(('ERROR', (
-                            (gene_id, rnaseq_reads.filename, trans_index), 
+                            (gene_id, trans_index), 
                             error_msg)))
                 input_queue_lock.release()
                 return
-
+            
             log_lhd = frequency_estimation.calc_lhd( 
                 mle_estimate, observed_array, expected_array)
             log_statement( "FINISHED MLE %s\t%.2f" % ( gene_id, log_lhd ) )
-
+            
             op_lock.acquire()
             output[(gene_id, 'mle')] = mle_estimate
             output[(gene_id, 'fpkm')] = fpkms
@@ -272,11 +269,21 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 output[(gene_id, 'ub')] = [None]*len(mle_estimate)
                 output[(gene_id, 'lb')] = [None]*len(mle_estimate)
                 op_lock.release()        
+                
+                NUM_TRANS_IN_GRP = 50
+                grouped_indices = []
+                for i in xrange(expected_array.shape[1]):
+                    if i%NUM_TRANS_IN_GRP == 0:
+                        grouped_indices.append( [] )
+                    grouped_indices[-1].append( i )
 
                 input_queue_lock.acquire()
-                for i in xrange(expected_array.shape[1]):
-                    input_queue.append( ('lb', (gene_id, None, i)) )
-                    input_queue.append( ('ub', (gene_id, None, i)) )
+                for indices in grouped_indices:
+                    input_queue.append( ('lb', (gene_id, None, indices)) )
+                    input_queue.append( ('ub', (gene_id, None, indices)) )
+                #for i in xrange(expected_array.shape[1]):
+                #    input_queue.append( ('lb', (gene_id, None, i)) )
+                #    input_queue.append( ('ub', (gene_id, None, i)) )
                 input_queue_lock.release()
             else:
                 input_queue_lock.acquire()
@@ -293,20 +300,39 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
 
             bnd_type = 'LOWER' if work_type == 'lb' else 'UPPER'
 
-            log_statement( "Estimating %s confidence bound for gene %s transcript %i/%i" % ( 
-                bnd_type, gene_id, trans_index+1, mle_estimate.shape[0] ) )
-            p_value, bnd = frequency_estimation.estimate_confidence_bound( 
-                observed_array, expected_array, 
-                trans_index, mle_estimate, bnd_type, cb_alpha )
-            log_statement( "FINISHED %s BOUND %s\t%s\t%i/%i\t%.2e\t%.2e" % ( 
-                bnd_type, gene_id, None, trans_index+1, mle_estimate.shape[0], 
-                bnd, p_value ), do_log=True )
+            if type(trans_index) == int:
+                trans_indices = [trans_index,]
+            else:
+                assert isinstance( trans_index, list )
+                trans_indices = trans_index
 
+            res = []
+            log_statement( 
+                "Estimating %s confidence bound for gene %s transcript %i-%i/%i" % ( 
+                    bnd_type,gene_id,trans_indices[0]+1, trans_indices[-1]+1, 
+                    mle_estimate.shape[0]))
+            for trans_index in trans_indices:
+                if DEBUG_VERBOSE: log_statement( 
+                    "Estimating %s confidence bound for gene %s transcript %i/%i" % ( 
+                    bnd_type,gene_id,trans_index+1,mle_estimate.shape[0]))
+                p_value, bnd = frequency_estimation.estimate_confidence_bound( 
+                    observed_array, expected_array, 
+                    trans_index, mle_estimate, bnd_type, cb_alpha )
+                if DEBUG_VERBOSE: log_statement( 
+                    "FINISHED %s BOUND %s\t%s\t%i/%i\t%.2e\t%.2e" % (
+                    bnd_type, gene_id, None, trans_index+1, mle_estimate.shape[0], 
+                    bnd, p_value ), do_log=True )
+                res.append((trans_index, bnd))
+            log_statement( 
+                "FINISHED Estimating %s confidence bound for gene %s transcript %i-%i/%i" % ( 
+                    bnd_type,gene_id,trans_indices[0]+1, trans_indices[-1]+1, 
+                    mle_estimate.shape[0]))
+            
             op_lock.acquire()
             bnds = output[(gene_id, work_type+'s')]
-            bnds[trans_index] = bnd
+            for trans_index, bnd in res:
+                bnds[trans_index] = bnd
             output[(gene_id, work_type+'s')] = bnds
-
             ubs = output[(gene_id, 'ubs')]
             lbs = output[(gene_id, 'lbs')]
             mle = output[(gene_id, 'mle')]
@@ -329,12 +355,12 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             log_statement("")
     
     except Exception, inst:
-        input_queue_lock.release()
-        op_lock.release()
+        import traceback
+        input_queue_lock.acquire()
         input_queue.append(
-            ('ERROR', ((gene_id, rnaseq_reads.filename, trans_index), str(inst))))
-        raise
-
+            ('ERROR', ((gene_id, trans_index), traceback.format_exc())))
+        input_queue_lock.release()
+    
     return
 
 def write_finished_data_to_disk( output_dict, output_dict_lock, 
@@ -387,7 +413,6 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                 if compute_confidence_bounds else None
             ubs = output_dict[(key, 'ubs')] \
                 if compute_confidence_bounds else None
-            output_dict_lock.release()
 
             write_gene_to_gtf(gtf_ofp, gene, mles, lbs, ubs, fpkms, 
                               unobservable_transcripts=unobservable_transcripts)
@@ -397,7 +422,6 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                     expression_ofp, gene, lbs, ubs, fpkms, 
                     unobservable_transcripts=unobservable_transcripts)
             
-            output_dict_lock.acquire()
             del output_dict[(key, 'gene')]
             del output_dict[(key, 'mle')]
             del output_dict[(key, 'design_matrices')]
@@ -506,13 +530,11 @@ def initialize_processing_data( elements, genes, fl_dists,
     gene_id = 0
     if genes != None:
         for gene in genes:
-            gene_id += 1
-            
-            output_dict[(gene_id, 'gene')] = gene
-            add_universal_data(output_dict, gene_id, gene.chrm, gene.strand)
+            output_dict[(gene.id, 'gene')] = gene
+            add_universal_data(output_dict, gene.id, gene.chrm, gene.strand)
             
             input_queue_lock.acquire()
-            input_queue.append(('design_matrices', (gene_id, None, None)))
+            input_queue.append(('design_matrices', (gene.id, None, None)))
             input_queue_lock.release()            
     else:
         for (contig, strand), grpd_exons in elements.iteritems():
@@ -668,7 +690,10 @@ def main():
         
     global log_statement
     # add an extra thread for the background writer
-    log_statement = Logger(num_threads+1, use_ncurses=use_ncurses )
+    log_fp = open( gtf_ofp.name + ".log", "w" )
+    log_statement = Logger(num_threads+1, 
+                           use_ncurses=use_ncurses, 
+                           log_ofstream=log_fp )
     frequency_estimation.log_statement = log_statement
     
     manager = multiprocessing.Manager()
@@ -736,14 +761,15 @@ def main():
         try:
             input_queue_lock.acquire()
             work_type, key = input_queue.pop()
-        except IndexError:
+        except IndexError, inst:
             if len(input_queue) == 0 and all( 
                     p == None or not p.is_alive() for p in ps ): 
                 input_queue_lock.release()
                 break
-            input_queue_lock.release()
+            
             # if the queue is empty but processing is still going on,
             # then just sleep
+            input_queue_lock.release()
             time.sleep(1.0)
             continue
         
@@ -752,7 +778,6 @@ def main():
         if work_type == 'ERROR':
             ( gene_id, trans_index ), msg = key
             log_statement( str(gene_id) + "\tERROR\t" + msg, only_log=True ) 
-            assert False
             continue
         else:
             gene_id, bam_fn, trans_index = key
@@ -794,6 +819,7 @@ def main():
 
     log_statement.close()
     gtf_ofp.close()
+    log_fp.close()
     expression_ofp.close()
     
     return
