@@ -2,6 +2,7 @@ __version__ = "0.1.1"
 
 import sys, os
 import time
+import math
 
 import numpy
 
@@ -76,7 +77,7 @@ MIN_EXON_BPKM = 0.1
 EXON_EXT_CVG_RATIO_THRESH = 5
 POLYA_MERGE_SIZE = 100
 
-CAGE_PEAK_WIN_SIZE = 10
+CAGE_PEAK_WIN_SIZE = 30
 MIN_NUM_CAGE_TAGS = 5
 MAX_CAGE_FRAC = 0.01
 
@@ -656,29 +657,24 @@ def filter_polya_sites( (chrm, strand), gene, polya_sites, rnaseq_cov ):
 def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
      raw_peaks = find_peaks( cage_cov, window_len=CAGE_PEAK_WIN_SIZE, 
                              min_score=MIN_NUM_CAGE_TAGS,
-                             max_score_frac=MAX_CAGE_FRAC, 
-                             max_num_peaks=20 )
+                             max_score_frac=MAX_CAGE_FRAC,
+                             max_num_peaks=100)
      if len( raw_peaks ) == 0:
          return []
      
      cage_peaks = Bins( chrm, strand )
      for peak_st, peak_sp in raw_peaks:
          # make sure there is *some* rnaseq coverage post peak
-         if rnaseq_cov[peak_st:peak_sp+10].sum() < MIN_NUM_CAGE_TAGS: continue
+         if rnaseq_cov[peak_st:peak_sp+100].sum() < MIN_NUM_CAGE_TAGS: continue
          # make sure that there is an increase in coverage from pre to post peak
-         pre_peak_cov = rnaseq_cov[peak_st-10:peak_st].sum()
-         post_peak_cov = rnaseq_cov[peak_st:peak_sp+10].sum()
+         pre_peak_cov = rnaseq_cov[peak_st-100:peak_st].sum()
+         post_peak_cov = rnaseq_cov[peak_st:peak_sp+100].sum()
          if post_peak_cov/(pre_peak_cov+1e-6) < 5: continue
          cage_peaks.append( Bin( peak_st, peak_sp+1,
                                  "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK") )
      return cage_peaks
 
-def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
-    cumsum_cvg_array = \
-        numpy.append(0, numpy.cumsum( cov ))
-    scores = cumsum_cvg_array[window_len:] - cumsum_cvg_array[:-window_len]
-    indices = numpy.argsort( scores )
-    
+def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):    
     def overlaps_prev_peak( new_loc ):
         for start, stop in peaks:
             if not( new_loc > stop or new_loc + window_len < start ):
@@ -688,18 +684,23 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
     # merge the peaks
     def grow_peak( start, stop, grow_size=max(1, window_len/4), min_grow_ratio=0.5 ):
         # grow a peak at most max_num_peaks times
+        max_mean_signal = cov[start:stop+1].mean()
         for i in xrange(max_num_peaks):
             curr_signal = cov[start:stop+1].sum()
             if curr_signal < min_score:
                 return ( start, stop )
             
-            downstream_sig = cov[max(0, start-grow_size):start].sum()
-            upstream_sig = cov[stop+1:stop+1+grow_size].sum()
-            exp_factor = float( stop - start + 1 )/grow_size
+            downstream_sig = float(cov[max(0, start-grow_size):start].sum())/grow_size
+            upstream_sig = float(cov[stop+1:stop+1+grow_size].sum())/grow_size
             
             # if neither passes the threshold, then return the current peak
-            if float(max( upstream_sig, downstream_sig ))*exp_factor \
-                    < curr_signal*min_grow_ratio: return (start, stop)
+            if max(upstream_sig, downstream_sig) \
+                    < min_grow_ratio*curr_signal/float(stop-start+1): 
+                return (start, stop)
+            
+            # if the expansion isn't greater than the min ratio, then return
+            if max(upstream_sig,downstream_sig) < MAX_CAGE_FRAC*max_mean_signal:
+                return (start, stop)
             
             # otherwise, we know one does
             if upstream_sig > downstream_sig:
@@ -715,6 +716,11 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
     peaks = []
     peak_scores = []
     
+    cumsum_cvg_array = \
+        numpy.append(0, numpy.cumsum( cov ))
+    scores = cumsum_cvg_array[window_len:] - cumsum_cvg_array[:-window_len]
+    indices = numpy.argsort( scores )
+    min_score = max( min_score, MAX_CAGE_FRAC*scores[ indices[-1] ] )
     for index in reversed(indices):
         if not overlaps_prev_peak( index ):
             score = scores[ index ]
@@ -737,38 +743,49 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
     
     # merge cage peaks together
     def merge_peaks( peaks_and_scores ):
-        merged_peaks = set()
-        new_peaks = []
-        new_scores = []
-        for pk_i, (peak, score) in enumerate(peaks_and_scores):
-            if pk_i in merged_peaks: continue
-            curr_pk = list( peak )
-            curr_score = score
-            for i_pk_i, (i_peak, i_score) in enumerate(peaks_and_scores):
-                if i_pk_i in merged_peaks: continue
-                if i_peak[0] < curr_pk[0]: continue
-                if i_peak[0] - curr_pk[1] < max( window_len, 
-                                                 curr_pk[1]-curr_pk[0] ):
-                    curr_pk[1] = i_peak[1]
-                    curr_score += i_score
-                    merged_peaks.add( i_pk_i )
-                else:
-                    break
-
-            new_peaks.append( curr_pk )
-            new_scores.append( curr_score )
+        peaks_and_scores = sorted( list(x) for x in peaks_and_scores )
+        peak, score = peaks_and_scores.pop()
+        new_peaks = [peak,]
+        new_scores = [score,]
+        while len(peaks_and_scores) >  0:
+            last_peak = new_peaks[-1]
+            peak, score = peaks_and_scores.pop()
+            new_peak = (min(peak[0], last_peak[0]), max(peak[1], last_peak[1]))
+            if (new_peak[1] - new_peak[0]) <= 1.50*( 
+                    last_peak[1] - last_peak[0] + peak[1] - peak[0] ):
+                new_peaks[-1] = new_peak
+                new_scores[-1] += score
+            else:
+                new_peaks.append( peak )
+                new_scores.append( score )
+        
         return zip( new_peaks, new_scores )
     
     peaks_and_scores = sorted( zip(peaks, peak_scores) )
-    old_len = len( peaks_and_scores )
     for i in xrange( 99 ):
         if i == 100: assert False
+        old_len = len( peaks_and_scores )
         peaks_and_scores = merge_peaks( peaks_and_scores )
         if len( peaks_and_scores ) == old_len: break
     
+        
+    new_peaks_and_scores = []
+    scores = (cumsum_cvg_array[3:] - cumsum_cvg_array[:-3])/3.
+    for peak, score in peaks_and_scores:
+        peak_scores = scores[peak[0]:peak[1]+1]
+        max_score = peak_scores.max()
+        good_indices = ( peak_scores >= max_score*math.sqrt(MAX_CAGE_FRAC) ).nonzero()[0]
+        new_peak = [
+                peak[0] + int(good_indices.min() + 1), 
+                peak[0] + int(good_indices.max() + 2)  ]
+        new_score = float(
+            cumsum_cvg_array[new_peak[1]+1] - cumsum_cvg_array[new_peak[0]])
+        new_peaks_and_scores.append( (new_peak, new_score) )
+    
+    peaks_and_scores = sorted( new_peaks_and_scores )
     max_score = max( s for p, s in peaks_and_scores )
     return [ pk for pk, score in peaks_and_scores \
-                 if score/max_score > max_score_frac
+                 if score >= MAX_CAGE_FRAC*max_score
                  and score > min_score ]
 
 
@@ -1323,7 +1340,7 @@ def main():
 
     for contig, contig_len in contig_lens.iteritems():
         for strand in '+-':
-            #if contig != '4': continue
+            if contig != '4': continue
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, promoter_reads, polya_sites,
                                   ref_gtf_fname, ref_elements_to_include)
