@@ -11,6 +11,8 @@ from scipy.stats import chi2
 from scipy.optimize import fminbound, brentq, bisect, line_search
 from scipy.io import savemat
 
+from igraph import Graph
+
 import time
 def make_time_str(et):
     hours = et//3600
@@ -47,6 +49,32 @@ except ImportError:
         denom = numpy.matrix( expected_array )*numpy.matrix(freqs).T
         rv = (((expected_array.T)*observed_array))*(1.0/denom)
         return -numpy.array(rv)[:,0]
+
+def is_row_identifiable(X, i_to_check):
+    from cvxopt import matrix, solvers
+    solvers.options['show_progress'] = False
+    indices = numpy.array([i for i in xrange(X.shape[1]) if i != i_to_check]) 
+    A = matrix(X[:,indices])
+    b = matrix(numpy.matrix(X[:,i_to_check])).T
+    m, n = A.size
+    I = matrix(0.0, (n,n))
+    I[::n+1] = 1.0
+    G = matrix([-I, matrix(0.0, (1,n)), I])
+    h = matrix(n*[0.0] + [1.0] + n*[0.0])
+    dims = {'l': n, 'q': [n+1], 's': []}
+    x = solvers.coneqp(A.T*A, -A.T*b, G, h, dims)
+    error = float(((A*x['x'] - b).T*(A*x['x'] - b))[0])
+    if DEBUG_VERBOSE: 
+        print "SLACK for transcript %i: %e" % ( i_to_check, error )
+    
+    return bool(error > 1e-6)
+
+def find_identifiable_transcripts( expected_array ):
+    identifiable_transcripts = []
+    for i in xrange(expected_array.shape[1]):
+        if is_row_identifiable( expected_array, i ):
+            identifiable_transcripts.append(i)
+    return identifiable_transcripts
 
 def nnls( X, Y, fixed_indices_and_values={} ):    
     X = matrix(X)

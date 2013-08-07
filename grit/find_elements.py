@@ -1125,7 +1125,12 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp, (chrm, strand, cont
 
 def find_exons_in_contig( (chrm, strand, contig_len), ofp,
                           rnaseq_reads, cage_reads, polya_sites,
-                          gene_bndry_bins=None):
+                          ref_gtf_fname, ref_elements_to_include):
+    if VERBOSE: log_statement( 'Loading gtf' )    
+    gene_bndry_bins = defaultdict( lambda: None )
+    if ref_gtf_fname != None:
+        gene_bndry_bins = load_gene_bndry_bins( ref_gtf_fname, contig_lens )
+    
     junctions = load_junctions( rnaseq_reads, (chrm, strand, contig_len) )
     polya_sites = polya_sites[(chrm, strand)]
     
@@ -1222,8 +1227,19 @@ def parse_arguments():
     parser.add_argument( '--polya-candidate-sites', type=file, nargs='*', \
         help='files with allowed polya sites.')
 
-    parser.add_argument( '--reference',
-        help='Reference GTF ( for gene boundry information )')
+    parser.add_argument( '--reference', help='Reference GTF')
+    parser.add_argument( '--use-reference-genes', 
+                         help='Use genes boundaries from the reference annotation.', 
+                         default=False, action='set_true')
+    parser.add_argument( '--use-reference-junctions', 
+                         help='Include junctions from the reference annotation.',
+                         default=False, action='set_true')
+    parser.add_argument( '--use-reference-tss', 
+                         help='Use TSS\'s taken from the reference annotation.',
+                         default=False, action='set_true')
+    parser.add_argument( '--use-reference-tes', 
+                         help='Use TES\'s taken from the reference annotation.',
+                         default=False, action='set_true')
     
     parser.add_argument( '--ofname', '-o', 
                          default="discovered_elements.bed",\
@@ -1254,17 +1270,34 @@ def parse_arguments():
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
     
+    if None == args.reference and args.use_reference_genes:
+        raise ValueError, "--reference must be set if --use-reference-genes is set"
+    if None == args.reference and args.use_reference_junctions:
+        raise ValueError, "--reference must be set if --use-reference-junctions is set"
+    if None == args.reference and args.use_reference_tss:
+        raise ValueError, "--reference must be set if --use-reference-tss is set"
+    if None == args.reference and args.use_reference_tes:
+        raise ValueError, "--reference must be set if --use-reference-tes is set"
+    RefElementsToInclude = namedtuple(
+        'RefElementsToInclude', ['genes', 'junctions', 'TSS', 'TES'])
+    ref_elements_to_include = RefElementsToInclude(args.use_reference_genes, 
+                                                   args.use_reference_junctions,
+                                                   args.use_reference_tss, 
+                                                   args.use_reference_tes)
+    
     ofp = ThreadSafeFile( args.ofname, "w" )
     ofp.write('track name="%s" visibility=2 itemRgb="On"\n' % ofp.name)
     
     return args.rnaseq_reads, args.reverse_rnaseq_strand, \
         args.cage_reads, args.rampage_reads, \
-        args.polya_candidate_sites, ofp, args.reference, \
+        args.polya_candidate_sites, ofp, \
+        args.reference, ref_elements_to_include, \
         not args.dont_use_ncurses
 
 def main():
-    rnaseq_bams, reverse_rnaseq_strand, cage_bams, rampage_bams, \
-        polya_candidate_sites_fps, ofp, gtf_fname, use_ncurses \
+    rnaseq_bams, reverse_rnaseq_strand, cage_bams, rampage_bams,\
+        polya_candidate_sites_fps, ofp, ref_gtf_fname, ref_elements_to_include,\
+        use_ncurses \
         = parse_arguments()
 
     global log_statement
@@ -1287,18 +1320,13 @@ def main():
     for fp in polya_candidate_sites_fps: fp.close()
 
     contig_lens = get_contigs_and_lens( rnaseq_reads, promoter_reads )
-
-    if VERBOSE: log_statement( 'Loading gtf' )    
-    gene_bndry_bins = defaultdict( lambda: None )
-    if gtf_fname != None:
-        gene_bndry_bins = load_gene_bndry_bins( gtf_fname, contig_lens )
     
     for contig, contig_len in contig_lens.iteritems():
         for strand in '+-':
-            if contig != '4': continue
+            #if contig != '4': continue
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, promoter_reads, polya_sites,
-                                  gene_bndry_bins = gene_bndry_bins[(contig, strand)])
+                                  ref_gtf_fname, ref_elements_to_include)
     
     log_statement.close()
     

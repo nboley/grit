@@ -10,6 +10,8 @@ PROMOTER_SIZE = 50
 
 DEBUG=False
 
+from igraph import Graph
+
 import frag_len
 
 from itertools import product, izip, chain
@@ -606,6 +608,26 @@ def build_design_matrices( gene, rnaseq_reads, fl_dists, promoter_reads=[],
         build_expected_and_observed_arrays( 
             expected_rnaseq_cnts, observed_rnaseq_cnts, True )
     del expected_rnaseq_cnts, observed_rnaseq_cnts
+
+    # clsuter and join rows
+    edges = set()
+    row, col = (numpy.corrcoef(expected_rnaseq_array) == 1).nonzero()
+    for row_i, col_i in zip( row, col ):
+        edges.add((row_i, col_i))
+
+    graph = Graph( expected_rnaseq_array.shape[0] )
+    graph.add_edges( list( edges ) )
+    clusters = graph.clusters()
+    
+    new_expected_array = numpy.zeros( 
+        (len(clusters), expected_rnaseq_array.shape[1]) )
+    new_observed_array = numpy.zeros( len(clusters), dtype=int )
+    for i, node in enumerate(graph.clusters()):
+        new_expected_array[i,:] = expected_rnaseq_array[node,].sum(0)
+        new_observed_array[i] = observed_rnaseq_array[node].sum()
+
+    expected_rnaseq_array = new_expected_array
+    observed_rnaseq_array = new_observed_array
     
     if len(promoter_reads) == 0:
         return expected_rnaseq_array, \
@@ -635,7 +657,7 @@ def build_design_matrices( gene, rnaseq_reads, fl_dists, promoter_reads=[],
     expected_array = numpy.vstack((expected_prom_array, expected_rnaseq_array))
     unobservable_transcripts \
         = unobservable_rnaseq_trans.union(unobservable_prom_trans)
-        
+    
     return expected_array, observed_array, unobservable_transcripts
 
 def find_nonoverlapping_exons_covered_by_segment(exon_bndrys, start, stop):
