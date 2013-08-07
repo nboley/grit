@@ -95,11 +95,6 @@ class Logger( object ):
         self.nthreads = nthreads
         self.log_ofstream = log_ofstream
         
-        # if we're not using ncurses and the log_ofstream is not set,
-        # then by default write messages to stderr
-        if not self.use_ncurses and self.log_ofstream == None:
-            self.log_ofstream = sys.stderr
-        
         if self.use_ncurses:
             self._init_ncurses_manager()
         

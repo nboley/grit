@@ -11,8 +11,6 @@ from scipy.stats import chi2
 from scipy.optimize import fminbound, brentq, bisect, line_search
 from scipy.io import savemat
 
-from igraph import Graph
-
 import time
 def make_time_str(et):
     hours = et//3600
@@ -28,7 +26,7 @@ def log_statement(message, only_log=False ):
 
 MIN_TRANSCRIPT_FREQ = 1e-12
 # finite differences step size
-FD_SS = 1e-12
+FD_SS = 1e-10
 NUM_ITER_FOR_CONV = 5
 DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
