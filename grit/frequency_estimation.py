@@ -357,9 +357,8 @@ def estimate_confidence_bound( observed_array,
         
     def min_line_search( x, gradient, max_feasible_step_size ):
         def brentq_fmin(alpha):
-            return calc_lhd(x + alpha*gradient, observed_array, expected_array)\
-                - min_lhd
-                
+            return calc_lhd(x + alpha*gradient, observed_array, expected_array) - min_lhd
+        
         min_step_size = 0
         max_step_size = max_feasible_step_size
 
@@ -380,16 +379,16 @@ def estimate_confidence_bound( observed_array,
         gradient = numpy.zeros(n)
         gradient[fixed_index] = -1 if bound_type == 'LOWER' else 1
         gradient = project_onto_simplex( x + 1.*gradient ) - x
-        gradient /= numpy.absolute(gradient).sum()        
-        #print "GR1", gradient
-        #gradient = calc_joint_gradient( x, 1.0 )
-        #print "GR2", gradient
-        
-        max_feasible_step_size, max_index = \
-            calc_max_feasible_step_size_and_limiting_index(x, gradient)
-        alpha, is_full_step = min_line_search(
-            x, gradient, max_feasible_step_size)
-        x += alpha*gradient    
+        gradient_l1_size = numpy.absolute(gradient).sum()
+        # if we can't go anywhere, then dont move
+        if gradient_l1_size > 0:
+            gradient /= numpy.absolute(gradient).sum()        
+            assert not numpy.isnan(gradient).all()
+            max_feasible_step_size, max_index = \
+                calc_max_feasible_step_size_and_limiting_index(x, gradient)
+            alpha, is_full_step = min_line_search(
+                x, gradient, max_feasible_step_size)
+            x += alpha*gradient    
         lhd = calc_lhd(x, observed_array, expected_array)
         assert lhd >= min_lhd
         if DEBUG_OPTIMIZATION:
@@ -413,40 +412,27 @@ def estimate_confidence_bound( observed_array,
         denominator = lhd_gradient[fixed_index] - coord_gradient[fixed_index]
         if denominator == 0: theta = 1.
         else: theta = lhd_gradient[fixed_index]/denominator
-        try:
-            gradient = (1-theta)*lhd_gradient + theta*coord_gradient
-            projection = project_onto_simplex( x + 1.*gradient )
-        except:
-            print "LHD V", lhd_gradient
-            print "COORD V", coord_gradient
-            print "GRAD", gradient
-            print "EXT PNT", x + 1.*gradient
-            print "X", x
-            raise
-
+        gradient = (1-theta)*lhd_gradient + theta*coord_gradient
+        projection = project_onto_simplex( x + 1.*gradient )
         gradient = projection - x
-        gradient /= numpy.absolute(gradient).sum()                
-        gradient[fixed_index] = max(0, gradient[fixed_index])
-        try:
+        gradient_l1_size = numpy.absolute(gradient).sum()
+        if gradient_l1_size > 0:
+            gradient /= gradient_l1_size
+            assert not numpy.isnan(gradient).all()
+            gradient[fixed_index] = max(0, gradient[fixed_index])
             assert gradient[fixed_index] >= 0
-        except:
-            print lhd_gradient
-            print coord_gradient
-            print theta, fixed_index
-            print gradient
-            raise
         
-        max_feasible_step_size, max_index = \
-            calc_max_feasible_step_size_and_limiting_index(x, gradient)
-        alpha, is_full_step = line_search(
-            x, lambda x: calc_lhd(x, observed_array, expected_array),
-            gradient, max_feasible_step_size)
-        assert alpha >= 0
-        x = x + alpha*gradient
-        if DEBUG_OPTIMIZATION:
-            print "MAX LHD ", x[fixed_index], \
-                calc_lhd(x, observed_array, expected_array) - min_lhd, \
-                "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
+            max_feasible_step_size, max_index = \
+                calc_max_feasible_step_size_and_limiting_index(x, gradient)
+            alpha, is_full_step = line_search(
+                x, lambda x: calc_lhd(x, observed_array, expected_array),
+                gradient, max_feasible_step_size)
+            assert alpha >= 0
+            if DEBUG_OPTIMIZATION:
+                print "MAX LHD ", x[fixed_index], \
+                    calc_lhd(x, observed_array, expected_array) - min_lhd, \
+                    "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
+        
         assert calc_lhd(x, observed_array, expected_array) >= min_lhd
         return x
 
