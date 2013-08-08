@@ -751,7 +751,7 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
             last_peak = new_peaks[-1]
             peak, score = peaks_and_scores.pop()
             new_peak = (min(peak[0], last_peak[0]), max(peak[1], last_peak[1]))
-            if (new_peak[1] - new_peak[0]) <= 1.50*( 
+            if (new_peak[1] - new_peak[0]) <= 1.1*( 
                     last_peak[1] - last_peak[0] + peak[1] - peak[0] ):
                 new_peaks[-1] = new_peak
                 new_scores[-1] += score
@@ -762,6 +762,7 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
         return zip( new_peaks, new_scores )
     
     peaks_and_scores = sorted( zip(peaks, peak_scores) )
+    
     for i in xrange( 99 ):
         if i == 100: assert False
         old_len = len( peaks_and_scores )
@@ -936,32 +937,40 @@ def find_tss_exons_and_se_genes(
 
     for peak in cage_peaks:
         # should this be peak start
-        try:
-            tss_index, tss_bin = next( (i, bin) for i, bin in enumerate(bins)
-                                       if bin.stop > peak.stop
-                                       and bin.right_label in ( 'POLYA', 'D_JN') )
-        except StopIteration:
-            continue
-        
-        tss_exon = Bin( 
-            peak.start, tss_bin.stop, 
-            "CAGE_PEAK", tss_bin.right_label, "TSS_EXON" )
-        if tss_exon.right_label == 'POLYA':
-            tss_exon.type = 'SE_GENE'
-            se_genes.append( tss_exon )
-        elif tss_exon.right_label == 'D_JN':
-            tss_exons.append( tss_exon )
-        
-        for r_ext in find_right_exon_extensions(
-                tss_index, tss_bin, bins, rnaseq_cov):
+        #try:
+        #    tss_index, tss_bin = next((i, bin) for i, bin in enumerate(bins)
+        #                              if bin.stop > peak.stop
+        #                              and bin.right_label in ( 'POLYA', 'D_JN'))
+        #except StopIteration:
+        #    continue
+        tss_indices_and_bins = []
+        for i, bin in enumerate(bins):
+            if bin.stop < peak.start: continue
+            if bin.right_label not in ( 'POLYA', 'D_JN'): continue
+            if bin.stop > peak.start:
+                tss_indices_and_bins.append( (i, bin) )
+            if bin.stop > peak.stop: break
+                
+        for tss_index, tss_bin in tss_indices_and_bins:
             tss_exon = Bin( 
-                peak.start, r_ext.stop, 
-                "CAGE_PEAK", r_ext.right_label, "TSS_EXON" )
+                peak.start, tss_bin.stop, 
+                "CAGE_PEAK", tss_bin.right_label, "TSS_EXON" )
             if tss_exon.right_label == 'POLYA':
                 tss_exon.type = 'SE_GENE'
                 se_genes.append( tss_exon )
             elif tss_exon.right_label == 'D_JN':
                 tss_exons.append( tss_exon )
+                
+            for r_ext in find_right_exon_extensions(
+                    tss_index, tss_bin, bins, rnaseq_cov):
+                tss_exon = Bin( 
+                    peak.start, r_ext.stop, 
+                    "CAGE_PEAK", r_ext.right_label, "TSS_EXON" )
+                if tss_exon.right_label == 'POLYA':
+                    tss_exon.type = 'SE_GENE'
+                    se_genes.append( tss_exon )
+                elif tss_exon.right_label == 'D_JN':
+                    tss_exons.append( tss_exon )
     
     return tss_exons, se_genes
 
@@ -1340,7 +1349,7 @@ def main():
 
     for contig, contig_len in contig_lens.iteritems():
         for strand in '+-':
-            if contig != '4': continue
+            #if contig != '4': continue
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, promoter_reads, polya_sites,
                                   ref_gtf_fname, ref_elements_to_include)
