@@ -1155,18 +1155,21 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     gene_bndry_bins = None
     if ref_gtf_fname != None:
         if VERBOSE: log_statement( 'Loading gtf' )    
-        gene_bndry_bins = load_gene_bndry_bins( ref_gtf_fname, contig_lens )
+        gene_bndry_bins = load_gene_bndry_bins(
+            ref_gtf_fname, chrm, strand, contig_len)
     
     junctions = load_junctions( rnaseq_reads, (chrm, strand, contig_len) )
     polya_sites = polya_sites[(chrm, strand)]
 
     if gene_bndry_bins == None:
-        log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" % ( chrm, strand ) )
+        log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
+                       % ( chrm, strand ) )
         gene_bndry_bins = find_gene_boundaries( 
             (chrm, strand, contig_len), rnaseq_reads, 
             polya_sites, junctions)
     
-    log_statement( "Finding exons in contig '%s' on '%s' strand" % ( chrm, strand ) )
+    log_statement( "Finding exons in contig '%s' on '%s' strand" 
+                   % ( chrm, strand ) )
     if NTHREADS > 1:
         manager = multiprocessing.Manager()
         genes_queue = manager.list()
@@ -1196,23 +1199,21 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     
     return
 
-def load_gene_bndry_bins( gtf_fname, contig_lens ):
-    gene_bndry_bins = {}
+def load_gene_bndry_bins( gtf_fname, contig, strand, contig_len ):
+    gene_bndry_bins = []
     with open(gtf_fname) as fp:
         for line in fp:
             data = parse_gtf_line( line )
-            if data.region.chr not in contig_lens:
+            if data.region.chr != contig:
+                continue
+            if data.region.strand != strand:
                 continue
             if data == None or data.feature != 'gene': 
                 continue
-            key = (data.region.chr, data.region.strand) 
-            if key not in gene_bndry_bins:
-                gene_bndry_bins[key] = Bins( data.region.chr, data.region.strand )
             gene_bin = Bin(max(1,data.region.start-2500), 
-                           min(data.region.stop+2500, 
-                               contig_lens[data.region.chr]), 
+                           min(data.region.stop+2500, contig_len ),
                            'GENE', 'GENE', 'GENE' )
-            gene_bndry_bins[key].append( gene_bin )
+            gene_bndry_bins.append( gene_bin )
     
     merged_gene_bndry_bins = gene_bndry_bins
     """
@@ -1344,12 +1345,12 @@ def main():
     if VERBOSE: log_statement( 'Loading candidate polyA sites' )
     polya_sites = find_polya_sites([x.name for x in polya_candidate_sites_fps])
     for fp in polya_candidate_sites_fps: fp.close()
-
+    
     contig_lens = get_contigs_and_lens( rnaseq_reads, promoter_reads )
-
+    
     for contig, contig_len in contig_lens.iteritems():
         for strand in '+-':
-            #if contig != '4': continue
+            if contig != '4': continue
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, promoter_reads, polya_sites,
                                   ref_gtf_fname, ref_elements_to_include)
