@@ -5,6 +5,7 @@ import time
 import math
 
 import numpy
+from scipy.stats import beta
 
 from collections import defaultdict, namedtuple
 from itertools import chain, izip
@@ -30,6 +31,7 @@ log_statement = None
 
 USE_CACHE = False
 NTHREADS = 1
+TOTAL_MAPPED_READS = None
 
 class ThreadSafeFile( file ):
     def __init__( self, *args ):
@@ -655,24 +657,30 @@ def filter_polya_sites( (chrm, strand), gene, polya_sites, rnaseq_cov ):
 
 
 def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
-     raw_peaks = find_peaks( cage_cov, window_len=CAGE_PEAK_WIN_SIZE, 
-                             min_score=MIN_NUM_CAGE_TAGS,
-                             max_score_frac=MAX_CAGE_FRAC,
-                             max_num_peaks=100)
-     if len( raw_peaks ) == 0:
-         return []
-     
-     cage_peaks = Bins( chrm, strand )
-     for peak_st, peak_sp in raw_peaks:
-         # make sure there is *some* rnaseq coverage post peak
-         if rnaseq_cov[peak_st:peak_sp+100].sum() < MIN_NUM_CAGE_TAGS: continue
+    # threadhold the CAGE data
+    max_scores = TOTAL_MAPPED_READS*beta.ppf(
+        0.999, rnaseq_cov+1, numpy.zeros(len(rnaseq_cov))+(TOTAL_MAPPED_READS+1)
+    )
+    cage_cov[ cage_cov < max_scores ] = 0
+    
+    raw_peaks = find_peaks( cage_cov, window_len=CAGE_PEAK_WIN_SIZE, 
+                            min_score=MIN_NUM_CAGE_TAGS,
+                            max_score_frac=MAX_CAGE_FRAC,
+                            max_num_peaks=100)
+    if len( raw_peaks ) == 0:
+        return []
+    
+    cage_peaks = Bins( chrm, strand )
+    for peak_st, peak_sp in raw_peaks:
+        # make sure there is *some* rnaseq coverage post peak
+        if rnaseq_cov[peak_st:peak_sp+100].sum() < MIN_NUM_CAGE_TAGS: continue
          # make sure that there is an increase in coverage from pre to post peak
-         pre_peak_cov = rnaseq_cov[peak_st-100:peak_st].sum()
-         post_peak_cov = rnaseq_cov[peak_st:peak_sp+100].sum()
-         if post_peak_cov/(pre_peak_cov+1e-6) < 5: continue
-         cage_peaks.append( Bin( peak_st, peak_sp+1,
-                                 "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK") )
-     return cage_peaks
+        pre_peak_cov = rnaseq_cov[peak_st-100:peak_st].sum()
+        post_peak_cov = rnaseq_cov[peak_st:peak_sp+100].sum()
+        if post_peak_cov/(pre_peak_cov+1e-6) < 5: continue
+        cage_peaks.append( Bin( peak_st, peak_sp+1,
+                                "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK") )
+    return cage_peaks
 
 def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):    
     def overlaps_prev_peak( new_loc ):
@@ -1028,7 +1036,7 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         chrm, strand, gene.start, gene.stop )
     
     cage_cov = cage_reads[0].build_read_coverage_array( 
-        chrm, strand, gene.start, gene.stop+1 )
+        chrm, strand, gene.start, gene.stop )
     
     if strand == '-':
         gene_len = gene.stop - gene.start + 1
@@ -1332,6 +1340,8 @@ def main():
     
     rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=reverse_rnaseq_strand) 
                      for fp in rnaseq_bams ]
+    global TOTAL_MAPPED_READS
+    TOTAL_MAPPED_READS = sum( x.mapped for x in rnaseq_reads )
     
     cage_reads = [ CAGEReads(fp.name).init(reverse_read_strand=True) 
                    for fp in cage_bams ]
