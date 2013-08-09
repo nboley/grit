@@ -496,8 +496,9 @@ def load_junctions( rnaseq_reads, (chrm, strand, contig_len) ):
             junctions = extract_junctions_in_contig( 
                 rnaseq_reads[0], chrm, strand )
         else:
-            seg_len = int(contig_len/NTHREADS)
-            segments =  [ [i*seg_len, (i+1)*seg_len] for i in xrange(NTHREADS) ]
+            nthreads = min( NTHREADS, 8 )
+            seg_len = int(contig_len/nthreads)
+            segments =  [ [i*seg_len, (i+1)*seg_len] for i in xrange(nthreads) ]
             segments[0][0] = 0
             segments[-1][1] = contig_len
             
@@ -606,11 +607,14 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
         junctions = load_junctions( rnaseq_reads, (chrm, strand, contig_len) )
     
     # find segment boundaries
+    if VERBOSE: log_statement( "Finding initial segmentation for %s %s" % (chrm, strand) )
     initial_segmentation = find_initial_segmentation( 
         chrm, strand, rnaseq_reads, polya_sites )
     if VERBOSE: log_statement( "Finished initial segmentation for %s %s" % (chrm, strand) )
+    if VERBOSE: log_statement( "Merging segments for %s %s" % (chrm, strand) )
     merged_segments = merge_segments( initial_segmentation, strand )
     if VERBOSE: log_statement( "Finished merging segments for %s %s" % (chrm, strand) )
+    if VERBOSE: log_statement( "Clustering segments for %s %s" % (chrm, strand) )
     clustered_segments = cluster_segments( merged_segments, junctions )
     if VERBOSE: log_statement( "Finished clustering segments for %s %s" % (chrm, strand) )
     
@@ -684,10 +688,10 @@ def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
     for peak_st, peak_sp in raw_peaks:
         # make sure there is *some* rnaseq coverage post peak
         if rnaseq_cov[peak_st:peak_sp+100].sum() < MIN_NUM_CAGE_TAGS: continue
-         # make sure that there is an increase in coverage from pre to post peak
-        pre_peak_cov = rnaseq_cov[peak_st-100:peak_st].sum()
-        post_peak_cov = rnaseq_cov[peak_st:peak_sp+100].sum()
-        if post_peak_cov/(pre_peak_cov+1e-6) < 5: continue
+        # make sure that there is an increase in coverage from pre to post peak
+        #pre_peak_cov = rnaseq_cov[peak_st-100:peak_st].sum()
+        #post_peak_cov = rnaseq_cov[peak_st:peak_sp+100].sum()
+        #if post_peak_cov/(pre_peak_cov+1e-6) < 5: continue
         cage_peaks.append( Bin( peak_st, peak_sp+1,
                                 "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK") )
     return cage_peaks
@@ -1206,7 +1210,7 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     else:
         log_statement( "Waiting on exon finding children in contig '%s' on '%s' strand" % ( chrm, strand ) )
         ps = []
-        for i in xrange( NTHREADS ):
+        for i in xrange( min(NTHREADS, 8) ):
             p = multiprocessing.Process(target=find_exons_worker, args=args)
             p.start()
             ps.append( p )
@@ -1347,7 +1351,7 @@ def main():
         = parse_arguments()
 
     global log_statement
-    log_statement = Logger(nthreads=NTHREADS, use_ncurses=use_ncurses)
+    log_statement = Logger(nthreads=NTHREADS+(NTHREADS/8), use_ncurses=use_ncurses)
     
     rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=reverse_rnaseq_strand) 
                      for fp in rnaseq_bams ]
@@ -1366,16 +1370,42 @@ def main():
     if VERBOSE: log_statement( 'Loading candidate polyA sites' )
     polya_sites = find_polya_sites([x.name for x in polya_candidate_sites_fps])
     for fp in polya_candidate_sites_fps: fp.close()
+    log_statement( '' )
     
     contig_lens = get_contigs_and_lens( rnaseq_reads, promoter_reads )
-    
+
+    # Call the children processes
+    all_args = []
     for contig, contig_len in contig_lens.iteritems():
         for strand in '+-':
-            #if contig != '4': continue
-            find_exons_in_contig( (contig, strand, contig_len), ofp,
-                                  rnaseq_reads, promoter_reads, polya_sites,
-                                  ref_gtf_fname, ref_elements_to_include)
-    
+            all_args.append( ( (contig, strand, contig_len), ofp,
+                               rnaseq_reads, promoter_reads, polya_sites,
+                               ref_gtf_fname, ref_elements_to_include) )
+
+    if NTHREADS == 1:
+        for args in all_args:
+            find_exons_in_contig(*args)
+    else:
+        log_statement( 'Waiting on children processes.' )
+        # max 8 threads per process
+        n_simulataneous_contigs = (NTHREADS/8)
+        ps = [None]*n_simulataneous_contigs
+        while len(all_args) > 0:
+            for i, p in enumerate(ps):
+                if p == None or not p.is_alive():
+                    args = all_args.pop()
+                    p = multiprocessing.Process( 
+                        target=find_exons_in_contig, args=args )
+                    p.start()
+                    ps[i] = p
+                    break
+            time.sleep(0.1)
+
+        while True:
+            if all( p == None or not p.is_alive() for p in ps ):
+                break
+            time.sleep( 0.1 )
+        
     log_statement.close()
     
 if __name__ == '__main__':
