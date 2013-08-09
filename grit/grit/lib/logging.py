@@ -6,6 +6,7 @@ import multiprocessing
 __version__ = "0.1.1"
 MAX_REFRESH_TIME = 1e-2
 MAX_NCOL = 120
+N_LOG_ROWS = 10
 
 def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
     curses.curs_set(0)    
@@ -21,9 +22,9 @@ def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
 
     stdscr.addstr(nthreads+2+2+1, 0, "Log:" )
 
-    log_border = stdscr.derwin(20+2, MAX_NCOL, nthreads+2+2+2, 0)
+    log_border = stdscr.derwin(N_LOG_ROWS+2, MAX_NCOL, nthreads+2+2+2, 0)
     log_border.border()
-    log = log_border.derwin( 20, 78, 1, 1 )
+    log = log_border.derwin( N_LOG_ROWS, 78, 1, 1 )
 
     header.addstr(0, 0, "GRIT (version %s)" % (__version__, ) )
     stdscr.refresh()
