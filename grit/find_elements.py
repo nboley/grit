@@ -657,11 +657,21 @@ def filter_polya_sites( (chrm, strand), gene, polya_sites, rnaseq_cov ):
 
 
 def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
-    # threadhold the CAGE data
-    max_scores = TOTAL_MAPPED_READS*beta.ppf(
-        0.999, rnaseq_cov+1, numpy.zeros(len(rnaseq_cov))+(TOTAL_MAPPED_READS+1)
+    # threshold the CAGE data. We assume that the CAGE data is a mixture of 
+    # reads taken from actually capped transcripts, and random transcribed 
+    # regions, or RNA seq covered regions. We zero out any bases where we
+    # can't reject the null hypothesis that the observed CAGE reads all derive 
+    # from the background, at alpha = 0.001. 
+    rnaseq_cov = numpy.array( rnaseq_cov+1-1e-6, dtype=int)
+    max_val = rnaseq_cov.max()
+    thresholds = TOTAL_MAPPED_READS*beta.ppf( 
+        0.999, 
+        numpy.arange(max_val+1)+1, 
+        numpy.zeros(max_val+1)+(TOTAL_MAPPED_READS+1) 
     )
-    cage_cov[ cage_cov < max_scores ] = 0
+    max_scores = thresholds[ rnaseq_cov ]
+    cage_cov[ cage_cov < max_scores ] = 0    
+    
     
     raw_peaks = find_peaks( cage_cov, window_len=CAGE_PEAK_WIN_SIZE, 
                             min_score=MIN_NUM_CAGE_TAGS,
@@ -690,7 +700,8 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
         return False
     
     # merge the peaks
-    def grow_peak( start, stop, grow_size=max(1, window_len/4), min_grow_ratio=0.5 ):
+    def grow_peak( start, stop, grow_size=
+                   max(1, window_len/4), min_grow_ratio=0.2 ):
         # grow a peak at most max_num_peaks times
         max_mean_signal = cov[start:stop+1].mean()
         for i in xrange(max_num_peaks):
@@ -717,8 +728,9 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
                 start = max(0, start - grow_size )
         
         if VERBOSE:
-            log_statement( "Warning: reached max peak iteration at %i-%i ( signal %.2f )" \
-                               % (start, stop, cov[start:stop+1].sum() ) )
+            log_statement( 
+                "Warning: reached max peak iteration at %i-%i ( signal %.2f )"
+                    % (start, stop, cov[start:stop+1].sum() ) )
         return (start, stop )
     
     peaks = []
@@ -759,7 +771,7 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
             last_peak = new_peaks[-1]
             peak, score = peaks_and_scores.pop()
             new_peak = (min(peak[0], last_peak[0]), max(peak[1], last_peak[1]))
-            if (new_peak[1] - new_peak[0]) <= 1.1*( 
+            if (new_peak[1] - new_peak[0]) <= 1.5*( 
                     last_peak[1] - last_peak[0] + peak[1] - peak[0] ):
                 new_peaks[-1] = new_peak
                 new_scores[-1] += score
@@ -783,7 +795,7 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
     for peak, score in peaks_and_scores:
         peak_scores = scores[peak[0]:peak[1]+1]
         max_score = peak_scores.max()
-        good_indices = ( peak_scores >= max_score*math.sqrt(MAX_CAGE_FRAC) ).nonzero()[0]
+        good_indices = (peak_scores >= max_score*math.sqrt(MAX_CAGE_FRAC)).nonzero()[0]
         new_peak = [
                 peak[0] + int(good_indices.min() + 1), 
                 peak[0] + int(good_indices.max() + 2)  ]
@@ -1152,8 +1164,7 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp, (chrm, strand, cont
 
         log_statement( "FINISHED Finding Exons in Chrm %s Strand %s Pos %i-%i" %
                        (chrm, strand, gene.start, gene.stop) )
-
-    time.sleep(0.1)        
+    
     log_statement( "" )
     return
 
@@ -1360,7 +1371,7 @@ def main():
     
     for contig, contig_len in contig_lens.iteritems():
         for strand in '+-':
-            if contig != '4': continue
+            #if contig != '4': continue
             find_exons_in_contig( (contig, strand, contig_len), ofp,
                                   rnaseq_reads, promoter_reads, polya_sites,
                                   ref_gtf_fname, ref_elements_to_include)
