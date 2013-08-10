@@ -21,7 +21,7 @@ from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, clean_chr_name, \
     guess_strand_from_fname, iter_coverage_intervals_for_read
 from files.junctions import extract_junctions_in_region, extract_junctions_in_contig
 from files.bed import create_bed_line
-from files.gtf import parse_gtf_line
+from files.gtf import parse_gtf_line, load_gtf
 
 from lib.logging import Logger
 # log statement is set in the main init, and is a global
@@ -75,7 +75,7 @@ def flatten( regions ):
 
 MIN_REGION_LEN = 50
 MIN_EMPTY_REGION_LEN = 100
-MIN_EXON_BPKM = 0.1
+MIN_EXON_BPKM = 0.01
 EXON_EXT_CVG_RATIO_THRESH = 5
 POLYA_MERGE_SIZE = 100
 
@@ -536,12 +536,12 @@ def load_junctions( rnaseq_reads, (chrm, strand, contig_len) ):
         jn_starts[start] = max( jn_starts[start], cnt )
         jn_stops[stop] = max( jn_stops[stop], cnt )
     
-    filtered_junctions = []
+    filtered_junctions = defaultdict(int)
     for (start, stop), cnt in junctions:
         if float(cnt)/jn_starts[start] < 0.001: continue
         if float(cnt)/jn_stops[stop] < 0.001: continue
         if stop - start > 10000000: continue
-        filtered_junctions.append( ((start, stop), cnt) )
+        filtered_junctions[(start, stop)] = cnt
     
     return filtered_junctions
 
@@ -1175,16 +1175,27 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp, (chrm, strand, cont
 def find_exons_in_contig( (chrm, strand, contig_len), ofp,
                           rnaseq_reads, cage_reads, polya_sites,
                           ref_gtf_fname, ref_elements_to_include):
-    gene_bndry_bins = None
-    if ref_gtf_fname != None:
-        if VERBOSE: log_statement( 'Loading gtf' )    
-        gene_bndry_bins = load_gene_bndry_bins(
-            ref_gtf_fname, chrm, strand, contig_len)
-    
     junctions = load_junctions( rnaseq_reads, (chrm, strand, contig_len) )
-    polya_sites = polya_sites[(chrm, strand)]
-
-    if gene_bndry_bins == None:
+    polya_sites = set(polya_sites[(chrm, strand)])
+    
+    if any( ref_elements_to_include ):
+        assert ref_gtf_fname != None
+        if VERBOSE: log_statement( 'Loading gtf' )    
+        genes = load_gtf(ref_gtf_fname, contig=chrm, strand=strand)
+        for gene in genes:
+            elements = gene.extract_elements()
+            if ref_elements_to_include.junctions:
+                for jn in elements['intron']:
+                    junctions[jn] += 0
+            if ref_elements_to_include.TES:
+                polya_sites.update( elements['TES'] )
+    
+    junctions = sorted( junctions.iteritems() )
+    polya_sites = numpy.array(sorted( polya_sites ))
+    
+    if ref_elements_to_include.genes == True:
+        gene_bndry_bins = load_gene_bndry_bins(genes, chrm, strand, contig_len)
+    else:
         log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
                        % ( chrm, strand ) )
         gene_bndry_bins = find_gene_boundaries( 
@@ -1223,21 +1234,16 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     log_statement( "" )    
     return
 
-def load_gene_bndry_bins( gtf_fname, contig, strand, contig_len ):
+
+def load_gene_bndry_bins( genes, contig, strand, contig_len ):
     gene_bndry_bins = []
-    with open(gtf_fname) as fp:
-        for line in fp:
-            data = parse_gtf_line( line )
-            if data.region.chr != contig:
-                continue
-            if data.region.strand != strand:
-                continue
-            if data == None or data.feature != 'gene': 
-                continue
-            gene_bin = Bin(max(1,data.region.start-2500), 
-                           min(data.region.stop+2500, contig_len ),
+    for gene in genes:
+        if gene.chrm != contig: continue
+        if gene.strand != strand: continue
+        gene_bin = Bin(max(1,gene.start-2500), 
+                       min(gene.stop+2500, contig_len ),
                            'GENE', 'GENE', 'GENE' )
-            gene_bndry_bins.append( gene_bin )
+        gene_bndry_bins.append( gene_bin )
     
     merged_gene_bndry_bins = gene_bndry_bins
     """
@@ -1378,6 +1384,7 @@ def main():
     # Call the children processes
     all_args = []
     for contig, contig_len in contig_lens.iteritems():
+        #if contig != '20': continue
         for strand in '+-':
             all_args.append( ( (contig, strand, contig_len), ofp,
                                rnaseq_reads, promoter_reads, polya_sites,
