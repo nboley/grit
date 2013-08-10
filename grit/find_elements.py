@@ -687,7 +687,7 @@ def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
     cage_peaks = Bins( chrm, strand )
     for peak_st, peak_sp in raw_peaks:
         # make sure there is *some* rnaseq coverage post peak
-        if rnaseq_cov[peak_st:peak_sp+100].sum() < MIN_NUM_CAGE_TAGS: continue
+        #if rnaseq_cov[peak_st:peak_sp+100].sum() < MIN_NUM_CAGE_TAGS: continue
         # make sure that there is an increase in coverage from pre to post peak
         #pre_peak_cov = rnaseq_cov[peak_st-100:peak_st].sum()
         #post_peak_cov = rnaseq_cov[peak_st:peak_sp+100].sum()
@@ -1219,7 +1219,8 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
             if all( not p.is_alive() for p in ps ):
                 break
             time.sleep( 0.1 )
-    
+
+    log_statement( "" )    
     return
 
 def load_gene_bndry_bins( gtf_fname, contig, strand, contig_len ):

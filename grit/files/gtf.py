@@ -521,8 +521,8 @@ def create_gtf_line( region, gene_id, transcript_id, meta_data, score=0, \
     
     # if gene and trans id are included in meta data, then remove them so that
     # we dont build them twice
-    meta_data_str = 'gene_id "%s"; transcript_id "%s";' \
-        % ( gene_id, transcript_id )
+    meta_data_str = ( 'gene_id "%s"; transcript_id "%s";' 
+        % ( gene_id, transcript_id ) )
     # an optimization for the common case that only gene and transcript id
     # are included
     if len( meta_data ) > 0:
@@ -533,11 +533,12 @@ def create_gtf_line( region, gene_id, transcript_id, meta_data, score=0, \
         try: del meta_data['transcript_id']
         except KeyError: pass
         
-        items = [ " " + str(k) + ' "%s";' % str(v) \
+        items = [ " " + str(k) + ' "%s";' % str(v) 
                      for k, v in meta_data.iteritems() ]
         meta_data_str += "".join( items )
     
-    gtf_line = [ chrm, source, feature, str(r.start), str(r.stop), \
+    # add one because gtf lines are 1 based
+    gtf_line = [ chrm, source, feature, str(r.start+1), str(r.stop+1), 
                  str(score), r.strand, frame, meta_data_str ]
     return '\t'.join( gtf_line )
 
