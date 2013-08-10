@@ -44,7 +44,7 @@ def update_buffer_array_from_rnaseq_read( buffer_array,
     """
     for start, stop in iter_coverage_intervals_for_read(read):
         rd_strand = get_strand( read, 
-                                reverse_read_strand=False, 
+                                reverse_read_strand=reverse_read_strand, 
                                 pairs_are_opp_strand=pairs_are_opp_strand )
         if rd_strand != strand: continue
         buffer_array[(start-buffer_offset):(stop-buffer_offset) + 1] += 1
@@ -277,12 +277,13 @@ def parse_arguments():
         args.reverse_read_strand, args.threads
 
 def main():
-    assay, reads_fname, op_prefix, build_bigwig, reverse_read_strand, num_threads \
-        = parse_arguments()
-
+    ( assay, reads_fname, op_prefix, build_bigwig, 
+      reverse_read_strand, num_threads ) = parse_arguments()
+    
     # initialize the assay specific options
     if assay == 'cage':
         reads = CAGEReads( reads_fname, "rb" )
+        # the read strand reversal is done later, so set this to False
         reads.init(reverse_read_strand=False)
         update_buffer_array_from_read = update_buffer_array_from_CAGE_read
         stranded = True
@@ -292,6 +293,7 @@ def main():
         stranded = True
     elif assay == 'rnaseq':
         reads = RNAseqReads( reads_fname, "rb" )
+        # the read strand reversal is done later, so set this to False
         reads.init(reverse_read_strand=False)
         update_buffer_array_from_read = \
             update_buffer_array_from_rnaseq_read_generator(reads)
