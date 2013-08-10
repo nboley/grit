@@ -14,13 +14,12 @@ from grit.files.reads import iter_coverage_intervals_for_read, clean_chr_name, \
 import multiprocessing
 
 BUFFER_SIZE = 50000000
-bedGraphToBigWig_script = "/usr/local/bin/bedGraphToBigWig"
-
 
 class ProcessSafeOPStream( object ):
     def __init__( self, writeable_obj ):
         self.writeable_obj = writeable_obj
         self.lock = multiprocessing.Lock()
+        self.name = self.writeable_obj.name
         return
     
     def write( self, data ):
@@ -304,7 +303,7 @@ def main():
     # if we want to build a bigwig, make sure that the script is on the path
     if build_bigwig:
         try: 
-            subprocess.check_call(["which", "bedGraphToBigWigs"], stdout=None)
+            subprocess.check_call(["which", "bedGraphToBigWig"], stdout=None)
         except subprocess.CalledProcessError:
             raise ValueError, "bedGraphToBigWig does not exist on $PATH. " + \
                 "You can still build a bedGraph by removing the --bigwig(-b) option."
@@ -315,13 +314,14 @@ def main():
     # Open the output files
     if stranded:
         ofps = { '+' : ProcessSafeOPStream(
-                open(op_prefix+".plus.bedgraph","w")), 
+                open(op_prefix+".plus.bedgraph","r")), 
                  '-' : ProcessSafeOPStream(
-                open(op_prefix+".minus.bedgraph", "w"))
+                open(op_prefix+".minus.bedgraph", "r"))
                }
     else:
         ofps = { None: ProcessSafeOPStream(open(op_prefix+".bedgraph", "w")) }
 
+    """
     # write the header information
     for key, fp in ofps.iteritems():
         strand_str = "" if key == None else {'+': '.plus', '-': '.minus'}[key]
@@ -330,18 +330,22 @@ def main():
     
     generate_wiggle( reads, ofps, update_buffer_array_from_read, num_threads,
                      reverse_read_strand=reverse_read_strand )
-
+    """
+    
     # finally, if we are building a bigwig, build it, and then remove the bedgraph files
     if build_bigwig:
         for strand, bedgraph_fp in ofps.iteritems():
-            strand_str = "" if key == None else {'+': '.plus', '-': '.minus'}[key]
+            strand_str = "" if strand == None else ( 
+                {'+': '.plus', '-': '.minus'}[strand] )
             bedgraph_fname = bedgraph_fp.name
             # first, sort
             sorted_ofp = tempfile.NamedTemporaryFile(delete=False)
-            subprocess.call( ["sort" "-k1,1" "-k2,2n" "tmp.readcov.plus.bedgraph"], 
-                             stdout=sorted_ofp )
+            if VERBOSE: print "Sorting ", bedgraph_fname
+            subprocess.call( 
+                ["sort -k1,1 -k2,2n " + bedgraph_fname,], 
+                stdout=sorted_ofp, shell=True )
             sorted_ofp.flush()
-            
+            if VERBOSE: print "Building wig for", bedgraph_fname
             subprocess.check_call( [ "bedGraphToBigWig", 
                                      sorted_ofp.name, 
                                      chrm_sizes_file.name, 
