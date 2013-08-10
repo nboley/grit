@@ -543,7 +543,7 @@ def compare( ref_fname, gtf_fname, build_maps, build_maps_stats,
         
     if out_prefix == None:
         # dump stats to stdout
-        print output_stats + '\n'
+        print str(output_stats) + '\n'
     else:
         # prepare formated stats output
         op = [ str(output_stats), ]
