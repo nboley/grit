@@ -240,7 +240,6 @@ def generate_wiggle(reads, ofps, update_buffer_array_from_read,
             if p != None: p.join()
     
     for fp in ofps.values(): fp.close()
-    reads.close()
     
     return
 
@@ -365,8 +364,10 @@ def main():
                 t.join()
         
         chrm_sizes_file.close()
-    else:
-        for fp in ofps.values(): fp.close()
+    
+    # close the reads files
+    reads.close()
+
 
 if __name__ == "__main__":
     main()
