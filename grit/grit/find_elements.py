@@ -1054,8 +1054,8 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     cage_cov = cage_reads[0].build_read_coverage_array( 
         chrm, strand, gene.start, gene.stop )
     
+    gene_len = gene.stop - gene.start + 1
     if strand == '-':
-        gene_len = gene.stop - gene.start + 1
         polya_sites = [ gene_len - x for x in polya_sites ]
         jns = [ (gene_len-x2, gene_len-x1, cnt) for x1, x2, cnt in jns ]
         rnaseq_cov = rnaseq_cov[::-1]
@@ -1063,7 +1063,7 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     
     filtered_junctions = []
     for (start, stop, cnt) in jns:
-        if start < 0 or stop > contig_len: continue
+        if start < 0 or stop >= gene_len: continue
         left_intron_cvg = rnaseq_cov[start+10:start+30].sum()/20
         right_intron_cvg = rnaseq_cov[stop-30:stop-10].sum()/20        
         if cnt*10 < left_intron_cvg or cnt*10 < right_intron_cvg:
@@ -1090,6 +1090,9 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     
     jn_bins = Bins(chrm, strand, [])
     for start, stop, cnt in jns:
+        if stop - start <= 0:
+            log_statement( "BAD JUNCTION: %s %s %s" % (start, stop, cnt) )
+            continue
         bin = Bin(start, stop, 'R_JN', 'D_JN', 'INTRON', cnt)
         jn_bins.append( bin )
     
