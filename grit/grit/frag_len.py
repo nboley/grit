@@ -36,6 +36,7 @@ class FlDist( object ):
     """
     def __init__( self, fl_min, fl_max, fl_density, stats=None ):
         assert fl_min <= fl_max
+        assert fl_max < 100000
         try:
             assert type( fl_min ) == int
             assert type( fl_max ) == int
@@ -102,6 +103,7 @@ def build_uniform_density( fl_min, fl_max ):
 
 def build_normal_density( fl_min, fl_max, mean, sd ):
     length = fl_max - fl_min + 1
+    assert length < 100000
     from scipy.stats import norm
     density = norm(loc=mean, scale=sd)
     density_array = numpy.array( [ density.pdf( index ) \
@@ -516,7 +518,11 @@ def estimate_normal_fl_dist_from_reads( reads, max_num_fragments_to_sample=500 )
             rd2 = reads.mate(rd1)
         except ValueError: 
             continue
+        if len( rd1.cigar ) > 1 or len( rd2.cigar ) > 1: 
+            continue
         frag_len = find_frag_len(rd1, rd2)
+        if frag_len > 1200: continue
+        
         frag_lens.append( frag_len )
         if len( frag_lens ) > max_num_fragments_to_sample: break
 
@@ -524,7 +530,7 @@ def estimate_normal_fl_dist_from_reads( reads, max_num_fragments_to_sample=500 )
         err_str = "There are not enough reads to estimate an fl dist"
         raise ValueError, err_str
     
-    frag_lens = numpy.array( frag_lens )
+    frag_lens = numpy.array( frag_lens )    
     frag_lens.sort()
     bnd = int(0.15*len(frag_lens))
     trimmed_fragments = frag_lens[bnd:len(frag_lens)-bnd]
