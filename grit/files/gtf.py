@@ -452,7 +452,8 @@ def _load_gene_from_gtf_lines( gene_id, gene_lines, transcripts_data ):
                  transcripts, gene_meta_data )
     
 
-def load_gtf(fname_or_fp, use_name_instead_of_id=False):
+def load_gtf(fname_or_fp, use_name_instead_of_id=False, 
+             contig=None, strand=None):
     if isinstance( fname_or_fp, str ):
         fp = open( fname_or_fp )
     else:
@@ -464,6 +465,8 @@ def load_gtf(fname_or_fp, use_name_instead_of_id=False):
         data = parse_gtf_line(line, fix_chrm=True, 
                               use_name_instead_of_id=use_name_instead_of_id)
         if None == data: continue
+        if contig != None and data.region.chr != contig: continue
+        if strand != None and data.region.strand != strand: continue
         # add gene lines directly to the gene object
         if data.feature == 'gene': 
             gene_lines[data.gene_id][1].append( data )
