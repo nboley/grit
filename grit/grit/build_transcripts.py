@@ -1,5 +1,6 @@
 import sys, os
 import numpy
+import scipy
 
 import time
 
@@ -48,10 +49,14 @@ class ThreadSafeFile( file ):
         self.flush()
         self.lock.release()
 
-def calc_fpkm( gene, fl_dist, freqs, num_reads_in_bam, num_reads_in_gene ):
+def calc_fpkm( gene, fl_dist, freqs, 
+               num_reads_in_bam, num_reads_in_gene, 
+               bound_alpha=0.5 ):
+    corrected_num_reads_in_gene = num_reads_in_bam*scipy.stats.beta.ppf(
+            bound_alpha, num_reads_in_gene+1, num_reads_in_bam+1)
     fpkms = []
     for t, freq in izip( gene.transcripts, freqs ):
-        num_reads_in_t = num_reads_in_gene*freq
+        num_reads_in_t = corrected_num_reads_in_gene*freq
         t_len = sum( e[1] - e[0] + 1 for e in t.exons )
         fpk = num_reads_in_t/(t_len/1000.)
         fpkm = fpk/(num_reads_in_bam/1000000.)
@@ -84,7 +89,7 @@ def write_gene_to_gtf( ofp, gene, mles=None, lbs=None, ubs=None, fpkms=None,
         # the current transcripts upper bound over all transcripts'
         # lower bound
         if lbs != None and ubs != None:
-            frac = int((1000.*ubs[index-n_skipped_ts])/max(lbs))
+            frac = int((1000.*ubs[index-n_skipped_ts])/(1e-8+max(lbs)))
             transcript.score = max(1,min(1000,frac))
 
         ofp.write( transcript.build_gtf_lines(
@@ -268,8 +273,8 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             
             if estimate_confidence_bounds:
                 op_lock.acquire()
-                output[(gene_id, 'ub')] = [None]*len(mle_estimate)
-                output[(gene_id, 'lb')] = [None]*len(mle_estimate)
+                output[(gene_id, 'ub')] = [None]*len(mle)
+                output[(gene_id, 'lb')] = [None]*len(mle)
                 op_lock.release()        
                 
                 NUM_TRANS_IN_GRP = 50
@@ -343,11 +348,13 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 num_reads_in_bam = NUMBER_OF_READS_IN_BAM
                 ub_fpkms = calc_fpkm( gene, fl_dists, 
                                       [ ubs[i] for i in xrange(len(mle)) ], 
-                                      num_reads_in_bam, num_reads_in_gene )
+                                      num_reads_in_bam, num_reads_in_gene,
+                                      1.0 - cb_alpha)
                 output[(gene_id, 'ubs')] = ub_fpkms
                 lb_fpkms = calc_fpkm( gene, fl_dists, 
                                       [ lbs[i] for i in xrange(len(mle)) ], 
-                                      num_reads_in_bam, num_reads_in_gene )
+                                      num_reads_in_bam, num_reads_in_gene,
+                                      cb_alpha )
                 output[(gene_id, 'lbs')] = lb_fpkms
                 input_queue_lock.acquire()
                 input_queue.append(('FINISHED', (gene_id, None, None)))
