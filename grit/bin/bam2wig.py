@@ -12,6 +12,7 @@ from grit.files.reads import iter_coverage_intervals_for_read, clean_chr_name, \
     get_strand, CAGEReads, RNAseqReads
 
 import multiprocessing
+import threading
 
 BUFFER_SIZE = 50000000
 
@@ -198,7 +199,7 @@ def write_array_to_opstream(ofp, buffer, buff_start, chrm, chrm_length ):
 
 
 def build_chrm_sizes_file(reads):
-    chrm_sizes_file = tempfile.NamedTemporaryFile(delete=False)
+    chrm_sizes_file = tempfile.NamedTemporaryFile(delete=True)
     # find the chrm names and their associated lengths
     chrm_lengths = zip(reads.references, reads.lengths)
     #write out the chromosomes and its corrosponding size to disk
@@ -275,6 +276,21 @@ def parse_arguments():
     return assay, args.mapped_reads_fname, args.out_fname_prefix, args.bigwig, \
         args.reverse_read_strand, args.threads
 
+def build_bigwig_from_bedgraph(bedgraph_fp, chrm_sizes_file, op_fname):
+    with tempfile.NamedTemporaryFile(delete=True) as sorted_ofp:
+        if VERBOSE: print "Sorting ", bedgraph_fp.name
+        subprocess.call( 
+            ["sort -k1,1 -k2,2n " + bedgraph_fp.name,], 
+            stdout=sorted_ofp, shell=True )
+        sorted_ofp.flush()
+        
+        if VERBOSE: print "Building wig for", bedgraph_fp.name
+        subprocess.check_call( [ "bedGraphToBigWig", 
+                                 sorted_ofp.name, 
+                                 chrm_sizes_file.name, 
+                                 op_fname ] )
+    return
+
 def main():
     ( assay, reads_fname, op_prefix, build_bigwig, 
       reverse_read_strand, num_threads ) = parse_arguments()
@@ -306,50 +322,47 @@ def main():
             subprocess.check_call(["which", "bedGraphToBigWig"], stdout=None)
         except subprocess.CalledProcessError:
             raise ValueError, "bedGraphToBigWig does not exist on $PATH. " + \
-                "You can still build a bedGraph by removing the --bigwig(-b) option."
-        
-        # build the chrm sizes file.
-        chrm_sizes_file = build_chrm_sizes_file(reads)
+                "You can still build a bedGraph by removing the --bigwig(-b) option."        
     
     # Open the output files
     if stranded:
         ofps = { '+' : ProcessSafeOPStream(
-                open(op_prefix+".plus.bedgraph","r")), 
+                open(op_prefix+".plus.bedgraph","w")), 
                  '-' : ProcessSafeOPStream(
-                open(op_prefix+".minus.bedgraph", "r"))
+                open(op_prefix+".minus.bedgraph", "w"))
                }
     else:
         ofps = { None: ProcessSafeOPStream(open(op_prefix+".bedgraph", "w")) }
 
-    """
-    # write the header information
-    for key, fp in ofps.iteritems():
-        strand_str = "" if key == None else {'+': '.plus', '-': '.minus'}[key]
-        fp.write( "track name=%s.%s type=bedGraph\n" \
-                      % ( os.path.basename(op_prefix), strand_str ) )
+    # write the bedgraph header information
+    if not build_bigwig:
+        for key, fp in ofps.iteritems():
+            strand_str = "" if key == None else {'+': '.plus', '-': '.minus'}[key]
+            fp.write( "track name=%s.%s type=bedGraph\n" \
+                          % ( os.path.basename(op_prefix), strand_str ) )
+    
     
     generate_wiggle( reads, ofps, update_buffer_array_from_read, num_threads,
                      reverse_read_strand=reverse_read_strand )
-    """
     
     # finally, if we are building a bigwig, build it, and then remove the bedgraph files
     if build_bigwig:
-        for strand, bedgraph_fp in ofps.iteritems():
-            strand_str = "" if strand == None else ( 
-                {'+': '.plus', '-': '.minus'}[strand] )
-            bedgraph_fname = bedgraph_fp.name
-            # first, sort
-            sorted_ofp = tempfile.NamedTemporaryFile(delete=False)
-            if VERBOSE: print "Sorting ", bedgraph_fname
-            subprocess.call( 
-                ["sort -k1,1 -k2,2n " + bedgraph_fname,], 
-                stdout=sorted_ofp, shell=True )
-            sorted_ofp.flush()
-            if VERBOSE: print "Building wig for", bedgraph_fname
-            subprocess.check_call( [ "bedGraphToBigWig", 
-                                     sorted_ofp.name, 
-                                     chrm_sizes_file.name, 
-                                     op_prefix + strand_str + ".bw"] )
+        # build the chrm sizes file.
+        with build_chrm_sizes_file(reads) as chrm_sizes_file:        
+            threads = []
+            for strand, bedgraph_fp in ofps.iteritems():
+                strand_str = "" if strand == None else ( 
+                    {'+': '.plus', '-': '.minus'}[strand] )
+                op_fname = op_prefix + strand_str + ".bw"
+
+                t = threading.Thread( 
+                    target=build_bigwig_from_bedgraph, 
+                    args=(bedgraph_fp, chrm_sizes_file, op_fname) )
+                t.start()
+                threads.append( t )
+
+            for t in threads:
+                t.join()
         
         chrm_sizes_file.close()
     else:

@@ -703,6 +703,7 @@ def main():
     output_dict_lock = multiprocessing.Lock()    
     output_dict = manager.dict()
         
+    log_statement( "Loading data files." )
     rnaseq_reads = [ RNAseqReads(fp.name).init(
                      reverse_read_strand=reverse_rnaseq_strand) 
                      for fp in rnaseq_bams ]
@@ -719,25 +720,28 @@ def main():
                       for fp in rampage_bams ]
     for fp in rampage_bams: fp.close()
     promoter_reads = [] + cage_reads + rampage_reads
-    assert len(promoter_reads) <= 1
-    
+    assert len(promoter_reads) <= 1    
     log_statement( "Finished loading data files." )
         
     elements, genes = None, None
     if exons_bed_fp != None:
+        log_statement( "Loading %s" % exons_bed_fp.name )
         elements = load_elements( exons_bed_fp )
         log_statement( "Finished Loading %s" % exons_bed_fp.name )
     else:
         assert transcripts_gtf_fp != None
+        log_statement( "Loading %s" % transcripts_gtf_fp.name )
         genes = load_gtf( transcripts_gtf_fp )
         elements = extract_elements_from_genes(genes)
         log_statement( "Finished Loading %s" % transcripts_gtf_fp.name )
     
     # estimate the fragment length distribution
+    log_statement( "Estimating the fragment length distribution" )
     fl_dists = build_fl_dists( 
         elements, rnaseq_reads, log_fp.name + ".fldist.pdf" )
     log_statement( "Finished estimating the fragment length distribution" )
-    
+
+    log_statement( "Initializing processing data" )    
     initialize_processing_data(             
         elements, genes, fl_dists,
         rnaseq_reads, promoter_reads,
