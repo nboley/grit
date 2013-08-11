@@ -149,17 +149,18 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                     tss_exons, tes_exons, se_transcripts))
             gene_max = max( max(e) for e in chain(
                     tss_exons, tes_exons, se_transcripts))
-            gene = Gene( gene_id, contig, strand, gene_min, gene_max, transcripts )
+            gene = Gene(gene_id, contig,strand, gene_min, gene_max, transcripts)
 
             if fasta_fn != None:
                 fasta = Fastafile( fasta_fn )
-                gene.transcripts = find_cds_for_gene( gene, fasta, only_longest_orf=True )
+                gene.transcripts = find_cds_for_gene( 
+                    gene, fasta, only_longest_orf=True )
 
             op_lock.acquire()
             output[(gene_id, 'gene')] = gene
             op_lock.release()
 
-            # only try and build the design matrix if we were able to build full 
+            # only try and build the design matrix if we were able to build full
             # length transcripts
             if len( gene.transcripts ) > 0:
                 input_queue_lock.acquire()
@@ -177,13 +178,14 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             rnaseq_reads = [ RNAseqReads(fname).init(**kwargs) 
                              for fname, kwargs in rnaseq_reads_init_data ][0]
             promoter_reads = [ readsclass(fname).init(**kwargs) 
-                             for readsclass, fname, kwargs in promoter_reads_init_data ]
+                             for readsclass, fname, kwargs 
+                               in promoter_reads_init_data ]
             try:
                 expected_array, observed_array, unobservable_transcripts \
                     = build_design_matrices( gene, rnaseq_reads, 
                                              fl_dists, promoter_reads )
             except ValueError, inst:
-                error_msg = "%i: Skipping %s: %s" % ( os.getpid(), gene_id, inst )
+                error_msg = "%i: Skipping %s: %s" % (os.getpid(), gene_id, inst)
                 log_statement( error_msg )
                 input_queue_lock.acquire()
                 input_queue.append(
@@ -191,7 +193,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 input_queue_lock.release()
                 return
             except MemoryError, inst:
-                error_msg =  "%i: Skipping %s: %s" % ( os.getpid(), gene_id, inst )
+                error_msg = "%i: Skipping %s: %s" % (os.getpid(), gene_id, inst)
                 log_statement( error_msg )
                 input_queue_lock.acquire()
                 input_queue.append(
@@ -239,11 +241,11 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                              for fname, args in rnaseq_reads_init_data ][0]
 
             try:
-                mle_estimate = frequency_estimation.estimate_transcript_frequencies( 
+                mle = frequency_estimation.estimate_transcript_frequencies( 
                     observed_array, expected_array)
                 num_reads_in_gene = observed_array.sum()
                 num_reads_in_bam = NUMBER_OF_READS_IN_BAM
-                fpkms = calc_fpkm( gene, fl_dists, mle_estimate, 
+                fpkms = calc_fpkm( gene, fl_dists, mle, 
                                    num_reads_in_bam, num_reads_in_gene )
             except ValueError, inst:
                 error_msg = "Skipping %s: %s" % ( gene_id, inst )
@@ -256,11 +258,11 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 return
             
             log_lhd = frequency_estimation.calc_lhd( 
-                mle_estimate, observed_array, expected_array)
+                mle, observed_array, expected_array)
             log_statement( "FINISHED MLE %s\t%.2f" % ( gene_id, log_lhd ) )
             
             op_lock.acquire()
-            output[(gene_id, 'mle')] = mle_estimate
+            output[(gene_id, 'mle')] = mle
             output[(gene_id, 'fpkm')] = fpkms
             op_lock.release()
             
@@ -281,9 +283,6 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 for indices in grouped_indices:
                     input_queue.append( ('lb', (gene_id, None, indices)) )
                     input_queue.append( ('ub', (gene_id, None, indices)) )
-                #for i in xrange(expected_array.shape[1]):
-                #    input_queue.append( ('lb', (gene_id, None, i)) )
-                #    input_queue.append( ('ub', (gene_id, None, i)) )
                 input_queue_lock.release()
             else:
                 input_queue_lock.acquire()
@@ -320,7 +319,8 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                     trans_index, mle_estimate, bnd_type, cb_alpha )
                 if DEBUG_VERBOSE: log_statement( 
                     "FINISHED %s BOUND %s\t%s\t%i/%i\t%.2e\t%.2e" % (
-                    bnd_type, gene_id, None, trans_index+1, mle_estimate.shape[0], 
+                    bnd_type, gene_id, None, 
+                    trans_index+1, mle_estimate.shape[0], 
                     bnd, p_value ), do_log=True )
                 res.append((trans_index, bnd))
             log_statement( 
@@ -341,10 +341,12 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 fl_dists = output[(gene_id, 'fl_dists')]
                 num_reads_in_gene = observed_array.sum()
                 num_reads_in_bam = NUMBER_OF_READS_IN_BAM
-                ub_fpkms = calc_fpkm( gene, fl_dists, [ ubs[i] for i in xrange(len(mle)) ], 
+                ub_fpkms = calc_fpkm( gene, fl_dists, 
+                                      [ ubs[i] for i in xrange(len(mle)) ], 
                                       num_reads_in_bam, num_reads_in_gene )
                 output[(gene_id, 'ubs')] = ub_fpkms
-                lb_fpkms = calc_fpkm( gene, fl_dists, [ lbs[i] for i in xrange(len(mle)) ], 
+                lb_fpkms = calc_fpkm( gene, fl_dists, 
+                                      [ lbs[i] for i in xrange(len(mle)) ], 
                                       num_reads_in_bam, num_reads_in_gene )
                 output[(gene_id, 'lbs')] = lb_fpkms
                 input_queue_lock.acquire()
