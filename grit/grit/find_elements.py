@@ -31,6 +31,7 @@ log_statement = None
 
 USE_CACHE = False
 NTHREADS = 1
+MAX_THREADS_PER_CONTIG = 16
 TOTAL_MAPPED_READS = None
 
 class ThreadSafeFile( file ):
@@ -496,7 +497,7 @@ def load_junctions( rnaseq_reads, (chrm, strand, contig_len) ):
             junctions = extract_junctions_in_contig( 
                 rnaseq_reads[0], chrm, strand )
         else:
-            nthreads = min( NTHREADS, 8 )
+            nthreads = min( NTHREADS, MAX_THREADS_PER_CONTIG )
             seg_len = int(contig_len/nthreads)
             segments =  [ [i*seg_len, (i+1)*seg_len] for i in xrange(nthreads) ]
             segments[0][0] = 0
@@ -1224,7 +1225,7 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     else:
         log_statement( "Waiting on exon finding children in contig '%s' on '%s' strand" % ( chrm, strand ) )
         ps = []
-        for i in xrange( min(NTHREADS, 8) ):
+        for i in xrange( min(NTHREADS, MAX_THREADS_PER_CONTIG) ):
             p = multiprocessing.Process(target=find_exons_worker, args=args)
             p.start()
             ps.append( p )
@@ -1280,11 +1281,12 @@ def parse_arguments():
     
     parser.add_argument( '--cage-reads', type=file, default=[], nargs='*', \
         help='BAM files containing mapped cage reads.')
-
     parser.add_argument( '--rampage-reads', type=file, default=[], nargs='*', \
         help='BAM files containing mapped rampage reads.')
-    
-    parser.add_argument( '--polya-candidate-sites', type=file, nargs='+', \
+
+    parser.add_argument( '--polya-reads', type=file, nargs='*', \
+        help='BAM files containing mapped polya reads.')
+    parser.add_argument( '--polya-candidate-sites', type=file, nargs='*', \
         help='files with allowed polya sites.')
 
     parser.add_argument( '--reference', help='Reference GTF')
@@ -1355,10 +1357,14 @@ def parse_arguments():
 
     if (( len(args.cage_reads) == 0 and len(args.rampage_reads) == 0 ) 
         or (len(args.cage_reads) > 0 and len(args.rampage_reads) > 0 )):
-        raise ValueError, "Either CAGE or RAMPAGE reads (but not both) must be provided"    
+        raise ValueError, "Either --cage-reads or --rampage-reads (but not both) must be set"    
+
+    if ((len(args.polya_reads)==0 and len(args.polya_candidate_sites)==0) 
+        or (len(args.polya_reads)>0 and len(args.polya_candidate_sites)>0)):
+        raise ValueError, "Either --polya-reads or --candidate-polya-sites (but not both) must be set"    
     
     return args.rnaseq_reads, args.reverse_rnaseq_strand, \
-        args.cage_reads, args.rampage_reads, \
+        args.cage_reads, args.rampage_reads, args.polya_reads, \
         args.polya_candidate_sites, ofp, \
         args.reference, ref_elements_to_include, \
         not args.batch_mode
@@ -1371,8 +1377,9 @@ def main():
 
     global log_statement
     log_ofstream = open( ".".join(ofp.name.split(".")[:-1]) + ".log", "w" )
-    log_statement = Logger(nthreads=NTHREADS+max(1,(NTHREADS/8)), 
-                           use_ncurses=use_ncurses, log_ofstream=log_ofstream)
+    log_statement = Logger(
+        nthreads=NTHREADS+max(1,(NTHREADS/MAX_THREADS_PER_CONTIG)), 
+        use_ncurses=use_ncurses, log_ofstream=log_ofstream)
     
     rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=reverse_rnaseq_strand) 
                      for fp in rnaseq_bams ]
@@ -1409,8 +1416,8 @@ def main():
             find_exons_in_contig(*args)
     else:
         log_statement( 'Waiting on children processes.' )
-        # max 8 threads per process
-        n_simulataneous_contigs = max(1, (NTHREADS/8))
+        # max MAX_THREADS_PER_CONTIG threads per process
+        n_simulataneous_contigs = max(1, (NTHREADS/MAX_THREADS_PER_CONTIG))
         ps = [None]*n_simulataneous_contigs
         while len(all_args) > 0:
             for i, p in enumerate(ps):
