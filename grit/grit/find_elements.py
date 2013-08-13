@@ -1305,11 +1305,11 @@ def parse_arguments():
                          default="discovered_elements.bed",\
         help='Output file name. (default: discovered_elements.bed)')
     
-    parser.add_argument( '--verbose', '-v', default=False, action='store_true',\
+    parser.add_argument( '--verbose', '-v', default=False, action='store_true',
         help='Whether or not to print status information.')
-    parser.add_argument( '--debug-verbose', default=False, action='store_true',\
+    parser.add_argument( '--debug-verbose', default=False, action='store_true',
         help='Whether or not to print debugging information.')
-    parser.add_argument('--write-debug-data',default=False,action='store_true',\
+    parser.add_argument('--write-debug-data',default=False,action='store_true',
         help='Whether or not to print out gff files containing intermediate exon assembly data.')
     parser.add_argument( '--dont-use-ncurses', default=False, action='store_true',
                              help='Whether or not to use the ncurses display.')
@@ -1361,7 +1361,7 @@ def main():
         = parse_arguments()
 
     global log_statement
-    log_statement = Logger(nthreads=NTHREADS+(NTHREADS/8), use_ncurses=use_ncurses)
+    log_statement = Logger(nthreads=NTHREADS+max(1,(NTHREADS/8)), use_ncurses=use_ncurses)
     
     rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=reverse_rnaseq_strand) 
                      for fp in rnaseq_bams ]
@@ -1399,7 +1399,7 @@ def main():
     else:
         log_statement( 'Waiting on children processes.' )
         # max 8 threads per process
-        n_simulataneous_contigs = (NTHREADS/8)
+        n_simulataneous_contigs = max(1, (NTHREADS/8))
         ps = [None]*n_simulataneous_contigs
         while len(all_args) > 0:
             for i, p in enumerate(ps):
