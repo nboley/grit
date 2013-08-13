@@ -1412,7 +1412,7 @@ def main():
         # Call the children processes
         all_args = []
         for contig, contig_len in contig_lens.iteritems():
-            #if contig != '4': continue
+            if contig != '2L': continue
             for strand in '+-':
                 all_args.append( ( (contig, strand, contig_len), ofp,
                                    [rnaseq_reads,], [promoter_reads,], polya_sites,
