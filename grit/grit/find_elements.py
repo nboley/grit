@@ -3,6 +3,7 @@ __version__ = "0.1.1"
 import sys, os
 import time
 import math
+import traceback
 
 import numpy
 from scipy.stats import beta
@@ -84,7 +85,7 @@ CAGE_PEAK_WIN_SIZE = 30
 MIN_NUM_CAGE_TAGS = 5
 MAX_CAGE_FRAC = 0.01
 
-def get_contigs_and_lens( rnaseq_reads, cage_reads ):
+def get_contigs_and_lens( reads_files ):
     """Get contigs and their lengths from a set of bam files.
     
     We make sure that the contig lengths are consistent in all of the bam files, and
@@ -93,7 +94,7 @@ def get_contigs_and_lens( rnaseq_reads, cage_reads ):
     """
     chrm_lengths = {}
     contigs = None
-    for bam in chain( rnaseq_reads, cage_reads ):
+    for bam in reads_files:
         bam_contigs = set()
         for ref_name, ref_len in zip(bam.references, bam.lengths):
             # add the contig to the chrm lengths file, checking to
@@ -112,7 +113,7 @@ def get_contigs_and_lens( rnaseq_reads, cage_reads ):
     
     # remove contigs that dont have reads in at least one file
     def at_least_one_bam_has_reads( chrm, bams ):
-        for bam in  chain( rnaseq_reads, cage_reads ):
+        for bam in reads_files:
             try:
                 next( bam.fetch( chrm ) )
             except StopIteration:
@@ -125,9 +126,8 @@ def get_contigs_and_lens( rnaseq_reads, cage_reads ):
     # produce the final list of contigs
     rv =  {}
     for key, val in chrm_lengths.iteritems():
-        if at_least_one_bam_has_reads(key, rnaseq_reads) \
-                and at_least_one_bam_has_reads(key, cage_reads) \
-                and key in contigs:
+        if key in contigs and any( 
+            at_least_one_bam_has_reads(key, reads) for reads in reads_files ):
             rv[key] = val
     
     return rv
@@ -1272,21 +1272,21 @@ def parse_arguments():
     parser = argparse.ArgumentParser(\
         description='Find exons from RNAseq, CAGE, and poly(A) assays.')
 
-    parser.add_argument( 'rnaseq_reads',type=argparse.FileType('rb'),nargs='+',\
+    parser.add_argument( 'rnaseq_reads', type=argparse.FileType('rb'),
         help='BAM files containing mapped RNAseq reads ( must be indexed ).')
-
+    
     parser.add_argument( '--reverse-rnaseq-strand', default=False,
                          action='store_true',
         help='Whether to reverse the RNAseq read strand (default False).')
     
-    parser.add_argument( '--cage-reads', type=file, default=[], nargs='*', \
+    parser.add_argument( '--cage-reads', type=argparse.FileType('rb'),
         help='BAM files containing mapped cage reads.')
-    parser.add_argument( '--rampage-reads', type=file, default=[], nargs='*', \
+    parser.add_argument( '--rampage-reads', type=argparse.FileType('rb'),
         help='BAM files containing mapped rampage reads.')
 
-    parser.add_argument( '--polya-reads', type=file, default=[], nargs='*', \
+    parser.add_argument( '--polya-reads', type=argparse.FileType('rb'),
         help='BAM files containing mapped polya reads.')
-    parser.add_argument( '--polya-candidate-sites', type=file, nargs='*', \
+    parser.add_argument( '--polya-candidate-sites', type=file, nargs='*',
         help='files with allowed polya sites.')
 
     parser.add_argument( '--reference', help='Reference GTF')
@@ -1355,12 +1355,12 @@ def parse_arguments():
     ofp = ThreadSafeFile( args.ofname, "w" )
     ofp.write('track name="%s" visibility=2 itemRgb="On"\n' % ofp.name)
 
-    if (( len(args.cage_reads) == 0 and len(args.rampage_reads) == 0 ) 
-        or (len(args.cage_reads) > 0 and len(args.rampage_reads) > 0 )):
+    if (( args.cage_reads == None and args.rampage_reads == None ) 
+        or ( args.cage_reads != None and args.rampage_reads != None )):
         raise ValueError, "Either --cage-reads or --rampage-reads (but not both) must be set"    
 
-    if ((len(args.polya_reads)==0 and len(args.polya_candidate_sites)==0) 
-        or (len(args.polya_reads)>0 and len(args.polya_candidate_sites)>0)):
+    if ((args.polya_reads == None and len(args.polya_candidate_sites) == 0) 
+        or (args.polya_reads != None and len(args.polya_candidate_sites) > 0)):
         raise ValueError, "Either --polya-reads or --candidate-polya-sites (but not both) must be set"    
     
     return args.rnaseq_reads, args.reverse_rnaseq_strand, \
@@ -1370,7 +1370,7 @@ def parse_arguments():
         not args.batch_mode
 
 def main():
-    rnaseq_bams, reverse_rnaseq_strand, cage_bams, rampage_bams, polya_bams,\
+    rnaseq_bam, reverse_rnaseq_strand, cage_bam, rampage_bam, polya_bam,\
         polya_candidate_sites_fps, ofp, ref_gtf_fname, ref_elements_to_include,\
         use_ncurses \
         = parse_arguments()
@@ -1381,86 +1381,77 @@ def main():
         nthreads=NTHREADS+max(1,(NTHREADS/MAX_THREADS_PER_CONTIG)), 
         use_ncurses=use_ncurses, log_ofstream=log_ofstream)
 
-    if VERBOSE: log_statement( 'Loading RNAseq read bams' )                
-    rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=reverse_rnaseq_strand) 
-                     for fp in rnaseq_bams ]
-    global TOTAL_MAPPED_READS
-    TOTAL_MAPPED_READS = sum( x.mapped for x in rnaseq_reads )
+    # wrap everything in a try block so that we can deal with elegantly deal
+    # with uncaught exceptions
+    try:
+        if VERBOSE: log_statement( 'Loading RNAseq read bams' )                
+        rnaseq_reads = RNAseqReads(rnaseq_bam.name).init(
+            reverse_read_strand=reverse_rnaseq_strand)
+        global TOTAL_MAPPED_READS
+        TOTAL_MAPPED_READS = rnaseq_reads.mapped
 
-    if VERBOSE: log_statement( 'Loading CAGE read bams' )            
-    cage_reads = [ CAGEReads(fp.name).init(reverse_read_strand=True) 
-                   for fp in cage_bams ]
-    if VERBOSE: log_statement( 'Loading RAMPAGE read bams' )            
-    rampage_reads = [ RAMPAGEReads(fp.name).init(reverse_read_strand=True) 
-                      for fp in rampage_bams ]    
-    promoter_reads = [] + cage_reads + rampage_reads
-    assert len(promoter_reads) > 0, "Must have either CAGE or RAMPAGE reads."
+        if VERBOSE: log_statement( 'Loading CAGE read bams' )            
+        cage_reads = CAGEReads(cage_bam.name).init(
+            reverse_read_strand=True) if cage_bam != None else None
+        if VERBOSE: log_statement( 'Loading RAMPAGE read bams' )            
+        rampage_reads = RAMPAGEReads(rampage_bam.name).init(
+            reverse_read_strand=True) if rampage_bam != None else None
+        promoter_reads = cage_reads if cage_reads != None else rampage_reads
+        assert promoter_reads != None, "Must have either CAGE or RAMPAGE reads."
 
-    if VERBOSE: log_statement( 'Loading polyA reads bams' )        
-    polya_reads = [ PolyAReads(fp.name).init(reverse_read_strand=True) 
-                    for fp in polya_bams ]
-    if VERBOSE: log_statement( 'Loading candidate polyA sites' )    
-    polya_sites = find_polya_sites([x.name for x in polya_candidate_sites_fps])
-    for fp in polya_candidate_sites_fps: fp.close()
-    log_statement( '' )
-    
-    contig_lens = get_contigs_and_lens( rnaseq_reads, promoter_reads )
+        if VERBOSE: log_statement( 'Loading polyA reads bams' )        
+        polya_reads = PolyAReads(polya_bam.name).init(
+            reverse_read_strand=True) if polya_bam != None else None
+        if VERBOSE: log_statement( 'Loading candidate polyA sites' )    
+        polya_sites = find_polya_sites([x.name for x in polya_candidate_sites_fps])
+        for fp in polya_candidate_sites_fps: fp.close()
+        log_statement( '' )
 
-    # Call the children processes
-    all_args = []
-    for contig, contig_len in contig_lens.iteritems():
-        #if contig != '4': continue
-        for strand in '+-':
-            all_args.append( ( (contig, strand, contig_len), ofp,
-                               rnaseq_reads, promoter_reads, polya_sites,
-                               ref_gtf_fname, ref_elements_to_include) )
+        contig_lens = get_contigs_and_lens( (rnaseq_reads, promoter_reads) )
 
-    if NTHREADS == 1:
-        for args in all_args:
-            find_exons_in_contig(*args)
-    else:
-        log_statement( 'Waiting on children processes.' )
-        # max MAX_THREADS_PER_CONTIG threads per process
-        n_simulataneous_contigs = max(1, (NTHREADS/MAX_THREADS_PER_CONTIG))
-        ps = [None]*n_simulataneous_contigs
-        while len(all_args) > 0:
-            for i, p in enumerate(ps):
-                if p == None or not p.is_alive():
-                    args = all_args.pop()
-                    p = multiprocessing.Process( 
-                        target=find_exons_in_contig, args=args )
-                    p.start()
-                    ps[i] = p
+        # Call the children processes
+        all_args = []
+        for contig, contig_len in contig_lens.iteritems():
+            #if contig != '4': continue
+            for strand in '+-':
+                all_args.append( ( (contig, strand, contig_len), ofp,
+                                   [rnaseq_reads,], [promoter_reads,], polya_sites,
+                                   ref_gtf_fname, ref_elements_to_include) )
+
+        if NTHREADS == 1:
+            for args in all_args:
+                find_exons_in_contig(*args)
+        else:
+            log_statement( 'Waiting on children processes.' )
+            # max MAX_THREADS_PER_CONTIG threads per process
+            n_simulataneous_contigs = max(1, (NTHREADS/MAX_THREADS_PER_CONTIG))
+            ps = [None]*n_simulataneous_contigs
+            while len(all_args) > 0:
+                for i, p in enumerate(ps):
+                    if p == None or not p.is_alive():
+                        args = all_args.pop()
+                        p = multiprocessing.Process( 
+                            target=find_exons_in_contig, args=args )
+                        p.start()
+                        ps[i] = p
+                        break
+                time.sleep(0.1)
+
+            while True:
+                if all( p == None or not p.is_alive() for p in ps ):
                     break
-            time.sleep(0.1)
-
-        while True:
-            if all( p == None or not p.is_alive() for p in ps ):
-                break
-            time.sleep( 0.1 )
-
-    log_ofstream.close()
-    log_statement.close()
+                time.sleep( 0.1 )
+    except Exception, inst:
+        log_statement( "FATAL ERROR" )
+        log_statement( traceback.format_exc() )
+        log_ofstream.close()
+        log_statement.close()
+        raise
+    else:
+        log_ofstream.close()
+        log_statement.close()
     
 if __name__ == '__main__':
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 #
