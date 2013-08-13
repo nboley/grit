@@ -386,3 +386,54 @@ class RAMPAGEReads(Reads):
             cvg[max(0,rd.pos-start-16)] += 1
         
         return cvg
+
+
+class PolyAReads(Reads):
+    def init(self, reverse_read_strand, pairs_are_opp_strand=None ):       
+        assert self.is_indexed()
+
+        reads_are_paired = True
+        reads_are_stranded = True
+        
+        # reads strandedness
+        if pairs_are_opp_strand == None:
+            pairs_are_opp_strand = read_pairs_are_on_same_strand( self )
+        
+        Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
+                         reads_are_stranded, reverse_read_strand )
+        
+        self._init_kwargs = {
+            'reverse_read_strand': reverse_read_strand, 
+            'pairs_are_opp_strand': pairs_are_opp_strand 
+        }
+        
+        return self
+    
+    def build_read_coverage_array( self, chrm, strand, start, stop ):
+        full_region_len = stop - start + 1
+        cvg = numpy.zeros(full_region_len)
+        for rd in self.fetch( chrm, start, stop ):
+            # skip the read's pair, which doesn't contain a poly(a) site
+            if not rd.is_read1: continue
+
+            # determine the strand of the poly(A) site
+            rd_strand = '-' if rd.is_reverse else '+'
+            if self.reverse_read_strand:
+                rd_strand = '-' if rd_strand == '+' else '+'
+            
+            # determine which pos of the read corresponds to the 
+            # poly(a) site
+            if rd_strand == '+': pos = read.aend
+            else: pos = read.pos
+            
+            # skip sites that aren't within the requested range
+            if strand != rd_strand: continue
+            if pos < start or pos > stop: continue
+
+            # find the statmap posterior probabiliy, if available
+            res = [ val for key, val in read.tags if key == 'XP' ]
+            post_prb = 1.0 if len(res) == 0 else res[0]
+            
+            cvg[pos] += post_prb
+        
+        return cvg

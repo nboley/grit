@@ -17,8 +17,8 @@ import Queue
 
 from igraph import Graph
 
-from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, clean_chr_name, \
-    guess_strand_from_fname, iter_coverage_intervals_for_read
+from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads, \
+    clean_chr_name, guess_strand_from_fname, iter_coverage_intervals_for_read
 from files.junctions import extract_junctions_in_region, extract_junctions_in_contig
 from files.bed import create_bed_line
 from files.gtf import parse_gtf_line, load_gtf
@@ -1284,7 +1284,7 @@ def parse_arguments():
     parser.add_argument( '--rampage-reads', type=file, default=[], nargs='*', \
         help='BAM files containing mapped rampage reads.')
 
-    parser.add_argument( '--polya-reads', type=file, nargs='*', \
+    parser.add_argument( '--polya-reads', type=file, default=[], nargs='*', \
         help='BAM files containing mapped polya reads.')
     parser.add_argument( '--polya-candidate-sites', type=file, nargs='*', \
         help='files with allowed polya sites.')
@@ -1370,7 +1370,7 @@ def parse_arguments():
         not args.batch_mode
 
 def main():
-    rnaseq_bams, reverse_rnaseq_strand, cage_bams, rampage_bams,\
+    rnaseq_bams, reverse_rnaseq_strand, cage_bams, rampage_bams, polya_bams,\
         polya_candidate_sites_fps, ofp, ref_gtf_fname, ref_elements_to_include,\
         use_ncurses \
         = parse_arguments()
@@ -1380,22 +1380,26 @@ def main():
     log_statement = Logger(
         nthreads=NTHREADS+max(1,(NTHREADS/MAX_THREADS_PER_CONTIG)), 
         use_ncurses=use_ncurses, log_ofstream=log_ofstream)
-    
+
+    if VERBOSE: log_statement( 'Loading RNAseq read bams' )                
     rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=reverse_rnaseq_strand) 
                      for fp in rnaseq_bams ]
     global TOTAL_MAPPED_READS
     TOTAL_MAPPED_READS = sum( x.mapped for x in rnaseq_reads )
-    
+
+    if VERBOSE: log_statement( 'Loading CAGE read bams' )            
     cage_reads = [ CAGEReads(fp.name).init(reverse_read_strand=True) 
                    for fp in cage_bams ]
-
+    if VERBOSE: log_statement( 'Loading RAMPAGE read bams' )            
     rampage_reads = [ RAMPAGEReads(fp.name).init(reverse_read_strand=True) 
-                      for fp in rampage_bams ]
-    
+                      for fp in rampage_bams ]    
     promoter_reads = [] + cage_reads + rampage_reads
     assert len(promoter_reads) > 0, "Must have either CAGE or RAMPAGE reads."
-    
-    if VERBOSE: log_statement( 'Loading candidate polyA sites' )
+
+    if VERBOSE: log_statement( 'Loading polyA reads bams' )        
+    polya_reads = [ PolyAReads(fp.name).init(reverse_read_strand=True) 
+                    for fp in polya_bams ]
+    if VERBOSE: log_statement( 'Loading candidate polyA sites' )    
     polya_sites = find_polya_sites([x.name for x in polya_candidate_sites_fps])
     for fp in polya_candidate_sites_fps: fp.close()
     log_statement( '' )
