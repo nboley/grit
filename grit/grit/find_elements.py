@@ -1311,8 +1311,8 @@ def parse_arguments():
         help='Whether or not to print debugging information.')
     parser.add_argument('--write-debug-data',default=False,action='store_true',
         help='Whether or not to print out gff files containing intermediate exon assembly data.')
-    parser.add_argument( '--dont-use-ncurses', default=False, action='store_true',
-                             help='Whether or not to use the ncurses display.')
+    parser.add_argument( '--batch-mode', default=False, action='store_true',
+                             help='Disable the ncurses frontend, and just print status messages to stderr.')
     
     parser.add_argument( '--threads', '-t', default=1, type=int,
         help='The number of threads to use.')
@@ -1361,7 +1361,7 @@ def parse_arguments():
         args.cage_reads, args.rampage_reads, \
         args.polya_candidate_sites, ofp, \
         args.reference, ref_elements_to_include, \
-        not args.dont_use_ncurses
+        not args.batch_mode
 
 def main():
     rnaseq_bams, reverse_rnaseq_strand, cage_bams, rampage_bams,\
@@ -1370,7 +1370,9 @@ def main():
         = parse_arguments()
 
     global log_statement
-    log_statement = Logger(nthreads=NTHREADS+max(1,(NTHREADS/8)), use_ncurses=use_ncurses)
+    log_ofstream = open( ".".join(ofp.name.split(".")[:-1]) + ".log", "w" )
+    log_statement = Logger(nthreads=NTHREADS+max(1,(NTHREADS/8)), 
+                           use_ncurses=use_ncurses, log_ofstream=log_ofstream)
     
     rnaseq_reads = [ RNAseqReads(fp.name).init(reverse_read_strand=reverse_rnaseq_strand) 
                      for fp in rnaseq_bams ]
@@ -1396,7 +1398,7 @@ def main():
     # Call the children processes
     all_args = []
     for contig, contig_len in contig_lens.iteritems():
-        #if contig != '20': continue
+        #if contig != '4': continue
         for strand in '+-':
             all_args.append( ( (contig, strand, contig_len), ofp,
                                rnaseq_reads, promoter_reads, polya_sites,
@@ -1425,7 +1427,8 @@ def main():
             if all( p == None or not p.is_alive() for p in ps ):
                 break
             time.sleep( 0.1 )
-        
+
+    log_ofstream.close()
     log_statement.close()
     
 if __name__ == '__main__':
