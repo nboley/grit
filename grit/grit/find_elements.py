@@ -1284,7 +1284,7 @@ def parse_arguments():
     parser.add_argument( '--rampage-reads', type=file, default=[], nargs='*', \
         help='BAM files containing mapped rampage reads.')
     
-    parser.add_argument( '--polya-candidate-sites', type=file, nargs='*', \
+    parser.add_argument( '--polya-candidate-sites', type=file, nargs='+', \
         help='files with allowed polya sites.')
 
     parser.add_argument( '--reference', help='Reference GTF')
@@ -1330,6 +1330,11 @@ def parse_arguments():
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
     
+    if args.use_reference_tss:
+        raise NotImplemented, "--use-reference-tss is not yet implemented"
+    if args.use_reference_tes:
+        raise NotImplemented, "--use-reference-tes is not yet implemented"
+    
     if None == args.reference and args.use_reference_genes:
         raise ValueError, "--reference must be set if --use-reference-genes is set"
     if None == args.reference and args.use_reference_junctions:
@@ -1347,6 +1352,10 @@ def parse_arguments():
     
     ofp = ThreadSafeFile( args.ofname, "w" )
     ofp.write('track name="%s" visibility=2 itemRgb="On"\n' % ofp.name)
+
+    if (( len(args.cage_reads) == 0 and len(args.rampage_reads) == 0 ) 
+        or (len(args.cage_reads) > 0 and len(args.rampage_reads) > 0 )):
+        raise ValueError, "Either CAGE or RAMPAGE reads (but not both) must be provided"    
     
     return args.rnaseq_reads, args.reverse_rnaseq_strand, \
         args.cage_reads, args.rampage_reads, \
