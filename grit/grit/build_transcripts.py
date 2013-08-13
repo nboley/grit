@@ -1,8 +1,9 @@
 import sys, os
+import time
+import traceback
+
 import numpy
 import scipy
-
-import time
 
 from pysam import Fastafile, Samfile
 
@@ -167,7 +168,9 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
 
             # only try and build the design matrix if we were able to build full
             # length transcripts
-            if len( gene.transcripts ) > 0:
+            if ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+                input_queue.append(('FINISHED', (gene_id, None, None)))
+            elif len( gene.transcripts ) > 0:
                 input_queue_lock.acquire()
                 input_queue.append( ('design_matrices', (gene_id, None, None)) )
                 input_queue_lock.release()
@@ -226,10 +229,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
 
             op_lock.release()
             input_queue_lock.acquire()
-            if ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
-                input_queue.append(('FINISHED', (gene_id, None, None)))
-            else:
-                input_queue.append( ('mle', (gene_id, None, None)) )
+            input_queue.append( ('mle', (gene_id, None, None)) )
             input_queue_lock.release()
         elif work_type == 'mle':
             log_statement( "Finding MLE for Gene %s" % gene_id  )
@@ -364,7 +364,6 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             log_statement("")
     
     except Exception, inst:
-        import traceback
         input_queue_lock.acquire()
         input_queue.append(
             ('ERROR', ((gene_id, trans_index), traceback.format_exc())))
@@ -413,7 +412,8 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
 
             output_dict_lock.acquire()            
             gene = output_dict[(key, 'gene')]
-            unobservable_transcripts = output_dict[(key, 'design_matrices')][2]
+            unobservable_transcripts = output_dict[(key, 'design_matrices')][2]\
+                if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS else []
             mles = output_dict[(key, 'mle')] \
                 if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
             fpkms = output_dict[(key, 'fpkm')] \
@@ -521,12 +521,14 @@ def initialize_processing_data( elements, genes, fl_dists,
         output_dict[ (gene_id, 'contig') ] = contig
         output_dict[ (gene_id, 'strand') ] = strand
 
-        output_dict[ (gene_id, 'rnaseq_reads') ] = \
-            [(x.filename, x._init_kwargs) for x in rnaseq_reads]
-        output_dict[ (gene_id, 'promoter_reads') ] = \
+        output_dict[ (gene_id, 'rnaseq_reads') ] = (
+            [(x.filename, x._init_kwargs) for x in rnaseq_reads] 
+            if rnaseq_reads != None else None )
+        output_dict[ (gene_id, 'promoter_reads') ] = (
             [(type(x), x.filename, x._init_kwargs) for x in promoter_reads]
-        output_dict[ (gene_id, 'fasta_fn') ] = None \
-            if fasta == None else fasta.name
+            if promoter_reads != None else None )
+        output_dict[ (gene_id, 'fasta_fn') ] = ( None 
+            if fasta == None else fasta.name )
 
         output_dict[ (gene_id, 'fl_dists') ] = fl_dists
         output_dict[ (gene_id, 'lbs') ] = {}
@@ -689,83 +691,11 @@ def parse_arguments():
         args.estimate_confidence_bounds, args.write_design_matrices, \
         not args.dont_use_ncurses
 
-def main():
-    # Get file objects from command line
-    exons_bed_fp, transcripts_gtf_fp, rnaseq_bams, cage_bams, rampage_bams, \
-        gtf_ofp, expression_ofp, fasta, reverse_rnaseq_strand, \
-        estimate_confidence_bounds, write_design_matrices, \
-        use_ncurses \
-        = parse_arguments()
-        
-    global log_statement
-    # add an extra thread for the background writer
-    log_fp = open( gtf_ofp.name + ".log", "w" )
-    log_statement = Logger(num_threads+1, 
-                           use_ncurses=use_ncurses, 
-                           log_ofstream=log_fp )
-    frequency_estimation.log_statement = log_statement
-    
-    manager = multiprocessing.Manager()
-    input_queue = manager.list()
-    input_queue_lock = multiprocessing.Lock()
-    finished_queue = manager.Queue()
-    output_dict_lock = multiprocessing.Lock()    
-    output_dict = manager.dict()
-        
-    log_statement( "Loading data files." )
-    rnaseq_reads = [ RNAseqReads(fp.name).init(
-                     reverse_read_strand=reverse_rnaseq_strand) 
-                     for fp in rnaseq_bams ]
-    for fp in rnaseq_bams: fp.close()    
-    
-    global NUMBER_OF_READS_IN_BAM
-    NUMBER_OF_READS_IN_BAM = sum( x.mapped for x in rnaseq_reads )
-    assert ONLY_BUILD_CANDIDATE_TRANSCRIPTS or len(rnaseq_reads) == 1
-
-    cage_reads = [ CAGEReads(fp.name).init(reverse_read_strand=True) 
-                   for fp in cage_bams ]    
-    for fp in cage_bams: fp.close()
-    rampage_reads = [ RAMPAGEReads(fp.name).init(reverse_read_strand=True) 
-                      for fp in rampage_bams ]
-    for fp in rampage_bams: fp.close()
-    promoter_reads = [] + cage_reads + rampage_reads
-    assert len(promoter_reads) <= 1    
-    log_statement( "Finished loading data files." )
-        
-    elements, genes = None, None
-    if exons_bed_fp != None:
-        log_statement( "Loading %s" % exons_bed_fp.name )
-        elements = load_elements( exons_bed_fp )
-        log_statement( "Finished Loading %s" % exons_bed_fp.name )
-    else:
-        assert transcripts_gtf_fp != None
-        log_statement( "Loading %s" % transcripts_gtf_fp.name )
-        genes = load_gtf( transcripts_gtf_fp )
-        elements = extract_elements_from_genes(genes)
-        log_statement( "Finished Loading %s" % transcripts_gtf_fp.name )
-    
-    # estimate the fragment length distribution
-    log_statement( "Estimating the fragment length distribution" )
-    fl_dists = build_fl_dists( 
-        elements, rnaseq_reads, log_fp.name + ".fldist.pdf" )
-    log_statement( "Finished estimating the fragment length distribution" )
-
-    log_statement( "Initializing processing data" )    
-    initialize_processing_data(             
-        elements, genes, fl_dists,
-        rnaseq_reads, promoter_reads,
-        fasta,
-        input_queue, input_queue_lock, 
-        output_dict, output_dict_lock )    
-    log_statement( "Finished initializing processing data" )
-    
-    write_p = multiprocessing.Process(target=write_finished_data_to_disk, args=(
-            output_dict, output_dict_lock, 
-            finished_queue, gtf_ofp, expression_ofp,
-            estimate_confidence_bounds, write_design_matrices ) )
-    
-    write_p.start()    
-    
+def spawn_and_manage_children( input_queue, input_queue_lock,
+                               output_dict_lock, output_dict,
+                               finished_queue,
+                               write_design_matrices, 
+                               estimate_confidence_bounds):
     ps = [None]*num_threads
     time.sleep(0.1)
     log_statement( "Waiting on children" )
@@ -773,7 +703,7 @@ def main():
         # get the data to process
         try:
             input_queue_lock.acquire()
-            work_type, key = input_queue.pop()
+            work_type, work_data = input_queue.pop()
         except IndexError, inst:
             if len(input_queue) == 0 and all( 
                     p == None or not p.is_alive() for p in ps ): 
@@ -789,11 +719,11 @@ def main():
         input_queue_lock.release()
         
         if work_type == 'ERROR':
-            ( gene_id, trans_index ), msg = key
+            ( gene_id, trans_index ), msg = work_data
             log_statement( str(gene_id) + "\tERROR\t" + msg, only_log=True ) 
             continue
         else:
-            gene_id, bam_fn, trans_index = key
+            gene_id, bam_fn, trans_index = work_data
 
         if work_type == 'FINISHED':
             finished_queue.put( ('gtf', gene_id) )
@@ -827,13 +757,107 @@ def main():
         else:
             estimate_gene_expression_worker(*args)
     
-    finished_queue.put( ('FINISHED', None) )
-    write_p.join()
+    return
 
-    log_statement.close()
-    gtf_ofp.close()
-    log_fp.close()
-    expression_ofp.close()
+def main():
+    # Get file objects from command line
+    (exons_bed_fp, transcripts_gtf_fp, rnaseq_bams, cage_bams, rampage_bams,
+     gtf_ofp, expression_ofp, fasta, reverse_rnaseq_strand,
+     estimate_confidence_bounds, write_design_matrices, 
+     use_ncurses) = parse_arguments()
+    
+    global log_statement
+    # add an extra thread for the background writer
+    log_fp = open( gtf_ofp.name + ".log", "w" )
+    log_statement = Logger(num_threads+1, 
+                           use_ncurses=use_ncurses, 
+                           log_ofstream=log_fp )
+    frequency_estimation.log_statement = log_statement
+    
+    try:
+        manager = multiprocessing.Manager()
+        input_queue = manager.list()
+        input_queue_lock = multiprocessing.Lock()
+        finished_queue = manager.Queue()
+        output_dict_lock = multiprocessing.Lock()    
+        output_dict = manager.dict()
+
+        if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+            log_statement( "Loading data files." )
+            rnaseq_reads = [ RNAseqReads(fp.name).init(
+                             reverse_read_strand=reverse_rnaseq_strand) 
+                             for fp in rnaseq_bams ]
+            for fp in rnaseq_bams: fp.close()    
+
+            global NUMBER_OF_READS_IN_BAM
+            NUMBER_OF_READS_IN_BAM = sum( x.mapped for x in rnaseq_reads )
+
+            cage_reads = [ CAGEReads(fp.name).init(reverse_read_strand=True) 
+                           for fp in cage_bams ]    
+            for fp in cage_bams: fp.close()
+            rampage_reads = [ 
+                RAMPAGEReads(fp.name).init(reverse_read_strand=True) 
+                for fp in rampage_bams ]
+            for fp in rampage_bams: fp.close()
+            promoter_reads = [] + cage_reads + rampage_reads
+            assert len(promoter_reads) <= 1    
+            log_statement( "Finished loading data files." )
+            
+            # estimate the fragment length distribution
+            log_statement( "Estimating the fragment length distribution" )
+            fl_dists = build_fl_dists( 
+                elements, rnaseq_reads, log_fp.name + ".fldist.pdf" )
+            log_statement( "Finished estimating the fragment length distribution" )
+        else:
+            fl_dists, rnaseq_reads, promoter_reads = None, None, None
+        
+        elements, genes = None, None
+        if exons_bed_fp != None:
+            log_statement( "Loading %s" % exons_bed_fp.name )
+            elements = load_elements( exons_bed_fp )
+            log_statement( "Finished Loading %s" % exons_bed_fp.name )
+        else:
+            assert transcripts_gtf_fp != None
+            log_statement( "Loading %s" % transcripts_gtf_fp.name )
+            genes = load_gtf( transcripts_gtf_fp )
+            elements = extract_elements_from_genes(genes)
+            log_statement( "Finished Loading %s" % transcripts_gtf_fp.name )
+        
+        log_statement( "Initializing processing data" )    
+        initialize_processing_data(             
+            elements, genes, fl_dists,
+            rnaseq_reads, promoter_reads,
+            fasta,
+            input_queue, input_queue_lock, 
+            output_dict, output_dict_lock )    
+        log_statement( "Finished initializing processing data" )
+
+        write_p = multiprocessing.Process(
+            target=write_finished_data_to_disk, args=(
+                output_dict, output_dict_lock, 
+                finished_queue, gtf_ofp, expression_ofp,
+                estimate_confidence_bounds, write_design_matrices ) )
+
+        write_p.start()    
+
+        spawn_and_manage_children( input_queue, input_queue_lock,
+                                   output_dict_lock, output_dict, 
+                                   finished_queue,
+                                   write_design_matrices, 
+                                   estimate_confidence_bounds)
+        
+        finished_queue.put( ('FINISHED', None) )
+        write_p.join()
+    except Exception, inst:
+        log_statement(traceback.format_exc())
+        log_statement.close()
+        raise
+    else:
+        log_statement.close()
+    finally:
+        gtf_ofp.close()
+        log_fp.close()
+        expression_ofp.close()
     
     return
 
