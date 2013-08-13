@@ -645,7 +645,7 @@ def parse_arguments():
             and args.elements == None:
         raise ValueError, "--elements must be set if --only-build-transcripts is set"
     if args.only_build_candidate_transcripts == True \
-            and args.rnaseq_reads == None:
+            and args.rnaseq_reads != None:
         raise ValueError, "--rnaseq-reads and --only-build-transcripts must not both be set"
     if args.only_build_candidate_transcripts == True \
             and args.estimate_confidence_bounds == True:
