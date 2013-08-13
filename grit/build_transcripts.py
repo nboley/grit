@@ -782,6 +782,18 @@ def main():
         output_dict_lock = multiprocessing.Lock()    
         output_dict = manager.dict()
 
+        elements, genes = None, None
+        if exons_bed_fp != None:
+            log_statement( "Loading %s" % exons_bed_fp.name )
+            elements = load_elements( exons_bed_fp )
+            log_statement( "Finished Loading %s" % exons_bed_fp.name )
+        else:
+            assert transcripts_gtf_fp != None
+            log_statement( "Loading %s" % transcripts_gtf_fp.name )
+            genes = load_gtf( transcripts_gtf_fp )
+            elements = extract_elements_from_genes(genes)
+            log_statement( "Finished Loading %s" % transcripts_gtf_fp.name )
+        
         if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
             log_statement( "Loading data files." )
             rnaseq_reads = [ RNAseqReads(fp.name).init(
@@ -810,19 +822,7 @@ def main():
             log_statement( "Finished estimating the fragment length distribution" )
         else:
             fl_dists, rnaseq_reads, promoter_reads = None, None, None
-        
-        elements, genes = None, None
-        if exons_bed_fp != None:
-            log_statement( "Loading %s" % exons_bed_fp.name )
-            elements = load_elements( exons_bed_fp )
-            log_statement( "Finished Loading %s" % exons_bed_fp.name )
-        else:
-            assert transcripts_gtf_fp != None
-            log_statement( "Loading %s" % transcripts_gtf_fp.name )
-            genes = load_gtf( transcripts_gtf_fp )
-            elements = extract_elements_from_genes(genes)
-            log_statement( "Finished Loading %s" % transcripts_gtf_fp.name )
-        
+                
         log_statement( "Initializing processing data" )    
         initialize_processing_data(             
             elements, genes, fl_dists,
