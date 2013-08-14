@@ -590,14 +590,18 @@ def parse_arguments():
     parser.add_argument( '--expression-ofname', 
                          help='Output filename for expression levels.', 
                          default="isoforms.fpkm_tracking")
+
     parser.add_argument( '--elements', type=file,
         help='Bed file containing elements')
-
     parser.add_argument( '--transcripts', type=file,
         help='GTF file containing transcripts for which to estimate expression')
+    
     parser.add_argument( '--rnaseq-reads', 
                          type=argparse.FileType('rb'), nargs='+',
         help='BAM files containing mapped RNAseq reads ( must be indexed ).')
+    parser.add_argument( '--rnaseq-read-type', required=True,
+        choices=["forward", "backward"],
+        help='Whether or not the first RNAseq read in a pair needs to be reversed to be on the correct strand.')
     
     parser.add_argument( '--cage-reads', type=file, default=[], nargs='*', 
         help='BAM files containing mapped cage reads.')
@@ -607,9 +611,6 @@ def parse_arguments():
     parser.add_argument( '--fasta', type=file,
         help='Fasta file containing the genome sequence - if provided the ORF finder is automatically run.')
     
-    parser.add_argument( '--reverse-rnaseq-strand', 
-                         default=False, action="store_true",
-        help='Whether to reverse the RNAseq read strand (default False).')
     parser.add_argument( '--only-build-candidate-transcripts', default=False,
         action="store_true",
         help='If set, we will output all possible transcripts without expression estimates.')
@@ -623,14 +624,14 @@ def parse_arguments():
     
     parser.add_argument( '--threads', '-t', type=int , default=1,
         help='Number of threads spawn for multithreading (default=1)')
-
     
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',
                              help='Whether or not to print status information.')
     parser.add_argument( '--debug-verbose', default=False, action='store_true',
                              help='Prints the optimization path updates.')
-    parser.add_argument( '--dont-use-ncurses', default=False, action='store_true',
-                             help='Whether or not to use the ncurses display.')
+    parser.add_argument( '--batch-mode', '-b', 
+        default=False, action='store_true',
+        help='Disable the ncurses frontend, and just print status messages to stderr.')
     
     args = parser.parse_args()
         
@@ -652,6 +653,9 @@ def parse_arguments():
     if args.only_build_candidate_transcripts == True \
             and args.estimate_confidence_bounds == True:
         raise ValueError, "--only-build-candidate-transcripts and --estimate-confidence-bounds may not both be set"
+    
+    reverse_rnaseq_strand = ( 
+        True if args.rnaseq_read_type == 'backward' else False )
     
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
@@ -687,9 +691,9 @@ def parse_arguments():
     
     return args.elements, args.transcripts, \
         args.rnaseq_reads, args.cage_reads, args.rampage_reads, \
-        gtf_ofp, expression_ofp, args.fasta, args.reverse_rnaseq_strand, \
+        gtf_ofp, expression_ofp, args.fasta, reverse_rnaseq_strand, \
         args.estimate_confidence_bounds, args.write_design_matrices, \
-        not args.dont_use_ncurses
+        not args.batch_mode
 
 def spawn_and_manage_children( input_queue, input_queue_lock,
                                output_dict_lock, output_dict,

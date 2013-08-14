@@ -1272,20 +1272,20 @@ def parse_arguments():
     parser = argparse.ArgumentParser(\
         description='Find exons from RNAseq, CAGE, and poly(A) assays.')
 
-    parser.add_argument( 'rnaseq_reads', type=argparse.FileType('rb'),
-        help='BAM files containing mapped RNAseq reads ( must be indexed ).')
-    
-    parser.add_argument( '--reverse-rnaseq-strand', default=False,
-                         action='store_true',
-        help='Whether to reverse the RNAseq read strand (default False).')
+    parser.add_argument( 
+        '--rnaseq-reads', type=argparse.FileType('rb'), required=True, 
+        help='BAM file containing mapped RNAseq reads.')
+    parser.add_argument( '--rnaseq-read-type', required=True,
+        choices=["forward", "backward"],
+        help='Whether or not the first RNAseq read in a pair needs to be reversed to be on the correct strand.')
     
     parser.add_argument( '--cage-reads', type=argparse.FileType('rb'),
-        help='BAM files containing mapped cage reads.')
+        help='BAM file containing mapped cage reads.')
     parser.add_argument( '--rampage-reads', type=argparse.FileType('rb'),
-        help='BAM files containing mapped rampage reads.')
+        help='BAM file containing mapped rampage reads.')
 
     parser.add_argument( '--polya-reads', type=argparse.FileType('rb'),
-        help='BAM files containing mapped polya reads.')
+        help='BAM file containing mapped polya reads.')
     parser.add_argument( '--polya-candidate-sites', type=file, nargs='*',
         help='files with allowed polya sites.')
 
@@ -1313,8 +1313,9 @@ def parse_arguments():
         help='Whether or not to print debugging information.')
     parser.add_argument('--write-debug-data',default=False,action='store_true',
         help='Whether or not to print out gff files containing intermediate exon assembly data.')
-    parser.add_argument( '--batch-mode', default=False, action='store_true',
-                             help='Disable the ncurses frontend, and just print status messages to stderr.')
+    parser.add_argument( '--batch-mode', '-b', 
+        default=False, action='store_true',
+        help='Disable the ncurses frontend, and just print status messages to stderr.')
     
     parser.add_argument( '--threads', '-t', default=1, type=int,
         help='The number of threads to use.')
@@ -1363,7 +1364,10 @@ def parse_arguments():
         or (args.polya_reads != None and len(args.polya_candidate_sites) > 0)):
         raise ValueError, "Either --polya-reads or --candidate-polya-sites (but not both) must be set"    
     
-    return args.rnaseq_reads, args.reverse_rnaseq_strand, \
+    reverse_rnaseq_strand = ( 
+        True if args.rnaseq_read_type == 'backward' else False )
+    
+    return args.rnaseq_reads, reverse_rnaseq_strand, \
         args.cage_reads, args.rampage_reads, args.polya_reads, \
         args.polya_candidate_sites, ofp, \
         args.reference, ref_elements_to_include, \
@@ -1381,8 +1385,8 @@ def main():
         nthreads=NTHREADS+max(1,(NTHREADS/MAX_THREADS_PER_CONTIG)), 
         use_ncurses=use_ncurses, log_ofstream=log_ofstream)
 
-    # wrap everything in a try block so that we can deal with elegantly deal
-    # with uncaught exceptions
+    # wrap everything in a try block so that we can with elegantly handle
+    # uncaught exceptions
     try:
         if VERBOSE: log_statement( 'Loading RNAseq read bams' )                
         rnaseq_reads = RNAseqReads(rnaseq_bam.name).init(
@@ -1412,7 +1416,7 @@ def main():
         # Call the children processes
         all_args = []
         for contig, contig_len in contig_lens.iteritems():
-            if contig != '2L': continue
+            #if contig != '4': continue
             for strand in '+-':
                 all_args.append( ( (contig, strand, contig_len), ofp,
                                    [rnaseq_reads,], [promoter_reads,], polya_sites,
