@@ -287,7 +287,7 @@ class Reads( pysam.Samfile ):
         reads.init(**self._init_kwargs)
         return reads
 
-class RNAseqReads(Reads):
+class RNAseqReads(Reads):    
     def init(self, reverse_read_strand, reads_are_stranded=True, 
                    pairs_are_opp_strand=None, reads_are_paired=True):        
         assert self.is_indexed()
@@ -297,6 +297,9 @@ class RNAseqReads(Reads):
         
         if pairs_are_opp_strand == None:
             pairs_are_opp_strand = not read_pairs_are_on_same_strand( self )
+        
+        if reverse_read_strand == None:
+            reverse_read_strand = self.determine_reverse_read_strand_param()
         
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
