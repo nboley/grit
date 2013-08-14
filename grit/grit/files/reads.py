@@ -66,7 +66,7 @@ def get_read_group( r1, r2 ):
         return None
 
 
-def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=500000 ):
+def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000, max_num_reads_to_check=5000000 ):
     # keep track of which fractiona re on the sam strand
     paired_cnts = {'no_mate': 0, 'same_strand': 1e-4, 'diff_strand': 1e-4}
     
@@ -76,31 +76,32 @@ def read_pairs_are_on_same_strand( bam_obj, num_reads_to_check=500000 ):
         num_observed_reads += 1
         if read.is_paired and read.mate_is_unmapped:
             continue
-
+        
         if not read.is_paired:
             paired_cnts['no_mate'] += 1        
         elif read.is_reverse != read.mate_is_reverse:
             paired_cnts['diff_strand'] += 1
         else:
             paired_cnts['same_strand'] += 1
-            
         # keep collecting reads until we observe enough
         num_good_reads += 1
-        if num_good_reads > num_reads_to_check:
+        if num_good_reads > min_num_reads_to_check \
+                and num_good_reads%min_num_reads_to_check == 0:
+            print "Paired Cnts:", paired_cnts, "Num Reads", num_observed_reads
+            # if the reads are single ended, then return True ( 
+            #    because it doesnt really matter )
+            if paired_cnts['no_mate'] >= 0.95*num_good_reads:
+                return True
+            if float(paired_cnts['same_strand'])/paired_cnts['diff_strand'] > 5:
+                return True
+            elif float(paired_cnts['diff_strand'])/paired_cnts['same_strand'] > 5:
+                return False
+            
+        if num_good_reads > max_num_reads_to_check:
             break
     
-    # if the reads are single ended, then return True ( 
-    #    because it doesnt really matter )
-    if paired_cnts['no_mate'] == num_reads_to_check:
-        return True
-    
-    if float(paired_cnts['same_strand'])/paired_cnts['diff_strand'] > 5:
-        return True
-    elif float(paired_cnts['diff_strand'])/paired_cnts['same_strand'] > 5:
-        return False
-    else:
-        print >> sys.stderr, "Paired Cnts:", paired_cnts, "Num Reads", num_observed_reads
-        raise ValueError, "Reads appear to be a mix of reads on the same and different strands. (%s)" % paired_cnts
+    print >> sys.stderr, "Paired Cnts:", paired_cnts, "Num Reads", num_observed_reads
+    raise ValueError, "Reads appear to be a mix of reads on the same and different strands. (%s)" % paired_cnts
 
 def iter_coverage_intervals_for_read(read):
     # we loop through each contig in the cigar string to deal

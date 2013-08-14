@@ -1038,10 +1038,10 @@ def find_tes_exons( (chrm, strand), rnaseq_cov, jns, polya_sites ):
     return Bins( chrm, strand, sorted(set(tes_exons)))
 
 def find_exons_in_gene( ( chrm, strand, contig_len ), gene, 
-                        rnaseq_reads, cage_reads, 
+                        rnaseq_reads, cage_reads,
                         polya_sites, jns ):
     ###########################################################
-    # Shift all of the input data to eb in the gene region, and 
+    # Shift all of the input data to be in the gene region, and 
     # reverse it when necessary
     polya_sites = [x - gene.start for x in polya_sites
                    if x > gene.start and x <= gene.stop]
@@ -1177,7 +1177,7 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp, (chrm, strand, cont
     return
 
 def find_exons_in_contig( (chrm, strand, contig_len), ofp,
-                          rnaseq_reads, cage_reads, polya_sites,
+                          rnaseq_reads, cage_reads, poya_reads, polya_sites,
                           ref_gtf_fname, ref_elements_to_include):
     junctions = load_junctions( rnaseq_reads, (chrm, strand, contig_len) )
     polya_sites = set(polya_sites[(chrm, strand)])
@@ -1360,8 +1360,8 @@ def parse_arguments():
         or ( args.cage_reads != None and args.rampage_reads != None )):
         raise ValueError, "Either --cage-reads or --rampage-reads (but not both) must be set"    
 
-    if ((args.polya_reads == None and len(args.polya_candidate_sites) == 0) 
-        or (args.polya_reads != None and len(args.polya_candidate_sites) > 0)):
+    if ((args.polya_reads == None and args.polya_candidate_sites == None) 
+        or (args.polya_reads != None and args.polya_candidate_sites != None)):
         raise ValueError, "Either --polya-reads or --candidate-polya-sites (but not both) must be set"    
     
     reverse_rnaseq_strand = ( 
@@ -1404,22 +1404,28 @@ def main():
         assert promoter_reads != None, "Must have either CAGE or RAMPAGE reads."
 
         if VERBOSE: log_statement( 'Loading polyA reads bams' )        
-        polya_reads = PolyAReads(polya_bam.name).init(
-            reverse_read_strand=True) if polya_bam != None else None
-        if VERBOSE: log_statement( 'Loading candidate polyA sites' )    
-        polya_sites = find_polya_sites([x.name for x in polya_candidate_sites_fps])
-        for fp in polya_candidate_sites_fps: fp.close()
-        log_statement( '' )
-
+        polya_reads = ( PolyAReads(polya_bam.name).init(
+                reverse_read_strand=True, pairs_are_opp_strand=True) 
+                        if polya_bam != None else None )
+        
+        if polya_candidate_sites_fps != None:
+            if VERBOSE: log_statement( 'Loading candidate polyA sites' )
+            polya_sites = find_polya_sites([x.name for x in polya_candidate_sites_fps])
+            for fp in polya_candidate_sites_fps: fp.close()
+            log_statement( '' )
+        else:
+            polya_sites = None
+        
         contig_lens = get_contigs_and_lens( (rnaseq_reads, promoter_reads) )
 
         # Call the children processes
         all_args = []
         for contig, contig_len in contig_lens.iteritems():
-            #if contig != '4': continue
+            if contig != '4': continue
             for strand in '+-':
                 all_args.append( ( (contig, strand, contig_len), ofp,
-                                   [rnaseq_reads,], [promoter_reads,], polya_sites,
+                                   [rnaseq_reads,], [promoter_reads,], 
+                                   [polya_reads,], polya_sites,
                                    ref_gtf_fname, ref_elements_to_include) )
 
         if NTHREADS == 1:
