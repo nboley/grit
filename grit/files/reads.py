@@ -87,7 +87,6 @@ def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000, max_nu
         num_good_reads += 1
         if num_good_reads > min_num_reads_to_check \
                 and num_good_reads%min_num_reads_to_check == 0:
-            print "Paired Cnts:", paired_cnts, "Num Reads", num_observed_reads
             # if the reads are single ended, then return True ( 
             #    because it doesnt really matter )
             if paired_cnts['no_mate'] >= 0.95*num_good_reads:
@@ -427,17 +426,17 @@ class PolyAReads(Reads):
             
             # determine which pos of the read corresponds to the 
             # poly(a) site
-            if rd_strand == '+': pos = read.aend
-            else: pos = read.pos
+            if rd_strand == '+': pos = rd.aend
+            else: pos = rd.pos
             
             # skip sites that aren't within the requested range
             if strand != rd_strand: continue
             if pos < start or pos > stop: continue
 
             # find the statmap posterior probabiliy, if available
-            res = [ val for key, val in read.tags if key == 'XP' ]
+            res = [ val for key, val in rd.tags if key == 'XP' ]
             post_prb = 1.0 if len(res) == 0 else res[0]
             
-            cvg[pos] += post_prb
+            cvg[pos-start] += post_prb
         
         return cvg
