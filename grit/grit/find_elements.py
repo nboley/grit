@@ -546,20 +546,82 @@ def load_junctions( rnaseq_reads, (chrm, strand, contig_len) ):
     
     return filtered_junctions
 
-def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads, 
-                         polya_sites, junctions=None):
-    def find_splits_in_region(rnaseq_reads, chrm, strand, start, stop):
-        n_splits = int( (stop-start)/MIN_REGION_LEN )
-        segment_len = int((stop-start)/(n_splits+1))
-        return [ start + i*segment_len for i in xrange(1,n_splits+1) ]
+def find_initial_segmentation_worker( 
+        candidate_boundaries, accepted_boundaries,
+        chrm, strand, 
+        rnaseq_reads, cage_reads, polya_reads ):
+    log_statement( "Finding Segments on Chromosome %s Strand %s" 
+                   % ( chrm, strand ))
+    def no_signal( start, stop ):
+        try: next( rnaseq_reads.iter_reads(chrm, strand, start, stop ) )
+        except StopIteration: pass
+        else: return False
+        
+        if cage_reads != None:
+            try: next( cage_reads.iter_reads(chrm, strand, start, stop ) )
+            except StopIteration: pass
+            else: return False
+        
+        if polya_reads != None:
+            try: next( polya_reads.iter_reads(chrm, strand, start, stop ) )
+            except StopIteration: pass
+            else: return False
+        
+        return True
+
+    locs = []
+    while not candidate_boundaries.empty():
+        try: bndry = candidate_boundaries.get(timeout=0.1)
+        except Queue.Empty: break
+        if no_signal( bndry-20, bndry+20 ):
+            locs.append( bndry )
     
-    def find_initial_segmentation( chrm, strand, rnaseq_reads, polya_sites ):
-        locs = {0: 'SEGMENT', contig_len:'SEGMENT'}
-        for polya in polya_sites:
-            locs[ polya ] = "POLYA"
-        return locs
+    accepted_boundaries.put( locs )
+    log_statement( "" )
+
+def find_gene_boundaries((chrm, strand, contig_len), 
+                         rnaseq_reads, 
+                         cage_reads,
+                         polya_reads,
+                         junctions=None):
     
-    def merge_segments( segments, strand, window_len = 10 ):
+    def find_initial_segmentation( chrm, strand, rnaseq_reads ):
+        candidate_boundaries = multiprocessing.Queue()
+        for x in xrange( 20, contig_len-20, 200 ):
+            candidate_boundaries.put( x )
+        accepted_boundaries = multiprocessing.Queue()
+        
+        ps = []
+        for i in xrange(MAX_THREADS_PER_CONTIG):
+            args = (candidate_boundaries, accepted_boundaries,
+                    chrm, strand, rnaseq_reads, cage_reads, polya_reads )
+            p = multiprocessing.Process( 
+                target=find_initial_segmentation_worker, args=args)
+            p.start()
+            ps.append( p )
+        
+        log_statement( "Waiting on segmentation children (%s-%s)" 
+                       % ( chrm, strand ) )
+        while True:
+            if all( not p.is_alive() for p in ps ):
+                break
+            time.sleep( 0.1 )
+
+        log_statement( "Merging segments queue (%s-%s)" 
+                       % ( chrm, strand ) )        
+
+        locs = [0, contig_len]
+        while not accepted_boundaries.empty():
+            try: locs.extend(accepted_boundaries.get(timeout=0.1))
+            except Queue.Empty: break
+        
+        log_statement( "Finished segmentation (%s-%s)" 
+                       % ( chrm, strand ) )        
+        accepted_boundaries.close()        
+        candidate_boundaries.close()
+        return sorted(locs)
+    
+    def merge_polya_segments( segments, strand, window_len = 10 ):
         bndries = numpy.array( sorted(segments, reverse=(strand!='-')) )
         bndries_to_delete = set()
         for i, bndry in enumerate(bndries[1:-1]):
@@ -568,11 +630,10 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
             pre_bndry_cnt = 0
             post_bndry_cnt = 0
             
-            for reads in rnaseq_reads:
-                cvg = reads.build_read_coverage_array( 
-                    chrm, strand, max(0,bndry-window_len), bndry+window_len )
-                pre_bndry_cnt += cvg[:window_len].sum()
-                post_bndry_cnt += cvg[window_len:].sum()
+            cvg = rnaseq_reads.build_read_coverage_array( 
+                chrm, strand, max(0,bndry-window_len), bndry+window_len )
+            pre_bndry_cnt += cvg[:window_len].sum()
+            post_bndry_cnt += cvg[window_len:].sum()
             
             if strand == '-':
                 pre_bndry_cnt, post_bndry_cnt = post_bndry_cnt, pre_bndry_cnt
@@ -605,19 +666,19 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
     
     # find all of the junctions
     if None == junctions:
-        junctions = load_junctions( rnaseq_reads, (chrm, strand, contig_len) )
+        junctions = load_junctions([rnaseq_reads,], (chrm, strand, contig_len))
     
     # find segment boundaries
-    if VERBOSE: log_statement( "Finding initial segmentation for %s %s" % (chrm, strand) )
-    initial_segmentation = find_initial_segmentation( 
-        chrm, strand, rnaseq_reads, polya_sites )
-    if VERBOSE: log_statement( "Finished initial segmentation for %s %s" % (chrm, strand) )
-    if VERBOSE: log_statement( "Merging segments for %s %s" % (chrm, strand) )
-    merged_segments = merge_segments( initial_segmentation, strand )
-    if VERBOSE: log_statement( "Finished merging segments for %s %s" % (chrm, strand) )
-    if VERBOSE: log_statement( "Clustering segments for %s %s" % (chrm, strand) )
+    if VERBOSE: log_statement( 
+        "Finding initial segmentation for %s %s" % (chrm, strand) )
+    initial_segmentation = find_initial_segmentation(chrm, strand, rnaseq_reads)
+    merged_segments = initial_segmentation
+    
+    #if VERBOSE: log_statement( "Merging segments for %s %s" % (chrm, strand) )
+    #merged_segments = merge_segments( initial_segmentation, strand )
+    
+    if VERBOSE: log_statement( "Clustering segments for %s %s" % (chrm, strand))
     clustered_segments = cluster_segments( merged_segments, junctions )
-    if VERBOSE: log_statement( "Finished clustering segments for %s %s" % (chrm, strand) )
     
     # build the gene bins, and write them out to the elements file
     genes = Bins( chrm, strand, [] )
@@ -625,10 +686,9 @@ def find_gene_boundaries((chrm, strand, contig_len), rnaseq_reads,
         return genes
     
     for start, stop in clustered_segments:
-        if stop - start < 100: continue
-        if stop - start > 1000000: continue
+        if stop - start < 300: continue
         genes.append( Bin(max(1,start-10), min(stop+10,contig_len), 
-                          "ESTART", "POLYA", "GENE" ) )
+                          "ESTART", "ESTOP", "GENE" ) )
     
     return genes
 
@@ -696,6 +756,39 @@ def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
         cage_peaks.append( Bin( peak_st, peak_sp+1,
                                 "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK") )
     return cage_peaks
+
+def find_polya_peaks_in_gene( ( chrm, strand ), gene, polya_cov, rnaseq_cov ):
+    # threshold the polya data. We assume that the polya data is a mixture of 
+    # reads taken from actually capped transcripts, and random transcribed 
+    # regions, or RNA seq covered regions. We zero out any bases where we
+    # can't reject the null hypothesis that the observed polya reads all derive 
+    # from the background, at alpha = 0.001. 
+    """
+    rnaseq_cov = numpy.array( rnaseq_cov+1-1e-6, dtype=int)
+    max_val = rnaseq_cov.max()
+    thresholds = TOTAL_MAPPED_READS*beta.ppf( 
+        0.1, 
+        numpy.arange(max_val+1)+1, 
+        numpy.zeros(max_val+1)+(TOTAL_MAPPED_READS+1) 
+    )
+    max_scores = thresholds[ rnaseq_cov ]
+    polya_cov[ polya_cov < max_scores ] = 0    
+    """
+    
+    raw_peaks = find_peaks( polya_cov, window_len=30, 
+                            min_score=5,
+                            max_score_frac=0.1,
+                            max_num_peaks=100)
+    if len( raw_peaks ) == 0:
+        return []
+    
+    polya_sites = Bins( chrm, strand )
+    for peak_st, peak_sp in raw_peaks:
+        polya_bin = Bin( peak_st, peak_sp+1,
+                         "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA")
+        polya_sites.append( polya_bin )
+    
+    return polya_sites
 
 def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):    
     def overlaps_prev_peak( new_loc ):
@@ -921,7 +1014,8 @@ def build_labeled_segments( rnaseq_cov, jns, cage_peaks=[], polya_sites=[] ):
     
     return bins
 
-def find_canonical_and_internal_exons( (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_sites  ):
+def find_canonical_and_internal_exons( 
+        (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_sites  ):
     bins = build_labeled_segments( rnaseq_cov, jns )    
     
     def iter_canonical_exons_and_indices():
@@ -1038,29 +1132,35 @@ def find_tes_exons( (chrm, strand), rnaseq_cov, jns, polya_sites ):
     return Bins( chrm, strand, sorted(set(tes_exons)))
 
 def find_exons_in_gene( ( chrm, strand, contig_len ), gene, 
-                        rnaseq_reads, cage_reads,
-                        polya_sites, jns ):
+                        rnaseq_reads, cage_reads, polya_reads,
+                        jns ):
     ###########################################################
     # Shift all of the input data to be in the gene region, and 
     # reverse it when necessary
-    polya_sites = [x - gene.start for x in polya_sites
-                   if x > gene.start and x <= gene.stop]
+    
+    ## FIX ME
+    #polya_sites = [x - gene.start for x in polya_sites
+    #               if x > gene.start and x <= gene.stop]
         
     jns = [ (x1 - gene.start, x2 - gene.start, cnt)  
             for x1, x2, cnt in jns ]
 
-    rnaseq_cov = rnaseq_reads[0].build_read_coverage_array( 
+    rnaseq_cov = rnaseq_reads.build_read_coverage_array( 
         chrm, strand, gene.start, gene.stop )
     
-    cage_cov = cage_reads[0].build_read_coverage_array( 
+    cage_cov = cage_reads.build_read_coverage_array( 
+        chrm, strand, gene.start, gene.stop )
+
+    polya_cov = polya_reads.build_read_coverage_array( 
         chrm, strand, gene.start, gene.stop )
     
     gene_len = gene.stop - gene.start + 1
     if strand == '-':
-        polya_sites = [ gene_len - x for x in polya_sites ]
+        #polya_sites = [ gene_len - x for x in polya_sites ]
         jns = [ (gene_len-x2, gene_len-x1, cnt) for x1, x2, cnt in jns ]
         rnaseq_cov = rnaseq_cov[::-1]
         cage_cov = cage_cov[::-1]
+        polya_cov = polya_cov[::-1]
     
     filtered_junctions = []
     for (start, stop, cnt) in jns:
@@ -1077,7 +1177,12 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     
     cage_peaks = find_cage_peaks_in_gene( 
         (chrm, strand), gene, cage_cov, rnaseq_cov )
-    #polya_sites = filter_polya_sites( (chrm, strand), gene, polya_sites, rnaseq_cov )
+    polya_peaks = find_polya_peaks_in_gene( 
+        (chrm, strand), gene, polya_cov, rnaseq_cov )
+    polya_sites = numpy.array(sorted(x.stop-1 for x in polya_peaks))
+    
+    #polya_sites = filter_polya_sites( 
+    #    (chrm, strand), gene, polya_sites, rnaseq_cov )
     
     canonical_exons, internal_exons = find_canonical_and_internal_exons(
         (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_sites)
@@ -1103,7 +1208,8 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     se_genes = filter_exons( se_genes, rnaseq_cov )
 
     elements = Bins(chrm, strand, chain(
-            jn_bins, cage_peaks, tss_exons, internal_exons, tes_exons, se_genes) )
+            jn_bins, cage_peaks, polya_peaks, 
+            tss_exons, internal_exons, tes_exons, se_genes) )
     if strand == '-':
         elements = elements.reverse_strand( gene.stop - gene.start + 1 )
     elements = elements.shift( gene.start )
@@ -1116,14 +1222,16 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     return elements, gene_bins
         
 
-def find_exons_worker( (genes_queue, genes_queue_lock), ofp, (chrm, strand, contig_len),
-                        jns, rnaseq_reads, cage_reads, polya_sites ):
+def find_exons_worker( (genes_queue, genes_queue_lock), ofp, 
+                       (chrm, strand, contig_len),
+                       jns, rnaseq_reads, cage_reads, polya_reads ):
     jn_starts = [ i[0][0] for i in jns ]
     jn_stops = [ i[0][1] for i in jns ]
     jn_values = [ i[1] for i in jns ]
     
-    rnaseq_reads = [ x.reload() for x in rnaseq_reads ]
-    cage_reads = [ x.reload() for x in cage_reads ]
+    rnaseq_reads = rnaseq_reads.reload()
+    cage_reads = cage_reads.reload()
+    polya_reads = polya_reads.reload()
     
     while True:
         log_statement( "Waiting for genes queue lock" )
@@ -1153,18 +1261,11 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp, (chrm, strand, cont
                         jn_stops[gj_sa:gj_so], 
                         jn_values[gj_sa:gj_so] )
         
-        # find the polyas associated with this gene
-        gene_polya_sa_i = polya_sites.searchsorted( gene.start )
-        gene_polya_so_i = polya_sites.searchsorted( gene.stop, side='right' )
-        gene_polyas = polya_sites[gene_polya_sa_i:gene_polya_so_i]
-                
         elements, pseudo_exons = \
             find_exons_in_gene( ( chrm, strand, contig_len ), gene, 
-                                rnaseq_reads, cage_reads,
-                                gene_polyas, gene_jns )
-    
-        elements.extend( Bin( x-10, x, "POLYA", "POLYA", "POLYA" ) 
-                         for x in sorted(gene_polyas) )
+                                rnaseq_reads, cage_reads, polya_reads,
+                                gene_jns )
+        
         write_unified_bed( elements, ofp)
         
         if WRITE_DEBUG_DATA:
@@ -1177,10 +1278,9 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp, (chrm, strand, cont
     return
 
 def find_exons_in_contig( (chrm, strand, contig_len), ofp,
-                          rnaseq_reads, cage_reads, poya_reads, polya_sites,
+                          rnaseq_reads, cage_reads, polya_reads,
                           ref_gtf_fname, ref_elements_to_include):
     junctions = load_junctions( rnaseq_reads, (chrm, strand, contig_len) )
-    polya_sites = set(polya_sites[(chrm, strand)])
     
     if any( ref_elements_to_include ):
         assert ref_gtf_fname != None
@@ -1191,11 +1291,8 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
             if ref_elements_to_include.junctions:
                 for jn in elements['intron']:
                     junctions[jn] += 0
-            if ref_elements_to_include.TES:
-                polya_sites.update( elements['TES'] )
     
     junctions = sorted( junctions.iteritems() )
-    polya_sites = numpy.array(sorted( polya_sites ))
     
     if ref_elements_to_include.genes == True:
         gene_bndry_bins = load_gene_bndry_bins(genes, chrm, strand, contig_len)
@@ -1203,8 +1300,8 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
         log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
                        % ( chrm, strand ) )
         gene_bndry_bins = find_gene_boundaries( 
-            (chrm, strand, contig_len), rnaseq_reads, 
-            polya_sites, junctions)
+            (chrm, strand, contig_len), rnaseq_reads[0], 
+            cage_reads[0], polya_reads[0], junctions )
     
     log_statement( "Finding exons in contig '%s' on '%s' strand" 
                    % ( chrm, strand ) )
@@ -1218,7 +1315,7 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     genes_queue.extend( gene_bndry_bins )
     sorted_jns = sorted( junctions )
     args = [ (genes_queue, genes_queue_lock), ofp, (chrm, strand, contig_len),
-             sorted_jns, rnaseq_reads, cage_reads, polya_sites ]
+             sorted_jns, rnaseq_reads[0], cage_reads[0], polya_reads[0] ]
     
     if NTHREADS == 1:
         find_exons_worker(*args)
@@ -1324,6 +1421,8 @@ def parse_arguments():
 
     global NTHREADS
     NTHREADS = args.threads
+    global MAX_THREADS_PER_CONTIG
+    MAX_THREADS_PER_CONTIG = NTHREADS
     
     global WRITE_DEBUG_DATA
     WRITE_DEBUG_DATA = args.write_debug_data
@@ -1421,20 +1520,20 @@ def main():
         # Call the children processes
         all_args = []
         for contig, contig_len in contig_lens.iteritems():
-            if contig != '4': continue
+            #if contig != '4': continue
             for strand in '+-':
-                all_args.append( ( (contig, strand, contig_len), ofp,
-                                   [rnaseq_reads,], [promoter_reads,], 
-                                   [polya_reads,], polya_sites,
-                                   ref_gtf_fname, ref_elements_to_include) )
+                all_args.append( ( 
+                        (contig, strand, contig_len), ofp,
+                        [rnaseq_reads,], [promoter_reads,], [polya_reads,], 
+                        ref_gtf_fname, ref_elements_to_include) )
 
-        if NTHREADS == 1:
+        if True or NTHREADS == 1:
             for args in all_args:
                 find_exons_in_contig(*args)
         else:
             log_statement( 'Waiting on children processes.' )
             # max MAX_THREADS_PER_CONTIG threads per process
-            n_simulataneous_contigs = max(1, (NTHREADS/MAX_THREADS_PER_CONTIG))
+            n_simulataneous_contigs = 1 #max(1, (NTHREADS/MAX_THREADS_PER_CONTIG))
             ps = [None]*n_simulataneous_contigs
             while len(all_args) > 0:
                 for i, p in enumerate(ps):
