@@ -547,11 +547,11 @@ def load_junctions( rnaseq_reads, (chrm, strand, contig_len) ):
     return filtered_junctions
 
 def find_initial_segmentation_worker( 
-        candidate_boundaries, accepted_boundaries,
+        candidate_boundaries, candidate_boundaries_lock,
+        accepted_boundaries, accepted_boundaries_lock,
         chrm, strand, 
         rnaseq_reads, cage_reads, polya_reads ):
-    log_statement( "Finding Segments on Chromosome %s Strand %s" 
-                   % ( chrm, strand ))
+    log_statement( "Finding Segments (%s-%s)" % ( chrm, strand ))
     def no_signal( start, stop ):
         try: next( rnaseq_reads.iter_reads(chrm, strand, start, stop ) )
         except StopIteration: pass
@@ -570,14 +570,23 @@ def find_initial_segmentation_worker(
         return True
 
     locs = []
-    while not candidate_boundaries.empty():
-        try: bndry = candidate_boundaries.get(timeout=0.1)
-        except Queue.Empty: break
+    while True:
+        candidate_boundaries_lock.acquire()
+        try:
+            bndry = candidate_boundaries.pop()
+        except IndexError:
+            candidate_boundaries_lock.release()
+            break
+        candidate_boundaries_lock.release()
         if no_signal( bndry-20, bndry+20 ):
             locs.append( bndry )
-    
-    accepted_boundaries.put( locs )
+
+    log_statement( "Putting Segments in Queue (%s, %s)" % (chrm, strand) )
+    accepted_boundaries_lock.acquire()
+    accepted_boundaries.append( locs )
+    accepted_boundaries_lock.release()
     log_statement( "" )
+    return
 
 def find_gene_boundaries((chrm, strand, contig_len), 
                          rnaseq_reads, 
@@ -586,39 +595,45 @@ def find_gene_boundaries((chrm, strand, contig_len),
                          junctions=None):
     
     def find_initial_segmentation( chrm, strand, rnaseq_reads ):
-        candidate_boundaries = multiprocessing.Queue()
-        for x in xrange( 20, contig_len-20, 200 ):
-            candidate_boundaries.put( x )
-        accepted_boundaries = multiprocessing.Queue()
+        manager = multiprocessing.Manager()
+        candidate_boundaries = manager.list()
+        candidate_boundaries_lock = manager.Lock()
+        candidate_boundaries.extend( xrange( 20, contig_len-20, 200 ) )
+        accepted_boundaries = manager.list()
+        accepted_boundaries_lock = manager.Lock()
         
         ps = []
         for i in xrange(MAX_THREADS_PER_CONTIG):
-            args = (candidate_boundaries, accepted_boundaries,
+            args = (candidate_boundaries, candidate_boundaries_lock,
+                    accepted_boundaries, accepted_boundaries_lock,
                     chrm, strand, rnaseq_reads, cage_reads, polya_reads )
             p = multiprocessing.Process( 
                 target=find_initial_segmentation_worker, args=args)
             p.start()
             ps.append( p )
         
-        log_statement( "Waiting on segmentation children (%s-%s)" 
-                       % ( chrm, strand ) )
+        n_bndries = len(candidate_boundaries)
         while True:
+            log_statement(
+                "Waiting on segmentation children in %s-%s (%i/%i remain)" 
+                % (chrm, strand, len(candidate_boundaries), n_bndries),
+                do_log=False )
+            
             if all( not p.is_alive() for p in ps ):
                 break
-            time.sleep( 0.1 )
+            time.sleep( 0.5 )
 
-        log_statement( "Merging segments queue (%s-%s)" 
+        log_statement( "Merging segments queue in %s-%s" 
                        % ( chrm, strand ) )        
 
         locs = [0, contig_len]
-        while not accepted_boundaries.empty():
-            try: locs.extend(accepted_boundaries.get(timeout=0.1))
-            except Queue.Empty: break
-        
-        log_statement( "Finished segmentation (%s-%s)" 
+        accepted_boundaries_lock.acquire()
+        for bndries in accepted_boundaries:
+            locs.extend( bndries )
+        accepted_boundaries_lock.release()
+        log_statement( "Finished segmentation in %s-%s" 
                        % ( chrm, strand ) )        
-        accepted_boundaries.close()        
-        candidate_boundaries.close()
+        
         return sorted(locs)
     
     def merge_polya_segments( segments, strand, window_len = 10 ):
@@ -1422,7 +1437,7 @@ def parse_arguments():
     global NTHREADS
     NTHREADS = args.threads
     global MAX_THREADS_PER_CONTIG
-    MAX_THREADS_PER_CONTIG = NTHREADS
+    MAX_THREADS_PER_CONTIG = NTHREADS/2 if NTHREADS > 20 else NTHREADS
     
     global WRITE_DEBUG_DATA
     WRITE_DEBUG_DATA = args.write_debug_data
@@ -1527,13 +1542,14 @@ def main():
                         [rnaseq_reads,], [promoter_reads,], [polya_reads,], 
                         ref_gtf_fname, ref_elements_to_include) )
 
-        if True or NTHREADS == 1:
+        if NTHREADS == MAX_THREADS_PER_CONTIG:
             for args in all_args:
                 find_exons_in_contig(*args)
         else:
             log_statement( 'Waiting on children processes.' )
             # max MAX_THREADS_PER_CONTIG threads per process
-            n_simulataneous_contigs = 1 #max(1, (NTHREADS/MAX_THREADS_PER_CONTIG))
+            n_simulataneous_contigs = ( 
+                1 if MAX_THREADS_PER_CONTIG == NTHREADS else 2 )
             ps = [None]*n_simulataneous_contigs
             while len(all_args) > 0:
                 for i, p in enumerate(ps):
