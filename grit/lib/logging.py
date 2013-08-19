@@ -9,26 +9,28 @@ MAX_NCOL = 120
 N_LOG_ROWS = 10
 
 def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
-    curses.curs_set(0)    
-    stdscr.timeout(0)
-    header = stdscr.derwin(2, MAX_NCOL, 0, 0)
+    curses.curs_set(0)
+    base_pad = curses.newpad(1000, 500)
+    base_pad.timeout(0)
+    header = base_pad.subpad(2, MAX_NCOL, 1, 1)
 
     thread_data_windows = []
-    thread_data_windows.append( stdscr.derwin(1, MAX_NCOL, 3, 0) )
+    thread_data_windows.append( base_pad.subpad(1, MAX_NCOL, 3, 1) )
     thread_data_windows[-1].insstr( 0, 0, "Thread 0:".ljust(11) )
     for i in xrange(nthreads):
-        thread_data_windows.append( stdscr.derwin(1, MAX_NCOL+i, 3+i+1, 0))
+        thread_data_windows.append( base_pad.subpad(1, MAX_NCOL, 3+i+1, 1))
         thread_data_windows[i+1].insstr(0, 0, ("Thread %i:" % (i+1)).ljust(11))
 
-    stdscr.addstr(nthreads+2+2+1, 0, "Log:" )
+    base_pad.addstr(nthreads+2+2+1, 1, "Log:" )
 
-    log_border = stdscr.derwin(N_LOG_ROWS+2, MAX_NCOL, nthreads+2+2+2, 0)
+    nrow, ncol = stdscr.getmaxyx()
+    log_border = base_pad.subpad(
+        N_LOG_ROWS+2, min(ncol, MAX_NCOL), nthreads+2+2+2, 1)
     log_border.border()
-    log = log_border.derwin( N_LOG_ROWS, 78, 1, 1 )
+    log = log_border.subpad( N_LOG_ROWS, min(ncol, MAX_NCOL)-2, 1, 1)
 
     header.addstr(0, 0, "GRIT (version %s)" % (__version__, ) )
-    stdscr.refresh()
-
+    
     while True:
         start_time = time.time()
         while True:
@@ -55,7 +57,6 @@ def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
             if do_log:
                 log.insertln()
                 log.insstr( msg )
-                log.refresh()
             
             # truncate the message so that it doesnt extend past 80 charcters
             msg = msg[:MAX_NCOL-11]
@@ -64,12 +65,15 @@ def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
                     + msg.ljust(MAX_NCOL-11)
                 thread_data_windows[thread_index].erase()
                 thread_data_windows[thread_index].insstr(0, 0, line )
-                thread_data_windows[thread_index].refresh()
             
             counter += 1
             if counter >= 10: break
         
-        stdscr.refresh()
+        nrow, ncol = stdscr.getmaxyx()
+        try:
+            base_pad.refresh(0, 0, 0, 0, max(nrow-1,0), max(ncol-1,0))
+        except:
+            raise
     
     return
 
