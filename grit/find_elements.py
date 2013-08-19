@@ -1089,52 +1089,35 @@ def find_canonical_and_internal_exons( (chrm, strand), rnaseq_cov, jns ):
     
     return canonical_exons, internal_exons
 
-def find_tss_exons_and_se_genes( 
-        (chrm, strand), rnaseq_cov, jns, polya_sites, cage_peaks ):
+def find_se_genes( 
+        (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_sites  ):
     bins = build_labeled_segments( 
         (chrm, strand), rnaseq_cov, jns, transcript_bndries=polya_sites )
-    tss_exons = Bins( chrm, strand )
     se_genes = Bins( chrm, strand )
     if len(bins) == 0: 
-        return tss_exons, se_genes
-
+        return se_genes
+    
     for peak in cage_peaks:
         # find all bins that start with a CAGE peak, and 
         # end with a polya or junction. because it's possible
         # for CAGE peaks to span splice donors, we need to 
         # look at all boundaries inside of the peak
-        tss_indices_and_bins = []
         for i, bin in enumerate(bins):
+            # continue until we've reched an overlapping bin
             if bin.stop < peak.start: continue
-            if bin.right_label not in ( 'POLYA', 'D_JN'): continue
-            if bin.stop > peak.start:
-                tss_indices_and_bins.append( (i, bin) )
-            if bin.stop > peak.stop: break
-                
-        # for each tss start bin ( from the previous step )
-        # we look for contigous signal. 
-        for tss_index, tss_bin in tss_indices_and_bins:
-            tss_exon = Bin( 
-                peak.start, tss_bin.stop, 
-                "CAGE_PEAK", tss_bin.right_label, "TSS_EXON" )
-            if tss_exon.right_label == 'POLYA':
-                tss_exon.type = 'SE_GENE'
-                se_genes.append( tss_exon )
-            elif tss_exon.right_label == 'D_JN':
-                tss_exons.append( tss_exon )
-                
-            for r_ext in find_right_exon_extensions(
-                    tss_index, tss_bin, bins, rnaseq_cov):
-                tss_exon = Bin( 
-                    peak.start, r_ext.stop, 
-                    "CAGE_PEAK", r_ext.right_label, "TSS_EXON" )
-                if tss_exon.right_label == 'POLYA':
-                    tss_exon.type = 'SE_GENE'
-                    se_genes.append( tss_exon )
-                elif tss_exon.right_label == 'D_JN':
-                    tss_exons.append( tss_exon )
+            # if we've moved past the peak, stop searching
+            if bin.start > peak.stop: break
+            # if the right label isn't a poly_bin, it's not a single exon gene
+            if bin.right_label not in ( 'TRANS_BNDRY', ): continue
+            # we know that we have a CAGE peak that lies ( at least partially )
+            # within a bin that ends with a polya, so we've found a single exon 
+            # gene
+            se_gene = Bin( 
+                peak.start, bin.stop, 
+                "CAGE_PEAK", "POLYA", "SE_GENE" )
+            se_genes.append( se_gene )
     
-    return tss_exons, se_genes
+    return se_genes
 
 def find_gene_bndry_exons( (chrm, strand), rnaseq_cov, jns, peaks, peak_type ):
     if peak_type == 'CAGE':
@@ -1237,7 +1220,6 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         (chrm, strand), gene, cage_cov, rnaseq_cov )
     polya_peaks = find_polya_peaks_in_gene( 
         (chrm, strand), gene, polya_cov, rnaseq_cov )
-    polya_sites = numpy.array(sorted(x.stop-1 for x in polya_peaks))
     
     #polya_sites = filter_polya_sites( 
     #    (chrm, strand), gene, polya_sites, rnaseq_cov )
@@ -1248,9 +1230,10 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         (chrm, strand), rnaseq_cov, jns, cage_peaks, "CAGE")
     tes_exons = find_gene_bndry_exons(
         (chrm, strand), rnaseq_cov, jns, polya_peaks, "POLYA_SEQ")
-    se_genes = Bins( chrm, strand )
-    #find_se_genes( 
-    #    (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_peaks ))
+    
+    polya_sites = numpy.array(sorted(x.stop-1 for x in polya_peaks))
+    se_genes = find_se_genes( 
+        (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_sites )
     
     gene_bins = Bins(chrm, strand, build_labeled_segments( 
             (chrm, strand), rnaseq_cov, jns ) )
