@@ -34,7 +34,7 @@ USE_CACHE = False
 NTHREADS = 1
 MAX_THREADS_PER_CONTIG = 16
 TOTAL_MAPPED_READS = None
-MAX_INTRON_SIZE = 200
+MIN_INTRON_SIZE = 40
 
 class ThreadSafeFile( file ):
     def __init__( self, *args ):
@@ -185,7 +185,7 @@ def filter_exon( exon, wig ):
     start = exon.start
     end = exon.stop
     vals = wig[start:end+1]
-    n_div = max( 1, int(len(vals)/MAX_INTRON_SIZE) )
+    n_div = max( 1, int(len(vals)/MIN_INTRON_SIZE) )
     div_len = len(vals)/n_div
     for i in xrange(n_div):
         seg = vals[i*div_len:(i+1)*div_len]
@@ -581,12 +581,12 @@ def find_gene_boundaries((chrm, strand, contig_len),
         manager = multiprocessing.Manager()
         candidate_segments = manager.list()
         candidate_segments_lock = manager.Lock()
-        for middle in xrange( MAX_INTRON_SIZE/2, 
-                              contig_len-MAX_INTRON_SIZE/2, 
-                              MAX_INTRON_SIZE ):
+        for middle in xrange( MIN_INTRON_SIZE/2, 
+                              contig_len-MIN_INTRON_SIZE/2, 
+                              MIN_INTRON_SIZE ):
             
             candidate_segments.append( 
-                (middle-MAX_INTRON_SIZE/2, middle+MAX_INTRON_SIZE/2) )
+                (middle-MIN_INTRON_SIZE/2, middle+MIN_INTRON_SIZE/2) )
         accepted_segments = manager.list()
         accepted_segments_lock = manager.Lock()
         
@@ -1535,7 +1535,7 @@ def main():
         # Call the children processes
         all_args = []
         for contig, contig_len in contig_lens.iteritems():
-            if contig != '4': continue
+            #if contig != '4': continue
             for strand in '+-':
                 all_args.append( ( 
                         (contig, strand, contig_len), ofp,
