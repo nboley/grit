@@ -75,14 +75,17 @@ def iter_nonoverlapping_exons(exons):
     return
 
 def cluster_exons( tss_exons, internal_exons, tes_exons, se_transcripts, 
-                   jns, strand ):
+                   promoters, polyas, jns, strand ):
     assert isinstance( tss_exons, set )
     assert isinstance( internal_exons, set )
     assert isinstance( tes_exons, set )
     assert isinstance( se_transcripts, set )
+    assert isinstance( promoters, set )
+    assert isinstance( polyas, set )
     
     all_exons = sorted( chain(tss_exons, internal_exons, 
-                              tes_exons, se_transcripts) )
+                              tes_exons, se_transcripts,
+                              promoters, polyas) )
     
     genes_graph = igraph.Graph()
     genes_graph.add_vertices( len(all_exons) )
@@ -95,12 +98,15 @@ def cluster_exons( tss_exons, internal_exons, tes_exons, se_transcripts,
         yield ( tss_exons.intersection( exons ),
                 tes_exons.intersection( exons ),
                 internal_exons.intersection( exons ),
-                se_transcripts.intersection( exons ) )
+                se_transcripts.intersection( exons ),
+                promoters.intersection( promoters ),
+                polyas.intersection( polyas )
+              )
     
     return
 
 def build_transcripts( tss_exons, internal_exons, tes_exons, se_transcripts, 
-                       jns, strand, max_num_transcripts=100 ):
+                       jns, strand, max_num_transcripts=10000 ):
     import networkx as nx
     # build a directed graph, with edges leading from exon to exon via junctions
     all_exons = sorted(chain(tss_exons, internal_exons, tes_exons))

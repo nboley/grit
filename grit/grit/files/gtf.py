@@ -186,12 +186,11 @@ class Transcript( object ):
                 current_frame = ( current_frame + stop - start + 1 )%3
             return
         
-        ret_lines.extend( build_lines_for_feature( 
-                self.exons, 'exon', False ) )
-
         if self.promoter != None:
             ret_lines.extend( build_lines_for_feature( 
                     [self.promoter,], 'promoter', False ) )
+        ret_lines.extend( build_lines_for_feature( 
+                self.exons, 'exon', False ) )
         if self.antagonist != None:
             ret_lines.extend( build_lines_for_feature( 
                     [self.antagonist,], 'antagonist', False ) )
