@@ -125,6 +125,21 @@ def write_gene_to_fpkm_tracking( ofp, gene, lbs=None, ubs=None, fpkms=None,
     ofp.write( "\n".join(lines)+"\n" )
     return
 
+def find_matching_promoter_for_transcript(transcript, promoters):
+    # find the promoter that starts at the same basepair
+    # If it extends beyond the first exon, we truncate the
+    # promoter at the end of the first exon
+    tss_exon = transcript.exons[0] if transcript.strand == '+' \
+        else transcript.exons[-1] 
+    matching_promoter = None
+    for promoter in promoters:
+        if transcript.strand == '-' and promoter[1] == tss_exon[1]:
+            matching_promoter = (max(promoter[0], tss_exon[0]), promoter[1])
+        elif transcript.strand == '+' and promoter[0] == tss_exon[0]:
+            matching_promoter = (promoter[0], min(promoter[1], tss_exon[1]))
+    
+    return matching_promoter
+
 def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                                      input_queue, input_queue_lock,
                                      op_lock, output, 
@@ -140,6 +155,8 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             tes_exons = output[ (gene_id, 'tes_exons') ]
             se_transcripts = output[ (gene_id, 'se_transcripts') ]
             introns = output[ (gene_id, 'introns') ]
+            promoters = output[ (gene_id, 'promoters') ]
+            polyas = output[ (gene_id, 'polyas') ]
             fasta_fn = output[ (gene_id, 'fasta_fn') ]
             op_lock.release()
 
@@ -147,9 +164,14 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             for i, exons in enumerate( build_transcripts( 
                     tss_exons, internal_exons, tes_exons,
                     se_transcripts, introns, strand, MAX_NUM_TRANSCRIPTS ) ):
-                transcripts.append( Transcript(
-                        "%s_%i" % ( gene_id, i ), contig, strand, 
-                        exons, cds_region=None, gene_id=gene_id) )
+                transcript = Transcript(
+                    "%s_%i" % ( gene_id, i ), contig, strand, 
+                    exons, cds_region=None, gene_id=gene_id)
+                transcript.promoter = find_matching_promoter_for_transcript(
+                    transcript, promoters)
+                #transcript.polya = find_matching_polya_for_transcript(
+                #    transcript, polyas)                
+                transcripts.append( transcript )
 
             gene_min = min( min(e) for e in chain(
                     tss_exons, tes_exons, se_transcripts))
@@ -556,11 +578,14 @@ def initialize_processing_data( elements, genes, fl_dists,
             input_queue_lock.release()            
     else:
         for (contig, strand), grpd_exons in elements.iteritems():
-            for tss_es, tes_es, internal_es, se_ts in cluster_exons( 
+            for ( tss_es, tes_es, internal_es, 
+                  se_ts, promoters, polyas ) in cluster_exons( 
                     set(map(tuple, grpd_exons['tss_exon'].tolist())), 
                     set(map(tuple, grpd_exons['internal_exon'].tolist())), 
                     set(map(tuple, grpd_exons['tes_exon'].tolist())), 
                     set(map(tuple, grpd_exons['single_exon_gene'].tolist())),
+                    set(map(tuple, grpd_exons['promoter'].tolist())), 
+                    set(map(tuple, grpd_exons['polya'].tolist())), 
                     set(map(tuple, grpd_exons['intron'].tolist())), 
                     strand):
                 # skip genes without all of the element types
@@ -579,8 +604,11 @@ def initialize_processing_data( elements, genes, fl_dists,
                 output_dict[ (gene_id, 'internal_exons') ] = internal_es
                 output_dict[ (gene_id, 'tes_exons') ] = tes_es
                 output_dict[ (gene_id, 'se_transcripts') ] = se_ts
+                output_dict[ (gene_id, 'promoters') ] = promoters
+                output_dict[ (gene_id, 'polyas') ] = polyas
+                # XXX - BUG - FIXME
                 output_dict[ (gene_id, 'introns') ] = grpd_exons['intron']
-
+                
                 output_dict[ (gene_id, 'gene') ] = None
                 
                 add_universal_data(output_dict, gene_id, contig, strand)
@@ -606,7 +634,7 @@ def parse_arguments():
     parser.add_argument( '--rnaseq-reads', 
                          type=argparse.FileType('rb'), nargs='+',
         help='BAM files containing mapped RNAseq reads ( must be indexed ).')
-    parser.add_argument( '--rnaseq-read-type', required=True,
+    parser.add_argument( '--rnaseq-read-type',
         choices=["forward", "backward"],
         help='Whether or not the first RNAseq read in a pair needs to be reversed to be on the correct strand.')
     
@@ -683,6 +711,12 @@ def parse_arguments():
     ONLY_BUILD_CANDIDATE_TRANSCRIPTS = args.only_build_candidate_transcripts
     if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS and len( args.rnaseq_reads ) == 0:
         raise ValueError, "Must provide RNAseq data to estimate transcript frequencies"
+
+    if args.rnaseq_reads != None and args.rnaseq_read_type == None:
+        raise ValueError, "--rnaseq-read-type must be set if --rnaseq-reads is set"
+
+    if args.rnaseq_reads == None and args.rnaseq_read_type != None:
+        raise ValueError, "It doesn't make sense to set --rnaseq-read-type if --rnaseq-reads is not set"
     
     global num_threads
     num_threads = args.threads
