@@ -57,7 +57,8 @@ def partition_coding_and_utr_segments( exons, cds_start, cds_stop ):
 
 class Transcript( object ):
     def __init__(self, trans_id, chrm, strand, exons, cds_region,
-                 gene_id=None, score=None, rpkm=None, rpk=None, promoter=None ):
+                 gene_id=None, score=None, rpkm=None, rpk=None, 
+                 promoter=None, antagonist=None ):
         self.gene_id = gene_id
         self.id = trans_id
         self.chrm = chrm
@@ -91,9 +92,11 @@ class Transcript( object ):
         self.ds_exons = None
         
         self.promoter = promoter
+        self.antagonist = antagonist
+
         if cds_region != None:
             self.add_cds_region( cds_region )
-            
+    
     def add_cds_region( self, cds_region ):
         self.cds_region = cds_region
         self.us_exons, self.cds_exons, self.ds_exons = \
@@ -185,6 +188,13 @@ class Transcript( object ):
         
         ret_lines.extend( build_lines_for_feature( 
                 self.exons, 'exon', False ) )
+
+        if self.promoter != None:
+            ret_lines.extend( build_lines_for_feature( 
+                    [self.promoter,], 'promoter', False ) )
+        if self.antagonist != None:
+            ret_lines.extend( build_lines_for_feature( 
+                    [self.antagonist,], 'antagonist', False ) )
         
         if self.cds_region != None:
             us_exons, ds_exons = self.fp_utr_exons, self.tp_utr_exons
@@ -206,7 +216,44 @@ class Transcript( object ):
     
     def calc_length(self):
         return sum( x[1]-x[0]+1 for x in self.exons )
+    
+    def find_promoter(self, inferred_promoter_length=50):
+        # if there is an annotated promoter, then return it
+        if self.promoter != None:
+            return self.promoter
+        
+        # otherwise, return *up to* the first inferred_promoter_length bases
+        # at the beggining of the transcript
+        if self.strand == '+':
+            return ( self.exons[0][0],
+                     min(self.exons[0][0]+inferred_promoter_length, 
+                         self.exons[0][1]) )
+        else:
+            return ( max( self.exons[-1][1]-inferred_promoter_length, 
+                          self.exons[-1][0] ),
+                     self.exons[-1][1] )
+        
+        assert False
 
+    def find_antagonist(self, inferred_antagonist_length=20):
+        # if there is an annotated antagonist, then return it
+        if self.antagonist != None:
+            return self.antagonist
+        
+        # otherwise, return *up to* the first inferred_promoter_length bases
+        # at the beggining of the transcript
+        if self.strand == '+':
+            return ( max( self.exons[-1][1]-inferred_antagonist_length, 
+                          self.exons[-1][0] ),
+                     self.exons[-1][1] )
+        else:
+            return ( self.exons[0][0],
+                     min(self.exons[0][0]+inferred_antagonist_length, 
+                         self.exons[0][1]) )
+        
+        assert False
+
+    
 def flatten( regions ):
     regions.sort()
     new_regions = []
