@@ -14,7 +14,7 @@ import Queue
 import multiprocessing
 
 from files.gtf import load_gtf, Transcript, Gene
-from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads
+from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads
 from transcript import cluster_exons, build_transcripts
 from proteomics.ORF_finder import find_cds_for_gene
 
@@ -182,16 +182,20 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             fl_dists = output[(gene_id, 'fl_dists')]
             promoter_reads_init_data = output[(gene_id, 'promoter_reads')]
             rnaseq_reads_init_data = output[(gene_id, 'rnaseq_reads')]
+            polya_reads_init_data = output[(gene_id, 'polya_reads')]
             op_lock.release()
             rnaseq_reads = [ RNAseqReads(fname).init(**kwargs) 
                              for fname, kwargs in rnaseq_reads_init_data ][0]
             promoter_reads = [ readsclass(fname).init(**kwargs) 
                              for readsclass, fname, kwargs 
                                in promoter_reads_init_data ]
+            polya_reads = [ readsclass(fname).init(**kwargs) 
+                             for readsclass, fname, kwargs 
+                               in polya_reads_init_data ]
             try:
                 expected_array, observed_array, unobservable_transcripts \
-                    = build_design_matrices( gene, rnaseq_reads, 
-                                             fl_dists, promoter_reads )
+                    = build_design_matrices( gene, rnaseq_reads, fl_dists, 
+                                             chain(promoter_reads, polya_reads))
             except ValueError, inst:
                 error_msg = "%i: Skipping %s: %s" % (os.getpid(), gene_id, inst)
                 log_statement( error_msg )
@@ -511,7 +515,7 @@ def build_fl_dists( elements, rnaseq_reads,
 
 def initialize_processing_data( elements, genes, fl_dists,
                                 rnaseq_reads, promoter_reads,
-                                fasta,
+                                polya_reads, fasta,
                                 input_queue, input_queue_lock, 
                                 output_dict, output_dict_lock ):
     def add_universal_data(output_dict, gene_id, contig, strand):
@@ -527,6 +531,9 @@ def initialize_processing_data( elements, genes, fl_dists,
         output_dict[ (gene_id, 'promoter_reads') ] = (
             [(type(x), x.filename, x._init_kwargs) for x in promoter_reads]
             if promoter_reads != None else None )
+        output_dict[ (gene_id, 'polya_reads') ] = (
+            [(type(x), x.filename, x._init_kwargs) for x in polya_reads]
+            if polya_reads != None else None )
         output_dict[ (gene_id, 'fasta_fn') ] = ( None 
             if fasta == None else fasta.name )
 
@@ -608,6 +615,9 @@ def parse_arguments():
     parser.add_argument( '--rampage-reads', type=file, default=[], nargs='*',
         help='BAM files containing mapped rampage reads.')
 
+    parser.add_argument( '--polya-reads', type=file, default=[], nargs='*', 
+        help='BAM files containing mapped poly(A)-seq reads.')
+    
     parser.add_argument( '--fasta', type=file,
         help='Fasta file containing the genome sequence - if provided the ORF finder is automatically run.')
     
@@ -689,11 +699,11 @@ def parse_arguments():
 
     expression_ofp.write( "\t".join(columns) + "\n" )
     
-    return args.elements, args.transcripts, \
-        args.rnaseq_reads, args.cage_reads, args.rampage_reads, \
-        gtf_ofp, expression_ofp, args.fasta, reverse_rnaseq_strand, \
-        args.estimate_confidence_bounds, args.write_design_matrices, \
-        not args.batch_mode
+    return ( args.elements, args.transcripts, args.rnaseq_reads, 
+             args.cage_reads, args.rampage_reads, args.polya_reads,
+             gtf_ofp, expression_ofp, args.fasta, reverse_rnaseq_strand, 
+             args.estimate_confidence_bounds, args.write_design_matrices, 
+             not args.batch_mode )
 
 def spawn_and_manage_children( input_queue, input_queue_lock,
                                output_dict_lock, output_dict,
@@ -765,7 +775,8 @@ def spawn_and_manage_children( input_queue, input_queue_lock,
 
 def main():
     # Get file objects from command line
-    (exons_bed_fp, transcripts_gtf_fp, rnaseq_bams, cage_bams, rampage_bams,
+    (exons_bed_fp, transcripts_gtf_fp, 
+     rnaseq_bams, cage_bams, rampage_bams, polya_bams,
      gtf_ofp, expression_ofp, fasta, reverse_rnaseq_strand,
      estimate_confidence_bounds, write_design_matrices, 
      use_ncurses) = parse_arguments()
@@ -817,6 +828,12 @@ def main():
             for fp in rampage_bams: fp.close()
             promoter_reads = [] + cage_reads + rampage_reads
             assert len(promoter_reads) <= 1    
+            
+            polya_reads = [
+                PolyAReads(fp.name).init(
+                    reverse_read_strand=True, pairs_are_opp_strand=True)
+                for fp in polya_bams  ]
+            assert len(polya_reads) <= 1
             log_statement( "Finished loading data files." )
             
             # estimate the fragment length distribution
@@ -825,13 +842,14 @@ def main():
                 elements, rnaseq_reads, log_fp.name + ".fldist.pdf" )
             log_statement( "Finished estimating the fragment length distribution" )
         else:
-            fl_dists, rnaseq_reads, promoter_reads = None, None, None
+            fl_dists, rnaseq_reads, promoter_reads, polya_reads \
+                = None, None, None, None
                 
         log_statement( "Initializing processing data" )    
         initialize_processing_data(             
             elements, genes, fl_dists,
             rnaseq_reads, promoter_reads,
-            fasta,
+            polya_reads, fasta,
             input_queue, input_queue_lock, 
             output_dict, output_dict_lock )    
         log_statement( "Finished initializing processing data" )

@@ -17,7 +17,9 @@ import frag_len
 from itertools import product, izip, chain
 from collections import defaultdict
 
-from files.reads import iter_coverage_regions_for_read, get_read_group
+from files.reads import ( iter_coverage_regions_for_read, get_read_group,
+                          CAGEReads, RAMPAGEReads, PolyAReads )
+
 
 ################################################################################
 #
@@ -523,60 +525,63 @@ def build_expected_and_observed_rnaseq_counts( gene, reads, fl_dists ):
     
     return expected_cnts, observed_cnts
 
-def build_expected_and_observed_promoter_counts( gene, cage_reads ):
-    cage_array = numpy.zeros(gene.stop-gene.start+1)
-    for reads in cage_reads:
-        cage_array += reads.build_read_coverage_array( 
-            gene.chrm, gene.strand, gene.start, gene.stop )
+def build_expected_and_observed_transcript_bndry_counts( 
+        gene, reads, bndry_type=None ):
+    if bndry_type == None:
+        # try to infer the boundary type from the reads type
+        if isinstance(reads, CAGEReads): bndry_type = "CAGE"
+        elif isinstance(reads, RAMPAGEReads): bndry_type = "CAGE"
+        elif isinstance(reads, PolyAReads): bndry_type = "POLYA"
+        else: assert False, "Can't infer boundary read type (%s)" % type(reads)
+    assert bndry_type in ["CAGE", "POLYA"]
     
-    # find the promoters
-    promoters = list()
+    cvg_array = numpy.zeros(gene.stop-gene.start+1)
+    cvg_array += reads.build_read_coverage_array( 
+        gene.chrm, gene.strand, gene.start, gene.stop )
+    
+    # find all the bndry peak regions
+    peaks = list()
     for transcript in gene.transcripts:
-        if transcript.strand == '+':
-            promoter = [ transcript.exons[0][0], 
-                         min( transcript.exons[0][0] + PROMOTER_SIZE, 
-                              transcript.exons[0][1]) ]
-        else:
-            assert transcript.strand == '-'
-            promoter = [ max( transcript.exons[-1][1] - PROMOTER_SIZE, 
-                              transcript.exons[-1][0] ),
-                         transcript.exons[-1][1] ]
-        promoters.append( tuple( promoter ) )
+        if bndry_type == 'CAGE':
+            peaks.append( transcript.find_promoter() )
+        elif bndry_type == 'POLYA':
+            peaks.append( transcript.find_antagonist() )
+        else: assert False
     
-    promoter_boundaries = set()
-    for start, stop in promoters:
-        promoter_boundaries.add( start )
-        promoter_boundaries.add( stop + 1 )
-    promoter_boundaries = numpy.array( sorted( promoter_boundaries ) )
-    pseudo_promoters = zip(promoter_boundaries[:-1], promoter_boundaries[1:])
+    peak_boundaries = set()
+    for start, stop in peaks:
+        peak_boundaries.add( start )
+        peak_boundaries.add( stop + 1 )
+    peak_boundaries = numpy.array( sorted( peak_boundaries ) )
+    pseudo_peaks = zip(peak_boundaries[:-1], peak_boundaries[1:])
     
     # build the design matrix. XXX FIXME
     expected_cnts = defaultdict( lambda: [0.]*len(gene.transcripts) )
-    for transcript_i, promoter in enumerate(promoters):
+    for transcript_i, peak in enumerate(peaks):
         nonoverlapping_indices = \
             find_nonoverlapping_contig_indices( 
-                [promoter,], promoter_boundaries )
+                [peak,], peak_boundaries )
         # calculate the count probabilities, adding a fudge to deal with 0
         # frequency bins
-        tag_cnt = cage_array[
-            promoter[0]-gene.start:promoter[1]-gene.start].sum() \
+        tag_cnt = cvg_array[
+            peak[0]-gene.start:peak[1]-gene.start].sum() \
             + 1e-6*len(nonoverlapping_indices)
         for i in nonoverlapping_indices:
-            ps_promoter = pseudo_promoters[i]
-            ps_tag_cnt = cage_array[
-                ps_promoter[0]-gene.start:ps_promoter[1]-gene.start].sum()
-            expected_cnts[ ps_promoter ][transcript_i] \
+            ps_peak = pseudo_peaks[i]
+            ps_tag_cnt = cvg_array[
+                ps_peak[0]-gene.start:ps_peak[1]-gene.start].sum()
+            expected_cnts[ ps_peak ][transcript_i] \
                 = (ps_tag_cnt+1e-6)/tag_cnt
         
-    # count the reads in each non-overlaping promoter
+    # count the reads in each non-overlaping peak
     observed_cnts = {}
     for (start, stop) in expected_cnts.keys():
         observed_cnts[ (start, stop) ] \
-            = int(round(cage_array[start-gene.start:stop-gene.start].sum()))
+            = int(round(cvg_array[start-gene.start:stop-gene.start].sum()))
     
     return expected_cnts, observed_cnts
 
-def build_design_matrices( gene, rnaseq_reads, fl_dists, promoter_reads=[], 
+def build_design_matrices( gene, rnaseq_reads, fl_dists, all_promoter_reads=[], 
                            write_design_matrices_to_file=False  ):
     if len( gene.transcripts ) == 0:
         return numpy.zeros(0), numpy.zeros(0), []
@@ -630,37 +635,40 @@ def build_design_matrices( gene, rnaseq_reads, fl_dists, promoter_reads=[],
 
         expected_rnaseq_array = new_expected_array
         observed_rnaseq_array = new_observed_array
-        
-    if len(promoter_reads) == 0:
-        return expected_rnaseq_array, \
-            observed_rnaseq_array, \
-            unobservable_rnaseq_trans
+
+    # rename the arrays, in case there is no 
+    expected_array = expected_rnaseq_array
+    observed_array = observed_rnaseq_array
+    unobservable_trans = unobservable_rnaseq_trans
     
-    # bin the CAGE data
-    expected_promoter_cnts, observed_promoter_cnts = \
-        build_expected_and_observed_promoter_counts( gene, promoter_reads )
-    expected_prom_array, observed_prom_array, unobservable_prom_trans = \
-        build_expected_and_observed_arrays( 
-        expected_promoter_cnts, observed_promoter_cnts, False )
-    del expected_promoter_cnts, observed_promoter_cnts
+    # deal with the, optional, promoter reads
+    for promoter_reads in all_promoter_reads:
+        # bin the CAGE data
+        expected_promoter_cnts, observed_promoter_cnts = \
+            build_expected_and_observed_transcript_bndry_counts( 
+            gene, promoter_reads )
+        expected_prom_array, observed_prom_array, unobservable_prom_trans = \
+            build_expected_and_observed_arrays( 
+            expected_promoter_cnts, observed_promoter_cnts, False )
+        del expected_promoter_cnts, observed_promoter_cnts
+
+        # combine the arrays
+        observed_array = numpy.delete( observed_array, 
+                      numpy.array(list(unobservable_prom_trans)) )
+        observed_prom_array = numpy.delete( observed_prom_array, 
+                      numpy.array(list(unobservable_trans)) )
+        observed_array = numpy.hstack((observed_prom_array, observed_array))
+
+        expected_array = numpy.delete( expected_array, 
+                      numpy.array(list(unobservable_prom_trans)), axis=1 )
+        expected_prom_array = numpy.delete( expected_prom_array, 
+                      numpy.array(list(unobservable_trans)), axis=1 )   
+
+        expected_array = numpy.vstack((expected_prom_array, expected_array))
+        unobservable_trans = unobservable_trans.union(
+            unobservable_prom_trans)
     
-    # combine the arrays
-    observed_rnaseq_array = numpy.delete( observed_rnaseq_array, 
-                  numpy.array(list(unobservable_prom_trans)) )
-    observed_prom_array = numpy.delete( observed_prom_array, 
-                  numpy.array(list(unobservable_rnaseq_trans)) )
-    observed_array = numpy.hstack((observed_prom_array, observed_rnaseq_array))
-    
-    expected_rnaseq_array = numpy.delete( expected_rnaseq_array, 
-                  numpy.array(list(unobservable_prom_trans)), axis=1 )
-    expected_prom_array = numpy.delete( expected_prom_array, 
-                  numpy.array(list(unobservable_rnaseq_trans)), axis=1 )   
-    
-    expected_array = numpy.vstack((expected_prom_array, expected_rnaseq_array))
-    unobservable_transcripts \
-        = unobservable_rnaseq_trans.union(unobservable_prom_trans)
-    
-    return expected_array, observed_array, unobservable_transcripts
+    return expected_array, observed_array, unobservable_trans
 
 def find_nonoverlapping_exons_covered_by_segment(exon_bndrys, start, stop):
     """Return the pseudo bins that a given segment has at least one basepair in.
