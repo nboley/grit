@@ -178,9 +178,7 @@ def get_qrange_short( np ):
     L = len(np)
     return np.min(), np.max()
 
-def filter_exon( exon, wig, min_avg_cvg=0.01, 
-                 min_short_cvg=1, short_exon_length=400,
-                 min_long_cvg=10 ):
+def filter_exon( exon, wig ):
     '''Find all the exons that are sufficiently homogenous and expressed.
     
     '''
@@ -195,35 +193,6 @@ def filter_exon( exon, wig, min_avg_cvg=0.01,
             return True
 
     return False
-    mean_cvg = vals.mean()
-    
-    # if virtually off, forget it
-    if mean_cvg < min_avg_cvg: 
-        return True
-    
-    # if its short, just make sure it's covered to at least an average of 1X 
-    if end-start < short_exon_length: 
-        if mean_cvg > min_short_cvg:
-            return False
-        else:
-            return True
-    
-    # get the interquartile range
-    low, high = get_qrange_long( vals, 50, 300 ) 
-    # if the lower quartile is 0, ditch it
-    if low == 0 or high < min_long_cvg: 
-        return True
-    
-    IQ_ratio = high / max(low, min_avg_cvg)
-    # if the IQ range is < 100, chalk it up to inhomogeneity and accept it
-    if IQ_ratio < 20:
-        return False
-    
-    # if the IQ range is "boarder line", but the low is high, keep it, what the hell
-    if IQ_ratio >= 20 and IQ_ratio < 100 and low > 50:
-        return False
-    
-    return True
 
 def filter_exons( exons, rnaseq_cov ):
     for exon in exons:
