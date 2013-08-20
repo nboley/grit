@@ -34,7 +34,7 @@ USE_CACHE = False
 NTHREADS = 1
 MAX_THREADS_PER_CONTIG = 16
 TOTAL_MAPPED_READS = None
-MAX_INTRON_SIZE = 40
+MAX_INTRON_SIZE = 200
 
 class ThreadSafeFile( file ):
     def __init__( self, *args ):
