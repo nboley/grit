@@ -140,6 +140,21 @@ def find_matching_promoter_for_transcript(transcript, promoters):
     
     return matching_promoter
 
+def find_matching_polya_region_for_transcript(transcript, polyas):
+    # find the polya that ends at the same basepair
+    # If it extends beyond the tes exon, we truncate the
+    # polya region
+    tes_exon = transcript.exons[-1] if transcript.strand == '+' \
+        else transcript.exons[0] 
+    matching_polya = None
+    for polya in polyas:
+        if transcript.strand == '+' and polya[1] == tes_exon[1]:
+            matching_polya = (max(polya[0], tes_exon[0]), polya[1])
+        elif transcript.strand == '-' and polya[0] == tes_exon[0]:
+            matching_polya = (polya[0], min(polya[1], tes_exon[1]))
+    
+    return matching_polya
+
 def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                                      input_queue, input_queue_lock,
                                      op_lock, output, 
@@ -169,10 +184,10 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                     exons, cds_region=None, gene_id=gene_id)
                 transcript.promoter = find_matching_promoter_for_transcript(
                     transcript, promoters)
-                #transcript.polya = find_matching_polya_for_transcript(
-                #    transcript, polyas)                
+                transcript.polya_region = \
+                   find_matching_polya_region_for_transcript(transcript, polyas)
                 transcripts.append( transcript )
-
+            
             gene_min = min( min(e) for e in chain(
                     tss_exons, tes_exons, se_transcripts))
             gene_max = max( max(e) for e in chain(

@@ -58,7 +58,7 @@ def partition_coding_and_utr_segments( exons, cds_start, cds_stop ):
 class Transcript( object ):
     def __init__(self, trans_id, chrm, strand, exons, cds_region,
                  gene_id=None, score=None, rpkm=None, rpk=None, 
-                 promoter=None, antagonist=None ):
+                 promoter=None, polya_region=None ):
         self.gene_id = gene_id
         self.id = trans_id
         self.chrm = chrm
@@ -92,7 +92,7 @@ class Transcript( object ):
         self.ds_exons = None
         
         self.promoter = promoter
-        self.antagonist = antagonist
+        self.polya_region = polya_region
 
         if cds_region != None:
             self.add_cds_region( cds_region )
@@ -191,9 +191,9 @@ class Transcript( object ):
                     [self.promoter,], 'promoter', False ) )
         ret_lines.extend( build_lines_for_feature( 
                 self.exons, 'exon', False ) )
-        if self.antagonist != None:
+        if self.polya_region != None:
             ret_lines.extend( build_lines_for_feature( 
-                    [self.antagonist,], 'antagonist', False ) )
+                    [self.polya_region,], 'polya', False ) )
         
         if self.cds_region != None:
             us_exons, ds_exons = self.fp_utr_exons, self.tp_utr_exons
@@ -234,20 +234,20 @@ class Transcript( object ):
         
         assert False
 
-    def find_antagonist(self, inferred_antagonist_length=20):
-        # if there is an annotated antagonist, then return it
-        if self.antagonist != None:
-            return self.antagonist
+    def find_polya_region(self, inferred_polya_region_length=20):
+        # if there is an annotated polya region, then return it
+        if self.polya_region != None:
+            return self.polya_region
         
         # otherwise, return *up to* the first inferred_promoter_length bases
         # at the beggining of the transcript
         if self.strand == '+':
-            return ( max( self.exons[-1][1]-inferred_antagonist_length, 
+            return ( max( self.exons[-1][1]-inferred_polya_region_length, 
                           self.exons[-1][0] ),
                      self.exons[-1][1] )
         else:
             return ( self.exons[0][0],
-                     min(self.exons[0][0]+inferred_antagonist_length, 
+                     min(self.exons[0][0]+inferred_polya_region_length, 
                          self.exons[0][1]) )
         
         assert False

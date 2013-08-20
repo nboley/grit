@@ -545,7 +545,7 @@ def build_expected_and_observed_transcript_bndry_counts(
         if bndry_type == 'CAGE':
             peaks.append( transcript.find_promoter() )
         elif bndry_type == 'POLYA':
-            peaks.append( transcript.find_antagonist() )
+            peaks.append( transcript.find_polya_region() )
         else: assert False
     
     peak_boundaries = set()
