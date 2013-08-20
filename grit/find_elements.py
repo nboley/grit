@@ -187,7 +187,7 @@ def filter_exon( exon, wig, min_avg_cvg=0.01,
     start = exon.start
     end = exon.stop
     vals = wig[start:end+1]
-    n_div = max( 1, int(len(vals)/100) )
+    n_div = max( 1, int(len(vals)/MAX_INTRON_SIZE) )
     div_len = len(vals)/n_div
     for i in xrange(n_div):
         seg = vals[i*div_len:(i+1)*div_len]
