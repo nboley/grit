@@ -174,7 +174,6 @@ def run_all_bam2wigs( args ):
                     os.path.basename(args.polya_reads.name),
                     'p', args.threads, False, args.verbose)
     
-    assert False
     return
 
 def main():
