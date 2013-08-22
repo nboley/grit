@@ -10,28 +10,12 @@ from itertools import izip
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), ".." ) )
 from grit.files.reads import iter_coverage_intervals_for_read, clean_chr_name, \
     get_strand, CAGEReads, RNAseqReads
+from grit.lib.multiprocessing_utils import ProcessSafeOPStream
 
 import multiprocessing
 import threading
 
 BUFFER_SIZE = 50000000
-
-class ProcessSafeOPStream( object ):
-    def __init__( self, writeable_obj ):
-        self.writeable_obj = writeable_obj
-        self.lock = multiprocessing.Lock()
-        self.name = self.writeable_obj.name
-        return
-    
-    def write( self, data ):
-        self.lock.acquire()
-        self.writeable_obj.write( data )
-        self.writeable_obj.flush()
-        self.lock.release()
-        return
-    
-    def close( self ):
-        self.writeable_obj.close()
 
 def update_buffer_array_from_rnaseq_read( buffer_array, 
                                           buffer_offset, 

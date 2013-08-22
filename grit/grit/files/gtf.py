@@ -58,7 +58,7 @@ def partition_coding_and_utr_segments( exons, cds_start, cds_stop ):
 class Transcript( object ):
     def __init__(self, trans_id, chrm, strand, exons, cds_region,
                  gene_id=None, score=None, rpkm=None, rpk=None, 
-                 promoter=None, polya_region=None ):
+                 promoter=None, polya_region=None, coding_sequence=None ):
         self.gene_id = gene_id
         self.id = trans_id
         self.chrm = chrm
@@ -80,6 +80,7 @@ class Transcript( object ):
                                               exon_bnds[2:-1:2]) ])
         
         self.is_protein_coding = ( cds_region != None )
+        self.coding_sequence = coding_sequence
         
         self.cds_region = cds_region
         self.start_codon = None
