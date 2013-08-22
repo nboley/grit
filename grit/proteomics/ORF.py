@@ -1,5 +1,7 @@
 #!/usr/bin/python
 
+#__package__ = "grit.proteomics"
+
 # import python mods
 import os, sys
 
@@ -51,21 +53,8 @@ DO_PROFILE = False
 SERIALIZE = False
 
 # add parent(slide) directory to sys.path and import SLIDE mods
-sys.path.append( os.path.join( os.path.dirname(__file__), ".." ) )
-from files.gtf import load_gtf, Transcript
-
-class threadsafe_opstream( object ):
-    def __init__( self, writeable_obj ):
-        self.writeable_obj = writeable_obj
-        self.lock = multiprocessing.Lock()
-        return
-    
-    def write( self, data ):
-        self.lock.acquire()
-        self.writeable_obj.write( data )
-        self.writeable_obj.flush()
-        self.lock.release()
-        return
+from ..files.gtf import Transcript
+from ..files.fasta import iter_x_char_lines
 
 ################################################################################
 #
@@ -198,7 +187,7 @@ def find_orfs( sequence ):
     
     return orfs
 
-def find_cds_for_gene( gene, fasta, only_longest_orf=ONLY_USE_LONGEST_ORF ):
+def find_cds_for_gene( gene, fasta, only_longest_orf ):
     """Find all of the unique open reading frames in a gene
     """
     annotated_transcripts = []
@@ -222,6 +211,10 @@ def find_cds_for_gene( gene, fasta, only_longest_orf=ONLY_USE_LONGEST_ORF ):
             filtered_orfs = orfs
         
         for orf_id, (start, stop) in enumerate( filtered_orfs ):
+            ORF = trans_seq[start:stop+1]
+            AA_seq= "".join( GENCODE[ORF[3*i:3*(i+1)]] 
+                             for i in xrange(len(ORF)/3) )
+            
             if INCLUDE_STOP_CODON:
                 stop += 3
             if gene.strand == '-':
@@ -236,12 +229,13 @@ def find_cds_for_gene( gene, fasta, only_longest_orf=ONLY_USE_LONGEST_ORF ):
             trans_id = trans.id + "_CDS%i" % (orf_id+1) \
                 if len( filtered_orfs ) > 1 else trans.id            
             new_trans = Transcript( 
-                trans_id, trans.chrm, trans.strand, trans.exons, (start, stop) )
+                trans_id, trans.chrm, trans.strand, trans.exons, (start, stop), 
+                coding_sequence=AA_seq )
             annotated_transcripts.append( new_trans )
     
     return annotated_transcripts
 
-def find_gene_orfs_worker( input_queue, ofp, fasta_fn ):
+def find_gene_orfs_worker( input_queue, gtf_ofp, fa_ofp, fasta_fn ):
     # open fasta file in each thread separately
     fasta = Fastafile( fasta_fn )
     
@@ -253,16 +247,23 @@ def find_gene_orfs_worker( input_queue, ofp, fasta_fn ):
             break
         
         if VERBOSE: print >> sys.stderr, '\tProcessing ' + gene.name
-        ann_trans = find_cds_for_gene( gene, fasta )
+        ann_trans = find_cds_for_gene( gene, fasta, ONLY_USE_LONGEST_ORF )
         op_str = "\n".join( [ tr.build_gtf_lines( gene.id, {} ) 
                               for tr in ann_trans ] )
-        ofp.write( op_str + "\n" )
+        gtf_ofp.write( op_str + "\n" )
+        
+        if fa_ofp != None:
+            for trans in ann_trans:
+                fa_ofp.write( ">%s\n" % trans.id )
+                for line in iter_x_char_lines(trans.coding_sequence):
+                    fa_ofp.write(line+"\n")
+                
         if VERBOSE: print >> sys.stderr, '\tFinished ' + gene.name
     
     return
 
 
-def find_all_orfs( genes, fasta_fn, ofp, num_threads=1 ):
+def find_all_orfs( genes, fasta_fn, gtf_ofp, fa_ofp, num_threads=1 ):
     # create queues to store input and output data
     manager = multiprocessing.Manager()
     input_queue = manager.Queue()
@@ -273,90 +274,18 @@ def find_all_orfs( genes, fasta_fn, ofp, num_threads=1 ):
     for gene in genes:
         input_queue.put( gene )
 
-    if SERIALIZE:
-        find_gene_orfs_worker( input_queue, ofp, fasta_fn )
-    
-    args = ( input_queue, ofp, fasta_fn )
+    # spawn threads to find the orfs, and write them to the output streams 
+    args = ( input_queue, gtf_ofp, fa_ofp, fasta_fn )
+    if num_threads == 1:
+        find_gene_orfs_worker(*args)
+    else:
+        processes = []
+        for thread_id in xrange( num_threads ):
+            p = multiprocessing.Process(target=find_gene_orfs_worker, args=args)
+            p.start()
+            processes.append( p )
 
-    # spawn threads to estimate genes expression
-    processes = []
-    for thread_id in xrange( num_threads ):
-        p = multiprocessing.Process( target=find_gene_orfs_worker, args=args )
-        p.start()
-        processes.append( p )
-    
-    for p in processes:
-        p.join()
+        for p in processes:
+            p.join()
     
     return
-
-def parse_arguments():
-    global MIN_AAS_PER_ORF
-    global OUTPUT_PROTEINS
-    global VERBOSE
-    global ONLY_USE_LONGEST_ORF
-    global INCLUDE_STOP_CODON
-    import argparse
-    
-    parser = argparse.ArgumentParser(
-        description = 'Find open reading frames(ORF) in the input GTF file '
-        'and output gtf file with annotated reading frames.' )
-    parser.add_argument(
-        'gtf', type=file,
-        help='GTF file to search for ORFs.' )
-    parser.add_argument(
-        'fasta',
-        help='Fasta file with reference sequence.' )
-    parser.add_argument(
-        '--min-aas', '-m', type=int,
-        help='Number of amino acids to require for an open read frame. ' +
-        '(default: {0:d})'.format( MIN_AAS_PER_ORF ))
-
-    parser.add_argument(
-        '--only-longest-orf', default=False, action='store_true',
-        help='If this is set, only report the longest ORF per transcript. ' )
-    parser.add_argument(
-        '--dont-include-stop-codon', default=False, action='store_true',
-        help='If this is set, don\'t include the stop codon in the CDS region.')
-    
-    parser.add_argument(
-        '--threads', '-t', type=int, default=1,
-        help='Number of threads with which to find ORFs. ' +
-        '(default: %(default)d)')
-    
-    parser.add_argument(
-        '--output-filename', '-o',
-        help='Output file. (default: stdout)')
-    parser.add_argument( 
-        '--verbose', '-v', default=False, action='store_true',
-        help='Whether or not to print status information.')
-    args = parser.parse_args()
-    
-    if args.min_aas != None: MIN_AAS_PER_ORF = args.min_aas
-    
-    # create default if no prefix provided or if same as gtf filename
-    if args.output_filename == None:
-        ofp = threadsafe_opstream( sys.stdout )
-    else:
-        ofp = threadsafe_opstream( open( args.output_filename, 'w' ) )
-
-    # set flag args
-    VERBOSE = args.verbose
-    ONLY_USE_LONGEST_ORF = args.only_longest_orf
-    INCLUDE_STOP_CODON = not args.dont_include_stop_codon
-    
-    return args.gtf, args.fasta, args.threads, ofp
-
-def main():
-    gtf_fp, fasta_fn, threads, ofp = parse_arguments()
-    genes = load_gtf( gtf_fp.name )
-    find_all_orfs( genes, fasta_fn, ofp, threads )
-    
-    return
-
-if __name__ == '__main__':
-    if DO_PROFILE:
-        import cProfile
-        cProfile.run( 'main()' )
-    else:
-        main()
