@@ -46,8 +46,9 @@ def update_buffer_array_from_rnaseq_read_generator( reads, read_filter ):
                                       strand, reverse_read_strand, read):
         return update_buffer_array_from_rnaseq_read( 
             buffer_array, buffer_offset, 
-            read, strand, reverse_read_strand, read_filter,
-            reads.pairs_are_opp_strand )
+            read, strand, reverse_read_strand, 
+            reads.pairs_are_opp_strand,
+            read_filter )
     
     return update_buffer_array_from_read
 
@@ -262,13 +263,14 @@ def parse_arguments():
     VERBOSE = args.verbose
     
     assert args.read_filter in ( '1', '2', None )
+    read_filter = int(args.read_filter) if args.read_filter != None else None
     
     assay = {'c': 'cage', 'r': 'rnaseq', 'p': 'polya'}[args.assay.lower()[0]]
     if assay not in ('cage', 'rnaseq', 'polya'):
         raise ValueError, "Unrecongized assay (%s)" % args.assay
     
     return assay, args.mapped_reads_fname, args.out_fname_prefix, args.bigwig, \
-        args.reverse_read_strand, int(args.read_filter), args.threads
+        args.reverse_read_strand, read_filter, args.threads
 
 def build_bigwig_from_bedgraph(bedgraph_fp, chrm_sizes_file, op_fname):
     with tempfile.NamedTemporaryFile(delete=True) as sorted_ofp:

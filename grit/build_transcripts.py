@@ -16,7 +16,7 @@ import multiprocessing
 from files.gtf import load_gtf, Transcript, Gene
 from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads
 from transcript import cluster_exons, build_transcripts
-from proteomics.ORF_finder import find_cds_for_gene
+from proteomics.ORF import find_cds_for_gene
 
 from f_matrix import build_design_matrices
 import frequency_estimation

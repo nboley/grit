@@ -1474,6 +1474,9 @@ def parse_arguments():
         or ( args.cage_reads != None and args.rampage_reads != None )):
         raise ValueError, "Either --cage-reads or --rampage-reads (but not both) must be set"    
 
+    if args.polya_candidate_sites != None:
+        raise NotImplemented, "Polya candidate sites is not implemented"
+    
     if ((args.polya_reads == None and args.polya_candidate_sites == None) 
         or (args.polya_reads != None and args.polya_candidate_sites != None)):
         raise ValueError, "Either --polya-reads or --candidate-polya-sites (but not both) must be set"    
@@ -1486,6 +1489,12 @@ def parse_arguments():
         args.polya_candidate_sites, ofp, \
         args.reference, ref_elements_to_include, \
         not args.batch_mode
+
+def find_elements(   
+        rnaseq_bam, reverse_rnaseq_strand, cage_bam, rampage_bam, polya_bam,
+        polya_candidate_sites_fps, ofp, ref_gtf_fname, ref_elements_to_include,
+        use_ncurses ):
+    pass
 
 def main():
     rnaseq_bam, reverse_rnaseq_strand, cage_bam, rampage_bam, polya_bam,\
