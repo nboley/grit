@@ -21,11 +21,17 @@ def update_buffer_array_from_rnaseq_read( buffer_array,
                                           buffer_offset, 
                                           read, strand,
                                           reverse_read_strand,
-                                          pairs_are_opp_strand ):
+                                          pairs_are_opp_strand,
+                                          read_filter=None):
                                           
     """populate buffer with histogram of contiguous read regions
 
     """
+    if read_filter == None: pass
+    elif read_filter == 1 and not read.is_read1: return
+    elif read_filter == 2 and not read.is_read2: return
+    else: assert False, "Unrecognized read_filter setting '%s'" % read_filter
+    
     rd_strand = get_strand( read, 
                             reverse_read_strand=reverse_read_strand, 
                             pairs_are_opp_strand=pairs_are_opp_strand )
@@ -35,12 +41,12 @@ def update_buffer_array_from_rnaseq_read( buffer_array,
     
     return
 
-def update_buffer_array_from_rnaseq_read_generator( reads ):
+def update_buffer_array_from_rnaseq_read_generator( reads, read_filter ):
     def update_buffer_array_from_read(buffer_array, buffer_offset,
                                       strand, reverse_read_strand, read):
         return update_buffer_array_from_rnaseq_read( 
             buffer_array, buffer_offset, 
-            read, strand, reverse_read_strand,
+            read, strand, reverse_read_strand, read_filter,
             reads.pairs_are_opp_strand )
     
     return update_buffer_array_from_read
@@ -247,17 +253,22 @@ def parse_arguments():
     
     parser.add_argument( '--reverse-read-strand', '-r', default=False, action='store_true',
                          help='Whether or not to reverse the strand of the read. default: False')
+    parser.add_argument( '--read-filter', default=None, choices=['1','2'],
+                         help='Filter paired end reads to only accept this read pair (ie uses the is_read1 pysam attribute)')
+
         
     args = parser.parse_args()
     global VERBOSE
     VERBOSE = args.verbose
+    
+    assert args.read_filter in ( '1', '2', None )
     
     assay = {'c': 'cage', 'r': 'rnaseq', 'p': 'polya'}[args.assay.lower()[0]]
     if assay not in ('cage', 'rnaseq', 'polya'):
         raise ValueError, "Unrecongized assay (%s)" % args.assay
     
     return assay, args.mapped_reads_fname, args.out_fname_prefix, args.bigwig, \
-        args.reverse_read_strand, args.threads
+        args.reverse_read_strand, int(args.read_filter), args.threads
 
 def build_bigwig_from_bedgraph(bedgraph_fp, chrm_sizes_file, op_fname):
     with tempfile.NamedTemporaryFile(delete=True) as sorted_ofp:
@@ -276,7 +287,7 @@ def build_bigwig_from_bedgraph(bedgraph_fp, chrm_sizes_file, op_fname):
 
 def main():
     ( assay, reads_fname, op_prefix, build_bigwig, 
-      reverse_read_strand, num_threads ) = parse_arguments()
+      reverse_read_strand, read_filter, num_threads ) = parse_arguments()
     
     # initialize the assay specific options
     if assay == 'cage':
@@ -294,7 +305,7 @@ def main():
         # the read strand reversal is done later, so set this to False
         reads.init(reverse_read_strand=False)
         update_buffer_array_from_read = \
-            update_buffer_array_from_rnaseq_read_generator(reads)
+            update_buffer_array_from_rnaseq_read_generator(reads, read_filter)
         stranded = reads.reads_are_stranded
     else:
         raise ValueError, "Unrecognized assay: '%s'" % assay
