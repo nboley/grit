@@ -26,11 +26,11 @@ def update_buffer_array_from_rnaseq_read( buffer_array,
     """populate buffer with histogram of contiguous read regions
 
     """
+    rd_strand = get_strand( read, 
+                            reverse_read_strand=reverse_read_strand, 
+                            pairs_are_opp_strand=pairs_are_opp_strand )
+    if rd_strand != strand: return
     for start, stop in iter_coverage_intervals_for_read(read):
-        rd_strand = get_strand( read, 
-                                reverse_read_strand=reverse_read_strand, 
-                                pairs_are_opp_strand=pairs_are_opp_strand )
-        if rd_strand != strand: continue
         buffer_array[(start-buffer_offset):(stop-buffer_offset) + 1] += 1
     
     return
