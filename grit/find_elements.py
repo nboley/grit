@@ -1237,7 +1237,8 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
 
 def find_exons_worker( (genes_queue, genes_queue_lock), ofp, 
                        (chrm, strand, contig_len),
-                       jns, rnaseq_reads, cage_reads, polya_reads ):
+                       jns, rnaseq_reads, cage_reads, polya_reads,
+                       tss_exons, tes_exons ):
     jn_starts = [ i[0][0] for i in jns ]
     jn_stops = [ i[0][1] for i in jns ]
     jn_values = [ i[1] for i in jns ]
@@ -1278,7 +1279,9 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp,
             find_exons_in_gene( ( chrm, strand, contig_len ), gene, 
                                 rnaseq_reads, cage_reads, polya_reads,
                                 gene_jns )
-        
+        for tss_exon in tss_exons:
+            elements.append( Bin(tss_exon[0], tss_exon[1], "CAGE_PEAK", "D_JN",
+                                 "TSS_EXON") )
         write_unified_bed( elements, ofp)
         
         if WRITE_DEBUG_DATA:
@@ -1293,23 +1296,36 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp,
 def find_exons_in_contig( (chrm, strand, contig_len), ofp,
                           rnaseq_reads, cage_reads, polya_reads,
                           ref_gtf_fname, ref_elements_to_include):
-    junctions = load_junctions( rnaseq_reads, (chrm, strand, contig_len) )
-    
+    # we load the gene boundary bins first so that we can skip the 
+    # junction search in the case where there are no genes in this contig
     if any( ref_elements_to_include ):
         assert ref_gtf_fname != None
         if VERBOSE: log_statement( 'Loading gtf' )    
         genes = load_gtf(ref_gtf_fname, contig=chrm, strand=strand)
+    
+    gene_bndry_bins = None
+    if ref_elements_to_include.genes == True:
+        gene_bndry_bins = load_gene_bndry_bins(genes, chrm, strand, contig_len)
+    if len( gene_bndry_bins ) == 0:
+        return
+    
+    junctions = load_junctions( rnaseq_reads, (chrm, strand, contig_len) )
+    tss_exons = set()
+    tes_exons = set()
+    if any(ref_elements_to_include):
         for gene in genes:
             elements = gene.extract_elements()
             if ref_elements_to_include.junctions:
                 for jn in elements['intron']:
                     junctions[jn] += 0
+            if ref_elements_to_include.TSS:
+                tss_exons.update( elements['tss_exon'])
+            if ref_elements_to_include.TES:
+                tes_exons.update( elements['tes_exon'])
     
     junctions = sorted( junctions.iteritems() )
     
-    if ref_elements_to_include.genes == True:
-        gene_bndry_bins = load_gene_bndry_bins(genes, chrm, strand, contig_len)
-    else:
+    if gene_bndry_bins == None:
         log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
                        % ( chrm, strand ) )
         gene_bndry_bins = find_gene_boundaries( 
@@ -1328,7 +1344,8 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     genes_queue.extend( gene_bndry_bins )
     sorted_jns = sorted( junctions )
     args = [ (genes_queue, genes_queue_lock), ofp, (chrm, strand, contig_len),
-             sorted_jns, rnaseq_reads[0], cage_reads[0], polya_reads[0] ]
+              sorted_jns, rnaseq_reads[0], cage_reads[0], polya_reads[0],
+              tss_exons, tes_exons]
 
     #global NTHREADS
     #NTHREADS = 1
@@ -1447,10 +1464,10 @@ def parse_arguments():
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
     
-    if args.use_reference_tss:
-        raise NotImplemented, "--use-reference-tss is not yet implemented"
+    #if args.use_reference_tss:
+    #    raise NotImplementedError, "--use-reference-tss is not yet implemented"
     if args.use_reference_tes:
-        raise NotImplemented, "--use-reference-tes is not yet implemented"
+        raise NotImplementedError, "--use-reference-tes is not yet implemented"
     
     if None == args.reference and args.use_reference_genes:
         raise ValueError, "--reference must be set if --use-reference-genes is set"
