@@ -519,7 +519,6 @@ def load_gtf(fname_or_fp, use_name_instead_of_id=False,
             gene_lines[data.gene_id][1].append( data )
         else:
             gene_lines[data.gene_id][0][data.trans_id].append(data)
-    if VERBOSE: print >> sys.stderr, "Finished parsing gene lines."
     
     genes = []
     for gene_id, ( transcripts_data, gene_lines ) in gene_lines.iteritems():
@@ -533,8 +532,6 @@ def load_gtf(fname_or_fp, use_name_instead_of_id=False,
         
         if gene == None: continue
         genes.append( gene )
-
-    if VERBOSE: print >> sys.stderr, "Finished building gene objects."
     
     if isinstance( fname_or_fp, str ):
         fp.close()
