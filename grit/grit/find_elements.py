@@ -201,35 +201,6 @@ def filter_exons( exons, rnaseq_cov ):
     
     return
 
-def find_polya_sites( polya_sites_fnames ):
-    locs = defaultdict( list )
-    for fname in polya_sites_fnames:
-        strand = guess_strand_from_fname( fname )
-        with open( fname ) as fp:
-            for line in fp:
-                if line.startswith( "track" ): continue
-                data = line.split()
-                chrm, start, stop, value = \
-                    data[0], int(data[1]), int(data[2]), float(data[3])
-                assert start == stop
-                assert value == 1
-                locs[(chrm, strand)].append( start )
-    
-    # convert to a dict of sorted numpy arrays
-    numpy_locs = defaultdict( build_empty_array )
-
-    for (chrm, strand), polya_sites in locs.iteritems():
-        # make sure they're unique
-        assert len( polya_sites ) == len( set( polya_sites ) )
-
-        polya_sites.sort()
-        if chrm.startswith( 'chr' ):
-            chrm = chrm[3:]
-        
-        numpy_locs[(chrm, strand)] = numpy.array( polya_sites )
-    
-    return numpy_locs
-
 class Bin( object ):
     def __init__( self, start, stop, left_label, right_label, 
                   bin_type=None, score=1000 ):
@@ -1143,7 +1114,7 @@ def find_gene_bndry_exons( (chrm, strand), rnaseq_cov, jns, peaks, peak_type ):
 
 def find_exons_in_gene( ( chrm, strand, contig_len ), gene, 
                         rnaseq_reads, cage_reads, polya_reads,
-                        jns ):
+                        jns, cage_peaks=[], polya_peaks=[] ):
     ###########################################################
     # Shift all of the input data to be in the gene region, and 
     # reverse it when necessary
@@ -1157,20 +1128,12 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
 
     rnaseq_cov = rnaseq_reads.build_read_coverage_array( 
         chrm, strand, gene.start, gene.stop )
-    
-    cage_cov = cage_reads.build_read_coverage_array( 
-        chrm, strand, gene.start, gene.stop )
-
-    polya_cov = polya_reads.build_read_coverage_array( 
-        chrm, strand, gene.start, gene.stop )
-    
+        
     gene_len = gene.stop - gene.start + 1
     if strand == '-':
         #polya_sites = [ gene_len - x for x in polya_sites ]
         jns = [ (gene_len-x2, gene_len-x1, cnt) for x1, x2, cnt in jns ]
         rnaseq_cov = rnaseq_cov[::-1]
-        cage_cov = cage_cov[::-1]
-        polya_cov = polya_cov[::-1]
     
     filtered_junctions = []
     for (start, stop, cnt) in jns:
@@ -1184,14 +1147,30 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     jns = filtered_junctions
     
     ### END Prepare input data #########################################
+
+    # initialize the cage peaks with the reference provided set
+    cage_peaks = Bins( chrm, strand, (
+        Bin( pk, pk+1, "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK")
+        for pk in cage_peaks ))
+    if cage_reads != None:
+        cage_cov = cage_reads.build_read_coverage_array( 
+            chrm, strand, gene.start, gene.stop )
+        if strand == '-': cage_cov = cage_cov[::-1]
+        cage_peaks.extend( find_cage_peaks_in_gene( 
+            (chrm, strand), gene, cage_cov, rnaseq_cov ) )
+        for x in cage_peaks: print x
     
-    cage_peaks = find_cage_peaks_in_gene( 
-        (chrm, strand), gene, cage_cov, rnaseq_cov )
-    polya_peaks = find_polya_peaks_in_gene( 
-        (chrm, strand), gene, polya_cov, rnaseq_cov )
-    
-    #polya_sites = filter_polya_sites( 
-    #    (chrm, strand), gene, polya_sites, rnaseq_cov )
+    # initialize the polya peaks with the reference provided set
+    polya_peaks = Bins( chrm, strand, (
+        Bin( pk, pk+1, "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA")
+        for pk in polya_peaks ))
+    if polya_reads != None:
+        polya_cov = polya_reads.build_read_coverage_array( 
+            chrm, strand, gene.start, gene.stop )
+        if strand == '-': polya_cov = polya_cov[::-1]
+        polya_peaks.extend( find_polya_peaks_in_gene( 
+            (chrm, strand), gene, polya_cov, rnaseq_cov ) )
+        for x in polya_peaks: print x
     
     canonical_exons, internal_exons = find_canonical_and_internal_exons(
         (chrm, strand), rnaseq_cov, jns)
@@ -1238,14 +1217,14 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
 def find_exons_worker( (genes_queue, genes_queue_lock), ofp, 
                        (chrm, strand, contig_len),
                        jns, rnaseq_reads, cage_reads, polya_reads,
-                       tss_exons, tes_exons ):
+                       ref_elements ):
     jn_starts = [ i[0][0] for i in jns ]
     jn_stops = [ i[0][1] for i in jns ]
     jn_values = [ i[1] for i in jns ]
     
     rnaseq_reads = rnaseq_reads.reload()
-    cage_reads = cage_reads.reload()
-    polya_reads = polya_reads.reload()
+    cage_reads = cage_reads.reload() if cage_reads != None else None
+    polya_reads = polya_reads.reload() if polya_reads != None else None
     
     while True:
         log_statement( "Waiting for genes queue lock" )
@@ -1275,13 +1254,18 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp,
                         jn_stops[gj_sa:gj_so], 
                         jn_values[gj_sa:gj_so] )
         
-        elements, pseudo_exons = \
-            find_exons_in_gene( ( chrm, strand, contig_len ), gene, 
-                                rnaseq_reads, cage_reads, polya_reads,
-                                gene_jns )
-        for tss_exon in tss_exons:
+        elements, pseudo_exons = find_exons_in_gene(
+            ( chrm, strand, contig_len ), gene, 
+            rnaseq_reads, cage_reads, polya_reads, gene_jns,
+            ref_elements['promoters'], ref_elements['polya_sites'])
+        
+        # merge in the reference elements
+        for tss_exon in ref_elements['tss_exons']:
             elements.append( Bin(tss_exon[0], tss_exon[1], "CAGE_PEAK", "D_JN",
                                  "TSS_EXON") )
+        for tes_exon in ref_elements['tes_exons']:
+            elements.append( Bin(tss_exon[0], tss_exon[1], "R_JN", "POLYA",
+                                 "TES_EXON") )
         write_unified_bed( elements, ofp)
         
         if WRITE_DEBUG_DATA:
@@ -1292,6 +1276,35 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp,
     
     log_statement( "" )
     return
+
+def extract_reference_elements(genes, ref_elements_to_include, strand):
+    ref_elements = defaultdict(set)
+    if not any(ref_elements_to_include):
+        return ref_elements
+    
+    for gene in genes:
+        elements = gene.extract_elements()
+        if ref_elements_to_include.junctions:
+            ref_elements['introns'].update(elements['intron'])
+        if ref_elements_to_include.promoters:
+            if strand == '+': ref_elements['promoters'].update(
+                exon[0] for exon in elements['tss_exon'] )
+            else: ref_elements['promoters'].update(
+                exon[1] for exon in elements['tss_exon'] )
+        if ref_elements_to_include.polya_sites:
+            if strand == '+': ref_elements['polya_sites'].update(
+                exon[1] for exon in elements['tes_exon'] )
+            else: ref_elements['polya_sites'].update(
+                exon[0] for exon in elements['tes_exon'] )
+        if ref_elements_to_include.TSS:
+            ref_elements['tss_exons'].update(elements['tss_exon'])
+        if ref_elements_to_include.TES:
+            ref_elements['tes_exons'].update(elements['tes_exon'])
+    
+    for key, val in ref_elements.iteritems():
+        ref_elements[key] = sorted( val )
+
+    return ref_elements
 
 def find_exons_in_contig( (chrm, strand, contig_len), ofp,
                           rnaseq_reads, cage_reads, polya_reads,
@@ -1306,31 +1319,27 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     gene_bndry_bins = None
     if ref_elements_to_include.genes == True:
         gene_bndry_bins = load_gene_bndry_bins(genes, chrm, strand, contig_len)
-    if len( gene_bndry_bins ) == 0:
-        return
+        if len( gene_bndry_bins ) == 0:
+            return
     
-    junctions = load_junctions( rnaseq_reads, (chrm, strand, contig_len) )
-    tss_exons = set()
-    tes_exons = set()
-    if any(ref_elements_to_include):
-        for gene in genes:
-            elements = gene.extract_elements()
-            if ref_elements_to_include.junctions:
-                for jn in elements['intron']:
-                    junctions[jn] += 0
-            if ref_elements_to_include.TSS:
-                tss_exons.update( elements['tss_exon'])
-            if ref_elements_to_include.TES:
-                tes_exons.update( elements['tes_exon'])
+    # load junctions from the RNAseq data
+    junctions = load_junctions( [rnaseq_reads,], (chrm, strand, contig_len) )
     
+    # load the reference elements
+    ref_elements = extract_reference_elements( 
+        genes, ref_elements_to_include, strand )
+    
+    # update the junctions with the reference junctions, and sort them
+    for jn in ref_elements['junctions']:
+        junctions[jn] += 0
     junctions = sorted( junctions.iteritems() )
     
     if gene_bndry_bins == None:
         log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
                        % ( chrm, strand ) )
         gene_bndry_bins = find_gene_boundaries( 
-            (chrm, strand, contig_len), rnaseq_reads[0], 
-            cage_reads[0], polya_reads[0], junctions )
+            (chrm, strand, contig_len), rnaseq_reads, 
+            cage_reads, polya_reads, junctions )
     
     log_statement( "Finding exons in contig '%s' on '%s' strand" 
                    % ( chrm, strand ) )
@@ -1344,9 +1353,8 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     genes_queue.extend( gene_bndry_bins )
     sorted_jns = sorted( junctions )
     args = [ (genes_queue, genes_queue_lock), ofp, (chrm, strand, contig_len),
-              sorted_jns, rnaseq_reads[0], cage_reads[0], polya_reads[0],
-              tss_exons, tes_exons]
-
+              sorted_jns, rnaseq_reads, cage_reads, polya_reads, ref_elements ]
+    
     #global NTHREADS
     #NTHREADS = 1
     if NTHREADS == 1:
@@ -1415,9 +1423,7 @@ def parse_arguments():
 
     parser.add_argument( '--polya-reads', type=argparse.FileType('rb'),
         help='BAM file containing mapped polya reads.')
-    parser.add_argument( '--polya-candidate-sites', type=file, nargs='*',
-        help='files with allowed polya sites.')
-
+    
     parser.add_argument( '--reference', help='Reference GTF')
     parser.add_argument( '--use-reference-genes', 
                          help='Use genes boundaries from the reference annotation.', 
@@ -1431,10 +1437,16 @@ def parse_arguments():
     parser.add_argument( '--use-reference-tes', 
                          help='Use TES\'s taken from the reference annotation.',
                          default=False, action='store_true')
+    parser.add_argument( '--use-reference-promoters', 
+                         help='Use promoters\'s inferred from the start of reference transcripts.',
+                         default=False, action='store_true')
+    parser.add_argument( '--use-reference-polyas', 
+                         help='Use polya sites inferred from the end of reference transcripts.',
+                         default=False, action='store_true')
     
     parser.add_argument( '--ofname', '-o', 
-                         default="discovered_elements.bed",\
-        help='Output file name. (default: discovered_elements.bed)')
+                         default="discovered.elements.bed",\
+        help='Output file name. (default: discovered.elements.bed)')
     
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',
         help='Whether or not to print status information.')
@@ -1477,48 +1489,63 @@ def parse_arguments():
         raise ValueError, "--reference must be set if --use-reference-tss is set"
     if None == args.reference and args.use_reference_tes:
         raise ValueError, "--reference must be set if --use-reference-tes is set"
+    if None == args.reference and args.use_reference_promoters:
+        raise ValueError, "--reference must be set if --use-reference-promoters is set"
+    if None == args.reference and args.use_reference_polyas:
+        raise ValueError, "--reference must be set if --use-reference-polyas is set"
     RefElementsToInclude = namedtuple(
-        'RefElementsToInclude', ['genes', 'junctions', 'TSS', 'TES'])
+        'RefElementsToInclude', 
+        ['genes', 'junctions', 'TSS', 'TES', 'promoters', 'polya_sites'])
     ref_elements_to_include = RefElementsToInclude(args.use_reference_genes, 
                                                    args.use_reference_junctions,
                                                    args.use_reference_tss, 
-                                                   args.use_reference_tes)
+                                                   args.use_reference_tes,
+                                                   args.use_reference_promoters,
+                                                   args.use_reference_polyas)
     
     ofp = ThreadSafeFile( args.ofname, "w" )
     ofp.write('track name="%s" visibility=2 itemRgb="On"\n' % ofp.name)
-
-    if (( args.cage_reads == None and args.rampage_reads == None ) 
-        or ( args.cage_reads != None and args.rampage_reads != None )):
-        raise ValueError, "Either --cage-reads or --rampage-reads (but not both) must be set"    
-
-    if args.polya_candidate_sites != None:
-        raise NotImplemented, "Polya candidate sites is not implemented"
     
-    if ((args.polya_reads == None and args.polya_candidate_sites == None) 
-        or (args.polya_reads != None and args.polya_candidate_sites != None)):
-        raise ValueError, "Either --polya-reads or --candidate-polya-sites (but not both) must be set"    
+    if ( args.cage_reads == None 
+         and args.rampage_reads == None 
+         and not args.use_reference_tss
+         and not args.use_reference_promoters):
+        raise ValueError, "--cage-reads or --rampage-reads or --use-reference-tss or --use-reference-promoters must be set"
+    if args.cage_reads != None and args.rampage_reads != None:
+        raise ValueError, "--cage-reads and --rampage-reads may not both be set"
+    
+    if ( args.polya_reads == None 
+         and not args.use_reference_tes
+         and not args.use_reference_polyas ):
+        raise ValueError, "Either --polya-reads or --use-reference-tes or --use-reference-polyas must be set"
     
     reverse_rnaseq_strand = ( 
         True if args.rnaseq_read_type == 'backward' else False )
     
     return args.rnaseq_reads, reverse_rnaseq_strand, \
         args.cage_reads, args.rampage_reads, args.polya_reads, \
-        args.polya_candidate_sites, ofp, \
-        args.reference, ref_elements_to_include, \
+        ofp, args.reference, ref_elements_to_include, \
         not args.batch_mode
 
-def find_elements(   
-        rnaseq_bam, reverse_rnaseq_strand, cage_bam, rampage_bam, polya_bam,
-        polya_candidate_sites_fps, ofp, ref_gtf_fname, ref_elements_to_include,
-        use_ncurses ):
-    pass
+
+def load_promoter_reads(cage_bam, rampage_bam):
+    if cage_bam != None:
+        if VERBOSE: log_statement( 'Loading CAGE read bams' )
+        return CAGEReads(cage_bam.name).init(
+            reverse_read_strand=True)
+    
+    if rampage_bam != None:
+        if VERBOSE: log_statement( 'Loading RAMPAGE read bams' )            
+        return RAMPAGEReads(rampage_bam.name).init(
+            reverse_read_strand=True)
+    
+    return None
 
 def main():
-    rnaseq_bam, reverse_rnaseq_strand, cage_bam, rampage_bam, polya_bam,\
-        polya_candidate_sites_fps, ofp, ref_gtf_fname, ref_elements_to_include,\
-        use_ncurses \
-        = parse_arguments()
-
+    ( rnaseq_bam, reverse_rnaseq_strand, cage_bam, rampage_bam, polya_bam,
+      ofp, ref_gtf_fname, ref_elements_to_include, 
+      use_ncurses ) = parse_arguments()
+    
     global log_statement
     log_ofstream = open( ".".join(ofp.name.split(".")[:-1]) + ".log", "w" )
     log_statement = Logger(
@@ -1534,38 +1561,25 @@ def main():
         global TOTAL_MAPPED_READS
         TOTAL_MAPPED_READS = rnaseq_reads.mapped
 
-        if VERBOSE: log_statement( 'Loading CAGE read bams' )            
-        cage_reads = CAGEReads(cage_bam.name).init(
-            reverse_read_strand=True) if cage_bam != None else None
-        if VERBOSE: log_statement( 'Loading RAMPAGE read bams' )            
-        rampage_reads = RAMPAGEReads(rampage_bam.name).init(
-            reverse_read_strand=True) if rampage_bam != None else None
-        promoter_reads = cage_reads if cage_reads != None else rampage_reads
-        assert promoter_reads != None, "Must have either CAGE or RAMPAGE reads."
+        promoter_reads = load_promoter_reads(cage_bam, rampage_bam)
 
         if VERBOSE: log_statement( 'Loading polyA reads bams' )        
         polya_reads = ( PolyAReads(polya_bam.name).init(
                 reverse_read_strand=True, pairs_are_opp_strand=True) 
                         if polya_bam != None else None )
         
-        if polya_candidate_sites_fps != None:
-            if VERBOSE: log_statement( 'Loading candidate polyA sites' )
-            polya_sites = find_polya_sites([x.name for x in polya_candidate_sites_fps])
-            for fp in polya_candidate_sites_fps: fp.close()
-            log_statement( '' )
-        else:
-            polya_sites = None
+        contig_lens = get_contigs_and_lens( 
+            [ reads for reads in [rnaseq_reads, promoter_reads, polya_reads]
+              if reads != None ] )
         
-        contig_lens = get_contigs_and_lens( (rnaseq_reads, promoter_reads) )
-
         # Call the children processes
         all_args = []
         for contig, contig_len in contig_lens.iteritems():
-            #if contig != '4': continue
+            if contig != '4': continue
             for strand in '+-':
                 all_args.append( ( 
                         (contig, strand, contig_len), ofp,
-                        [rnaseq_reads,], [promoter_reads,], [polya_reads,], 
+                        rnaseq_reads, promoter_reads, polya_reads, 
                         ref_gtf_fname, ref_elements_to_include) )
 
         if NTHREADS == MAX_THREADS_PER_CONTIG:
