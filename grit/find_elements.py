@@ -1122,17 +1122,23 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     ## FIX ME
     #polya_sites = [x - gene.start for x in polya_sites
     #               if x > gene.start and x <= gene.stop]
-        
-    jns = [ (x1 - gene.start, x2 - gene.start, cnt)  
+    gene_len = gene.stop - gene.start + 1
+    jns = [ (x1-gene.start, x2-gene.start, cnt)  
             for x1, x2, cnt in jns ]
-
+    cage_peaks = [ (min(0, x1-gene.start), 
+                    max(gene_len, x2-gene.start))
+                   for x1, x2 in cage_peaks ]
+    polya_peaks = [ (min(0, x1-gene.start), 
+                     max(gene_len, x2-gene.start))  
+                    for x1, x2 in polya_peaks ]
+    
     rnaseq_cov = rnaseq_reads.build_read_coverage_array( 
         chrm, strand, gene.start, gene.stop )
-        
-    gene_len = gene.stop - gene.start + 1
+    
     if strand == '-':
-        #polya_sites = [ gene_len - x for x in polya_sites ]
         jns = [ (gene_len-x2, gene_len-x1, cnt) for x1, x2, cnt in jns ]
+        cage_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in cage_peaks ]
+        polya_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in polya_peaks ]
         rnaseq_cov = rnaseq_cov[::-1]
     
     filtered_junctions = []
@@ -1150,8 +1156,8 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
 
     # initialize the cage peaks with the reference provided set
     cage_peaks = Bins( chrm, strand, (
-        Bin( pk, pk+1, "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK")
-        for pk in cage_peaks ))
+        Bin(pk_start, pk_stop+1, "CAGE_PEAK_START","CAGE_PEAK_STOP","CAGE_PEAK")
+        for pk_start, pk_stop in cage_peaks ))
     if cage_reads != None:
         cage_cov = cage_reads.build_read_coverage_array( 
             chrm, strand, gene.start, gene.stop )
@@ -1162,8 +1168,8 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     
     # initialize the polya peaks with the reference provided set
     polya_peaks = Bins( chrm, strand, (
-        Bin( pk, pk+1, "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA")
-        for pk in polya_peaks ))
+       Bin( pk_start, pk_stop+1, "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA")
+        for pk_start, pk_stop in polya_peaks ))
     if polya_reads != None:
         polya_cov = polya_reads.build_read_coverage_array( 
             chrm, strand, gene.start, gene.stop )
@@ -1221,6 +1227,24 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp,
     jn_starts = [ i[0][0] for i in jns ]
     jn_stops = [ i[0][1] for i in jns ]
     jn_values = [ i[1] for i in jns ]
+
+    def extract_elements_for_gene( gene ):
+        # find the junctions associated with this gene
+        gj_sa = bisect( jn_stops, gene.start )
+        gj_so = bisect( jn_starts, gene.stop )
+        gene_jns = zip( jn_starts[gj_sa:gj_so], 
+                        jn_stops[gj_sa:gj_so], 
+                        jn_values[gj_sa:gj_so] )
+        
+        gene_ref_elements = defaultdict(list)
+        for key, vals in ref_elements.iteritems():
+            if len( vals ) == 0: continue
+            for start, stop in vals:
+                if stop < gene.start: continue
+                if start > gene.stop: break
+            gene_ref_elements[key].append((start, stop))
+        
+        return gene_jns, gene_ref_elements
     
     rnaseq_reads = rnaseq_reads.reload()
     cage_reads = cage_reads.reload() if cage_reads != None else None
@@ -1246,31 +1270,26 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp,
     
         log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" % 
                        (chrm, strand, gene.start, gene.stop) )
-    
-        # find the junctions associated with this gene
-        gj_sa = bisect( jn_stops, gene.start )
-        gj_so = bisect( jn_starts, gene.stop )
-        gene_jns = zip( jn_starts[gj_sa:gj_so], 
-                        jn_stops[gj_sa:gj_so], 
-                        jn_values[gj_sa:gj_so] )
-        
+
+        gene_jns, gene_ref_elements = extract_elements_for_gene( gene )
         elements, pseudo_exons = find_exons_in_gene(
             ( chrm, strand, contig_len ), gene, 
             rnaseq_reads, cage_reads, polya_reads, gene_jns,
-            ref_elements['promoters'], ref_elements['polya_sites'])
+            gene_ref_elements['promoters'], 
+            gene_ref_elements['polya'])
         
         # merge in the reference elements
-        for tss_exon in ref_elements['tss_exons']:
+        for tss_exon in gene_ref_elements['tss_exons']:
             elements.append( Bin(tss_exon[0], tss_exon[1], "CAGE_PEAK", "D_JN",
                                  "TSS_EXON") )
-        for tes_exon in ref_elements['tes_exons']:
+        for tes_exon in gene_ref_elements['tes_exons']:
             elements.append( Bin(tss_exon[0], tss_exon[1], "R_JN", "POLYA",
                                  "TES_EXON") )
         write_unified_bed( elements, ofp)
         
         if WRITE_DEBUG_DATA:
             pseudo_exons.writeBed( ofp )
-
+        
         log_statement( "FINISHED Finding Exons in Chrm %s Strand %s Pos %i-%i" %
                        (chrm, strand, gene.start, gene.stop) )
     
@@ -1287,15 +1306,9 @@ def extract_reference_elements(genes, ref_elements_to_include, strand):
         if ref_elements_to_include.junctions:
             ref_elements['introns'].update(elements['intron'])
         if ref_elements_to_include.promoters:
-            if strand == '+': ref_elements['promoters'].update(
-                exon[0] for exon in elements['tss_exon'] )
-            else: ref_elements['promoters'].update(
-                exon[1] for exon in elements['tss_exon'] )
+            ref_elements['promoters'].update(elements['promoter'])
         if ref_elements_to_include.polya_sites:
-            if strand == '+': ref_elements['polya_sites'].update(
-                exon[1] for exon in elements['tes_exon'] )
-            else: ref_elements['polya_sites'].update(
-                exon[0] for exon in elements['tes_exon'] )
+            ref_elements['polya'].update(elements['polya'])
         if ref_elements_to_include.TSS:
             ref_elements['tss_exons'].update(elements['tss_exon'])
         if ref_elements_to_include.TES:
@@ -1330,9 +1343,12 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
         genes, ref_elements_to_include, strand )
     
     # update the junctions with the reference junctions, and sort them
-    for jn in ref_elements['junctions']:
+    for jn in ref_elements['introns']:
         junctions[jn] += 0
     junctions = sorted( junctions.iteritems() )
+    # del introns from the reference elements because they've already been 
+    # merged into the set of junctions
+    del ref_elements['introns']
     
     if gene_bndry_bins == None:
         log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
@@ -1475,12 +1491,7 @@ def parse_arguments():
     VERBOSE = args.verbose
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
-    
-    #if args.use_reference_tss:
-    #    raise NotImplementedError, "--use-reference-tss is not yet implemented"
-    if args.use_reference_tes:
-        raise NotImplementedError, "--use-reference-tes is not yet implemented"
-    
+        
     if None == args.reference and args.use_reference_genes:
         raise ValueError, "--reference must be set if --use-reference-genes is set"
     if None == args.reference and args.use_reference_junctions:
