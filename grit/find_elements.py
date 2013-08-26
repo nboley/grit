@@ -1125,13 +1125,12 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     gene_len = gene.stop - gene.start + 1
     jns = [ (x1-gene.start, x2-gene.start, cnt)  
             for x1, x2, cnt in jns ]
-    cage_peaks = [ (min(0, x1-gene.start), 
-                    max(gene_len, x2-gene.start))
+    cage_peaks = [ (x1-gene.start, x2-gene.start)
                    for x1, x2 in cage_peaks ]
-    polya_peaks = [ (min(0, x1-gene.start), 
-                     max(gene_len, x2-gene.start))  
+    polya_peaks = [ (x1-gene.start, x2-gene.start)
                     for x1, x2 in polya_peaks ]
-    
+    for start, stop in cage_peaks:
+        assert 0 <= start <= stop
     rnaseq_cov = rnaseq_reads.build_read_coverage_array( 
         chrm, strand, gene.start, gene.stop )
     
@@ -1141,6 +1140,7 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         polya_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in polya_peaks ]
         rnaseq_cov = rnaseq_cov[::-1]
     
+    """
     filtered_junctions = []
     for (start, stop, cnt) in jns:
         if start < 0 or stop >= gene_len: continue
@@ -1151,6 +1151,7 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         filtered_junctions.append( (start, stop, cnt) )
 
     jns = filtered_junctions
+    """
     
     ### END Prepare input data #########################################
 
@@ -1164,7 +1165,6 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         if strand == '-': cage_cov = cage_cov[::-1]
         cage_peaks.extend( find_cage_peaks_in_gene( 
             (chrm, strand), gene, cage_cov, rnaseq_cov ) )
-        for x in cage_peaks: print x
     
     # initialize the polya peaks with the reference provided set
     polya_peaks = Bins( chrm, strand, (
@@ -1176,14 +1176,15 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         if strand == '-': polya_cov = polya_cov[::-1]
         polya_peaks.extend( find_polya_peaks_in_gene( 
             (chrm, strand), gene, polya_cov, rnaseq_cov ) )
-        for x in polya_peaks: print x
     
     canonical_exons, internal_exons = find_canonical_and_internal_exons(
         (chrm, strand), rnaseq_cov, jns)
     tss_exons = find_gene_bndry_exons(
         (chrm, strand), rnaseq_cov, jns, cage_peaks, "CAGE")
+    print tss_exons
     tes_exons = find_gene_bndry_exons(
         (chrm, strand), rnaseq_cov, jns, polya_peaks, "POLYA_SEQ")
+    print tes_exons
     
     polya_sites = numpy.array(sorted(x.stop-1 for x in polya_peaks))
     se_genes = find_se_genes( 
@@ -1239,10 +1240,10 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp,
         gene_ref_elements = defaultdict(list)
         for key, vals in ref_elements.iteritems():
             if len( vals ) == 0: continue
-            for start, stop in vals:
+            for start, stop in sorted(vals):
                 if stop < gene.start: continue
                 if start > gene.stop: break
-            gene_ref_elements[key].append((start, stop))
+                gene_ref_elements[key].append((start, stop))
         
         return gene_jns, gene_ref_elements
     
@@ -1280,10 +1281,12 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp,
         
         # merge in the reference elements
         for tss_exon in gene_ref_elements['tss_exons']:
-            elements.append( Bin(tss_exon[0], tss_exon[1], "CAGE_PEAK", "D_JN",
+            elements.append( Bin(tss_exon[0], tss_exon[1], 
+                                 "REF_TSS_EXON_START", "REF_TSS_EXON_STOP",
                                  "TSS_EXON") )
         for tes_exon in gene_ref_elements['tes_exons']:
-            elements.append( Bin(tss_exon[0], tss_exon[1], "R_JN", "POLYA",
+            elements.append( Bin(tes_exon[0], tes_exon[1], 
+                                 "REF_TES_EXON_START", "REF_TES_EXON_STOP",
                                  "TES_EXON") )
         write_unified_bed( elements, ofp)
         
@@ -1592,7 +1595,7 @@ def main():
                         (contig, strand, contig_len), ofp,
                         rnaseq_reads, promoter_reads, polya_reads, 
                         ref_gtf_fname, ref_elements_to_include) )
-
+        
         if NTHREADS == MAX_THREADS_PER_CONTIG:
             for args in all_args:
                 find_exons_in_contig(*args)
