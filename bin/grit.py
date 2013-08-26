@@ -40,6 +40,12 @@ def parse_arguments():
     parser.add_argument( '--use-reference-tes', 
                          help='Use TES\'s taken from the reference annotation.',
                          default=False, action='store_true')
+    parser.add_argument( '--use-reference-promoters', 
+                         help='Use promoters\'s inferred from the start of reference transcripts.',
+                         default=False, action='store_true')
+    parser.add_argument( '--use-reference-polyas', 
+                         help='Use polya sites inferred from the end of reference transcripts.',
+                         default=False, action='store_true')
     
     parser.add_argument( '--ofprefix', '-o', default="discovered",
         help='Output files prefix. (default: discovered)')
@@ -58,11 +64,6 @@ def parse_arguments():
         
     args = parser.parse_args()
     
-    if args.use_reference_tss:
-        raise NotImplemented, "--use-reference-tss is not yet implemented"
-    if args.use_reference_tes:
-        raise NotImplemented, "--use-reference-tes is not yet implemented"
-    
     if None == args.reference and args.use_reference_genes:
         raise ValueError, "--reference must be set if --use-reference-genes is set"
     if None == args.reference and args.use_reference_junctions:
@@ -71,25 +72,32 @@ def parse_arguments():
         raise ValueError, "--reference must be set if --use-reference-tss is set"
     if None == args.reference and args.use_reference_tes:
         raise ValueError, "--reference must be set if --use-reference-tes is set"
-    
+    if None == args.reference and args.use_reference_promoters:
+        raise ValueError, "--reference must be set if --use-reference-promoters is set"
+    if None == args.reference and args.use_reference_polyas:
+        raise ValueError, "--reference must be set if --use-reference-polyas is set"
+     
+    if ( args.cage_reads == None 
+         and args.rampage_reads == None 
+         and not args.use_reference_tss
+         and not args.use_reference_promoters):
+        raise ValueError, "--cage-reads or --rampage-reads or --use-reference-tss or --use-reference-promoters must be set"
     if args.cage_reads != None and args.rampage_reads != None:
         raise ValueError, "--cage-reads and --rampage-reads may not both be set"
     
-    if ( args.cage_reads == None 
-         and args.rampage_reads == None 
-         and not args.use_reference_tss ):
-         raise ValueError, "--cage-reads or --rampage-reads or --use-reference-tss must be set"
+    if ( args.polya_reads == None 
+         and not args.use_reference_tes
+         and not args.use_reference_polyas ):
+        raise ValueError, "Either --polya-reads or --use-reference-tes or --use-reference-polyas must be set"
     
-    if ( args.polya_reads == None and not args.use_reference_tes ):
-         raise ValueError, "--polya-reads or --use-reference-tes must be set"
-        
     return args
 
 def run_find_elements( args ):
     elements_ofname = args.ofprefix + ".elements.bed"
     
     command = [ "python", 
-                "/home/nboley/grit_experimental/grit/grit/find_elements.py" ]
+                os.path.join( os.path.dirname(__file__), 
+                              "..", "grit/find_elements.py" ) ]
     command.extend( ("--rnaseq-reads", args.rnaseq_reads.name) )
     command.extend( ("--rnaseq-read-type", args.rnaseq_read_type) )
     if args.cage_reads != None: 
@@ -101,8 +109,11 @@ def run_find_elements( args ):
     if args.reference != None: command.extend( ("--reference", args.reference) )
     if args.use_reference_genes: command.append( "--use-reference-genes" )
     if args.use_reference_junctions: command.append("--use-reference-junctions")
-    if args.use_reference_tss: command.append( "--use-reference-tss" )
-    if args.use_reference_tes: command.append( "--use-reference-tes" )
+    if args.use_reference_tss: command.append("--use-reference-tss")
+    if args.use_reference_tes: command.append("--use-reference-tes")
+    if args.use_reference_promoters: command.append("--use-reference-promoters")
+    if args.use_reference_polyas: command.append("--use-reference-polyas")
+
     command.extend( ("--ofname", elements_ofname) )
     if args.batch_mode: command.append( "--batch-mode" )
     command.extend( ("--threads", str(args.threads)) )
@@ -115,8 +126,9 @@ def run_build_transcripts(args, elements_fname):
     transcripts_ofname = args.ofprefix + ".transcripts.gtf"
     expression_ofname = args.ofprefix + ".isoforms.fpkm_tracking"
     
-    command = ["python", 
-               "/home/nboley/grit_experimental/grit/grit/build_transcripts.py"]
+    command = [ "python", 
+                os.path.join( os.path.dirname(__file__), 
+                              "..", "grit/build_transcripts.py" ) ]
     command.extend( ("--ofname", transcripts_ofname) )
     command.extend( ("--expression-ofname", expression_ofname) )
     
