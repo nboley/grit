@@ -16,7 +16,7 @@ def parse_arguments():
         'gtf', type=file,
         help='GTF file to search for ORFs.' )
     parser.add_argument(
-        'fasta',
+        'fasta', type=file,
         help='Fasta file with reference sequence.' )
     parser.add_argument(
         '--min-aas', '-m', type=int,
@@ -67,9 +67,10 @@ def parse_arguments():
     return args.gtf, args.fasta, args.threads, gtf_ofp, fa_ofp
 
 def main():
-    gtf_fp, fasta_fn, threads, gtf_ofp, fa_ofp = parse_arguments()
+    gtf_fp, fasta_fp, threads, gtf_ofp, fa_ofp = parse_arguments()
     genes = load_gtf( gtf_fp.name )
-    grit.proteomics.ORF.find_all_orfs(genes, fasta_fn, gtf_ofp, fa_ofp, threads)
+    grit.proteomics.ORF.find_all_orfs(
+        genes, fasta_fp.name, gtf_ofp, fa_ofp, threads)
     
     return
 

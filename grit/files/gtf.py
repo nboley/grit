@@ -515,6 +515,7 @@ def load_gtf(fname_or_fp, use_name_instead_of_id=False,
     for line in fp:
         data = parse_gtf_line(line, fix_chrm=True, 
                               use_name_instead_of_id=use_name_instead_of_id)
+        # skip unparseable lines, or lines without gene ids
         if None == data: continue
         if data.gene_id == "": continue
         if contig != None and data.region.chr != contig: continue
@@ -528,7 +529,8 @@ def load_gtf(fname_or_fp, use_name_instead_of_id=False,
     genes = []
     for gene_id, ( transcripts_data, gene_lines ) in gene_lines.iteritems():
         try:
-            gene = _load_gene_from_gtf_lines(gene_id, gene_lines, transcripts_data)
+            gene = _load_gene_from_gtf_lines(
+                gene_id, gene_lines, transcripts_data)
         except Exception, inst:
             print >> sys.stderr, "ERROR : Could not load '%s'" % gene_id
             print >> sys.stderr, "DETAIL: %s" % str( inst )
