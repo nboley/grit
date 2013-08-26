@@ -247,7 +247,7 @@ def find_gene_orfs_worker( input_queue, gtf_ofp, fa_ofp, fasta_fn ):
         except Queue.Empty:
             break
         
-        if VERBOSE: print >> sys.stderr, '\tProcessing ' + gene.name
+        if VERBOSE: print >> sys.stderr, '\tProcessing ' + gene.id
         ann_trans = find_cds_for_gene( gene, fasta, ONLY_USE_LONGEST_ORF )
         op_str = "\n".join( [ tr.build_gtf_lines( gene.id, {} ) 
                               for tr in ann_trans ] )
@@ -259,7 +259,7 @@ def find_gene_orfs_worker( input_queue, gtf_ofp, fa_ofp, fasta_fn ):
                 for line in iter_x_char_lines(trans.coding_sequence):
                     fa_ofp.write(line+"\n")
                 
-        if VERBOSE: print >> sys.stderr, '\tFinished ' + gene.name
+        if VERBOSE: print >> sys.stderr, '\tFinished ' + gene.id
     
     return
 

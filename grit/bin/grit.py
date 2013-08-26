@@ -25,7 +25,7 @@ def parse_arguments():
     parser.add_argument( '--build-bedgraphs', default=False,action='store_true',
                          help='Build read coverage bedgraphs.')
     
-    parser.add_argument( '--reference', help='Reference GTF')
+    parser.add_argument( '--reference', help='Reference GTF', type=file)
     parser.add_argument( '--fasta', type=file,
         help='Fasta file containing the genome sequence - if provided the ORF finder is automatically run.')
     parser.add_argument( '--use-reference-genes', 
@@ -106,7 +106,8 @@ def run_find_elements( args ):
         command.extend( ("--rampage-reads", args.rampage_reads.name) )
     if args.polya_reads != None:
         command.extend( ("--polya-reads", args.polya_reads.name) )
-    if args.reference != None: command.extend( ("--reference", args.reference) )
+    if args.reference != None: command.extend( 
+        ("--reference", args.reference.name) )
     if args.use_reference_genes: command.append( "--use-reference-genes" )
     if args.use_reference_junctions: command.append("--use-reference-junctions")
     if args.use_reference_tss: command.append("--use-reference-tss")
