@@ -178,12 +178,13 @@ def get_qrange_short( np ):
     L = len(np)
     return np.min(), np.max()
 
-def filter_exon( exon, wig ):
+def filter_exon(exon, wig, num_start_bases_to_skip=0, num_stop_bases_to_skip=0):
     '''Find all the exons that are sufficiently homogenous and expressed.
     
     '''
-    start = exon.start
-    end = exon.stop
+    start = exon.start + num_start_bases_to_skip
+    end = exon.stop - num_stop_bases_to_skip
+    if end - start < MIN_INTRON_SIZE: return False
     vals = wig[start:end+1]
     n_div = max( 1, int(len(vals)/MIN_INTRON_SIZE) )
     div_len = len(vals)/n_div
@@ -194,9 +195,13 @@ def filter_exon( exon, wig ):
 
     return False
 
-def filter_exons( exons, rnaseq_cov ):
+def filter_exons( exons, rnaseq_cov, 
+                  num_start_bases_to_skip=0, 
+                  num_stop_bases_to_skip=0 ):
     for exon in exons:
-        if not filter_exon( exon, rnaseq_cov ):
+        if not filter_exon( exon, rnaseq_cov, 
+                            num_start_bases_to_skip, 
+                            num_stop_bases_to_skip ):
             yield exon
     
     return
@@ -1181,10 +1186,8 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         (chrm, strand), rnaseq_cov, jns)
     tss_exons = find_gene_bndry_exons(
         (chrm, strand), rnaseq_cov, jns, cage_peaks, "CAGE")
-    print tss_exons
     tes_exons = find_gene_bndry_exons(
         (chrm, strand), rnaseq_cov, jns, polya_peaks, "POLYA_SEQ")
-    print tes_exons
     
     polya_sites = numpy.array(sorted(x.stop-1 for x in polya_peaks))
     se_genes = find_se_genes( 
@@ -1201,10 +1204,14 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         bin = Bin(start, stop, 'R_JN', 'D_JN', 'INTRON', cnt)
         jn_bins.append( bin )
     
-    tss_exons = filter_exons( tss_exons, rnaseq_cov )
-    tes_exons = filter_exons( tes_exons, rnaseq_cov )
+    # skip the first 200 bases to account for the expected lower coverage near 
+    # the transcript bounds
+    tss_exons = filter_exons(tss_exons, rnaseq_cov, num_start_bases_to_skip=200)
+    tes_exons = filter_exons(tes_exons, rnaseq_cov, num_stop_bases_to_skip=400)
     internal_exons = filter_exons( internal_exons, rnaseq_cov )
-    se_genes = filter_exons( se_genes, rnaseq_cov )
+    se_genes = filter_exons( se_genes, rnaseq_cov, 
+                             num_start_bases_to_skip=200, 
+                             num_stop_bases_to_skip=400 )
 
     elements = Bins(chrm, strand, chain(
             jn_bins, cage_peaks, polya_peaks, 
@@ -1589,7 +1596,7 @@ def main():
         # Call the children processes
         all_args = []
         for contig, contig_len in contig_lens.iteritems():
-            if contig != '4': continue
+            #if contig != '4': continue
             for strand in '+-':
                 all_args.append( ( 
                         (contig, strand, contig_len), ofp,
