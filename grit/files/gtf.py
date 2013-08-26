@@ -516,6 +516,7 @@ def load_gtf(fname_or_fp, use_name_instead_of_id=False,
         data = parse_gtf_line(line, fix_chrm=True, 
                               use_name_instead_of_id=use_name_instead_of_id)
         if None == data: continue
+        if data.gene_id == "": continue
         if contig != None and data.region.chr != contig: continue
         if strand != None and data.region.strand != strand: continue
         # add gene lines directly to the gene object
