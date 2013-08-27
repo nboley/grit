@@ -12,6 +12,7 @@ from collections import defaultdict
 import Queue
 
 import multiprocessing
+from lib.multiprocessing_utils import Pool
 
 from files.gtf import load_gtf, Transcript, Gene
 from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads
@@ -216,6 +217,10 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             log_statement( "Finding design matrix for Gene %s" % gene_id  )
             op_lock.acquire()
             gene = output[(gene_id, 'gene')]
+            log_statement( 
+                "Finding design matrix for Gene %s(%s:%s:%i-%i) - %i transcripts"\
+                    % (gene_id, gene.chrm, gene.strand, 
+                       gene.start, gene.stop, len(gene.transcripts) ) )
             fl_dists = output[(gene_id, 'fl_dists')]
             promoter_reads_init_data = output[(gene_id, 'promoter_reads')]
             rnaseq_reads_init_data = output[(gene_id, 'rnaseq_reads')]
@@ -278,6 +283,11 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             observed_array, expected_array, unobservable_transcripts = \
                 output[(gene_id, 'design_matrices')]
             gene = output[(gene_id, 'gene')]
+            log_statement( 
+                "Finding MLE for Gene %s(%s:%s:%i-%i) - %i transcripts" \
+                    % (gene_id, gene.chrm, gene.strand, 
+                       gene.start, gene.stop, len(gene.transcripts) ) )
+            
             fl_dists = output[(gene_id, 'fl_dists')]
             promoter_reads = output[(gene_id, 'promoter_reads')]
             rnaseq_reads_init_data = output[(gene_id, 'rnaseq_reads')]
@@ -550,38 +560,92 @@ def build_fl_dists( elements, rnaseq_reads,
     
     return fl_dists
 
+def add_universal_processing_data((contig, strand), gene_id, output_dict, 
+                                  rnaseq_reads, promoter_reads, polya_reads, 
+                                  fl_dists, fasta):
+    """Add stuff we need to provide whether we havea  list of 
+       already built genes or not.
+    """
+    output_dict[ (gene_id, 'contig') ] = contig
+    output_dict[ (gene_id, 'strand') ] = strand
+
+    output_dict[ (gene_id, 'rnaseq_reads') ] = (
+        [(x.filename, x._init_kwargs) for x in rnaseq_reads] 
+        if rnaseq_reads != None else None )
+    output_dict[ (gene_id, 'promoter_reads') ] = (
+        [(type(x), x.filename, x._init_kwargs) for x in promoter_reads]
+        if promoter_reads != None else None )
+    output_dict[ (gene_id, 'polya_reads') ] = (
+        [(type(x), x.filename, x._init_kwargs) for x in polya_reads]
+        if polya_reads != None else None )
+    output_dict[ (gene_id, 'fasta_fn') ] = ( None 
+        if fasta == None else fasta.name )
+
+    output_dict[ (gene_id, 'fl_dists') ] = fl_dists
+    output_dict[ (gene_id, 'lbs') ] = {}
+    output_dict[ (gene_id, 'ubs') ] = {}
+    output_dict[ (gene_id, 'mle') ] = None
+    output_dict[ (gene_id, 'fpkm') ] = None
+    output_dict[ (gene_id, 'design_matrices') ] = None
+
+
+def add_elements_for_contig_and_strand((contig, strand), grpd_exons, 
+                                       gene_id, gene_id_lock,
+                                       input_queue_lock, input_queue,
+                                       output_dict_lock, output_dict,
+                                       rnaseq_reads,promoter_reads,polya_reads,
+                                       fl_dists, fasta ):
+    log_statement( "Clustering elements into genes for %s:%s" % ( contig, strand ) )
+    for ( tss_es, tes_es, internal_es, 
+          se_ts, promoters, polyas ) in cluster_exons( 
+            set(map(tuple, grpd_exons['tss_exon'].tolist())), 
+            set(map(tuple, grpd_exons['internal_exon'].tolist())), 
+            set(map(tuple, grpd_exons['tes_exon'].tolist())), 
+            set(map(tuple, grpd_exons['single_exon_gene'].tolist())),
+            set(map(tuple, grpd_exons['promoter'].tolist())), 
+            set(map(tuple, grpd_exons['polya'].tolist())), 
+            set(map(tuple, grpd_exons['intron'].tolist())), 
+            strand):
+        # skip genes without all of the element types
+        if len(se_ts) == 0 and (
+                len(tes_es) == 0 
+                or len( tss_es ) == 0 ):
+            continue
+
+        gene_id += 1
+        
+        input_queue_lock.acquire()
+        input_queue.append(('gene', (gene_id, None, None)))
+        input_queue_lock.release()
+
+        output_dict_lock.acquire()
+        output_dict[ (gene_id, 'tss_exons') ] = tss_es
+        output_dict[ (gene_id, 'internal_exons') ] = internal_es
+        output_dict[ (gene_id, 'tes_exons') ] = tes_es
+        output_dict[ (gene_id, 'se_transcripts') ] = se_ts
+        output_dict[ (gene_id, 'promoters') ] = promoters
+        output_dict[ (gene_id, 'polyas') ] = polyas
+        # XXX - BUG - FIXME
+        output_dict[ (gene_id, 'introns') ] = grpd_exons['intron']
+
+        output_dict[ (gene_id, 'gene') ] = None
+        
+        add_universal_processing_data(
+            (contig, strand), gene_id, output_dict, 
+            rnaseq_reads, promoter_reads, polya_reads, 
+            fl_dists, fasta )
+        output_dict_lock.release()
+    
+    log_statement("")
+    return
+    
+
 def initialize_processing_data( elements, genes, fl_dists,
                                 rnaseq_reads, promoter_reads,
                                 polya_reads, fasta,
                                 input_queue, input_queue_lock, 
-                                output_dict, output_dict_lock ):
-    def add_universal_data(output_dict, gene_id, contig, strand):
-        """Add stuff we need to provide whether we havea  list of 
-           already built genes or not.
-        """
-        output_dict[ (gene_id, 'contig') ] = contig
-        output_dict[ (gene_id, 'strand') ] = strand
-
-        output_dict[ (gene_id, 'rnaseq_reads') ] = (
-            [(x.filename, x._init_kwargs) for x in rnaseq_reads] 
-            if rnaseq_reads != None else None )
-        output_dict[ (gene_id, 'promoter_reads') ] = (
-            [(type(x), x.filename, x._init_kwargs) for x in promoter_reads]
-            if promoter_reads != None else None )
-        output_dict[ (gene_id, 'polya_reads') ] = (
-            [(type(x), x.filename, x._init_kwargs) for x in polya_reads]
-            if polya_reads != None else None )
-        output_dict[ (gene_id, 'fasta_fn') ] = ( None 
-            if fasta == None else fasta.name )
-
-        output_dict[ (gene_id, 'fl_dists') ] = fl_dists
-        output_dict[ (gene_id, 'lbs') ] = {}
-        output_dict[ (gene_id, 'ubs') ] = {}
-        output_dict[ (gene_id, 'mle') ] = None
-        output_dict[ (gene_id, 'fpkm') ] = None
-        output_dict[ (gene_id, 'design_matrices') ] = None
-    
-    
+                                output_dict, output_dict_lock ):    
+    gene_id_lock = multiprocessing.Lock()
     gene_id = 0
     if genes != None:
         for gene in genes:
@@ -592,41 +656,17 @@ def initialize_processing_data( elements, genes, fl_dists,
             input_queue.append(('design_matrices', (gene.id, None, None)))
             input_queue_lock.release()            
     else:
+        args_template = [gene_id, gene_id_lock,
+                         input_queue_lock, input_queue,
+                         output_dict_lock, output_dict,
+                         rnaseq_reads,promoter_reads,polya_reads,
+                         fl_dists, fasta]
+        all_args = []
         for (contig, strand), grpd_exons in elements.iteritems():
-            for ( tss_es, tes_es, internal_es, 
-                  se_ts, promoters, polyas ) in cluster_exons( 
-                    set(map(tuple, grpd_exons['tss_exon'].tolist())), 
-                    set(map(tuple, grpd_exons['internal_exon'].tolist())), 
-                    set(map(tuple, grpd_exons['tes_exon'].tolist())), 
-                    set(map(tuple, grpd_exons['single_exon_gene'].tolist())),
-                    set(map(tuple, grpd_exons['promoter'].tolist())), 
-                    set(map(tuple, grpd_exons['polya'].tolist())), 
-                    set(map(tuple, grpd_exons['intron'].tolist())), 
-                    strand):
-                # skip genes without all of the element types
-                if len(se_ts) == 0 and (
-                        len(tes_es) == 0 
-                        or len( tss_es ) == 0 ):
-                    continue
-                
-                gene_id += 1
-                
-                input_queue_lock.acquire()
-                input_queue.append(('gene', (gene_id, None, None)))
-                input_queue_lock.release()
-                
-                output_dict[ (gene_id, 'tss_exons') ] = tss_es
-                output_dict[ (gene_id, 'internal_exons') ] = internal_es
-                output_dict[ (gene_id, 'tes_exons') ] = tes_es
-                output_dict[ (gene_id, 'se_transcripts') ] = se_ts
-                output_dict[ (gene_id, 'promoters') ] = promoters
-                output_dict[ (gene_id, 'polyas') ] = polyas
-                # XXX - BUG - FIXME
-                output_dict[ (gene_id, 'introns') ] = grpd_exons['intron']
-                
-                output_dict[ (gene_id, 'gene') ] = None
-                
-                add_universal_data(output_dict, gene_id, contig, strand)
+            all_args.append( [(contig, strand), grpd_exons] + args_template )
+
+        p = Pool(num_threads)
+        p.apply( add_elements_for_contig_and_strand, all_args )
     
     return
 
@@ -724,7 +764,7 @@ def parse_arguments():
 
     global ONLY_BUILD_CANDIDATE_TRANSCRIPTS
     ONLY_BUILD_CANDIDATE_TRANSCRIPTS = args.only_build_candidate_transcripts
-    if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS and len( args.rnaseq_reads ) == 0:
+    if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS and args.rnaseq_reads == None:
         raise ValueError, "Must provide RNAseq data to estimate transcript frequencies"
 
     if args.rnaseq_reads != None and args.rnaseq_read_type == None:
