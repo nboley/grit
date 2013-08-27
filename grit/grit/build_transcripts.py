@@ -96,6 +96,7 @@ def write_gene_to_gtf( ofp, gene, mles=None, lbs=None, ubs=None, fpkms=None,
 
         ofp.write( transcript.build_gtf_lines(
                 gene.id, meta_data, source="grit") + "\n" )
+        ofp.flush()
     
     return
 
@@ -239,7 +240,9 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                     = build_design_matrices( gene, rnaseq_reads, fl_dists, 
                                              chain(promoter_reads, polya_reads))
             except ValueError, inst:
-                error_msg = "%i: Skipping %s: %s" % (os.getpid(), gene_id, inst)
+                error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
+                    os.getpid(), gene_id, 
+                    gene.chrm, gene.strand, gene.start, gene.stop, inst)
                 log_statement( error_msg )
                 input_queue_lock.acquire()
                 input_queue.append(
@@ -247,7 +250,9 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 input_queue_lock.release()
                 return
             except MemoryError, inst:
-                error_msg = "%i: Skipping %s: %s" % (os.getpid(), gene_id, inst)
+                error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
+                    os.getpid(), gene_id, 
+                    gene.chrm, gene.strand, gene.start, gene.stop, inst)
                 log_statement( error_msg )
                 input_queue_lock.acquire()
                 input_queue.append(
@@ -439,8 +444,8 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
             continue
         
         # write out the design matrix
-        if write_type == 'design_matrix':
-            if write_design_matrices:
+        try:            
+            if write_type == 'design_matrix' and write_design_matrices:
                 if DEBUG_VERBOSE: 
                     log_statement("Writing design matrix mat to '%s'" % ofname)
                 observed,expected,missed = output_dict[(key,'design_matrices')]
@@ -458,38 +463,44 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                     ofp.write("\n".join( "\t".join( "%e" % y for y in x ) 
                                          for x in expected ))
                 log_statement("" % ofname)
-        elif write_type == 'gtf':
-            log_statement( "Writing GENE %s to gtf" % key )
+            if write_type == 'gtf':
+                log_statement( "Writing GENE %s to gtf" % key )
 
-            output_dict_lock.acquire()            
-            gene = output_dict[(key, 'gene')]
-            unobservable_transcripts = output_dict[(key, 'design_matrices')][2]\
-                if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS else []
-            mles = output_dict[(key, 'mle')] \
-                if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
-            fpkms = output_dict[(key, 'fpkm')] \
-                if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
-            lbs = output_dict[(key, 'lbs')] \
-                if compute_confidence_bounds else None
-            ubs = output_dict[(key, 'ubs')] \
-                if compute_confidence_bounds else None
+                output_dict_lock.acquire()            
+                gene = output_dict[(key, 'gene')]
+                unobservable_transcripts = output_dict[(key, 'design_matrices')][2]\
+                    if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS else []
+                mles = output_dict[(key, 'mle')] \
+                    if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
+                fpkms = output_dict[(key, 'fpkm')] \
+                    if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
+                lbs = output_dict[(key, 'lbs')] \
+                    if compute_confidence_bounds else None
+                ubs = output_dict[(key, 'ubs')] \
+                    if compute_confidence_bounds else None
 
-            write_gene_to_gtf(gtf_ofp, gene, mles, lbs, ubs, fpkms, 
-                              unobservable_transcripts=unobservable_transcripts)
+                write_gene_to_gtf(gtf_ofp, gene, mles, lbs, ubs, fpkms, 
+                                  unobservable_transcripts=unobservable_transcripts)
+
+                if expression_ofp != None:
+                    write_gene_to_fpkm_tracking( 
+                        expression_ofp, gene, lbs, ubs, fpkms, 
+                        unobservable_transcripts=unobservable_transcripts)
+
+                del output_dict[(key, 'gene')]
+                if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+                    del output_dict[(key, 'mle')]
+                    del output_dict[(key, 'fpkm')]
+                    del output_dict[(key, 'design_matrices')]
+                if compute_confidence_bounds:
+                    del output_dict[(key, 'lbs')]
+                    del output_dict[(key, 'ubs')]
+                output_dict_lock.release()
             
-            if expression_ofp != None:
-                write_gene_to_fpkm_tracking( 
-                    expression_ofp, gene, lbs, ubs, fpkms, 
-                    unobservable_transcripts=unobservable_transcripts)
-            
-            del output_dict[(key, 'gene')]
-            del output_dict[(key, 'mle')]
-            del output_dict[(key, 'design_matrices')]
-            del output_dict[(key, 'lbs')]
-            del output_dict[(key, 'ubs')]
-            output_dict_lock.release()
-            
-            log_statement( "" )
+                log_statement( "" )
+        except Exception, inst:
+            log_statement( "FATAL ERROR" )
+            log_statement( traceback.format_exc() )
         
     return
 
@@ -676,10 +687,10 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description='Determine valid transcripts and estimate frequencies.')
     parser.add_argument( '--ofname', help='Output filename.', 
-                         default="transcripts.gtf")
+                         default="discovered.transcripts.gtf")
     parser.add_argument( '--expression-ofname', 
                          help='Output filename for expression levels.', 
-                         default="isoforms.fpkm_tracking")
+                         default="discovered.isoforms.fpkm_tracking")
 
     parser.add_argument( '--elements', type=file,
         help='Bed file containing elements')
