@@ -86,6 +86,8 @@ POLYA_MERGE_SIZE = 100
 CAGE_PEAK_WIN_SIZE = 30
 MIN_NUM_CAGE_TAGS = 5
 MAX_CAGE_FRAC = 0.05
+NUM_TSS_BASES_TO_SKIP = 50
+NUM_TES_BASES_TO_SKIP = 50
 
 def get_contigs_and_lens( reads_files ):
     """Get contigs and their lengths from a set of bam files.
@@ -1209,8 +1211,10 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
     
     # skip the first 200 bases to account for the expected lower coverage near 
     # the transcript bounds
-    tss_exons = filter_exons(tss_exons, rnaseq_cov, num_start_bases_to_skip=200)
-    tes_exons = filter_exons(tes_exons, rnaseq_cov, num_stop_bases_to_skip=400)
+    tss_exons = filter_exons(tss_exons, rnaseq_cov, 
+                             num_start_bases_to_skip=NUM_TSS_BASES_TO_SKIP)
+    tes_exons = filter_exons(tes_exons, rnaseq_cov, 
+                             num_stop_bases_to_skip=NUM_TES_BASES_TO_SKIP)
     internal_exons = filter_exons( internal_exons, rnaseq_cov )
     se_genes = filter_exons( se_genes, rnaseq_cov, 
                              num_start_bases_to_skip=200, 
