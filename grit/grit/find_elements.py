@@ -20,7 +20,8 @@ from igraph import Graph
 
 from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads, \
     clean_chr_name, guess_strand_from_fname, iter_coverage_intervals_for_read
-from files.junctions import extract_junctions_in_region, extract_junctions_in_contig
+from files.junctions import extract_junctions_in_region, \
+    extract_junctions_in_contig
 from files.bed import create_bed_line
 from files.gtf import parse_gtf_line, load_gtf
 
@@ -659,10 +660,12 @@ def find_gene_boundaries((chrm, strand, contig_len),
     # find segment boundaries
     if VERBOSE: log_statement( 
         "Finding segments for %s:%s" % (chrm, strand) )
-    merged_segments = find_segments_with_signal(chrm, strand, rnaseq_reads)
+    segments = find_segments_with_signal(chrm, strand, rnaseq_reads)
     
     #if VERBOSE: log_statement( "Merging segments for %s %s" % (chrm, strand) )
     #merged_segments = merge_segments( initial_segmentation, strand )
+    # because the segments are disjoint, they are implicitly merged
+    merged_segments = segments
     
     if VERBOSE: log_statement( "Clustering segments for %s %s" % (chrm, strand))
     clustered_segments = cluster_segments( merged_segments, junctions )
@@ -1331,17 +1334,14 @@ def extract_reference_elements(genes, ref_elements_to_include, strand):
 
 def find_exons_in_contig( (chrm, strand, contig_len), ofp,
                           rnaseq_reads, cage_reads, polya_reads,
-                          ref_gtf_fname, ref_elements_to_include):
-    # we load the gene boundary bins first so that we can skip the 
-    # junction search in the case where there are no genes in this contig
-    if any( ref_elements_to_include ):
-        assert ref_gtf_fname != None
-        if VERBOSE: log_statement( 'Loading gtf' )    
-        genes = load_gtf(ref_gtf_fname, contig=chrm, strand=strand)
+                          ref_genes, ref_elements_to_include):
+    assert not any(ref_elements_to_include) or ref_genes != None
     
     gene_bndry_bins = None
     if ref_elements_to_include.genes == True:
-        gene_bndry_bins = load_gene_bndry_bins(genes, chrm, strand, contig_len)
+        assert ref_genes != None
+        gene_bndry_bins = load_gene_bndry_bins(
+            ref_genes, chrm, strand, contig_len)
         if len( gene_bndry_bins ) == 0:
             return
     
@@ -1350,7 +1350,7 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     
     # load the reference elements
     ref_elements = extract_reference_elements( 
-        genes, ref_elements_to_include, strand )
+        ref_genes, ref_elements_to_include, strand )
     
     # update the junctions with the reference junctions, and sort them
     for jn in ref_elements['introns']:
@@ -1403,31 +1403,66 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
 
 
 def load_gene_bndry_bins( genes, contig, strand, contig_len ):
-    gene_bndry_bins = []
+    log_statement( "Loading gene boundaries from annotated genes in %s:%s" % (
+            contig, strand) )
+
+    ## find the gene regions in this contig. Note that these
+    ## may be overlapping
+    gene_intervals = []
     for gene in genes:
         if gene.chrm != contig: continue
         if gene.strand != strand: continue
-        gene_bin = Bin(max(1,gene.start-2500), 
-                       min(gene.stop+2500, contig_len ),
-                           'GENE', 'GENE', 'GENE' )
+        gene_intervals.append((gene.start, gene.stop))
+
+    ## merge overlapping genes regions by building a graph with nodes
+    ## of all gene regions, and edges with all overlapping genes 
+
+    # first, find the edges by probing into the sorted intervals
+    gene_intervals.sort()
+    gene_starts = numpy.array([interval[0] for interval in gene_intervals])
+    overlapping_genes = []
+    for gene_index, (start, stop) in enumerate(gene_intervals):
+        start_i = numpy.searchsorted(gene_starts, start)
+        # start looping over potentially overlapping intervals
+        for i, gene_interval in enumerate(gene_intervals[start_i:]):
+            # if we have surpassed all potentially overlapping intervals,
+            # then we don't need to go any further
+            if gene_interval[0] > stop: break
+            # if the intervals overlap ( I dont think I need this test, but
+            # it's cheap and this could be an insidious bug )
+            if not (stop < gene_interval[0] or start > gene_interval[1] ):
+                overlapping_genes.append( (gene_index, i+start_i) )
+    
+    # buld the graph, find the connected components, and build 
+    # the set of merged intervals
+    genes_graph = Graph(len(gene_starts))
+    genes_graph.add_edges(overlapping_genes)
+    merged_gene_intervals = []
+    for genes in genes_graph.clusters():
+        start = min( gene_intervals[i][0] for i in genes )
+        stop = max( gene_intervals[i][1] for i in genes )
+        merged_gene_intervals.append( [start, stop] )
+    
+    # expand the gene boundaries to their maximum amount such that the genes 
+    # aren't overlapping. This is to allow for gene ends that lie outside of 
+    # the previously annotated boundaries
+    merged_gene_intervals.sort()
+    for i in xrange(1,len(merged_gene_intervals)-1):
+        mid = (merged_gene_intervals[i][1]+merged_gene_intervals[i+1][0])/2
+        merged_gene_intervals[i][1] = int(mid)-1
+        merged_gene_intervals[i+1][0] = int(mid)+1    
+    merged_gene_intervals[0][0] = 1
+    merged_gene_intervals[-1][1] = contig_len-1
+
+    # build gene objects with the intervals
+    gene_bndry_bins = []
+    for start, stop in merged_gene_intervals:
+        gene_bin = Bin(start, stop, 'GENE', 'GENE', 'GENE')
         gene_bndry_bins.append( gene_bin )
     
-    merged_gene_bndry_bins = gene_bndry_bins
-    """
-    for key, bins in gene_bndry_bins.iteritems():
-        merged_gene_bndry_bins[key] = Bins( *key )
-        sorted_bins = sorted(bins)
-        merged_gene_bndry_bins[key].append( sorted_bins[0] )
-        for bin in sorted_bins[1:]:
-            if bin.start > merged_gene_bndry_bins[key][-1].stop:
-                merged_gene_bndry_bins[key].append( bin )
-            else:
-                merged_gene_bndry_bins[key][-1].start = min( 
-                    merged_gene_bndry_bins[key][-1].start, bin.start )
-                merged_gene_bndry_bins[key][-1].stop = max( 
-                    merged_gene_bndry_bins[key][-1].stop, bin.stop )
-    """
-    return merged_gene_bndry_bins
+    log_statement( "" )
+    
+    return gene_bndry_bins
 
 def parse_arguments():
     import argparse
@@ -1581,7 +1616,8 @@ def main():
             reverse_read_strand=reverse_rnaseq_strand)
         global TOTAL_MAPPED_READS
         TOTAL_MAPPED_READS = rnaseq_reads.mapped
-
+        
+        if VERBOSE: log_statement( 'Loading promoter reads bams' )        
         promoter_reads = load_promoter_reads(cage_bam, rampage_bam)
 
         if VERBOSE: log_statement( 'Loading polyA reads bams' )        
@@ -1593,15 +1629,26 @@ def main():
             [ reads for reads in [rnaseq_reads, promoter_reads, polya_reads]
               if reads != None ] )
         
+        if any( ref_elements_to_include ):
+            if VERBOSE: log_statement("Loading annotation file.")
+            genes = load_gtf( ref_gtf_fname )
+        
         # Call the children processes
         all_args = []
         for contig, contig_len in contig_lens.iteritems():
-            #if contig != '4': continue
+            if contig != '20': continue
             for strand in '+-':
+                contig_genes = [ 
+                    gene for gene in genes 
+                    if gene.strand == strand and gene.chrm == contig ]
+                # skip this contig if we are only using reference genes and
+                # this gene is not in the contig
+                if ref_elements_to_include.genes and len(contig_genes) == 0:
+                    continue
                 all_args.append( ( 
                         (contig, strand, contig_len), ofp,
                         rnaseq_reads, promoter_reads, polya_reads, 
-                        ref_gtf_fname, ref_elements_to_include) )
+                        contig_genes, ref_elements_to_include) )
         
         if NTHREADS == MAX_THREADS_PER_CONTIG:
             for args in all_args:
