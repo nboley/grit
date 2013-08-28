@@ -441,6 +441,7 @@ def load_transcript_from_gtf_data(transcript_lines):
     rpk = None
     rpkm = None
     promoter = None
+    polya_region = None
     CDS_start, CDS_stop = None, None
     for line in transcript_lines:
         scores.add( line.score )
@@ -458,7 +459,9 @@ def load_transcript_from_gtf_data(transcript_lines):
             CDS_stop = line.region.stop \
                 if CDS_stop == None or line.region.stop > CDS_stop else CDS_stop
         elif line.feature == 'promoter':
-            promoter = line.region
+            promoter = (line.region.start, line.region.stop)
+        elif line.feature == 'polya':
+            polya_region = (line.region.start, line.region.stop)
     
     if len( exons ) == 0:
         return None
@@ -470,7 +473,8 @@ def load_transcript_from_gtf_data(transcript_lines):
     line = transcript_lines[0]
     return Transcript( line.trans_id, line.region.chr, line.region.strand, 
                        flatten(sorted(exons)), CDS_region,
-                       line.gene_id, score, rpkm, rpk, promoter )
+                       line.gene_id, score, rpkm, rpk, 
+                       promoter, polya_region )
 
 def _load_gene_from_gtf_lines( gene_id, gene_lines, transcripts_data ):
     if len( gene_lines ) > 1:
