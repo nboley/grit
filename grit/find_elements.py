@@ -45,10 +45,9 @@ class ThreadSafeFile( file ):
         self.lock = multiprocessing.Lock()
 
     def write( self, line ):
-        self.lock.acquire()
-        file.write( self, line )
-        self.flush()
-        self.lock.release()
+        with self.lock:
+            file.write( self, line )
+            self.flush()
 
 def flatten( regions ):
     new_regions = []
@@ -432,9 +431,8 @@ class Bins( list ):
 def load_junctions_worker(all_jns, all_jns_lock, args):
     log_statement( "Finding jns in '%s:%s:%i-%i'" % args[1:5] )
     jns = extract_junctions_in_region( *args )
-    all_jns_lock.acquire()
-    all_jns.extend( jns )
-    all_jns_lock.release()
+    with all_jns_lock:
+        all_jns.extend( jns )
     del jns
     log_statement( "" )
     return
@@ -530,20 +528,17 @@ def find_initial_segmentation_worker(
 
     locs = []
     while True:
-        candidate_boundaries_lock.acquire()
-        try:
-            start, stop = candidate_boundaries.pop()
-        except IndexError:
-            candidate_boundaries_lock.release()
-            break
-        candidate_boundaries_lock.release()
+        with candidate_boundaries_lock:
+            try:
+                start, stop = candidate_boundaries.pop()
+            except IndexError:
+                break
         if not no_signal( start, stop ):
             locs.append( (start, stop) )
     
     log_statement( "Putting Segments in Queue (%s, %s)" % (chrm, strand) )
-    accepted_boundaries_lock.acquire()
-    accepted_boundaries.append( locs )
-    accepted_boundaries_lock.release()
+    with accepted_boundaries_lock:
+        accepted_boundaries.append( locs )
     log_statement( "" )
     return
 
@@ -594,10 +589,9 @@ def find_gene_boundaries((chrm, strand, contig_len),
                        % ( chrm, strand ) )        
 
         locs = []
-        accepted_segments_lock.acquire()
-        for bndries in accepted_segments:
-            locs.extend( bndries )
-        accepted_segments_lock.release()
+        with accepted_segments_lock:
+            for bndries in accepted_segments:
+                locs.extend( bndries )
         
         # merge adjoining segments
         locs.sort()

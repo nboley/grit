@@ -511,6 +511,7 @@ def find_fragments( reads, exons ):
     
     return fragment_sizes
 
+
 def estimate_normal_fl_dist_from_reads( reads, max_num_fragments_to_sample=500 ):
     frag_lens = []
     for rd1 in reads.fetch():
@@ -530,6 +531,9 @@ def estimate_normal_fl_dist_from_reads( reads, max_num_fragments_to_sample=500 )
         err_str = "There are not enough reads to estimate an fl dist"
         raise ValueError, err_str
     
+    return estimate_normal_fl_dist_from_fragments( frag_lens )
+
+def estimate_normal_fl_dist_from_fragments( frag_lens ):
     frag_lens = numpy.array( frag_lens )    
     frag_lens.sort()
     bnd = int(0.15*len(frag_lens))
@@ -552,9 +556,12 @@ def estimate_fl_dists( reads, exons ):
                 continue
             fl_dist = build_robust_fl_dist_with_stats( fragment_lengths )
             fl_dists[ read_group ] = fl_dist        
+    elif len(fragments) > 50:
+        fl_lens = [x[1] for x in fragments]
+        fl_dists, fl_lens = estimate_normal_fl_dist_from_fragments(fl_lens)
     else:
         fl_dists, fragments = estimate_normal_fl_dist_from_reads(reads)
-    
+
     return fl_dists, fragments
 
 def parse_arguments():
