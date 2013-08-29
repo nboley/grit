@@ -158,57 +158,49 @@ def find_matching_polya_region_for_transcript(transcript, polyas):
     
     return matching_polya
 
-def pre_filter_design_matrices():
-    if len(gene.transcripts) > 100:
-        log_statement(
-            "Pre-filtering transcripts for Gene %s(%s:%s:%i-%i) - %i transcripts" \
-                % (gene_id, gene.chrm, gene.strand, 
-                   gene.start, gene.stop, len(gene.transcripts) ) )
-        # find the indices of the various starts
-        low_expression_ts = set()
-        """
-        # find the intervals where the multinomial change occurs
-        all_mult_regions = []
+def pre_filter_design_matrices(
+        observed_array, expected_array, unobservable_transcripts):
+    # find the indices of the various starts
+    low_expression_ts = set()
+    """
+    # find the intervals where the multinomial change occurs
+    all_mult_regions = []
+    for trans_i, t in enumerate(expected_array.T):
+        mult_regions = []
+        for i, val in enumerate(expected_array[0,:].cumsum()):
+            if abs(val - int(val + 1e-12)) < 1e-12:
+                mult_regions.append(i)
+        all_mult_regions.append( mult_regions )
+
+    assert all( len(all_mult_regions[0]) == len(x) 
+                for x in all_mult_regions )
+    merged_mult_regions = [0,]
+    for i in xrange(len(all_mult_regions[0])):
+        merged_mult_regions.append(max(x[i] for x in all_mult_regions)+1)
+    """
+    mult_regions = [(0,1), (1,len(observed_array))]
+
+    for start, stop in mult_regions:
+        N = observed_array[start:stop].sum()
         for trans_i, t in enumerate(expected_array.T):
-            mult_regions = []
-            for i, val in enumerate(expected_array[0,:].cumsum()):
-                if abs(val - int(val + 1e-12)) < 1e-12:
-                    mult_regions.append(i)
-            all_mult_regions.append( mult_regions )
+            t = t[start:stop]
+            non_zero_expected = t.nonzero()
+            cnts = observed_array[start:stop][non_zero_expected]
+            N_t = float(cnts.sum())
+            ps = t[non_zero_expected]
+            rv = scipy.stats.binom(N_t, 0.05*(N/N_t)*ps[start:stop])
+            if (rv.ppf(0.10) > cnts[start:stop]).any():
+                low_expression_ts.add(trans_i)
 
-        assert all( len(all_mult_regions[0]) == len(x) 
-                    for x in all_mult_regions )
-        merged_mult_regions = [0,]
-        for i in xrange(len(all_mult_regions[0])):
-            merged_mult_regions.append(max(x[i] for x in all_mult_regions)+1)
-        """
-        mult_regions = [(0,1), (1,len(observed_array))]
-
-        for start, stop in mult_regions:
-            N = observed_array[start:stop].sum()
-            for trans_i, t in enumerate(expected_array.T):
-                t = t[start:stop]
-                non_zero_expected = t.nonzero()
-                cnts = observed_array[start:stop][non_zero_expected]
-                N_t = float(cnts.sum())
-                ps = t[non_zero_expected]
-                rv = scipy.stats.binom(N_t, 0.05*(N/N_t)*ps[start:stop])
-                if (rv.ppf(0.10) > cnts[start:stop]).any():
-                    low_expression_ts.add(trans_i)
-
-        new_unobservable_transcripts = [] + list(unobservable_transcripts)
-        for low_exp_t_i in low_expression_ts:
-            new_unobservable_transcripts.append( low_exp_t_i + sum(
-                    x <= low_exp_t_i for x in unobservable_transcripts ))
-        unobservable_transcripts = set( new_unobservable_transcripts )
-        high_exp_ts = numpy.array(sorted(set(range(expected_array.shape[1]))
-                                         - low_expression_ts), dtype=int)
-        expected_array = expected_array[:,high_exp_ts]
-        with op_lock:
-            output[(gene_id, 'design_matrices')] = \
-                observed_array, expected_array, unobservable_transcripts
-        
-        return
+    new_unobservable_transcripts = [] + list(unobservable_transcripts)
+    for low_exp_t_i in low_expression_ts:
+        new_unobservable_transcripts.append( low_exp_t_i + sum(
+                x <= low_exp_t_i for x in unobservable_transcripts ))
+    unobservable_transcripts = set( new_unobservable_transcripts )
+    high_exp_ts = numpy.array(sorted(set(range(expected_array.shape[1]))
+                                     - low_expression_ts), dtype=int)
+    expected_array = expected_array[:,high_exp_ts]
+    return observed_array, expected_array, unobservable_transcripts
 
 def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                                      input_queue, input_queue_lock,
@@ -310,6 +302,16 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                         ('ERROR', ((gene_id, trans_index), error_msg)))
                 
                 return
+
+            """
+            log_statement(
+                "Pre-filtering transcripts for Gene %s(%s:%s:%i-%i) - %i transcripts" \
+                    % (gene_id, gene.chrm, gene.strand, 
+                       gene.start, gene.stop, len(gene.transcripts) ) )
+            observed_array, expected_array, unobservable_transcripts = \
+                pre_filter_design_matrices(
+                    observed_array, expected_array, unobservable_transcripts)
+            """
             
             log_statement( "FINISHED DESIGN MATRICES %s" % gene_id )
             log_statement( "" )
@@ -640,11 +642,11 @@ def add_universal_processing_data((contig, strand), gene_id, output_dict,
 
 
 def add_elements_for_contig_and_strand((contig, strand), grpd_exons, 
-                                       gene_id, gene_id_lock,
                                        input_queue_lock, input_queue,
                                        output_dict_lock, output_dict,
                                        rnaseq_reads,promoter_reads,polya_reads,
                                        fl_dists, fasta ):
+    gene_id_num = 1
     log_statement( "Clustering elements into genes for %s:%s" % ( contig, strand ) )
     for ( tss_es, tes_es, internal_es, 
           se_ts, promoters, polyas ) in cluster_exons( 
@@ -662,7 +664,9 @@ def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
                 or len( tss_es ) == 0 ):
             continue
 
-        gene_id += 1
+        gene_id_num += 1
+        gene_id = "%s_%s_%i" % ( 
+            contig, 'm' if strand == '-' else 'p', gene_id_num )
         
         with input_queue_lock:
             input_queue.append(('gene', (gene_id, None, None)))
@@ -693,8 +697,6 @@ def initialize_processing_data( elements, genes, fl_dists,
                                 polya_reads, fasta,
                                 input_queue, input_queue_lock, 
                                 output_dict, output_dict_lock ):    
-    gene_id_lock = multiprocessing.Lock()
-    gene_id = 0
     if genes != None:
         for gene in genes:
             with output_dict_lock:
@@ -706,8 +708,7 @@ def initialize_processing_data( elements, genes, fl_dists,
             with input_queue_lock:
                 input_queue.append(('design_matrices', (gene.id, None, None)))
     else:
-        args_template = [gene_id, gene_id_lock,
-                         input_queue_lock, input_queue,
+        args_template = [input_queue_lock, input_queue,
                          output_dict_lock, output_dict,
                          rnaseq_reads,promoter_reads,polya_reads,
                          fl_dists, fasta]

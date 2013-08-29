@@ -496,8 +496,8 @@ def load_junctions( rnaseq_reads, (chrm, strand, contig_len) ):
     
     filtered_junctions = defaultdict(int)
     for (start, stop), cnt in junctions:
-        if float(cnt)/jn_starts[start] < 0.001: continue
-        if float(cnt)/jn_stops[stop] < 0.001: continue
+        if float(cnt)/jn_starts[start] < 0.01: continue
+        if float(cnt)/jn_stops[stop] < 0.01: continue
         if stop - start > 10000000: continue
         filtered_junctions[(start, stop)] = cnt
     
@@ -678,33 +678,33 @@ def find_gene_boundaries((chrm, strand, contig_len),
     
     return genes
 
-def filter_polya_sites( (chrm, strand), gene, polya_sites, rnaseq_cov ):
-    if len(polya_sites) == 0:
-        return polya_sites
+def filter_polya_peaks( polya_peaks, rnaseq_cov ):
+    if len(polya_peaks) == 0:
+        return polya_peaks
     
-    polya_sites.sort()
+    polya_peaks.sort()
 
-    new_polya_sites = []
-    for site in polya_sites[:-1]:
-        pre_cvg = rnaseq_cov[max(0,site-10):site].sum()       
-        post_cvg = rnaseq_cov[site+10:site+20].sum()
+    new_polya_peaks = []
+    for start, stop in polya_peaks[:-1]:
+        pre_cvg = rnaseq_cov[max(0,start-10):start].sum()       
+        post_cvg = rnaseq_cov[stop+10:stop+20].sum()
         if pre_cvg > 10 and pre_cvg/(post_cvg+1.0) < 5:
             continue
         else:
-            new_polya_sites.append( site )
+            new_polya_peaks.append( [start, stop] )
     
-    new_polya_sites.append( polya_sites[-1] )
-    polya_sites = new_polya_sites
+    new_polya_peaks.append( polya_peaks[-1] )
+    polya_peaks = new_polya_peaks
 
     # merge sites that are close
-    new_polya_sites = [polya_sites[0],]
-    for site in polya_sites[1:]:
-        if site - new_polya_sites[-1] < 20:
-            new_polya_sites[-1] = site
+    new_polya_peaks = [polya_peaks[0],]
+    for start, stop in polya_peaks[1:]:
+        if start - new_polya_peaks[-1][-1] < 20:
+            new_polya_peaks[-1][-1] = stop
         else:
-            new_polya_sites.append( site )
+            new_polya_peaks.append( [start, stop] )
     
-    return new_polya_sites
+    return new_polya_peaks
 
 
 def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
@@ -1143,6 +1143,8 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         cage_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in cage_peaks ]
         polya_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in polya_peaks ]
         rnaseq_cov = rnaseq_cov[::-1]
+
+    polya_peaks = filter_polya_peaks(polya_peaks, rnaseq_cov)
     
     """
     filtered_junctions = []
@@ -1474,6 +1476,8 @@ def parse_arguments():
     parser.add_argument( '--rnaseq-read-type', required=True,
         choices=["forward", "backward"],
         help='Whether or not the first RNAseq read in a pair needs to be reversed to be on the correct strand.')
+    parser.add_argument( '--num-mapped-rnaseq-reads', type=int,
+        help="The total number of mapped rnaseq reads ( needed to calculate the FPKM ). This only needs to be set if it isn't found by a call to samtools idxstats." )
     
     parser.add_argument( '--cage-reads', type=argparse.FileType('rb'),
         help='BAM file containing mapped cage reads.')
@@ -1534,6 +1538,11 @@ def parse_arguments():
     VERBOSE = args.verbose
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
+
+    global TOTAL_MAPPED_READS
+    TOTAL_MAPPED_READS = ( None if args.num_mapped_rnaseq_reads == None 
+                           else args.num_mapped_rnaseq_reads )
+
         
     if None == args.reference and args.use_reference_genes:
         raise ValueError, "--reference must be set if --use-reference-genes is set"
@@ -1612,8 +1621,13 @@ def main():
         if VERBOSE: log_statement( 'Loading RNAseq read bams' )                
         rnaseq_reads = RNAseqReads(rnaseq_bam.name).init(
             reverse_read_strand=reverse_rnaseq_strand)
+
         global TOTAL_MAPPED_READS
-        TOTAL_MAPPED_READS = rnaseq_reads.mapped
+        if TOTAL_MAPPED_READS == None:
+            TOTAL_MAPPED_READS = rnaseq_reads.mapped
+            if TOTAL_MAPPED_READS == 0:
+                raise ValueError, "Can't determine the number of reads in the RNASeq BAM (by samtools idxstats). Please set --num-mapped-rnaseq-reads"
+        assert TOTAL_MAPPED_READS > 0
         
         if VERBOSE: log_statement( 'Loading promoter reads bams' )        
         promoter_reads = load_promoter_reads(cage_bam, rampage_bam)
