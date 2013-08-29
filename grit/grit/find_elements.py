@@ -678,7 +678,7 @@ def find_gene_boundaries((chrm, strand, contig_len),
     
     return genes
 
-def filter_polya_peaks( polya_peaks, rnaseq_cov ):
+def filter_polya_peaks( polya_peaks, rnaseq_cov, jns ):
     if len(polya_peaks) == 0:
         return polya_peaks
     
@@ -686,7 +686,13 @@ def filter_polya_peaks( polya_peaks, rnaseq_cov ):
 
     new_polya_peaks = []
     for start, stop in polya_peaks[:-1]:
-        pre_cvg = rnaseq_cov[max(0,start-10):start].sum()       
+        pre_cvg = rnaseq_cov[max(0,start-10):start].sum()
+        # find the contribution of jn 
+        jn_cnt = sum( 1 for jn_start, jn_stop, jn_cnt in jns 
+                      if abs(stop - jn_start) <= 10+stop-start )
+        if jn_cnt > 0:
+            continue
+        pre_cvg -= 100*jn_cnt
         post_cvg = rnaseq_cov[stop+10:stop+20].sum()
         if pre_cvg > 10 and pre_cvg/(post_cvg+1.0) < 5:
             continue
@@ -1144,9 +1150,9 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         polya_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in polya_peaks ]
         rnaseq_cov = rnaseq_cov[::-1]
 
-    polya_peaks = filter_polya_peaks(polya_peaks, rnaseq_cov)
+    polya_peaks = filter_polya_peaks(polya_peaks, rnaseq_cov, jns)
     
-    """
+    
     filtered_junctions = []
     for (start, stop, cnt) in jns:
         if start < 0 or stop >= gene_len: continue
@@ -1157,7 +1163,6 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         filtered_junctions.append( (start, stop, cnt) )
 
     jns = filtered_junctions
-    """
     
     ### END Prepare input data #########################################
 
