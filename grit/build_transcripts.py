@@ -344,7 +344,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             log_statement(
                 "Finding MLE for Gene %s(%s:%s:%i-%i) - %i transcripts" \
                     % (gene_id, gene.chrm, gene.strand, 
-                       gene.start, gene.stop, expected_array.shape[1] ) )
+                       gene.start, gene.stop, len(gene.transcripts) ) )
             
             rnaseq_reads = [ RNAseqReads(fname).init(args) 
                              for fname, args in rnaseq_reads_init_data ][0]
