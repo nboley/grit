@@ -211,10 +211,15 @@ class Reads( pysam.Samfile ):
         """
         self = args[0]
         args = list( args )
-        if len(args) > 1:
-            args[1] = self.fix_chrm_name( args[1] )
-        elif 'reference' in kwargs:
-            kwargs['reference'] = self.fix_chrm_name( kwargs['reference'] )
+        try:
+            if len(args) > 1:
+                args[1] = self.fix_chrm_name( args[1] )
+            elif 'reference' in kwargs:
+                kwargs['reference'] = self.fix_chrm_name( kwargs['reference'] )
+        # if this contig doesn't exist for these reads, then 
+        # return an empty iterator
+        except KeyError:
+            return ()
         return pysam.Samfile.fetch( *args, **kwargs )
 
     def is_indexed( self ):
@@ -270,10 +275,15 @@ class Reads( pysam.Samfile ):
 
         return
 
-    def build_read_coverage_array( self, chrm, strand, start, stop ):
+    def build_read_coverage_array( self, chrm, strand, 
+                                   start, stop, read_pair=None ):
+        assert stop >= start
         full_region_len = stop - start + 1
         cvg = numpy.zeros(full_region_len)
         for rd in self.iter_reads( chrm, strand, start, stop ):
+            if read_pair != None:
+                if read_pair==1 and not rd.is_read1: continue
+                if read_pair==2 and not rd.is_read2: continue
             for region in iter_coverage_regions_for_read( 
                     rd, self, self.RRR, self.PAOS):
                 cvg[max(0, region[2]-start):max(0, region[3]-start)] += 1
