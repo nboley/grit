@@ -1,4 +1,5 @@
 import multiprocessing
+import time
 
 class ProcessSafeOPStream( object ):
     def __init__( self, writeable_obj ):

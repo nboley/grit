@@ -1,37 +1,25 @@
-import sys, os, copy, numpy, time, pickle
-from sklearn.ensemble import RandomForestClassifier
-from bx.intervals.intersection import Intersecter, Interval
+import sys, os 
+
+import copy
+import numpy
+import time
+import pickle
+
+from collections import namedtuple
 from itertools import izip
 
-sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
-                                      "../file_types/fast_gtf_parser/" ) )
-from gtf import load_gtf
+from sklearn.ensemble import RandomForestClassifier
+from bx.intervals.intersection import Intersecter, Interval
 
-sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
-                                      "./fast_wiggle_parser/" ) )
+sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), "..") )
 
-from wiggle import Wiggle
+from files.gtf import load_gtf, iter_gff_lines
+from files.reads import RNAseqReads, clean_chr_name
+GenomicInterval = namedtuple('GenomicInterval', ['chr', 'strand', 'start', 'stop'])
 
-sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), \
-                                      "../file_types/" ) )
-from genomic_intervals import GenomicInterval
-from gtf_file import iter_gff_lines
-
-
-################################################################################
-# The file names that need to be loaded in:
-genome_fname = '/media/scratch/DATA/genomes/hg19/ucsc_all.fa'
-annotation_fname = '/home/ben/human_polyA/UCSC_known.gtf'
-polyA_reads_fname = '/home/ben/human_polyA/epilepsy_polyA.gff'
-cDNA_tes_fname = '/home/ben/human_polyA/polyA_DB.gtf'
-wiggle_list = sys.argv[1] # A file like:
-# /media/scratch/final_transcriptome_v2/read_cov_bedgraphs/rnaseq_cov.AdMatedF_Ecl_1day_Heads.minus.bedGraph
-# /media/scratch/final_transcriptome_v2/read_cov_bedgraphs/rnaseq_cov.AdMatedF_Ecl_1day_Heads.plus.bedGraph
-# /media/scratch/final_transcriptome_v2/read_cov_bedgraphs/rnaseq_cov.AdMatedF_Ecl_20days_Heads.minus.bedGraph
-# /media/scratch/final_transcriptome_v2/read_cov_bedgraphs/rnaseq_cov.AdMatedF_Ecl_20days_Heads.plus.bedGraph
-#
-################################################################################
-
+VERBOSE = False
+DEBUG_VERBOSE = True
+NTHREADS = 60
 
 ################################################################################
 
@@ -110,27 +98,6 @@ def list_samples( samp_fn ):
         for rd in all_samples[samp].iterkeys():
             assert len(all_samples[samp][rd]) == 2
     return all_samples
-        
-
-def parse_wiggle(sample):
-    '''
-    sample should look like:
-        { sample.rd1 : [+,-], sample.rd2 : [+,-] }
-
-    returns a dict of Wiggle objects with exactly two entries, rd1 and rd2
-
-    wiggles, out_fname_prefix, chrm_sizes_fp, track_name_prefix, filter_region \
-        = parse_arguments()
-    '''
-    chrm_sizes_fp = open('/media/scratch/DATA/genomes/hg19/hg19.chrom.sizes')
-    wiggle_dict = {}
-    for short_name in sample.keys():
-        rd = short_name.split('.')[-1]
-        wiggle_dict[rd] = Wiggle( chrm_sizes_fp )
-        for fn in sample[short_name]:
-            fid = open(fn)
-            wiggle_dict[rd].load_data_from_fp( fid )
-    return wiggle_dict
 
 def parse_fasta( fn ):
     '''
@@ -578,8 +545,6 @@ def extract_covariates_from_seqs( seqs, w, polyA_density_curr, RNA_density, RNA_
     return numpy.asarray(Big_X), header, all_points
 
 
-
-
 def get_local_read_density(polyA_reads_D, polyA_reads_I):
     '''
     get the local polyA read density.
@@ -594,15 +559,108 @@ def get_local_read_density(polyA_reads_D, polyA_reads_I):
                 len( polyA_reads_I[(chrm,strand)].find(pos-50,pos+51) ) ]
     return seq_dict
 
+def get_predictors_for_polya_site( reads, chrm, strand, pos ):
+    rd1_cvg = reads.build_read_coverage_array(
+        chrm, strand, max(0,pos-100), pos+100, read_pair=1 )
+    rd2_cvg = reads.build_read_coverage_array(
+        chrm, strand, max(0,pos-100), pos+100, read_pair=2 )
+    # if we can't get the full read coverage, this doesn't make
+    # sense so skip this polya
+    if len(rd1_cvg) != 201: return None
+    if len(rd2_cvg) != 201: return None
 
-def get_RNAseq_densities( all_samples, polyA ):
+    ### TODO - BEN - can't we just reverse rd1_cvg ( ie, 
+    # if strand == '-': rd1_cvg = rd1_cvg[::-1] ) and skip
+    # the strand special casing
+
+    upstream_10_rd1 = rd1_cvg[100-10:100].sum()
+    downstream_10_rd1 = rd1_cvg[100:100+10].sum()
+
+    upstream_50_rd1 = rd1_cvg[100-50:100].sum()
+    downstream_50_rd1 = rd1_cvg[100:100+50].sum()
+
+    upstream_100_rd1 = rd1_cvg[100-100:100].sum()
+    downstream_100_rd1 = rd1_cvg[100:100+100].sum()
+
+    upstream_10_rd2 = rd2_cvg[100-10:100].sum()
+    downstream_10_rd2 = rd2_cvg[100:100+10].sum()
+
+    upstream_50_rd2 = rd2_cvg[100-50:100].sum()
+    downstream_50_rd2 = rd2_cvg[100:100+50].sum()
+
+    upstream_100_rd2 = rd2_cvg[100-100:100].sum()
+    downstream_100_rd2 = rd2_cvg[100:100+100].sum()
+
+    if strand == '+':
+        return [
+            upstream_10_rd1, downstream_10_rd1,
+            upstream_50_rd1, downstream_50_rd1,
+            upstream_100_rd1, downstream_100_rd1, 
+            upstream_10_rd1/max(downstream_10_rd1,1), 
+            upstream_50_rd1/max(downstream_50_rd1,1), 
+            upstream_100_rd1/max(downstream_100_rd1,1),
+            upstream_10_rd2, downstream_10_rd2,
+            upstream_50_rd2, downstream_50_rd2,
+            upstream_100_rd2, downstream_100_rd2, 
+            upstream_10_rd2/max(downstream_10_rd2,1), 
+            upstream_50_rd2/max(downstream_50_rd2,1), 
+            upstream_100_rd2/max(downstream_100_rd2,1),
+            upstream_10_rd1/max(downstream_10_rd2,1), 
+            upstream_50_rd1/max(downstream_50_rd2,1), 
+            upstream_100_rd1/max(downstream_100_rd2,1)
+            ]
+    else:
+        return [
+            downstream_10_rd1, upstream_10_rd1,
+            downstream_50_rd1, upstream_50_rd1,
+            downstream_100_rd1, upstream_100_rd1, 
+            downstream_10_rd1/max(upstream_10_rd1,1), 
+            downstream_50_rd1/max(upstream_50_rd1,1),
+            downstream_100_rd1/max(upstream_100_rd1,1),
+            downstream_10_rd2, upstream_10_rd2,
+            downstream_50_rd2, upstream_50_rd2,
+            downstream_100_rd2, upstream_100_rd2, 
+            downstream_10_rd2/max(upstream_10_rd2,1), 
+            downstream_50_rd2/max(upstream_50_rd2,1), 
+            downstream_100_rd2/max(upstream_100_rd2,1),
+            downstream_10_rd1/max(upstream_10_rd2,1), 
+            downstream_50_rd1/max(upstream_50_rd2,1), 
+            downstream_100_rd1/max(upstream_100_rd2,1)
+            ]
+    assert False
+
+def get_RNAseq_density_worker( reads, sites, sites_lock, dense ):
+    while True:
+        with sites_lock:
+            sites_len = len( sites )
+            if sites_len == 0: break
+            # using the commented out code appears slower because
+            # some regions ( like M ) have so many reads, that them
+            # all getting stuck in 1 group outweighs the lock overhead
+            # of doing 1 at a time. A random sort might fix this, but it
+            # seems fast enough as is. 
+            args = [sites.pop(),] #[-1:]
+            #del sites[-1:]
+        if DEBUG_VERBOSE and sites_len%1000 == 0:
+            print >> sys.stderr, "%i polyA sites remain" % sites_len
+        for chrm, strand, pos, cnt in args:
+            key = '_'.join([chrm,strand,str(pos)])
+            predictors = get_predictors_for_polya_site( 
+                reads, chrm, strand, pos )
+            if not dense.has_key(key):
+                dense[key] = predictors
+            else:
+                dense[key] = dense[key] + predictors
+
+    return
+
+def get_RNAseq_densities( all_reads, polyAs ):
     '''
     get the local RNA-seq read densities 
     '''
     dense = dict()
     header = []
-    wiggles = dict()
-    for sample in all_samples:
+    for sample in (x.filename for x in all_reads):
         header.extend( [ sample + '_up_10_rd1', 
                          sample + 'down_10_rd1', 
                          sample + '_up_50_rd1', 
@@ -624,76 +682,33 @@ def get_RNAseq_densities( all_samples, polyA ):
         header.extend( [ sample + '_up_down_rat_10_rd1_rd2', 
                          sample + '_up_down_rat_50_rd1_rd2', 
                          sample + '_up_down_rat_100_rd1_rd2' ] )
-    import pdb; pdb.set_trace()
-    for sample in all_samples.iterkeys():
-        t1 = time.time()
-        print >>sys.stderr, "Now loading wiggle for: " + sample
-        wiggle = parse_wiggle(all_samples[sample])
-        print >>sys.stderr, "To load, it took : " + str( time.time()-t1 )
-        t1 = time.time()
-        for (chrm,strand) in polyA.keys():
-            for pos in polyA[(chrm,strand)].keys():
-                if chrm.startswith('chr'):
-                    chrm = chrm[3:]             
-                key = '_'.join([chrm,strand,str(pos)])
-                if not dense.has_key(key):
-                    dense[key] = []
-
-                # now there is an rd1 and and rd2 entry in wiggles
-                upstream_10_rd1 = wiggle['rd1'][(chrm,strand)][pos-10:pos].sum()
-                downstream_10_rd1 = wiggle['rd1'][(chrm,strand)][pos:pos+10].sum()
-
-                upstream_50_rd1 = wiggle['rd1'][(chrm,strand)][pos-50:pos].sum()
-                downstream_50_rd1 = wiggle['rd1'][(chrm,strand)][pos:pos+50].sum()
-
-                upstream_100_rd1 = wiggle['rd1'][(chrm,strand)][pos-100:pos].sum()
-                downstream_100_rd1 = wiggle['rd1'][(chrm,strand)][pos:pos+100].sum()
-
-                upstream_10_rd2 = wiggle['rd2'][(chrm,strand)][pos-10:pos].sum()
-                downstream_10_rd2 = wiggle['rd2'][(chrm,strand)][pos:pos+10].sum()
-
-                upstream_50_rd2 = wiggle['rd2'][(chrm,strand)][pos-50:pos].sum()
-                downstream_50_rd2 = wiggle['rd2'][(chrm,strand)][pos:pos+50].sum()
-
-                upstream_100_rd2 = wiggle['rd2'][(chrm,strand)][pos-100:pos].sum()
-                downstream_100_rd2 = wiggle['rd2'][(chrm,strand)][pos:pos+100].sum()
-
-                if strand == '+':
-                    dense[key].extend([
-                            upstream_10_rd1, downstream_10_rd1,
-                            upstream_50_rd1, downstream_50_rd1,
-                            upstream_100_rd1, downstream_100_rd1, 
-                            upstream_10_rd1/max(downstream_10_rd1,1), 
-                            upstream_50_rd1/max(downstream_50_rd1,1), 
-                            upstream_100_rd1/max(downstream_100_rd1,1),
-                            upstream_10_rd2, downstream_10_rd2,
-                            upstream_50_rd2, downstream_50_rd2,
-                            upstream_100_rd2, downstream_100_rd2, 
-                            upstream_10_rd2/max(downstream_10_rd2,1), 
-                            upstream_50_rd2/max(downstream_50_rd2,1), 
-                            upstream_100_rd2/max(downstream_100_rd2,1),
-                            upstream_10_rd1/max(downstream_10_rd2,1), 
-                            upstream_50_rd1/max(downstream_50_rd2,1), 
-                            upstream_100_rd1/max(downstream_100_rd2,1)])
-                else:
-                    dense[key].extend([
-                            downstream_10_rd1, upstream_10_rd1,
-                            downstream_50_rd1, upstream_50_rd1,
-                            downstream_100_rd1, upstream_100_rd1, 
-                            downstream_10_rd1/max(upstream_10_rd1,1), 
-                            downstream_50_rd1/max(upstream_50_rd1,1),
-                            downstream_100_rd1/max(upstream_100_rd1,1),
-                            downstream_10_rd2, upstream_10_rd2,
-                            downstream_50_rd2, upstream_50_rd2,
-                            downstream_100_rd2, upstream_100_rd2, 
-                            downstream_10_rd2/max(upstream_10_rd2,1), 
-                            downstream_50_rd2/max(upstream_50_rd2,1), 
-                            downstream_100_rd2/max(upstream_100_rd2,1),
-                            downstream_10_rd1/max(upstream_10_rd2,1), 
-                            downstream_50_rd1/max(upstream_50_rd2,1), 
-                            downstream_100_rd1/max(upstream_100_rd2,1)])
-        print >>sys.stderr, "To process, it took : " + str( time.time()-t1 ) 
-    return dense, header
+    
+    # process a list of arguments for multithreading
+    import multiprocessing
+    manager = multiprocessing.Manager()
+    dense = manager.dict()
+    sites = manager.list()
+    sites_lock = manager.Lock()
+    
+    for reads in all_reads:
+        for (chrm, strand), polyA in polyAs.iteritems():
+            chrm = clean_chr_name( chrm )
+            for pos, cnt in sorted(polyA.iteritems()):
+                sites.append( (chrm, strand, pos, cnt) )
+    
+    if VERBOSE: print >> sys.stderr, \
+            "Finding poly(A) read coverage with %i threads" % NTHREADS
+    if NTHREADS == 1:
+        get_RNAseq_density_worker( reads, sites, sites_lock, dense )
+    else:
+        from lib.multiprocessing_utils import Pool
+        all_args = [( reads, sites, sites_lock, dense )]*NTHREADS
+        p = Pool(NTHREADS)
+        p.apply( get_RNAseq_density_worker, all_args )
+    
+    if VERBOSE: print "FINISHED finding poly(A) coverage"
+    
+    return dict(dense), header
 
 
 def print_bed_from_D( D ):
@@ -789,52 +804,98 @@ def fit_forests( X_pos, X_neg_set, total_sets, size_train, size_test ):
     import pdb; pdb.set_trace()
     return Forests, Errs
 
-   
+
+def parse_arguments():
+    import argparse
+
+    parser = argparse.ArgumentParser(\
+        description='Find the poly(A) sites expressed from an RNAseq experiment.')
+
+    parser.add_argument( 
+        '--rnaseq-reads', type=argparse.FileType('rb'), required=True, 
+        help='BAM file containing mapped RNAseq reads.')
+    parser.add_argument( '--rnaseq-read-type', required=True,
+        choices=["forward", "backward"],
+        help='Whether or not the first RNAseq read in a pair needs to be reversed to be on the correct strand.')
+    
+    parser.add_argument( '--fasta', type=file, required=True,
+                         help='Fasta file containing the genome sequence')
+    parser.add_argument( '--reference', type=file, required=True,
+                         help='Reference GTF')
+    parser.add_argument( '--polya-reads', type=file, required=True,
+                         help='BAM file containing mapped polya reads.')
+    parser.add_argument( '--true-positive-tes', type=file, required=True,
+                         help='GTF file containing a verified set of TES.')
+        
+    parser.add_argument( '--verbose', '-v', default=False, action='store_true',
+                         help='Whether or not to print status information.')
+    parser.add_argument( '--threads', '-t', default=1, type=int,
+                         help='The number of threads to use.')
+        
+    args = parser.parse_args()
+
+    global VERBOSE
+    VERBOSE = args.verbose
+    global NTHREADS
+    NTHREADS = args.threads
+    
+    ret_files = ( args.fasta, args.reference, args.polya_reads,
+                  args.true_positive_tes, args.rnaseq_reads )
+    for fp in ret_files: fp.close()
+    return [ fp.name for fp in ret_files ]
 
 
 def main():
+    ( genome_fname, annotation_fname, polyA_reads_fname, cDNA_tes_fname, 
+      rnaseq_bam_fname ) = parse_arguments()
+    reads = RNAseqReads( rnaseq_bam_fname ).init(reverse_read_strand=True)
+
     # load in the polyA reads
+    if VERBOSE: print >> sys.stderr, "Loading poly(A) reads"
     polyA_reads_D = polyA_gff_2_dict( polyA_reads_fname )
     polyA_reads_I = polyA_dict_2_intersecter( polyA_reads_D )
-    #import pdb; pdb.set_trace()
-   
 
-    # get all the RNA-seq wiggle file names, organize by sample and by read #
-    all_samples = list_samples( wiggle_list )
+    if VERBOSE: print >> sys.stderr, "Loading RNAseq densities"
+    RNA_dense, RNA_header = get_RNAseq_densities( [reads,], polyA_reads_D )
     
+    #import pdb; pdb.set_trace()
+       
     # set the size of the window we will extract
     window = 50
     
-    # get the RNA-seq read densities
-    RNA_dense, RNA_header = get_RNAseq_densities( all_samples, polyA_reads_D )
-
     # get local read density
+    if VERBOSE: print >> sys.stderr, "Finding local read density"
     polyA_density = get_local_read_density(polyA_reads_D, polyA_reads_I)
 
     # load in the reference GTF
+    if VERBOSE: print >> sys.stderr, "Loading reference GTF"
     Introns_Sect, Introns_Dict, Exons_Sect, Exons_Dict, CDSs_Sect, CDSs_Dict = (
-        gtf_2_intersecters_and_dicts( annotation_fname )
+        gtf_2_intersecters_and_dicts( annotation_fname ) )
 
     # load in the cDNA polyA ends
+    if VERBOSE: print >> sys.stderr, "Loading Gold polyA sites"
     cDNA_polyA_D = polyA_gff_2_dict( cDNA_tes_fname )
     cDNA_polyA_I = polyA_dict_2_intersecter( cDNA_polyA_D )
     #cDNA_density = get_local_read_density(cDNA_polyA_D, cDNA_polyA_I)
 
     # purify cDNAs to remove those that overlap CDSs:
+    if VERBOSE: print >> sys.stderr, "Filtering Gold polyAs that overlap CDSs"
     cDNA_polyA_noCDS_D = remove_overlapping_elements( 
             cDNA_polyA_D, CDSs_Sect, window )
 
+    if VERBOSE: print >> sys.stderr, "Find polyAs that intersect gold set"
     # get a set of "positive", polyA reads that we believe
     polyA_reads_cDNA_ends_D = get_overlapping_elements( 
             polyA_reads_D, cDNA_polyA_I, window )
-
     # purify "positives" to remove those that overlap CDSs:
     polyA_reads_cDNA_noCDS_D = remove_overlapping_elements( 
             polyA_reads_cDNA_ends_D, CDSs_Sect, window )
 
     # load in the reference genome indexed by chrm
+    if VERBOSE: print >> sys.stderr, "Loading reference genome"
     FA = parse_fasta( genome_fname )
 
+    if VERBOSE: print >> sys.stderr, "Extracting reference sequence"
     # extract genome sequences around cDNA polyA ends that don't overlap CDSs
     cDNA_polyA_noCDS_seqs = extract_genome_sequence( 
             FA, cDNA_polyA_noCDS_D, window )
@@ -845,6 +906,7 @@ def main():
     X_polyA_cDNA, header,point_names_polyA_cDNA = extract_covariates_from_seqs( 
             polyA_reads_cDNA_noCDS_seqs, 50, polyA_density,RNA_dense,RNA_header)
 
+    if VERBOSE: print >> sys.stderr, "Finding negative polya set"
     # 1.a) get a set of introns that overlap no exons, TESs in these 
     # should be largely rubbish
     pure_introns_I = purify_introns( Introns_Dict, Exons_Sect )
@@ -856,6 +918,7 @@ def main():
     # find the polyA reads that fall in CDSs
     polyA_CDS_reads_D = get_overlapping_elements( polyA_reads_D, CDSs_Sect, 0 )
 
+    if VERBOSE: print >> sys.stderr, "Finding negative polya's genome sequence"
     # extract sequences corresponding to negatives
     polyA_CDS_reads_seqs = extract_genome_sequence( 
             FA, polyA_CDS_reads_D, window )
@@ -869,6 +932,7 @@ def main():
     import pdb; pdb.set_trace()
 
     # fit the forests:
+    if VERBOSE: print >> sys.stderr, "Fitting the random forest"
     Forests, Errs = fit_forests( X_polyA_cDNA, [X_polyA_CDS, X_polyA_intronic], 
                                  3, [2000, 2000, 800], [2000, 2000, 800] )
 
@@ -878,6 +942,7 @@ def main():
             polyA_reads_seqs, 100, polyA_density, RNA_dense, RNA_header )
 
     # do all the predictions for each forest
+    if VERBOSE: print >> sys.stderr, "Predicting from forest"
     preds = []
     L = len(Forests)
     fl = 1
@@ -892,6 +957,7 @@ def main():
             all_preds[i] = 1
 
 
+    if VERBOSE: print >> sys.stderr, "Aggregatong and writing good polya to output file"
     # collect all the polyA ends that pass prediction
     every_site = {}
     for i,p in enumerate(all_preds):
@@ -936,6 +1002,5 @@ def main():
     import pdb; pdb.set_trace()
     # gets 85% of FlyBase r5.45 3' ends, and maintains 13,865 intergenic polyA sites 
 
-main()
-
-
+if __name__ == '__main__':
+    main()
