@@ -18,8 +18,8 @@ from files.reads import RNAseqReads, clean_chr_name
 GenomicInterval = namedtuple('GenomicInterval', ['chr', 'strand', 'start', 'stop'])
 
 VERBOSE = False
-DEBUG_VERBOSE = True
-NTHREADS = 60
+DEBUG_VERBOSE = False
+NTHREADS = 1
 
 ################################################################################
 
@@ -169,11 +169,11 @@ def get_elements_from_gene( gene, get_tss=True, get_jns=True, \
     introns = set()
     exons = set()
     
-    chrm, strand = gene[1], gene[2]
-    transcripts = gene[-1]
+    chrm, strand = gene.chrm, gene.strand
+    transcripts = gene.transcripts
     
     for trans in transcripts:
-        bndries = trans[1]
+        bndries = trans.exon_bnds
 
         fp_region = GenomicInterval(chrm, strand, bndries[0], bndries[1])
         tp_region = GenomicInterval(chrm, strand, bndries[-2], bndries[-1])
