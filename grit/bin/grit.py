@@ -13,6 +13,8 @@ def parse_arguments():
     parser.add_argument( '--rnaseq-read-type', required=True,
         choices=["forward", "backward"],
         help='Whether or not the first RNAseq read in a pair needs to be reversed to be on the correct strand.')
+    parser.add_argument( '--num-mapped-rnaseq-reads', type=int,
+        help="The total number of mapped rnaseq reads ( needed to calculate the FPKM ). This only needs to be set if it isn't found by a call to samtools idxstats." )
     
     parser.add_argument( '--cage-reads', type=argparse.FileType('rb'),
         help='BAM file containing mapped cage reads.')
@@ -100,6 +102,9 @@ def run_find_elements( args ):
                               "..", "grit/find_elements.py" ) ]
     command.extend( ("--rnaseq-reads", args.rnaseq_reads.name) )
     command.extend( ("--rnaseq-read-type", args.rnaseq_read_type) )
+    if args.num_mapped_rnaseq_reads != None:
+        command.extend( ("--num-mapped-rnaseq-reads",
+                         str(args.num_mapped_rnaseq_reads) ))
     if args.cage_reads != None: 
         command.extend( ("--cage-reads", args.cage_reads.name) )
     if args.rampage_reads != None:
@@ -118,6 +123,7 @@ def run_find_elements( args ):
     command.extend( ("--ofname", elements_ofname) )
     if args.batch_mode: command.append( "--batch-mode" )
     command.extend( ("--threads", str(args.threads)) )
+    if args.verbose: command.append( "--verbose" )
     
     subprocess.check_call(command)
     
@@ -137,6 +143,9 @@ def run_build_transcripts(args, elements_fname):
     
     command.extend( ("--rnaseq-reads", args.rnaseq_reads.name) )
     command.extend( ("--rnaseq-read-type", args.rnaseq_read_type) )
+    if args.num_mapped_rnaseq_reads != None: 
+        command.extend( ("--num-mapped-rnaseq-reads",
+                         str(args.num_mapped_rnaseq_reads) ))
     
     command.append( "--estimate-confidence-bounds" )
     
@@ -152,6 +161,7 @@ def run_build_transcripts(args, elements_fname):
     
     if args.batch_mode: command.append( "--batch-mode" )
     command.extend( ("--threads", str(args.threads)) )
+    if args.verbose: command.append( "--verbose" )
     
     subprocess.check_call(command)
     

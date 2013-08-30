@@ -1653,7 +1653,7 @@ def main():
         # Call the children processes
         all_args = []
         for contig, contig_len in contig_lens.iteritems():
-            if contig != '20': continue
+            #if contig != '20': continue
             for strand in '+-':
                 contig_genes = [ 
                     gene for gene in genes 
