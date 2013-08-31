@@ -475,7 +475,7 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
     log_statement("Initializing background writer")
     while True:
         try:
-            write_type, key = finished_genes_queue.get(timeout=1.0)
+            write_type, key = finished_genes_queue.get(timeout=0.1)
             if write_type == 'FINISHED':
                 break
         except Queue.Empty:
@@ -521,14 +521,15 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                     ubs = output_dict[(key, 'ubs')] \
                         if compute_confidence_bounds else None
 
-                    write_gene_to_gtf(gtf_ofp, gene, mles, lbs, ubs, fpkms, 
-                                      unobservable_transcripts=unobservable_transcripts)
+                write_gene_to_gtf(gtf_ofp, gene, mles, lbs, ubs, fpkms, 
+                                  unobservable_transcripts=unobservable_transcripts)
 
-                    if expression_ofp != None:
-                        write_gene_to_fpkm_tracking( 
-                            expression_ofp, gene, lbs, ubs, fpkms, 
-                            unobservable_transcripts=unobservable_transcripts)
+                if expression_ofp != None:
+                    write_gene_to_fpkm_tracking( 
+                        expression_ofp, gene, lbs, ubs, fpkms, 
+                        unobservable_transcripts=unobservable_transcripts)
 
+                with output_dict_lock:
                     del output_dict[(key, 'gene')]
                     if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
                         del output_dict[(key, 'mle')]
