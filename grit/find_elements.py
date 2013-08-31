@@ -85,8 +85,8 @@ POLYA_MERGE_SIZE = 100
 CAGE_PEAK_WIN_SIZE = 30
 MIN_NUM_CAGE_TAGS = 5
 MAX_CAGE_FRAC = 0.05
-NUM_TSS_BASES_TO_SKIP = 50
-NUM_TES_BASES_TO_SKIP = 50
+NUM_TSS_BASES_TO_SKIP = 200
+NUM_TES_BASES_TO_SKIP = 300
 
 def get_contigs_and_lens( reads_files ):
     """Get contigs and their lengths from a set of bam files.
