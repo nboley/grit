@@ -23,7 +23,7 @@ from f_matrix import build_design_matrices
 import frequency_estimation
 from frag_len import load_fl_dists, FlDist, build_normal_density
 
-MAX_NUM_TRANSCRIPTS = 50000
+MAX_NUM_TRANSCRIPTS = 1000
 
 from lib.logging import Logger
 # log statement is set in the main init, and is a global
@@ -281,7 +281,9 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             try:
                 expected_array, observed_array, unobservable_transcripts \
                     = build_design_matrices( gene, rnaseq_reads, fl_dists, 
-                                             chain(promoter_reads, polya_reads))
+                                             chain(promoter_reads, polya_reads),
+                                             MAX_NUM_TRANSCRIPTS)
+                                             
             except ValueError, inst:
                 error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
                     os.getpid(), gene_id, 
