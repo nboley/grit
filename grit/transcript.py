@@ -63,7 +63,7 @@ def find_jn_connected_exons(exons, jns, strand, use_names=False):
 
 def iter_nonoverlapping_exons(exons):
     genes_graph = igraph.Graph()
-    genes_graph.add_vertices(len(exons)-1)
+    genes_graph.add_vertices(len(exons))
     overlapping_exons = find_overlapping_exons(exons)
     genes_graph.add_edges( overlapping_exons )
     genes = genes_graph.components()
