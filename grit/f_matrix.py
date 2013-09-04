@@ -581,51 +581,18 @@ def build_expected_and_observed_transcript_bndry_counts(
     
     return expected_cnts, observed_cnts
 
-def build_design_matrices( gene, rnaseq_reads, fl_dists, all_promoter_reads=[], 
-                           write_design_matrices_to_file=False  ):
-    if len( gene.transcripts ) == 0:
-        return numpy.zeros(0), numpy.zeros(0), []
-    
-    # only do this if we are in debugging mode
-    if write_design_matrices_to_file:
-        import cPickle
-        
-        obj_name = "." + str(gene.id) + "_" + hash_array(promoter_reads) \
-            + "_" + os.path.basename(rnaseq_reads.filename) + ".obj"
-        try:
-            fp = open( obj_name )
-            expected_array, observed_array, unobservable_transcripts = \
-                cPickle.load( fp )
-            fp.close()
-            return expected_array, observed_array, unobservable_transcripts
-        except IOError:
-            if DEBUG_VERBOSE: 
-                print "Couldnt load cached"
-    
-    # bin the rnaseq reads
-    expected_rnaseq_cnts, observed_rnaseq_cnts = \
-        build_expected_and_observed_rnaseq_counts( 
-            gene, rnaseq_reads, fl_dists )
-    if len( expected_rnaseq_cnts ) == 0:
-        return numpy.zeros(0), numpy.zeros(0), []
-    
-    expected_rnaseq_array, observed_rnaseq_array, unobservable_rnaseq_trans = \
-        build_expected_and_observed_arrays( 
-            expected_rnaseq_cnts, observed_rnaseq_cnts, True )
-    del expected_rnaseq_cnts, observed_rnaseq_cnts
-
-    # clsuter and join rows
+def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
     corr_coefs = numpy.corrcoef(expected_rnaseq_array)
     if isinstance(corr_coefs, numpy.ndarray):
         edges = set()
         row, col = (corr_coefs == 1).nonzero()
         for row_i, col_i in zip( row, col ):
-            edges.add((row_i, col_i))
+            edges.add((int(row_i), int(col_i)))
 
         graph = Graph( expected_rnaseq_array.shape[0] )
-        graph.add_edges( list( edges ) )
+        graph.add_edges(edges) #[ (int(e[0]), int(e[1])) for e in edges])
         clusters = graph.clusters()
-
+        
         new_expected_array = numpy.zeros( 
             (len(clusters), expected_rnaseq_array.shape[1]) )
         new_observed_array = numpy.zeros( len(clusters), dtype=int )
@@ -635,7 +602,54 @@ def build_design_matrices( gene, rnaseq_reads, fl_dists, all_promoter_reads=[],
 
         expected_rnaseq_array = new_expected_array
         observed_rnaseq_array = new_observed_array
+    
+    return expected_rnaseq_array, observed_rnaseq_array
 
+def build_design_matrices( gene, rnaseq_reads, fl_dists, all_promoter_reads=[], 
+                           max_num_transcripts=None  ):
+    if len( gene.transcripts ) == 0:
+        return numpy.zeros(0), numpy.zeros(0), []
+        
+    # bin the rnaseq reads
+    expected_rnaseq_cnts, observed_rnaseq_cnts = \
+        build_expected_and_observed_rnaseq_counts( 
+            gene, rnaseq_reads, fl_dists )
+    if len( expected_rnaseq_cnts ) == 0:
+        return numpy.zeros(0), numpy.zeros(0), []
+        
+    expected_rnaseq_array, observed_rnaseq_array, unobservable_rnaseq_trans = \
+        build_expected_and_observed_arrays( 
+            expected_rnaseq_cnts, observed_rnaseq_cnts, True )
+    del expected_rnaseq_cnts, observed_rnaseq_cnts
+    
+    expected_rnaseq_array, observed_rnaseq_array = cluster_rows(
+        expected_rnaseq_array, observed_rnaseq_array)
+    
+    num_transcripts = expected_rnaseq_array.shape[1]
+    if max_num_transcripts != None and num_transcripts > max_num_transcripts:
+        low_expression_ts = set()
+        test = (observed_rnaseq_array+1)/expected_rnaseq_array.max(1)
+        for index in numpy.arange(observed_rnaseq_array.shape[0])[test.argsort()]:
+            if num_transcripts - len(low_expression_ts) <= max_num_transcripts:
+                break
+            new_low_expression = set(expected_rnaseq_array[index,].nonzero()[0])
+            if len( low_expression_ts.union(new_low_expression) ) == num_transcripts:
+                break
+            low_expression_ts.update( new_low_expression )
+        
+        high_expression_ts = numpy.array(
+            list(set(range(num_transcripts)) - low_expression_ts))
+        expected_rnaseq_array = expected_rnaseq_array[:,high_expression_ts]
+        
+        new_unobservable_transcripts = [] + list(unobservable_rnaseq_trans)
+        for low_exp_t_i in low_expression_ts:
+            new_unobservable_transcripts.append( low_exp_t_i + sum(
+                    x <= low_exp_t_i for x in unobservable_rnaseq_trans ))
+        unobservable_rnaseq_trans = set( new_unobservable_transcripts )
+
+        expected_rnaseq_array, observed_rnaseq_array = cluster_rows(
+            expected_rnaseq_array, observed_rnaseq_array)
+    
     # rename the arrays, in case there is no 
     expected_array = expected_rnaseq_array
     observed_array = observed_rnaseq_array
