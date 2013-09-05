@@ -1436,7 +1436,7 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
             # if the intervals overlap ( I dont think I need this test, but
             # it's cheap and this could be an insidious bug )
             if not (stop < gene_interval[0] or start > gene_interval[1] ):
-                overlapping_genes.append( (gene_index, i+start_i) )
+                overlapping_genes.append( (int(gene_index), int(i+start_i)) )
     
     # buld the graph, find the connected components, and build 
     # the set of merged intervals
