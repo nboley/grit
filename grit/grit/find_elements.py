@@ -19,7 +19,8 @@ import Queue
 from igraph import Graph
 
 from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads, \
-    clean_chr_name, guess_strand_from_fname, iter_coverage_intervals_for_read
+    clean_chr_name, fix_chrm_name_for_ucsc, \
+    guess_strand_from_fname, iter_coverage_intervals_for_read
 from files.junctions import extract_junctions_in_region, \
     extract_junctions_in_contig
 from files.bed import create_bed_line
@@ -346,15 +347,19 @@ def write_unified_bed( elements, ofp ):
     }
         
     for bin in elements:
-            region = ( elements.chrm, elements.strand, bin.start, bin.stop)
-            grp_id = feature_mapping[bin.type] + "_%s_%s_%i_%i" % region
-            bed_line = create_bed_line( elements.chrm, elements.strand, 
-                                        bin.start-1, bin.stop, 
-                                        feature_mapping[bin.type],
-                                        score=bin.score,
-                                        color=color_mapping[bin.type],
-                                        use_thick_lines=(bin.type != 'INTRON'))
-            ofp.write( bed_line + "\n"  )
+        chrm = elements.chrm
+        if FIX_CHRM_NAMES_FOR_UCSC:
+            chrm = fix_chrm_name_for_ucsc(chrm)
+        region = ( chrm, elements.strand, bin.start, bin.stop)
+        grp_id = feature_mapping[bin.type] + "_%s_%s_%i_%i" % region
+        
+        bed_line = create_bed_line( chrm, elements.strand, 
+                                    bin.start-1, bin.stop, 
+                                    feature_mapping[bin.type],
+                                    score=bin.score,
+                                    color=color_mapping[bin.type],
+                                    use_thick_lines=(bin.type != 'INTRON'))
+        ofp.write( bed_line + "\n"  )
     return
 
 class Bins( list ):
@@ -362,7 +367,10 @@ class Bins( list ):
         self.chrm = chrm
         self.strand = strand
         self.extend( iter )
-        self._bed_template = "\t".join( ["chr"+chrm, '{start}', '{stop}', '{name}', 
+        if FIX_CHRM_NAMES_FOR_UCSC:
+            chrm = fix_chrm_name_for_ucsc(chrm)
+        
+        self._bed_template = "\t".join( [chrm, '{start}', '{stop}', '{name}', 
                                          '1000', strand, '{start}', '{stop}', 
                                          '{color}']  ) + "\n"
         
@@ -421,7 +429,10 @@ class Bins( list ):
         for bin in writetable_bins:
             if filter != None and bin.type != filter:
                 continue
-            region = GenomicInterval(self.chrm, self.strand, 
+            chrm = elements.chrm
+            if FIX_CHRM_NAMES_FOR_UCSC:
+                chrm = fix_chrm_name_for_ucsc(self.chrm)
+            region = GenomicInterval(chrm, self.strand, 
                                      bin.start, bin.stop)
             grp_id = "%s_%s_%i_%i" % region
             ofp.write( create_gff_line(region, grp_id) + "\n" )
@@ -1522,6 +1533,9 @@ def parse_arguments():
         help='Whether or not to print debugging information.')
     parser.add_argument('--write-debug-data',default=False,action='store_true',
         help='Whether or not to print out gff files containing intermediate exon assembly data.')
+
+    parser.add_argument( '--ucsc', default=False, action='store_true',
+        help='Try to format contig names in the ucsc format (typically by prepending a chr).')    
     parser.add_argument( '--batch-mode', '-b', 
         default=False, action='store_true',
         help='Disable the ncurses frontend, and just print status messages to stderr.')
@@ -1547,8 +1561,10 @@ def parse_arguments():
     global TOTAL_MAPPED_READS
     TOTAL_MAPPED_READS = ( None if args.num_mapped_rnaseq_reads == None 
                            else args.num_mapped_rnaseq_reads )
-
-        
+    
+    global FIX_CHRM_NAMES_FOR_UCSC
+    FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
+    
     if None == args.reference and args.use_reference_genes:
         raise ValueError, "--reference must be set if --use-reference-genes is set"
     if None == args.reference and args.use_reference_junctions:
@@ -1649,6 +1665,8 @@ def main():
         if any( ref_elements_to_include ):
             if VERBOSE: log_statement("Loading annotation file.")
             genes = load_gtf( ref_gtf_fname )
+        else:
+            genes = []
         
         # Call the children processes
         all_args = []

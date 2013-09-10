@@ -15,7 +15,8 @@ import multiprocessing
 from lib.multiprocessing_utils import Pool
 
 from files.gtf import load_gtf, Transcript, Gene
-from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads
+from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads, \
+    fix_chrm_name_for_ucsc
 from transcript import cluster_exons, build_transcripts
 from proteomics.ORF import find_cds_for_gene
 
@@ -94,7 +95,10 @@ def write_gene_to_gtf( ofp, gene, mles=None, lbs=None, ubs=None, fpkms=None,
         if lbs != None and ubs != None:
             frac = int((1000.*ubs[index-n_skipped_ts])/(1e-8+max(lbs)))
             transcript.score = max(1,min(1000,frac))
-
+        
+        if FIX_CHRM_NAMES_FOR_UCSC:
+            transcript.chrm = fix_chrm_name_for_ucsc(transcript.chrm)
+        
         ofp.write( transcript.build_gtf_lines(
                 gene.id, meta_data, source="grit") + "\n" )
         ofp.flush()
@@ -777,6 +781,9 @@ def parse_arguments():
                              help='Whether or not to print status information.')
     parser.add_argument( '--debug-verbose', default=False, action='store_true',
                              help='Prints the optimization path updates.')
+
+    parser.add_argument( '--ucsc', default=False, action='store_true',
+        help='Try to format contig names in the ucsc format (typically by prepending a chr).')    
     parser.add_argument( '--batch-mode', '-b', 
         default=False, action='store_true',
         help='Disable the ncurses frontend, and just print status messages to stderr.')
@@ -816,7 +823,10 @@ def parse_arguments():
     global PROCESS_SEQUENTIALLY
     if args.threads == 1:
         PROCESS_SEQUENTIALLY = True
-        
+
+    global FIX_CHRM_NAMES_FOR_UCSC
+    FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
+    
     global NUMBER_OF_READS_IN_BAM
     NUMBER_OF_READS_IN_BAM = ( None if args.num_mapped_rnaseq_reads == None 
                                else args.num_mapped_rnaseq_reads )
