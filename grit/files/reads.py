@@ -15,6 +15,9 @@ def clean_chr_name( chrm ):
         chrm = "M"
     return chrm
 
+def fix_chrm_name_for_ucsc( chrm ):
+    return 'chr' + clean_chr_name(chrm)
+
 def guess_strand_from_fname( fname ):
     if fname.lower().rfind( "plus" ) >= 0:
         return '+'

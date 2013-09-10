@@ -56,6 +56,9 @@ def parse_arguments():
         help='Whether or not to print status information.')
     parser.add_argument( '--debug-verbose', default=False, action='store_true',
         help='Whether or not to print debugging information.')
+
+    parser.add_argument( '--ucsc', default=False, action='store_true',
+        help='Try to format contig names in the ucsc format (typically by prepending a chr).')
     
     parser.add_argument( '--batch-mode', '-b', 
         default=False, action='store_true',
@@ -120,6 +123,8 @@ def run_find_elements( args ):
     if args.use_reference_promoters: command.append("--use-reference-promoters")
     if args.use_reference_polyas: command.append("--use-reference-polyas")
 
+    if args.ucsc: command.append("--ucsc")
+
     command.extend( ("--ofname", elements_ofname) )
     if args.batch_mode: command.append( "--batch-mode" )
     command.extend( ("--threads", str(args.threads)) )
@@ -162,6 +167,8 @@ def run_build_transcripts(args, elements_fname):
     if args.batch_mode: command.append( "--batch-mode" )
     command.extend( ("--threads", str(args.threads)) )
     if args.verbose: command.append( "--verbose" )
+
+    if args.ucsc: command.append("--ucsc")
     
     subprocess.check_call(command)
     
