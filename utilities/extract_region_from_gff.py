@@ -4,6 +4,7 @@ import os,  sys
 
 sys.path.append( os.path.join(os.path.dirname(__file__), "..", "file_types") )
 from gtf_file import parse_gff_line, GenomicInterval
+from bed import parse_bed_line
 
 def get_region( region_str ):
     chrm, strand, locs = region_str.strip().split(':')
