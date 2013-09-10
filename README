@@ -1,0 +1,32 @@
+GRIT - A tool for the integrative analysis of RNA-seq type assays. 
+
+INSTALL:
+
+Dependencies
+
+scipy
+cython
+python-igraph
+python-networkx
+pysam ( https://code.google.com/p/pysam/ )
+
+Then, in the grit directory, run 
+
+python setup.py build_ext --inplace
+
+In ubuntu:
+sudo aptitude install python-scipy python-igraph python-networkx cython
+wget https://pysam.googlecode.com/files/pysam-0.7.5.tar.gzpython setup.py install
+tar -zxvf pysam-0.7.5.tar.gz
+cd pysam-0.7.5
+sudo python setup.py install
+
+Then, in the grit directory, python setup.py build_ext --inplace
+
+Running GRIT:
+
+Run 
+
+bin/grit.py --help
+
+options should be explained in the output. 
