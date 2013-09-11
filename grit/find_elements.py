@@ -32,11 +32,13 @@ from lib.logging import Logger
 log_statement = None
 
 
-USE_CACHE = False
 NTHREADS = 1
 MAX_THREADS_PER_CONTIG = 16
 TOTAL_MAPPED_READS = None
 MIN_INTRON_SIZE = 200
+
+# the maximum number of bases to expand gene boundaries from annotated genes
+MAX_GENE_EXPANSION = 1000
 
 class ThreadSafeFile( file ):
     def __init__( self, *args ):
@@ -448,70 +450,71 @@ def load_junctions_worker(all_jns, all_jns_lock, args):
     log_statement( "" )
     return
 
-def load_junctions( rnaseq_reads, (chrm, strand, contig_len) ):
-    if USE_CACHE:
-        import cPickle
-        fname = "tmp.junctions.%s.%s.obj" % ( chrm, strand )
-        try:
-            with open( fname ) as fp:
-                junctions = cPickle.load(fp)
-        except IOError:
-            junctions = extract_junctions_in_contig( 
-                rnaseq_reads[0], chrm, strand )
-            with open( fname, "w" ) as fp:
-                cPickle.dump(junctions, fp)
+def load_junctions_in_bam( reads, (chrm, strand, contig_len) ):
+    if NTHREADS == 1:
+        return extract_junctions_in_contig( reads, chrm, strand )
     else:
-        if NTHREADS == 1:
-            junctions = extract_junctions_in_contig( 
-                rnaseq_reads[0], chrm, strand )
-        else:
-            nthreads = min( NTHREADS, MAX_THREADS_PER_CONTIG )
-            seg_len = int(contig_len/nthreads)
-            segments =  [ [i*seg_len, (i+1)*seg_len] for i in xrange(nthreads) ]
-            segments[0][0] = 0
-            segments[-1][1] = contig_len
-            
-            from multiprocessing import Process, Manager
-            manager = Manager()
-            all_jns = manager.list()
-            all_jns_lock = multiprocessing.Lock()
-            
-            ps = []
-            for start, stop in segments:
-                p = Process(target=load_junctions_worker,
-                            args=( all_jns, all_jns_lock, 
-                                   (rnaseq_reads[0], chrm, strand, start, stop, True) 
-                                   ) )
-                
-                p.start()
-                ps.append( p )
-            
-            log_statement( "Waiting on jn finding children in contig '%s' on '%s' strand" % ( chrm, strand ) )
-            while True:
-                if all( not p.is_alive() for p in ps ):
-                    break
-                time.sleep( 0.1 )
-            
-            junctions = defaultdict( int )
-            for jn, cnt in all_jns:
-                junctions[jn] += cnt
-            
-            junctions = sorted(junctions.iteritems())
-        
+        nthreads = min( NTHREADS, MAX_THREADS_PER_CONTIG )
+        seg_len = int((contig_len)/nthreads)
+        segments =  [ [i*seg_len, (i+1)*seg_len] for i in xrange(nthreads) ]
+        segments[0][0] = 0
+        segments[-1][1] = contig_len
+
+        from multiprocessing import Process, Manager
+        manager = Manager()
+        all_jns = manager.list()
+        all_jns_lock = multiprocessing.Lock()
+
+        ps = []
+        for start, stop in segments:
+            p = Process(target=load_junctions_worker,
+                        args=( all_jns, all_jns_lock, 
+                               (reads, chrm, strand, start, stop, True) 
+                               ) )
+
+            p.start()
+            ps.append( p )
+
+        log_statement( "Waiting on jn finding children in contig '%s' on '%s' strand" % ( chrm, strand ) )
+        while True:
+            if all( not p.is_alive() for p in ps ):
+                break
+            time.sleep( 0.1 )
+
+        junctions = defaultdict( int )
+        for jn, cnt in all_jns:
+            junctions[jn] += cnt
+
+        return sorted(junctions.iteritems())
+    assert False
+    
+def load_junctions( rnaseq_reads, cage_reads, polya_reads, 
+                    (chrm, strand, contig_len) ):
+    # load and filter the ranseq reads. We can't filter all of the reads because
+    # they are on differnet scales, so we only filter the RNAseq and use the 
+    # cage and polya to get connectivity at the boundaries.
+    rnaseq_junctions = load_junctions_in_bam(
+        rnaseq_reads, (chrm, strand, contig_len))
+    
     # filter junctions
     jn_starts = defaultdict( int )
     jn_stops = defaultdict( int )
-    for (start, stop), cnt in junctions:
+    for (start, stop), cnt in rnaseq_junctions:
         jn_starts[start] = max( jn_starts[start], cnt )
         jn_stops[stop] = max( jn_stops[stop], cnt )
     
     filtered_junctions = defaultdict(int)
-    for (start, stop), cnt in junctions:
-        if float(cnt)/jn_starts[start] < 0.01: continue
-        if float(cnt)/jn_stops[stop] < 0.01: continue
+    for (start, stop), cnt in rnaseq_junctions:
+        if (float(cnt)+1)/jn_starts[start] < 0.01: continue
+        if (float(cnt)+1)/jn_stops[stop] < 0.01: continue
         if stop - start > 10000000: continue
         filtered_junctions[(start, stop)] = cnt
     
+    # add in the cage and polya reads, for connectivity
+    for reads in [cage_reads, polya_reads]:
+        if reads == None: continue
+        for jn, cnt in load_junctions_in_bam(reads, (chrm,strand,contig_len)):
+            filtered_junctions[jn] += 0
     return filtered_junctions
 
 def find_initial_segmentation_worker( 
@@ -662,7 +665,8 @@ def find_gene_boundaries((chrm, strand, contig_len),
     
     # find all of the junctions
     if None == junctions:
-        junctions = load_junctions([rnaseq_reads,], (chrm, strand, contig_len))
+        junctions = load_junctions(rnaseq_reads, cage_reads, polya_reads, 
+                                   (chrm, strand, contig_len))
     
     # find segment boundaries
     if VERBOSE: log_statement( 
@@ -1362,8 +1366,8 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
             return
     
     # load junctions from the RNAseq data
-    junctions = load_junctions( [rnaseq_reads,], (chrm, strand, contig_len) )
-    
+    junctions = load_junctions( rnaseq_reads, cage_reads, polya_reads, 
+                                (chrm, strand, contig_len) )
     # load the reference elements
     ref_elements = extract_reference_elements( 
         ref_genes, ref_elements_to_include, strand )
@@ -1467,8 +1471,10 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
         mid = (merged_gene_intervals[i][1]+merged_gene_intervals[i+1][0])/2
         merged_gene_intervals[i][1] = int(mid)-1
         merged_gene_intervals[i+1][0] = int(mid)+1    
-    merged_gene_intervals[0][0] = 1
-    merged_gene_intervals[-1][1] = contig_len-1
+    merged_gene_intervals[0][0] = max( 
+        1, merged_gene_intervals[0][0]-MAX_GENE_EXPANSION)
+    merged_gene_intervals[-1][1] = min( 
+        contig_len-1, merged_gene_intervals[-1][1]+MAX_GENE_EXPANSION)
 
     # build gene objects with the intervals
     gene_bndry_bins = []
