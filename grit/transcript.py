@@ -413,7 +413,7 @@ def cluster_exons( tss_exons, internal_exons, tes_exons, se_transcripts,
     return
 
 def build_transcripts( tss_exons, internal_exons, tes_exons, se_transcripts, 
-                       jns, strand, max_num_transcripts=10000 ):
+                       jns, strand, max_num_transcripts=None ):
     import networkx as nx
     # build a directed graph, with edges leading from exon to exon via junctions
     all_exons = sorted(chain(tss_exons, internal_exons, tes_exons))
@@ -431,7 +431,8 @@ def build_transcripts( tss_exons, internal_exons, tes_exons, se_transcripts,
         for tes in tes_exons:
             for transcript in nx.all_simple_paths(graph, tss, tes):
                 num_transcripts += 1
-                if num_transcripts > max_num_transcripts: 
+                if max_num_transcripts != None and \
+                        num_transcripts > max_num_transcripts: 
                     if VERBOSE: print >> sys.stderr, "TOO COMPLEX"
                     return []
 
