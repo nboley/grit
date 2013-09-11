@@ -153,18 +153,20 @@ def load_transcript_from_gtf_data(transcript_lines):
         if rpkm == None and 'rpkm' in line.meta_data: 
             rpkm = line.meta_data['rpkm']
         
+        # subtract one to make the coordinates 0 based
+        line_start, line_stop = line.region.start-1, line.region.stop-1
         if line.feature == 'exon':
-            exons.append( (line.region.start, line.region.stop) )
+            exons.append( (line_start, line_stop) )
         elif line.feature == 'CDS':
-            exons.append( (line.region.start, line.region.stop) )
-            CDS_start = line.region.start \
-                if CDS_start == None or line.region.start < CDS_start else CDS_start
-            CDS_stop = line.region.stop \
-                if CDS_stop == None or line.region.stop > CDS_stop else CDS_stop
+            exons.append( (line_start, line_stop) )
+            CDS_start = line_start \
+                if CDS_start == None or line_start < CDS_start else CDS_start
+            CDS_stop = line_stop \
+                if CDS_stop == None or line_stop > CDS_stop else CDS_stop
         elif line.feature == 'promoter':
-            promoter = (line.region.start, line.region.stop)
+            promoter = (line_start, line_stop)
         elif line.feature == 'polya':
-            polya_region = (line.region.start, line.region.stop)
+            polya_region = (line_start, line_stop)
     
     if len( exons ) == 0:
         return None

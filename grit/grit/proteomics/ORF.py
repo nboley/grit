@@ -83,9 +83,9 @@ def get_gene_seq( fasta, chrm, strand, gene_start, gene_stop ):
         chrm = 'chr' + chrm
     
     # get the raw sequence from the gene object and the fasta file
-    # subtract one from start since fasta is 0-based closed-open
+    # add one to stop since fasta is 0-based closed-open
     gene_seq = fasta.fetch(
-        chrm, gene_start-1, gene_stop-1+1 )
+        chrm, gene_start, gene_stop+1 )
     
     # convert the sequence to upper case
     gene_seq = gene_seq.upper()
