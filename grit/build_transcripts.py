@@ -248,7 +248,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 fasta = Fastafile( fasta_fn )
                 gene.transcripts = find_cds_for_gene( 
                     gene, fasta, only_longest_orf=True )
-
+            
             with op_lock:
                 output[(gene_id, 'gene')] = gene
 

@@ -35,7 +35,7 @@ log_statement = None
 NTHREADS = 1
 MAX_THREADS_PER_CONTIG = 16
 TOTAL_MAPPED_READS = None
-MIN_INTRON_SIZE = 200
+MIN_INTRON_SIZE = 40
 
 # the maximum number of bases to expand gene boundaries from annotated genes
 MAX_GENE_EXPANSION = 1000
@@ -355,6 +355,9 @@ def write_unified_bed( elements, ofp ):
         region = ( chrm, elements.strand, bin.start, bin.stop)
         grp_id = feature_mapping[bin.type] + "_%s_%s_%i_%i" % region
         
+        # subtract 1 because we work in 1 based coords, but beds are 0-based
+        # also, add 1 to stop because beds are open-closed ( which means no net 
+        # change for the stop coordinate )
         bed_line = create_bed_line( chrm, elements.strand, 
                                     bin.start-1, bin.stop, 
                                     feature_mapping[bin.type],
