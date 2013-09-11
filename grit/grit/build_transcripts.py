@@ -24,7 +24,7 @@ from f_matrix import build_design_matrices
 import frequency_estimation
 from frag_len import load_fl_dists, FlDist, build_normal_density
 
-MAX_NUM_TRANSCRIPTS = 1000
+MAX_NUM_TRANSCRIPTS = 2000
 
 from lib.logging import Logger
 # log statement is set in the main init, and is a global
@@ -228,7 +228,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
             transcripts = []
             for i, exons in enumerate( build_transcripts( 
                     tss_exons, internal_exons, tes_exons,
-                    se_transcripts, introns, strand, MAX_NUM_TRANSCRIPTS ) ):
+                    se_transcripts, introns, strand ) ):
                 transcript = Transcript(
                     "%s_%i" % ( gene_id, i ), contig, strand, 
                     exons, cds_region=None, gene_id=gene_id)
