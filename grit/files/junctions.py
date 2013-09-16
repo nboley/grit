@@ -131,13 +131,9 @@ def extract_junctions_in_region( reads, chrm, strand, start=None, end=None,
                                  allow_introns_to_span_end=False):
     reads.reload()
     all_junctions = defaultdict(int)
-    for i, read in enumerate(reads.fetch(chrm, start, end)):
+    for i, read in enumerate(reads.iter_reads(chrm, strand, start, end)):
         # increment the number of times we've seen this read
         if not read_spans_single_intron( read ):
-            continue
-
-        if strand != get_strand( read, reads.reverse_read_strand, 
-                                 reads.pairs_are_opp_strand ):
             continue
         
         # find the introns
@@ -163,16 +159,16 @@ def extract_junctions_in_region( reads, chrm, strand, start=None, end=None,
         dnstrm_intron_pos = upstrm_intron_pos + read.cigar[intron_index][1] - 1
         
         assert upstrm_intron_pos - dnstrm_intron_pos + 1 < MIN_INTRON_LEN
-        
+                
         # Filter out reads that aren't fully in the region
         if start != None:
             if dnstrm_intron_pos < start: continue
-            if False == allow_introns_to_span_start and upstrm_intron_pos < start:
+            if not allow_introns_to_span_start and upstrm_intron_pos < start:
                 continue
         
         if end != None:
             if upstrm_intron_pos > end: continue
-            if False == allow_introns_to_span_end and dnstrm_intron_pos > end:
+            if not allow_introns_to_span_end and dnstrm_intron_pos > end:
                 continue
         
         # increment count of junction reads at this read position

@@ -1,6 +1,7 @@
 import sys, os
 from itertools import chain
 from collections import defaultdict
+from copy import copy
 
 import pysam
 import numpy
@@ -152,6 +153,120 @@ def iter_coverage_regions_for_read(
         yield chrm, strand, start, stop
     
     return
+
+def get_contigs_and_lens( reads_files ):
+    """Get contigs and their lengths from a set of bam files.
+    
+    We make sure that the contig lengths are consistent in all of the bam files, and
+    we remove contigs that dont have at least 1 read in at least one rnaseq file 
+    and one promoter reads file.
+    """
+    chrm_lengths = {}
+    contigs = None
+    for bam in reads_files:
+        bam_contigs = set()
+        for ref_name, ref_len in zip(bam.references, bam.lengths):
+            # add the contig to the chrm lengths file, checking to
+            # make sure that lengths match if it has already been added
+            if clean_chr_name( ref_name ) not in chrm_lengths:
+                chrm_lengths[clean_chr_name( ref_name )] = ref_len
+            else:
+                assert chrm_lengths[clean_chr_name(ref_name)] == ref_len, \
+                    "Chromosome lengths do not match between bam files"
+            bam_contigs.add( clean_chr_name(ref_name) )
+        
+        if contigs == None:
+            contigs = bam_contigs
+        else:
+            contigs = contigs.intersection( bam_contigs )
+    
+    # remove contigs that dont have reads in at least one file
+    def at_least_one_bam_has_reads( chrm, bams ):
+        for bam in reads_files:
+            try:
+                next( bam.fetch( chrm ) )
+            except StopIteration:
+                continue
+            except KeyError:
+                continue
+            else:
+                return True
+    
+    # produce the final list of contigs
+    rv =  {}
+    for key, val in chrm_lengths.iteritems():
+        if key in contigs and any( 
+            at_least_one_bam_has_reads(key, reads) for reads in reads_files ):
+            rv[key] = val
+    
+    return zip(*sorted(rv.iteritems()))
+
+class MergedReads( object ):
+    """Replicate the reads functionality for multiple underlying bams.
+    
+    """
+    def _find_reads_type( self, reads ):
+        if isinstance(reads, RNAseqReads):
+            return "RNASeq"
+        elif isinstance(reads, CAGEReads):
+            return "CAGE"
+        elif isinstance(reads, PolyAReads):
+            return "PolyA"
+        elif isinstance(reads, RAMPAGEReads):
+            return "RAMPAGE" 
+        elif isinstance(reads, Reads):
+            return "Generic"
+        else:
+            raise ValueError, "Unrecognized read subtype %s" % type(reads)
+    
+    def __init__(self, all_reads):
+        self._reads = list(all_reads)
+        self.type = self._find_reads_type(self._reads[0])
+        if not all( self.type == self._find_reads_type(reads)
+                    for reads in self._reads ):
+            raise ValueError, "All read objects must be the same type"
+        
+        self.references, self.lengths = get_contigs_and_lens( self._reads )
+        
+        return
+    
+    @property
+    def mapped(self):
+        return sum( reads.mapped for reads in self._reads )
+    
+    def fetch(*args, **kwargs):
+        # this should be true because self is implicitly the first argument
+        assert len(args) > 0
+        self, args = (args[0], args[1:])
+        return chain(*[reads.fetch(*args, **kwargs) 
+                       for reads in self._reads])
+    
+    def iter_reads( self, chrm, strand, start=None, stop=None ):
+        for reads in self._reads:
+            for rd in reads.iter_reads( chrm, strand, start, stop  ):
+                yield rd    
+        return
+    
+    def iter_paired_reads( self, chrm, strand, start, stop ):
+        for reads in self.reads:
+            for rd1, rd2 in reads.iter_paired_reads( chrm, start, stop  ):
+                yield rd1, rd2
+        return
+    
+    def build_read_coverage_array( self, chrm, strand, 
+                                   start, stop, read_pair=None ):
+        assert stop >= start
+        full_region_len = stop - start + 1
+        cvg = numpy.zeros(full_region_len)
+        for reads in self._reads:
+            cvg += reads.build_read_coverage_array( 
+                chrm, strand, start, stop, read_pair )
+        
+        return cvg
+
+    def reload( self ):
+        new_reads = [ reads.reload() for reads in self._reads ]
+        return MergedReads( new_reads )
 
 class Reads( pysam.Samfile ):
     """Subclass the samfile object to include a method that returns reads 

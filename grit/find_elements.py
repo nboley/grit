@@ -18,8 +18,9 @@ import Queue
 
 from igraph import Graph
 
-from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads, \
-    clean_chr_name, fix_chrm_name_for_ucsc, \
+from files.reads import MergedReads, RNAseqReads, CAGEReads, RAMPAGEReads, \
+    PolyAReads, \
+    clean_chr_name, fix_chrm_name_for_ucsc, get_contigs_and_lens, \
     guess_strand_from_fname, iter_coverage_intervals_for_read
 from files.junctions import extract_junctions_in_region, \
     extract_junctions_in_contig
@@ -90,53 +91,6 @@ MIN_NUM_CAGE_TAGS = 5
 MAX_CAGE_FRAC = 0.05
 NUM_TSS_BASES_TO_SKIP = 200
 NUM_TES_BASES_TO_SKIP = 300
-
-def get_contigs_and_lens( reads_files ):
-    """Get contigs and their lengths from a set of bam files.
-    
-    We make sure that the contig lengths are consistent in all of the bam files, and
-    we remove contigs that dont have at least 1 read in at least one rnaseq file 
-    and one promoter reads file.
-    """
-    chrm_lengths = {}
-    contigs = None
-    for bam in reads_files:
-        bam_contigs = set()
-        for ref_name, ref_len in zip(bam.references, bam.lengths):
-            # add the contig to the chrm lengths file, checking to
-            # make sure that lengths match if it has already been added
-            if clean_chr_name( ref_name ) not in chrm_lengths:
-                chrm_lengths[clean_chr_name( ref_name )] = ref_len
-            else:
-                assert chrm_lengths[clean_chr_name(ref_name)] == ref_len, \
-                    "Chromosome lengths do not match between bam files"
-            bam_contigs.add( clean_chr_name(ref_name) )
-        
-        if contigs == None:
-            contigs = bam_contigs
-        else:
-            contigs = contigs.intersection( bam_contigs )
-    
-    # remove contigs that dont have reads in at least one file
-    def at_least_one_bam_has_reads( chrm, bams ):
-        for bam in reads_files:
-            try:
-                next( bam.fetch( chrm ) )
-            except StopIteration:
-                continue
-            except KeyError:
-                continue
-            else:
-                return True
-    
-    # produce the final list of contigs
-    rv =  {}
-    for key, val in chrm_lengths.iteritems():
-        if key in contigs and any( 
-            at_least_one_bam_has_reads(key, reads) for reads in reads_files ):
-            rv[key] = val
-    
-    return rv
 
 def build_empty_array():
     return numpy.array(())
@@ -1496,7 +1450,7 @@ def parse_arguments():
         description='Find exons from RNAseq, CAGE, and poly(A) assays.')
 
     parser.add_argument( 
-        '--rnaseq-reads', type=argparse.FileType('rb'), required=True, 
+        '--rnaseq-reads', type=argparse.FileType('rb'), required=True,nargs="+",
         help='BAM file containing mapped RNAseq reads.')
     parser.add_argument( '--rnaseq-read-type', required=True,
         choices=["forward", "backward"],
@@ -1509,7 +1463,7 @@ def parse_arguments():
     parser.add_argument( '--rampage-reads', type=argparse.FileType('rb'),
         help='BAM file containing mapped rampage reads.')
 
-    parser.add_argument( '--polya-reads', type=argparse.FileType('rb'),
+    parser.add_argument( '--polya-reads',type=argparse.FileType('rb'),
         help='BAM file containing mapped polya reads.')
     
     parser.add_argument( '--reference', help='Reference GTF')
@@ -1635,7 +1589,7 @@ def load_promoter_reads(cage_bam, rampage_bam):
     return None
 
 def main():
-    ( rnaseq_bam, reverse_rnaseq_strand, cage_bam, rampage_bam, polya_bam,
+    ( rnaseq_bams, reverse_rnaseq_strand, cage_bam, rampage_bam, polya_bam,
       ofp, ref_gtf_fname, ref_elements_to_include, 
       use_ncurses ) = parse_arguments()
     
@@ -1648,10 +1602,12 @@ def main():
     # wrap everything in a try block so that we can with elegantly handle
     # uncaught exceptions
     try:
-        if VERBOSE: log_statement( 'Loading RNAseq read bams' )                
-        rnaseq_reads = RNAseqReads(rnaseq_bam.name).init(
-            reverse_read_strand=reverse_rnaseq_strand)
-
+        if VERBOSE: log_statement( 'Loading RNAseq read bams' )
+        rnaseq_reads = MergedReads([ 
+            RNAseqReads(rnaseq_bam.name).init(
+                reverse_read_strand=reverse_rnaseq_strand)
+            for rnaseq_bam in rnaseq_bams ])
+        
         global TOTAL_MAPPED_READS
         if TOTAL_MAPPED_READS == None:
             TOTAL_MAPPED_READS = rnaseq_reads.mapped
@@ -1667,9 +1623,10 @@ def main():
                 reverse_read_strand=True, pairs_are_opp_strand=True) 
                         if polya_bam != None else None )
         
-        contig_lens = get_contigs_and_lens( 
+        contigs, contig_lens = get_contigs_and_lens( 
             [ reads for reads in [rnaseq_reads, promoter_reads, polya_reads]
               if reads != None ] )
+        contig_lens = dict(zip(contigs, contig_lens))
         
         if any( ref_elements_to_include ):
             if VERBOSE: log_statement("Loading annotation file.")
