@@ -1,5 +1,19 @@
 import os, sys
 import subprocess
+from collections import defaultdict, namedtuple
+
+ControlFileEntry = namedtuple('ControlFileEntry', [
+        'sample_type', 'rep_id', 
+        'assay', 'paired', 'stranded', 'read_type', 
+        'filename'])
+
+def parse_control_file(control_fp):
+    for line in control_fp:
+        if line.strip().startswith("#"): continue
+        if line.strip() == '': continue
+        print line
+        print ControlFileEntry(*(line.split()))
+    pass
 
 def parse_arguments():
     import argparse
@@ -7,11 +21,12 @@ def parse_arguments():
     parser = argparse.ArgumentParser(\
         description='Build transcripts and quantify expression levels from RNAseq, CAGE, and poly(A) assays.')
 
-    parser.add_argument( 
-        '--rnaseq-reads', type=argparse.FileType('rb'), required=True, 
+    parser.add_argument( '--control', type=file, 
+        help='GRIT control file. Allows better control over the types of input files.')
+
+    parser.add_argument( '--rnaseq-reads', type=argparse.FileType('rb'), 
         help='BAM file containing mapped RNAseq reads.')
-    parser.add_argument( '--rnaseq-read-type', required=True,
-        choices=["forward", "backward"],
+    parser.add_argument( '--rnaseq-read-type', choices=["forward", "backward"],
         help='Whether or not the first RNAseq read in a pair needs to be reversed to be on the correct strand.')
     parser.add_argument( '--num-mapped-rnaseq-reads', type=int,
         help="The total number of mapped rnaseq reads ( needed to calculate the FPKM ). This only needs to be set if it isn't found by a call to samtools idxstats." )
@@ -81,7 +96,13 @@ def parse_arguments():
         raise ValueError, "--reference must be set if --use-reference-promoters is set"
     if None == args.reference and args.use_reference_polyas:
         raise ValueError, "--reference must be set if --use-reference-polyas is set"
-     
+
+    if args.control != None:
+        res = parse_control_file( args.control )
+        print res
+    
+    assert False
+    
     if ( args.cage_reads == None 
          and args.rampage_reads == None 
          and not args.use_reference_tss
