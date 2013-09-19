@@ -1446,14 +1446,24 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
 def parse_arguments():
     import argparse
 
+
+    class ValidateRnaSeqReadType(argparse.Action):
+        def __call__(self, parser, args, values, option_string=None):
+            valid_strands = set(('forward', 'backward'))
+            for strand in values:
+                if strand not in valid_strands:
+                    raise ValueError('invalid strand {s!r}'.format(s=strand))
+            setattr(args, self.dest, values)
+
     parser = argparse.ArgumentParser(\
         description='Find exons from RNAseq, CAGE, and poly(A) assays.')
 
     parser.add_argument( 
-        '--rnaseq-reads', type=argparse.FileType('rb'), required=True,nargs="+",
+        '--rnaseq-reads', required=True, nargs="+",type=argparse.FileType('rb'),
         help='BAM file containing mapped RNAseq reads.')
-    parser.add_argument( '--rnaseq-read-type', required=True,
-        choices=["forward", "backward"],
+    parser.add_argument( '--rnaseq-read-type', required=True, nargs='+',
+                         action=ValidateRnaSeqReadType,
+                         metavar=["forward", "backward"],
         help='Whether or not the first RNAseq read in a pair needs to be reversed to be on the correct strand.')
     parser.add_argument( '--num-mapped-rnaseq-reads', type=int,
         help="The total number of mapped rnaseq reads ( needed to calculate the FPKM ). This only needs to be set if it isn't found by a call to samtools idxstats." )
