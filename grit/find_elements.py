@@ -36,7 +36,7 @@ log_statement = None
 NTHREADS = 1
 MAX_THREADS_PER_CONTIG = 16
 TOTAL_MAPPED_READS = None
-MIN_INTRON_SIZE = 40
+MIN_INTRON_SIZE = 150
 
 # the maximum number of bases to expand gene boundaries from annotated genes
 MAX_GENE_EXPANSION = 1000
