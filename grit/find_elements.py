@@ -741,7 +741,7 @@ def find_polya_peaks_in_gene( ( chrm, strand ), gene, polya_cov, rnaseq_cov ):
     """
     
     raw_peaks = find_peaks( polya_cov, window_len=30, 
-                            min_score=5,
+                            min_score=MIN_NUM_POLYA_TAGS,
                             max_score_frac=0.05,
                             max_num_peaks=100)
     polya_sites = Bins( chrm, strand )
