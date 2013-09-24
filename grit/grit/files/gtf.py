@@ -141,17 +141,27 @@ def parse_gtf_line( line, fix_chrm=True, use_name_instead_of_id=False ):
 def load_transcript_from_gtf_data(transcript_lines):
     exons = []
     scores = set()
-    rpk = None
-    rpkm = None
+    fpk = None
+    fpkm = None
+    conf_lo = None
+    conf_hi = None
+    frac = None
+    
     promoter = None
     polya_region = None
     CDS_start, CDS_stop = None, None
     for line in transcript_lines:
         scores.add( line.score )
-        if rpk == None and 'rpk' in line.meta_data: 
-            rpk = line.meta_data['rpk']
-        if rpkm == None and 'rpkm' in line.meta_data: 
-            rpkm = line.meta_data['rpkm']
+        if fpk == None and 'fpk' in line.meta_data: 
+            fpk = float(line.meta_data['FPK'])
+        if fpkm == None and 'FPKM' in line.meta_data: 
+            fpkm = float(line.meta_data['FPKM'])
+        if conf_lo == None and 'conf_lo' in line.meta_data: 
+            conf_lo = float(line.meta_data['conf_lo'])
+        if conf_hi == None and 'conf_hi' in line.meta_data: 
+            conf_hi = float(line.meta_data['conf_hi'])
+        if frac == None and 'frac' in line.meta_data: 
+            frac = float(line.meta_data['frac'])
         
         # subtract one to make the coordinates 0 based
         line_start, line_stop = line.region.start-1, line.region.stop-1
@@ -178,8 +188,9 @@ def load_transcript_from_gtf_data(transcript_lines):
     line = transcript_lines[0]
     return Transcript( line.trans_id, line.region.chr, line.region.strand, 
                        flatten(sorted(exons)), CDS_region,
-                       line.gene_id, score, rpkm, rpk, 
-                       promoter, polya_region )
+                       gene_id=line.gene_id, score=score, fpkm=fpkm, fpk=fpk, 
+                       promoter=promoter, polya_region=polya_region,
+                       conf_lo=conf_lo, conf_hi=conf_hi, frac=frac)
 
 def _load_gene_from_gtf_lines( gene_id, gene_lines, transcripts_data ):
     if len( gene_lines ) > 1:

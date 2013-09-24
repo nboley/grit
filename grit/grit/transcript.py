@@ -116,16 +116,20 @@ class Gene( object ):
 
 class Transcript( object ):
     def __init__(self, trans_id, chrm, strand, exons, cds_region,
-                 gene_id=None, score=None, rpkm=None, rpk=None, 
-                 promoter=None, polya_region=None, coding_sequence=None ):
+                 gene_id=None, score=None, fpkm=None, fpk=None, 
+                 promoter=None, polya_region=None, coding_sequence=None,
+                 conf_lo=None, conf_hi=None, frac=None):
         self.gene_id = gene_id
         self.id = trans_id
         self.chrm = chrm
         self.strand = strand
         
         self.score = score
-        self.rpkm = rpkm
-        self.rpk = rpk
+        self.fpkm = fpkm
+        self.fpk = fpk
+        self.conf_lo = conf_lo
+        self.conf_hi = conf_hi
+        self.frac = frac
         
         exon_bnds = list( chain( *exons ) )
         self.exon_bnds = exon_bnds
