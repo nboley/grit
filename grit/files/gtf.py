@@ -156,6 +156,8 @@ def load_transcript_from_gtf_data(transcript_lines):
             fpk = float(line.meta_data['FPK'])
         if fpkm == None and 'FPKM' in line.meta_data: 
             fpkm = float(line.meta_data['FPKM'])
+        if fpkm == None and 'fpkm' in line.meta_data: 
+            fpkm = float(line.meta_data['fpkm'])
         if conf_lo == None and 'conf_lo' in line.meta_data: 
             conf_lo = float(line.meta_data['conf_lo'])
         if conf_hi == None and 'conf_hi' in line.meta_data: 
