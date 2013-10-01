@@ -88,9 +88,11 @@ POLYA_MERGE_SIZE = 100
 
 CAGE_PEAK_WIN_SIZE = 30
 MIN_NUM_CAGE_TAGS = 5
+MIN_NUM_POLYA_TAGS = 2
 MAX_CAGE_FRAC = 0.05
 NUM_TSS_BASES_TO_SKIP = 200
 NUM_TES_BASES_TO_SKIP = 300
+
 
 def build_empty_array():
     return numpy.array(())

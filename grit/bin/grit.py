@@ -272,8 +272,8 @@ def parse_arguments():
     if None == args.control and None == args.rnaseq_reads:
         raise ValueError, "--control or --rnaseq-reads must be set"
     
-    if args.rampage_reads != None:
-        raise NotImplemented, "RAMPAGE is not currently implemented in grit.py."
+    #if args.rampage_reads != None:
+    #    raise NotImplemented, "RAMPAGE is not currently implemented in grit.py."
     
     if None == args.reference and args.use_reference_genes:
         raise ValueError, "--reference must be set if --use-reference-genes is set"
