@@ -9,7 +9,7 @@ from itertools import izip
 
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), ".." ) )
 from grit.files.reads import iter_coverage_intervals_for_read, clean_chr_name, \
-    get_strand, CAGEReads, RNAseqReads
+    get_strand, CAGEReads, RAMPAGEReads, RNAseqReads
 from grit.lib.multiprocessing_utils import ProcessSafeOPStream
 
 import multiprocessing
@@ -79,7 +79,7 @@ def update_buffer_array_from_polya_read(
 
 def update_buffer_array_from_CAGE_read(
         buffer_array, buffer_offset, strand, reverse_read_strand, read):
-    rd_strand = '+' if read.is_reverse else '-'
+    rd_strand = '-' if read.is_reverse else '+'
     if reverse_read_strand:
         rd_strand = '-' if rd_strand == '+' else '+'
     
@@ -100,6 +100,33 @@ def update_buffer_array_from_CAGE_read(
     buffer_array[pos-buffer_offset] += post_prb
     
     return
+
+def update_buffer_array_from_RAMPAGE_read(
+        buffer_array, buffer_offset, strand, reverse_read_strand, read):
+    rd_strand = '-' if read.is_reverse else '+'
+    if reverse_read_strand:
+        rd_strand = '-' if rd_strand == '+' else '+'
+    
+    if not read.is_read1: return
+
+    # skip reads that dont match the filtering criterion
+    if strand != rd_strand: return
+    
+    # determine which pos of the read corresponds to the 
+    # poly(a) site
+    if rd_strand == '+': pos = read.pos
+    else: pos = read.aend
+    
+    # find the statmap posterior probabiliy, if available
+    res = [ val for key, val in read.tags if key == 'XP' ]
+    try: post_prb = float(res[0])
+    except Exception: post_prb = 1.0
+    
+    # update the array
+    buffer_array[pos-buffer_offset] += post_prb
+    
+    return
+
 
 def populate_cvg_array_for_contig( 
         merged_ofp, reads_fname, chrm, chrm_length, strand, 
@@ -235,6 +262,8 @@ def generate_wiggle(reads, ofps, update_buffer_array_from_read,
     return
 
 def parse_arguments():
+    allowed_assays = ['cage', 'rampage', 'rnaseq', 'polya']
+    
     import argparse
     parser = argparse.ArgumentParser(
         description='Get coverage bedgraphs from aligned reads.')
@@ -243,7 +272,7 @@ def parse_arguments():
     parser.add_argument( '--out-fname-prefix', '-o', required=True, 
                          help='Output file(s) will be bigWig')
     parser.add_argument( '--assay', '-a', required=True, 
-                         help='The assay type [(r)naseq, (c)age, (p)olya]')    
+                         choices=allowed_assays, help='The assay type')
     parser.add_argument( '--bigwig', '-b', default=False, action='store_true', 
                          help='Build a bigwig instead of bedgraph.')
     
@@ -265,12 +294,12 @@ def parse_arguments():
     assert args.read_filter in ( '1', '2', None )
     read_filter = int(args.read_filter) if args.read_filter != None else None
     
-    assay = {'c': 'cage', 'r': 'rnaseq', 'p': 'polya'}[args.assay.lower()[0]]
-    if assay not in ('cage', 'rnaseq', 'polya'):
+    if args.assay not in allowed_assays:
         raise ValueError, "Unrecongized assay (%s)" % args.assay
     
-    return assay, args.mapped_reads_fname, args.out_fname_prefix, args.bigwig, \
-        args.reverse_read_strand, read_filter, args.threads
+    return ( args.assay, args.mapped_reads_fname, args.out_fname_prefix, 
+             args.bigwig, args.reverse_read_strand, read_filter, args.threads )
+        
 
 def build_bigwig_from_bedgraph(bedgraph_fp, chrm_sizes_file, op_fname):
     with tempfile.NamedTemporaryFile(delete=True) as sorted_ofp:
@@ -297,6 +326,12 @@ def main():
         # the read strand reversal is done later, so set this to False
         reads.init(reverse_read_strand=False)
         update_buffer_array_from_read = update_buffer_array_from_CAGE_read
+        stranded = True
+    elif assay == 'rampage':
+        reads = RAMPAGEReads( reads_fname, "rb" )
+        # the read strand reversal is done later, so set this to False
+        reads.init(reverse_read_strand=False)
+        update_buffer_array_from_read = update_buffer_array_from_RAMPAGE_read
         stranded = True
     elif assay == 'polya':
         reads = pysam.Samfile( reads_fname, "rb" )

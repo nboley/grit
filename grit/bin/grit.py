@@ -118,15 +118,19 @@ def run_bam2wig(fname, op_prefix, assay,
     subprocess.check_call(command)
 
 def run_all_bam2wigs( all_rnaseq_reads, all_rnaseq_read_types, 
-                      all_cage_reads, all_polya_reads, args ):
+                      all_cage_reads, all_rampage_reads, all_polya_reads, 
+                      args ):
     for rnaseq_reads, rnaseq_reads_type in zip(
             all_rnaseq_reads, all_rnaseq_read_types):
         run_bam2wig(rnaseq_reads.name, os.path.basename(rnaseq_reads.name),
                     'r', args.threads, bool(rnaseq_reads_type=='backward'),
                     args.verbose)
+    for rampage_reads in all_rampage_reads:
+        run_bam2wig(rampage_reads.name, os.path.basename(rampage_reads.name),
+                    'r', args.threads, True, args.verbose)    
     for cage_reads in all_cage_reads:
         run_bam2wig(cage_reads.name, os.path.basename(cage_reads.name),
-                    'r', args.threads, True, args.verbose)    
+                    'c', args.threads, True, args.verbose)    
     if args.polya_reads != None:
         run_bam2wig(args.polya_reads.name, 
                     os.path.basename(args.polya_reads.name),
@@ -299,8 +303,6 @@ def main():
     # build the element sets. If there is no control file, then 
     # we simply take the passed in files. If there is a control
     # file, then build the sets
-    all_rnaseq_reads, all_rnaseq_read_types, all_cage_reads, \
-        all_rampage_reads, all_polya_reads = [None]*5
     if args.control == None:
         all_input_data = [ InputData(
                 None, None,
@@ -316,8 +318,12 @@ def main():
         all_input_data = parse_control_file(args.control)
     
     if args.build_bedgraphs:
-        run_all_bam2wigs(all_rnaseq_reads, all_rnaseq_read_types, 
-                         all_cage_reads, all_polya_reads, args)
+        run_all_bam2wigs(all_input_data.rnaseq_reads, 
+                         all_input_data.rnaseq_read_types, 
+                         all_input_data.rampage_reads, 
+                         all_input_data.cage_reads, 
+                         all_input_data.polya_reads, 
+                         args)
 
     for ipd in all_input_data:
             verify_args_are_sufficient( args, ipd.rnaseq_reads, ipd.cage_reads, 
