@@ -514,7 +514,7 @@ class RAMPAGEReads(Reads):
             if rd.pos < start: continue
             rd_strand = '-' if rd.is_reverse else '+'
             if strand != rd_strand: continue
-            cvg[max(0,rd.pos-start-16)] += 1
+            cvg[max(0,rd.pos-start)] += 1
         
         return cvg
 
