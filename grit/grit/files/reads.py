@@ -102,6 +102,14 @@ def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000, max_nu
             
         if num_good_reads > max_num_reads_to_check:
             break
+
+    # if we have run out of reads, see if we can build the statistic
+    if paired_cnts['no_mate'] >= 0.95*num_good_reads:
+        return True
+    if float(paired_cnts['same_strand'])/paired_cnts['diff_strand'] > 5:
+        return True
+    elif float(paired_cnts['diff_strand'])/paired_cnts['same_strand'] > 5:
+        return False
     
     print >> sys.stderr, "Paired Cnts:", paired_cnts, "Num Reads", num_observed_reads
     raise ValueError, "Reads appear to be a mix of reads on the same and different strands. (%s)" % paired_cnts
