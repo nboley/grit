@@ -409,16 +409,18 @@ def load_junctions_worker(all_jns, all_jns_lock, args):
     log_statement( "" )
     return
 
-def load_junctions_in_bam( reads, (chrm, strand, contig_len) ):
+def load_junctions_in_bam( reads, (chrm, strand, region_start, region_stop) ):
     if NTHREADS == 1:
-        return extract_junctions_in_contig( reads, chrm, strand )
+        return extract_junctions_in_region( 
+            reads, chrm, strand, region_start, region_stop )
     else:
         nthreads = min( NTHREADS, MAX_THREADS_PER_CONTIG )
-        seg_len = int((contig_len)/nthreads)
-        segments =  [ [i*seg_len, (i+1)*seg_len] for i in xrange(nthreads) ]
-        segments[0][0] = 0
-        segments[-1][1] = contig_len
-
+        seg_len = int((region_stop - region_start + 1)/nthreads)
+        segments =  [ [region_start + i*seg_len, 
+                       region_start + (i+1)*seg_len] for i in xrange(nthreads) ]
+        segments[0][0] = region_start
+        segments[-1][1] = region_stop
+        
         from multiprocessing import Process, Manager
         manager = Manager()
         all_jns = manager.list()
@@ -448,12 +450,12 @@ def load_junctions_in_bam( reads, (chrm, strand, contig_len) ):
     assert False
     
 def load_junctions( rnaseq_reads, cage_reads, polya_reads, 
-                    (chrm, strand, contig_len) ):
+                    (chrm, strand, region_start, region_stop) ):
     # load and filter the ranseq reads. We can't filter all of the reads because
     # they are on differnet scales, so we only filter the RNAseq and use the 
     # cage and polya to get connectivity at the boundaries.
     rnaseq_junctions = load_junctions_in_bam(
-        rnaseq_reads, (chrm, strand, contig_len))
+        rnaseq_reads, (chrm, strand, region_start, region_stop))
     
     # filter junctions
     jn_starts = defaultdict( int )
@@ -472,7 +474,8 @@ def load_junctions( rnaseq_reads, cage_reads, polya_reads,
     # add in the cage and polya reads, for connectivity
     for reads in [cage_reads, polya_reads]:
         if reads == None: continue
-        for jn, cnt in load_junctions_in_bam(reads, (chrm,strand,contig_len)):
+        for jn, cnt in load_junctions_in_bam(
+                reads, (chrm, strand, region_start, region_stop)):
             filtered_junctions[jn] += 0
     return filtered_junctions
 
@@ -1324,17 +1327,27 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
         if len( gene_bndry_bins ) == 0:
             return
     
-    # load junctions from the RNAseq data
-    junctions = load_junctions( rnaseq_reads, cage_reads, polya_reads, 
-                                (chrm, strand, contig_len) )
     # load the reference elements
     ref_elements = extract_reference_elements( 
         ref_genes, ref_elements_to_include, strand )
+
+    
+    if gene_bndry_bins == None:
+        region_start, region_stop = 0, contig_len
+    else:
+        region_start = min( gene.start for gene in gene_bndry_bins )
+        region_stop = max( gene.stop for gene in gene_bndry_bins )
+        
+    # load junctions from the RNAseq data
+    junctions = load_junctions( rnaseq_reads, cage_reads, polya_reads, 
+                                (chrm, strand, region_start, region_stop) )
     
     # update the junctions with the reference junctions, and sort them
     for jn in ref_elements['introns']:
         junctions[jn] += 0
     junctions = sorted( junctions.iteritems() )
+
+    
     # del introns from the reference elements because they've already been 
     # merged into the set of junctions
     del ref_elements['introns']
