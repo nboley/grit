@@ -846,8 +846,12 @@ def parse_arguments():
     num_threads = args.threads
     
     gtf_ofp = ThreadSafeFile( args.ofname, "w" )
-    track_name = "." + os.path.basename(args.rnaseq_reads[0].name) \
-        if args.rnaseq_reads != None else ""
+    if args.ofname == None:
+        track_name = ".".join( os.path.basename(x.name) 
+                               for x in args.rnaseq_reads)
+    else:
+        track_name = ofname
+    
     gtf_ofp.write( "track name=transcripts.%s useScore=1\n" % track_name )
 
     expression_ofp = ThreadSafeFile( args.expression_ofname, "w" )
