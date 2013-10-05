@@ -36,7 +36,8 @@ log_statement = None
 NTHREADS = 1
 MAX_THREADS_PER_CONTIG = 16
 TOTAL_MAPPED_READS = None
-MIN_INTRON_SIZE = 50
+MIN_INTRON_SIZE = 100
+MIN_GENE_LENGTH = 100
 
 # the maximum number of bases to expand gene boundaries from annotated genes
 MAX_GENE_EXPANSION = 1000
@@ -89,7 +90,7 @@ POLYA_MERGE_SIZE = 100
 CAGE_PEAK_WIN_SIZE = 30
 MIN_NUM_CAGE_TAGS = 5
 MIN_NUM_POLYA_TAGS = 2
-MAX_CAGE_FRAC = 0.05
+MAX_CAGE_FRAC = 0.01
 NUM_TSS_BASES_TO_SKIP = 200
 NUM_TES_BASES_TO_SKIP = 300
 
@@ -247,7 +248,9 @@ class Bin( object ):
                 return '0,255,0'
             if self.type =='SE_GENE':
                 return '255,255,0'
-
+            if self.type =='INTERGENIC_SPACE':
+                return '254,254,34'
+        
         if strand == '+':
             left_label, right_label = self.left_label, self.right_label
         else:
@@ -290,7 +293,8 @@ def write_unified_bed( elements, ofp ):
         'EXON': 'internal_exon',
         'TES_EXON': 'tes_exon',
         'INTRON': 'intron',
-        'POLYA': 'polya'
+        'POLYA': 'polya',
+        'INTERGENIC_SPACE': 'intergenic'
     }
 
     color_mapping = { 
@@ -301,7 +305,8 @@ def write_unified_bed( elements, ofp ):
         'EXON': '000,000,000',
         'TES_EXON': '255,51,255',
         'INTRON': '100,100,100',
-        'POLYA': '255,0,0'
+        'POLYA': '255,0,0',
+        'INTERGENIC_SPACE': '254,254,34'
     }
         
     for bin in elements:
@@ -803,9 +808,8 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
     
     peaks = []
     peak_scores = []
-    
-    cumsum_cvg_array = \
-        numpy.append(0, numpy.cumsum( cov ))
+    cumsum_cvg_array = (
+        numpy.append(0, numpy.cumsum( cov )) )
     scores = cumsum_cvg_array[window_len:] - cumsum_cvg_array[:-window_len]
     indices = numpy.argsort( scores )
     min_score = max( min_score, MAX_CAGE_FRAC*scores[ indices[-1] ] )
@@ -1017,7 +1021,8 @@ def find_canonical_and_internal_exons( (chrm, strand), rnaseq_cov, jns ):
     return canonical_exons, internal_exons
 
 def find_se_genes( 
-        (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_sites  ):
+        (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_peaks  ):
+    polya_sites = numpy.array(sorted(x.stop-1 for x in polya_peaks))
     bins = build_labeled_segments( 
         (chrm, strand), rnaseq_cov, jns, transcript_bndries=polya_sites )
     se_genes = Bins( chrm, strand )
@@ -1045,6 +1050,35 @@ def find_se_genes(
             se_genes.append( se_gene )
     
     return se_genes
+
+def find_intergenic_space( 
+        (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_peaks  ):
+    cage_peak_starts = numpy.array(sorted(x.start for x in cage_peaks))
+    bins = build_labeled_segments( 
+        (chrm, strand), rnaseq_cov, jns, transcript_bndries=cage_peak_starts )
+    intergenic_segments = Bins( chrm, strand )
+    if len(bins) == 0: 
+        return intergenic_segments
+    
+    for peak in polya_peaks:
+        # find all bins that start with a polya site, and 
+        # end with a cage peak.
+        for i, bin in enumerate(bins):
+            # continue until we've reched an overlapping bin
+            if bin.stop < peak.start: continue
+            # if we've moved past the peak, stop searching
+            if bin.start > peak.stop: break
+            # if the right label isn't a cage_peak, it's not intergenic space
+            if bin.right_label not in ( 'TRANS_BNDRY', ): continue
+            intergenic_bin = Bin( 
+                peak.stop, bin.stop,
+                "POLYA", "CAGE_PEAK", "INTERGENIC_SPACE" )
+            intergenic_segments.append( intergenic_bin )
+            # intergenic space only extends to the first cage peak
+            break
+    
+    return intergenic_segments
+
 
 def find_gene_bndry_exons( (chrm, strand), rnaseq_cov, jns, peaks, peak_type ):
     if peak_type == 'CAGE':
@@ -1165,17 +1199,38 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         polya_peaks.extend( find_polya_peaks_in_gene( 
             (chrm, strand), gene, polya_cov, rnaseq_cov ) )
     
+    intergenic_bins = find_intergenic_space(
+        (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_peaks )
+    if len(intergenic_bins) > 0:
+        intervals = []
+        for intergenic_bin in intergenic_bins:
+            intervals.append((intergenic_bin.start+10, intergenic_bin.stop-10 ))
+        for bin_1, bin_2 in zip(
+                intergenic_bins[:-1], intergenic_bins[1:]):
+            intervals.append( (bin_1.stop+1+10, bin_2.start-1-10) )
+        intervals.append((0, intergenic_bins[0].start-1+10 ) )
+        intervals.append((intergenic_bins[-1].stop+1-10,gene.stop-gene.start+1))
+        intervals.sort()
+        # add the intergenic space, since there could be genes in the interior
+        new_genes = Bins(chrm, strand, [
+                Bin(max(0,gene.start+start), 
+                        min(gene.start+stop, contig_len),
+                        "ESTART","ESTOP","GENE")
+                for start, stop in intervals
+                if stop-start+1 > MIN_GENE_LENGTH])
+        if len(new_genes) > 1:
+            return None, None, new_genes        
+    
+    se_genes = find_se_genes( 
+        (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_peaks )
+    
     canonical_exons, internal_exons = find_canonical_and_internal_exons(
         (chrm, strand), rnaseq_cov, jns)
     tss_exons = find_gene_bndry_exons(
         (chrm, strand), rnaseq_cov, jns, cage_peaks, "CAGE")
     tes_exons = find_gene_bndry_exons(
         (chrm, strand), rnaseq_cov, jns, polya_peaks, "POLYA_SEQ")
-    
-    polya_sites = numpy.array(sorted(x.stop-1 for x in polya_peaks))
-    se_genes = find_se_genes( 
-        (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_sites )
-    
+        
     gene_bins = Bins(chrm, strand, build_labeled_segments( 
             (chrm, strand), rnaseq_cov, jns ) )
     
@@ -1200,7 +1255,7 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
 
     elements = Bins(chrm, strand, chain(
             jn_bins, cage_peaks, polya_peaks, 
-            tss_exons, internal_exons, tes_exons, se_genes) )
+            tss_exons, internal_exons, tes_exons, se_genes, intergenic_bins) )
     if strand == '-':
         elements = elements.reverse_strand( gene.stop - gene.start + 1 )
     elements = elements.shift( gene.start )
@@ -1210,7 +1265,7 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         gene_bins = gene_bins.reverse_strand( gene.stop - gene.start + 1 )
     gene_bins = gene_bins.shift( gene.start )
     
-    return elements, gene_bins
+    return elements, gene_bins, None
         
 
 def find_exons_worker( (genes_queue, genes_queue_lock), ofp, 
@@ -1265,11 +1320,21 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp,
                        (chrm, strand, gene.start, gene.stop) )
 
         gene_jns, gene_ref_elements = extract_elements_for_gene( gene )
-        elements, pseudo_exons = find_exons_in_gene(
+        elements, pseudo_exons, new_gene_boundaries = find_exons_in_gene(
             ( chrm, strand, contig_len ), gene, 
             rnaseq_reads, cage_reads, polya_reads, gene_jns,
             gene_ref_elements['promoters'], 
             gene_ref_elements['polya'])
+        
+        if new_gene_boundaries != None:
+            if genes_queue_lock != None:
+                genes_queue_lock.acquire()
+            print new_gene_boundaries
+            for gene in new_gene_boundaries:
+                genes_queue.append( gene )
+            if genes_queue_lock != None:
+                genes_queue_lock.release()
+            continue
         
         # merge in the reference elements
         for tss_exon in gene_ref_elements['tss_exons']:
@@ -1331,7 +1396,8 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     ref_elements = extract_reference_elements( 
         ref_genes, ref_elements_to_include, strand )
 
-    
+    # if we havn't provided genes, then find junctions for the entire
+    # contig. Otherwise, only look for junctions in the gene regions
     if gene_bndry_bins == None:
         region_start, region_stop = 0, contig_len
     else:
