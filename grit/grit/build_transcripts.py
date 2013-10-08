@@ -850,7 +850,7 @@ def parse_arguments():
         track_name = ".".join( os.path.basename(x.name) 
                                for x in args.rnaseq_reads)
     else:
-        track_name = ofname
+        track_name = args.ofname
     
     gtf_ofp.write( "track name=transcripts.%s useScore=1\n" % track_name )
 
