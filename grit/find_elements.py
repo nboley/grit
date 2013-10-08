@@ -36,8 +36,8 @@ log_statement = None
 NTHREADS = 1
 MAX_THREADS_PER_CONTIG = 16
 TOTAL_MAPPED_READS = None
-MIN_INTRON_SIZE = 100
-MIN_GENE_LENGTH = 100
+MIN_INTRON_SIZE = 40
+MIN_GENE_LENGTH = 200
 
 # the maximum number of bases to expand gene boundaries from annotated genes
 MAX_GENE_EXPANSION = 1000
@@ -76,7 +76,7 @@ def flatten( regions ):
             new_regions.append( [curr_start, curr_end] )
             curr_start = regions[i+1][0]
             curr_end = regions[i+1][1]
-    if type(new_regions[0]) == int:
+    if type(new_regions[0]) in (int, numpy.int64):
         return [new_regions]
     else:
         return new_regions
@@ -98,10 +98,53 @@ NUM_TES_BASES_TO_SKIP = 300
 def build_empty_array():
     return numpy.array(())
 
-def find_empty_regions( cov, thresh=1 ):
-    return []
+def cluster_segments( segments, jns ):
+    boundaries = numpy.array(sorted(chain(*segments)))
+    edges = set()
+    for (start, stop), cnt in jns:
+        start_bin = boundaries.searchsorted( start-1 )-1
+        stop_bin = boundaries.searchsorted( stop+1 )-1
+        if start_bin != stop_bin:
+            edges.add((int(min(start_bin, stop_bin)), 
+                       int(max(start_bin, stop_bin))))
+
+    genes_graph = Graph( len( boundaries )-1 )
+    genes_graph.add_edges( list( edges ) )
+
+    segments = []
+    for g in genes_graph.clusters():
+        segments.append( (boundaries[min(g)]+1, boundaries[max(g)+1]-1) )
+
+    return flatten( segments )
+
+def cluster_segments_2( segments, jns ):
+    boundaries = numpy.array(sorted(chain(*segments)))
+    edges = set()
+    for start, stop, cnt in jns:
+        start_bin = boundaries.searchsorted( start-1 )-1
+        stop_bin = boundaries.searchsorted( stop+1 )-1
+        if start_bin != stop_bin:
+            edges.add((int(min(start_bin, stop_bin)), 
+                       int(max(start_bin, stop_bin))))
+
+    genes_graph = Graph( len( boundaries )-1 )
+    genes_graph.add_edges( list( edges ) )
+
+    segments = []
+    for g in genes_graph.clusters():
+        segments.append( (boundaries[min(g)]+1, boundaries[max(g)+1]-1) )
+
+    return flatten( segments )
+
+
+def find_empty_regions( cov, thresh=1e-6, min_length=MIN_INTRON_SIZE ):
     x = numpy.diff( numpy.asarray( cov >= thresh, dtype=int ) )
-    return zip(numpy.nonzero(x==1)[0],numpy.nonzero(x==-1)[0])
+    stops = numpy.nonzero(x==1)[0].tolist()
+    if cov[-1] < thresh: stops.append(len(x))
+    starts = numpy.nonzero(x==-1)[0].tolist()
+    if cov[0] < thresh: starts.insert(0, 0)
+    assert len(starts) == len(stops)
+    return zip(starts, stops)
 
 def merge_empty_labels( poss ):
     locs = [i[1] for i in poss ]
@@ -536,12 +579,12 @@ def find_gene_boundaries((chrm, strand, contig_len),
         manager = multiprocessing.Manager()
         candidate_segments = manager.list()
         candidate_segments_lock = manager.Lock()
-        for middle in xrange( MIN_INTRON_SIZE/2, 
-                              contig_len-MIN_INTRON_SIZE/2, 
-                              MIN_INTRON_SIZE ):
+        for middle in xrange( MIN_GENE_LENGTH/2, 
+                              contig_len-MIN_GENE_LENGTH/2, 
+                              MIN_GENE_LENGTH ):
             
             candidate_segments.append( 
-                (middle-MIN_INTRON_SIZE/2, middle+MIN_INTRON_SIZE/2) )
+                (middle-MIN_GENE_LENGTH/2, middle+MIN_GENE_LENGTH/2) )
         accepted_segments = manager.list()
         accepted_segments_lock = manager.Lock()
         
@@ -610,26 +653,7 @@ def find_gene_boundaries((chrm, strand, contig_len),
             del segments[bndry_to_delete]
         
         return segments
-    
-    def cluster_segments( segments, jns ):
-        boundaries = numpy.array(sorted(chain(*segments)))
-        edges = set()
-        for (start, stop), cnt in jns:
-            start_bin = boundaries.searchsorted( start-1 )-1
-            stop_bin = boundaries.searchsorted( stop+1 )-1
-            if start_bin != stop_bin:
-                edges.add((int(min(start_bin, stop_bin)), 
-                           int(max(start_bin, stop_bin))))
         
-        genes_graph = Graph( len( boundaries )-1 )
-        genes_graph.add_edges( list( edges ) )
-        
-        segments = []
-        for g in genes_graph.clusters():
-            segments.append( (boundaries[min(g)]+1, boundaries[max(g)+1]-1) )
-        
-        return flatten( segments )
-    
     # find all of the junctions
     if None == junctions:
         junctions = load_junctions(rnaseq_reads, cage_reads, polya_reads, 
@@ -953,10 +977,6 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov,
 def build_labeled_segments( (chrm, strand), rnaseq_cov, jns, 
                             transcript_bndries=[] ):
     locs = defaultdict(set)    
-    for start, stop in find_empty_regions( rnaseq_cov ):
-        if stop - start < MIN_EMPTY_REGION_LEN: continue
-        locs[start].add( "ESTART" )
-        locs[stop].add( "ESTOP" )
     
     for start, stop, cnt in jns:
         if start < 1 or stop > len(rnaseq_cov): continue
@@ -1065,7 +1085,7 @@ def find_intergenic_space(
         # end with a cage peak.
         for i, bin in enumerate(bins):
             # continue until we've reched an overlapping bin
-            if bin.stop < peak.start: continue
+            if bin.stop <= peak.stop: continue
             # if we've moved past the peak, stop searching
             if bin.start > peak.stop: break
             # if the right label isn't a cage_peak, it's not intergenic space
@@ -1133,6 +1153,48 @@ def find_gene_bndry_exons( (chrm, strand), rnaseq_cov, jns, peaks, peak_type ):
     
     return bins
 
+def re_segment_gene( gene, (chrm, strand, contig_len),
+                     rnaseq_cov, jns, cage_peaks, polya_peaks):
+    # find intergenic bins ( those that start with polya signal,
+    # and end with cage signal )
+    intergenic_bins = find_intergenic_space(
+        (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_peaks )
+    if len(intergenic_bins) == 0: return []
+
+    # find the empty space inside of these intervals
+    empty_intervals = []
+    for intergenic_bin in intergenic_bins:
+        if intergenic_bin.stop - intergenic_bin.start + 1 < 10:
+            continue
+        empty_regions = find_empty_regions( 
+            rnaseq_cov[intergenic_bin.start+1:intergenic_bin.stop-1] )
+        for start, stop in empty_regions:
+            empty_intervals.append( 
+                (start+intergenic_bin.start, stop+intergenic_bin.start) )
+
+    # finally, build a new set of gene itnervals
+    intervals = []    
+    for (b1_start, b1_stop), (b2_start, b2_stop) in zip(
+            empty_intervals[:-1], empty_intervals[1:]):
+        intervals.append( (b1_stop+1, b2_start-1) )
+    intervals.append((0, empty_intervals[0][0]-1 ) )
+    intervals.append((empty_intervals[-1][1]+1,gene.stop-gene.start+1))
+    intervals.sort()
+    intervals = cluster_segments_2( intervals, jns )
+    print intervals
+    for x in intervals:
+        print x
+    
+    # add the intergenic space, since there could be genes in the interior
+    new_genes = Bins(chrm, strand, [
+            Bin(max(0,gene.start+start), 
+                    min(gene.start+stop, contig_len),
+                    "ESTART","ESTOP","GENE")
+            for start, stop in intervals
+            if stop-start+1 > MIN_GENE_LENGTH])
+
+    return new_genes
+
 def find_exons_in_gene( ( chrm, strand, contig_len ), gene, 
                         rnaseq_reads, cage_reads, polya_reads,
                         jns, cage_peaks=[], polya_peaks=[] ):
@@ -1198,29 +1260,13 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
         if strand == '-': polya_cov = polya_cov[::-1]
         polya_peaks.extend( find_polya_peaks_in_gene( 
             (chrm, strand), gene, polya_cov, rnaseq_cov ) )
-    
-    intergenic_bins = find_intergenic_space(
-        (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_peaks )
-    if len(intergenic_bins) > 0:
-        intervals = []
-        for intergenic_bin in intergenic_bins:
-            intervals.append((intergenic_bin.start+10, intergenic_bin.stop-10 ))
-        for bin_1, bin_2 in zip(
-                intergenic_bins[:-1], intergenic_bins[1:]):
-            intervals.append( (bin_1.stop+1+10, bin_2.start-1-10) )
-        intervals.append((0, intergenic_bins[0].start-1+10 ) )
-        intervals.append((intergenic_bins[-1].stop+1-10,gene.stop-gene.start+1))
-        intervals.sort()
-        # add the intergenic space, since there could be genes in the interior
-        new_genes = Bins(chrm, strand, [
-                Bin(max(0,gene.start+start), 
-                        min(gene.start+stop, contig_len),
-                        "ESTART","ESTOP","GENE")
-                for start, stop in intervals
-                if stop-start+1 > MIN_GENE_LENGTH])
-        if len(new_genes) > 1:
-            return None, None, new_genes        
-    
+
+    new_genes = re_segment_gene( 
+        gene, (chrm, strand, contig_len),
+        rnaseq_cov, jns, cage_peaks, polya_peaks )
+    if len(new_genes) > 1:
+        return None, None, new_genes        
+        
     se_genes = find_se_genes( 
         (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_peaks )
     
@@ -1255,7 +1301,7 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
 
     elements = Bins(chrm, strand, chain(
             jn_bins, cage_peaks, polya_peaks, 
-            tss_exons, internal_exons, tes_exons, se_genes, intergenic_bins) )
+            tss_exons, internal_exons, tes_exons, se_genes) )
     if strand == '-':
         elements = elements.reverse_strand( gene.stop - gene.start + 1 )
     elements = elements.shift( gene.start )
@@ -1329,7 +1375,6 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp,
         if new_gene_boundaries != None:
             if genes_queue_lock != None:
                 genes_queue_lock.acquire()
-            print new_gene_boundaries
             for gene in new_gene_boundaries:
                 genes_queue.append( gene )
             if genes_queue_lock != None:
