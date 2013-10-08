@@ -36,7 +36,7 @@ log_statement = None
 NTHREADS = 1
 MAX_THREADS_PER_CONTIG = 16
 TOTAL_MAPPED_READS = None
-MIN_INTRON_SIZE = 40
+MIN_INTRON_SIZE = 60
 MIN_GENE_LENGTH = 200
 
 # the maximum number of bases to expand gene boundaries from annotated genes
@@ -1181,9 +1181,6 @@ def re_segment_gene( gene, (chrm, strand, contig_len),
     intervals.append((empty_intervals[-1][1]+1,gene.stop-gene.start+1))
     intervals.sort()
     intervals = cluster_segments_2( intervals, jns )
-    print intervals
-    for x in intervals:
-        print x
     
     # add the intergenic space, since there could be genes in the interior
     new_genes = Bins(chrm, strand, [
