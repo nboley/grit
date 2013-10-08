@@ -90,7 +90,7 @@ POLYA_MERGE_SIZE = 100
 CAGE_PEAK_WIN_SIZE = 30
 MIN_NUM_CAGE_TAGS = 5
 MIN_NUM_POLYA_TAGS = 2
-MAX_CAGE_FRAC = 0.01
+MAX_CAGE_FRAC = 0.05
 NUM_TSS_BASES_TO_SKIP = 200
 NUM_TES_BASES_TO_SKIP = 300
 
@@ -1171,7 +1171,9 @@ def re_segment_gene( gene, (chrm, strand, contig_len),
         for start, stop in empty_regions:
             empty_intervals.append( 
                 (start+intergenic_bin.start, stop+intergenic_bin.start) )
-
+    if len(empty_intervals) == 0:
+        return [gene,]
+    
     # finally, build a new set of gene itnervals
     intervals = []    
     for (b1_start, b1_stop), (b2_start, b2_stop) in zip(
@@ -1770,7 +1772,7 @@ def main():
         # Call the children processes
         all_args = []
         for contig, contig_len in contig_lens.iteritems():
-            #if contig != '20': continue
+            #if contig != '4': continue
             for strand in '+-':
                 contig_genes = [ 
                     gene for gene in genes 
