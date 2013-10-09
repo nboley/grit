@@ -1179,6 +1179,9 @@ def re_segment_gene( gene, (chrm, strand, contig_len),
             empty_regions.append( 
                 (intergenic_bin.start+start, intergenic_bin.start+stop) )
     
+    if len(empty_regions) == 0:
+        return [gene,]
+    
     split_points = []
     for start, stop in flatten(empty_regions):
         split_points.append( int((start+stop)/2) )
@@ -1781,7 +1784,7 @@ def main():
         # Call the children processes
         all_args = []
         for contig, contig_len in contig_lens.iteritems():
-            if contig != '3R': continue
+            #if contig != '3R': continue
             for strand in '+-':
                 contig_genes = [ 
                     gene for gene in genes 
