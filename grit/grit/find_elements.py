@@ -36,11 +36,26 @@ log_statement = None
 NTHREADS = 1
 MAX_THREADS_PER_CONTIG = 16
 TOTAL_MAPPED_READS = None
-MIN_INTRON_SIZE = 60
-MIN_GENE_LENGTH = 100
 
+MIN_INTRON_SIZE = 60
+MAX_INTRON_SIZE = int(1e6)
+MIN_GENE_LENGTH = 100
 # the maximum number of bases to expand gene boundaries from annotated genes
 MAX_GENE_EXPANSION = 1000
+
+MIN_REGION_LEN = 50
+MIN_EMPTY_REGION_LEN = 100
+MIN_EXON_BPKM = 0.01
+EXON_EXT_CVG_RATIO_THRESH = 5
+POLYA_MERGE_SIZE = 100
+
+CAGE_PEAK_WIN_SIZE = 30
+MIN_NUM_CAGE_TAGS = 5
+MIN_NUM_POLYA_TAGS = 2
+MAX_CAGE_FRAC = 0.05
+NUM_TSS_BASES_TO_SKIP = 200
+NUM_TES_BASES_TO_SKIP = 300
+
 
 class ThreadSafeFile( file ):
     def __init__( self, *args ):
@@ -80,19 +95,6 @@ def flatten( regions ):
         return [new_regions]
     else:
         return new_regions
-
-MIN_REGION_LEN = 50
-MIN_EMPTY_REGION_LEN = 100
-MIN_EXON_BPKM = 0.01
-EXON_EXT_CVG_RATIO_THRESH = 5
-POLYA_MERGE_SIZE = 100
-
-CAGE_PEAK_WIN_SIZE = 30
-MIN_NUM_CAGE_TAGS = 5
-MIN_NUM_POLYA_TAGS = 2
-MAX_CAGE_FRAC = 0.05
-NUM_TSS_BASES_TO_SKIP = 200
-NUM_TES_BASES_TO_SKIP = 300
 
 
 def build_empty_array():
@@ -1206,6 +1208,19 @@ def re_segment_gene( gene, (chrm, strand, contig_len),
     
     return new_genes
 
+def filter_jns(jns, rnaseq_cov):
+    filtered_junctions = []
+    for (start, stop, cnt) in jns:
+        if start < 0 or stop >= gene_len: continue
+        if stop - start + 1 > MAX_INTRON_SIZE : continue
+        left_intron_cvg = rnaseq_cov[start+10:start+30].sum()/20
+        right_intron_cvg = rnaseq_cov[stop-30:stop-10].sum()/20        
+        if cnt*10 < left_intron_cvg or cnt*10 < right_intron_cvg:
+            continue
+        filtered_junctions.append( (start, stop, cnt) )
+    
+    return filtered_junctions
+
 def find_exons_in_gene( ( chrm, strand, contig_len ), gene, 
                         rnaseq_reads, cage_reads, polya_reads,
                         jns, cage_peaks=[], polya_peaks=[] ):
@@ -1236,17 +1251,7 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
 
     polya_peaks = filter_polya_peaks(polya_peaks, rnaseq_cov, jns)
     
-    
-    filtered_junctions = []
-    for (start, stop, cnt) in jns:
-        if start < 0 or stop >= gene_len: continue
-        left_intron_cvg = rnaseq_cov[start+10:start+30].sum()/20
-        right_intron_cvg = rnaseq_cov[stop-30:stop-10].sum()/20        
-        if cnt*10 < left_intron_cvg or cnt*10 < right_intron_cvg:
-            continue
-        filtered_junctions.append( (start, stop, cnt) )
-
-    jns = filtered_junctions
+    jns = filter_jns(jns, rnaseq_cov)
     
     ### END Prepare input data #########################################
 
@@ -1784,7 +1789,7 @@ def main():
         # Call the children processes
         all_args = []
         for contig, contig_len in contig_lens.iteritems():
-            #if contig != '3R': continue
+            #if contig != 'X': continue
             for strand in '+-':
                 contig_genes = [ 
                     gene for gene in genes 
