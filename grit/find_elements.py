@@ -357,8 +357,8 @@ def write_unified_bed( elements, ofp ):
         'POLYA': '255,0,0',
         'INTERGENIC_SPACE': '254,254,34'
     }
-        
-    for bin in elements:
+
+    def write_bin(bin):
         chrm = elements.chrm
         if FIX_CHRM_NAMES_FOR_UCSC:
             chrm = fix_chrm_name_for_ucsc(chrm)
@@ -375,6 +375,15 @@ def write_unified_bed( elements, ofp ):
                                     color=color_mapping[bin.type],
                                     use_thick_lines=(bin.type != 'INTRON'))
         ofp.write( bed_line + "\n"  )
+
+    for element in elements:
+        if isinstance(element, Bin):
+            write_bin(element)
+        elif isinstance(element, Bins):
+            for bin in element:
+                write_bin( bin )
+        else: assert False
+
     return
 
 class Bins( list ):
@@ -406,6 +415,14 @@ class Bins( list ):
         for bin in self:
             shifted_bins.append( bin.shift( shift_amnt ) )
         return shifted_bins
+    
+    @property
+    def start(self):
+        return min( x.start for x in self )
+
+    @property
+    def stop(self):
+        return max( x.stop for x in self )
     
     def writeBed( self, ofp ):
         """
@@ -465,8 +482,10 @@ def load_junctions_worker(all_jns, all_jns_lock, args):
 
 def load_junctions_in_bam( reads, (chrm, strand, region_start, region_stop) ):
     if NTHREADS == 1:
-        return extract_junctions_in_region( 
+        jns = extract_junctions_in_region( 
             reads, chrm, strand, region_start, region_stop )
+        return [ (jn, cnt) for jn, cnt in jns 
+                 if jn[1] - jn[0] + 1 <= MAX_INTRON_SIZE ]
     else:
         nthreads = min( NTHREADS, MAX_THREADS_PER_CONTIG )
         seg_len = int((region_stop - region_start + 1)/nthreads)
@@ -498,6 +517,8 @@ def load_junctions_in_bam( reads, (chrm, strand, region_start, region_stop) ):
 
         junctions = defaultdict( int )
         for jn, cnt in all_jns:
+            if jn[1] - jn[0] + 1 > MAX_INTRON_SIZE:
+                continue
             junctions[jn] += cnt
 
         return sorted(junctions.iteritems())
@@ -635,31 +656,7 @@ def find_gene_boundaries((chrm, strand, contig_len),
         log_statement( "Finished segmentation in %s:%s" 
                        % ( chrm, strand ) )
         return new_locs
-    
-    def merge_polya_segments( segments, strand, window_len = 10 ):
-        bndries = numpy.array( sorted(segments, reverse=(strand!='-')) )
-        bndries_to_delete = set()
-        for i, bndry in enumerate(bndries[1:-1]):
-            if bndry - bndries[i+1-1] > 1000000:
-                continue
-            pre_bndry_cnt = 0
-            post_bndry_cnt = 0
             
-            cvg = rnaseq_reads.build_read_coverage_array( 
-                chrm, strand, max(0,bndry-window_len), bndry+window_len )
-            pre_bndry_cnt += cvg[:window_len].sum()
-            post_bndry_cnt += cvg[window_len:].sum()
-            
-            if strand == '-':
-                pre_bndry_cnt, post_bndry_cnt = post_bndry_cnt, pre_bndry_cnt
-            if (post_bndry_cnt)/(post_bndry_cnt+pre_bndry_cnt+1e-6) > 0.20:
-                bndries_to_delete.add( bndry )
-        
-        for bndry_to_delete in bndries_to_delete:
-            del segments[bndry_to_delete]
-        
-        return segments
-        
     # find all of the junctions
     if None == junctions:
         junctions = load_junctions(rnaseq_reads, cage_reads, polya_reads, 
@@ -670,8 +667,6 @@ def find_gene_boundaries((chrm, strand, contig_len),
         "Finding segments for %s:%s" % (chrm, strand) )
     segments = find_segments_with_signal(chrm, strand, rnaseq_reads)
     
-    #if VERBOSE: log_statement( "Merging segments for %s %s" % (chrm, strand) )
-    #merged_segments = merge_segments( initial_segmentation, strand )
     # because the segments are disjoint, they are implicitly merged
     merged_segments = segments
     
@@ -679,14 +674,16 @@ def find_gene_boundaries((chrm, strand, contig_len),
     clustered_segments = cluster_segments( merged_segments, junctions )
     
     # build the gene bins, and write them out to the elements file
-    genes = Bins( chrm, strand, [] )
+    genes = []
     if len( clustered_segments ) == 2:
         return genes
     
     for start, stop in clustered_segments:
-        if stop - start < 300: continue
-        genes.append( Bin(max(1,start-10), min(stop+10,contig_len), 
+        if stop - start < MIN_GENE_LENGTH: continue
+        gene = Bins( chrm, strand, [] )
+        gene.append( Bin(max(1,start-10), min(stop+10,contig_len), 
                           "ESTART", "ESTOP", "GENE" ) )
+        genes.append( gene  )
     
     return genes
 
@@ -1199,7 +1196,8 @@ def re_segment_gene( gene, (chrm, strand, contig_len),
     new_genes = Bins(chrm, strand)
     for start, stop in intervals: 
         if stop-start+1 < MIN_GENE_LENGTH: continue
-        new_gene = Bin(start, stop, "ESTART","ESTOP","GENE")
+        new_gene = Bins( gene.chrm, gene.strand, 
+                         [ Bin(start, stop, "ESTART","ESTOP","GENE"), ] )
         if strand == '-': 
             new_gene = new_gene.shift(contig_len-gene.stop).reverse_strand(contig_len)
         else:
@@ -1208,10 +1206,10 @@ def re_segment_gene( gene, (chrm, strand, contig_len),
     
     return new_genes
 
-def filter_jns(jns, rnaseq_cov):
+def filter_jns(jns, rnaseq_cov, gene):
     filtered_junctions = []
     for (start, stop, cnt) in jns:
-        if start < 0 or stop >= gene_len: continue
+        if start < 0 or stop >= gene.stop - gene.start + 1: continue
         if stop - start + 1 > MAX_INTRON_SIZE : continue
         left_intron_cvg = rnaseq_cov[start+10:start+30].sum()/20
         right_intron_cvg = rnaseq_cov[stop-30:stop-10].sum()/20        
@@ -1221,29 +1219,41 @@ def filter_jns(jns, rnaseq_cov):
     
     return filtered_junctions
 
-def find_exons_in_gene( ( chrm, strand, contig_len ), gene, 
-                        rnaseq_reads, cage_reads, polya_reads,
-                        jns, cage_peaks=[], polya_peaks=[] ):
-    ###########################################################
-    # Shift all of the input data to be in the gene region, and 
-    # reverse it when necessary
+def build_raw_elements_in_gene( gene, 
+                                rnaseq_reads, cage_reads, polya_reads,
+                                jns, cage_peaks, polya_peaks  ):
+    """Find the read coverage arrays, junctions lists,
+    and make the appropriate conversion into gene coordiantes.
     
-    ## FIX ME
-    #polya_sites = [x - gene.start for x in polya_sites
-    #               if x > gene.start and x <= gene.stop]
+    """
+    cage_cov, polya_cov = None, None
+    
     gene_len = gene.stop - gene.start + 1
     jns = [ (x1-gene.start, x2-gene.start, cnt)  
             for x1, x2, cnt in jns ]
+    
     cage_peaks = [ (x1-gene.start, x2-gene.start)
                    for x1, x2 in cage_peaks ]
+    assert all( 0 <= start <= stop for start, stop in cage_peaks )
+    
+    if cage_reads != None:
+        cage_cov = cage_reads.build_read_coverage_array( 
+            gene.chrm, gene.strand, gene.start, gene.stop )
+        if gene.strand == '-': cage_cov = cage_cov[::-1]
+    
     polya_peaks = [ (x1-gene.start, x2-gene.start)
                     for x1, x2 in polya_peaks ]
-    for start, stop in cage_peaks:
-        assert 0 <= start <= stop
-    rnaseq_cov = rnaseq_reads.build_read_coverage_array( 
-        chrm, strand, gene.start, gene.stop )
+    assert all( 0 <= start <= stop for start, stop in polya_peaks )
     
-    if strand == '-':
+    if polya_reads != None:
+        polya_cov = polya_reads.build_read_coverage_array( 
+            gene.chrm, gene.strand, gene.start, gene.stop )
+        if gene.strand == '-': polya_cov = polya_cov[::-1]
+    
+    rnaseq_cov = rnaseq_reads.build_read_coverage_array( 
+        gene.chrm, gene.strand, gene.start, gene.stop )
+    
+    if gene.strand == '-':
         jns = [ (gene_len-x2, gene_len-x1, cnt) for x1, x2, cnt in jns ]
         cage_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in cage_peaks ]
         polya_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in polya_peaks ]
@@ -1251,52 +1261,61 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
 
     polya_peaks = filter_polya_peaks(polya_peaks, rnaseq_cov, jns)
     
-    jns = filter_jns(jns, rnaseq_cov)
+    jns = filter_jns(jns, rnaseq_cov, gene)
+
+    return rnaseq_cov, cage_cov, cage_peaks, polya_cov, polya_peaks, jns
+
+def find_exons_in_gene( gene, contig_len,
+                        rnaseq_reads, cage_reads, polya_reads,
+                        jns, cage_peaks=[], polya_peaks=[] ):
+    assert isinstance( gene, Bins )
+
+    ###########################################################
+    # Shift all of the input data to be in the gene region, and 
+    # reverse it when necessary
     
+    rnaseq_cov, cage_cov, cage_peaks, polya_cov, polya_peaks, jns  \
+          = build_raw_elements_in_gene( 
+            gene, rnaseq_reads, cage_reads, polya_reads, 
+            jns, cage_peaks, polya_peaks) 
     ### END Prepare input data #########################################
 
     # initialize the cage peaks with the reference provided set
-    cage_peaks = Bins( chrm, strand, (
+    cage_peaks = Bins( gene.chrm, gene.strand, (
         Bin(pk_start, pk_stop+1, "CAGE_PEAK_START","CAGE_PEAK_STOP","CAGE_PEAK")
         for pk_start, pk_stop in cage_peaks ))
     if cage_reads != None:
-        cage_cov = cage_reads.build_read_coverage_array( 
-            chrm, strand, gene.start, gene.stop )
-        if strand == '-': cage_cov = cage_cov[::-1]
         cage_peaks.extend( find_cage_peaks_in_gene( 
-            (chrm, strand), gene, cage_cov, rnaseq_cov ) )
+            (gene.chrm, gene.strand), gene, cage_cov, rnaseq_cov ) )
     
     # initialize the polya peaks with the reference provided set
-    polya_peaks = Bins( chrm, strand, (
+    polya_peaks = Bins( gene.chrm, gene.strand, (
        Bin( pk_start, pk_stop+1, "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA")
         for pk_start, pk_stop in polya_peaks ))
     if polya_reads != None:
-        polya_cov = polya_reads.build_read_coverage_array( 
-            chrm, strand, gene.start, gene.stop )
-        if strand == '-': polya_cov = polya_cov[::-1]
         polya_peaks.extend( find_polya_peaks_in_gene( 
-            (chrm, strand), gene, polya_cov, rnaseq_cov ) )
+            (gene.chrm, gene.strand), gene, polya_cov, rnaseq_cov ) )
 
     new_genes = re_segment_gene( 
-        gene, (chrm, strand, contig_len),
+        gene, (gene.chrm, gene.strand, contig_len),
         rnaseq_cov, jns, cage_peaks, polya_peaks )
     if len(new_genes) > 1:
         return None, None, new_genes        
         
     se_genes = find_se_genes( 
-        (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_peaks )
+        (gene.chrm, gene.strand), rnaseq_cov, jns, cage_peaks, polya_peaks )
     
     canonical_exons, internal_exons = find_canonical_and_internal_exons(
-        (chrm, strand), rnaseq_cov, jns)
+        (gene.chrm, gene.strand), rnaseq_cov, jns)
     tss_exons = find_gene_bndry_exons(
-        (chrm, strand), rnaseq_cov, jns, cage_peaks, "CAGE")
+        (gene.chrm, gene.strand), rnaseq_cov, jns, cage_peaks, "CAGE")
     tes_exons = find_gene_bndry_exons(
-        (chrm, strand), rnaseq_cov, jns, polya_peaks, "POLYA_SEQ")
+        (gene.chrm, gene.strand), rnaseq_cov, jns, polya_peaks, "POLYA_SEQ")
         
-    gene_bins = Bins(chrm, strand, build_labeled_segments( 
-            (chrm, strand), rnaseq_cov, jns ) )
+    gene_bins = Bins(gene.chrm, gene.strand, build_labeled_segments( 
+            (gene.chrm, gene.strand), rnaseq_cov, jns ) )
     
-    jn_bins = Bins(chrm, strand, [])
+    jn_bins = Bins(gene.chrm, gene.strand, [])
     for start, stop, cnt in jns:
         if stop - start <= 0:
             log_statement( "BAD JUNCTION: %s %s %s" % (start, stop, cnt) )
@@ -1312,18 +1331,18 @@ def find_exons_in_gene( ( chrm, strand, contig_len ), gene,
                              num_stop_bases_to_skip=NUM_TES_BASES_TO_SKIP)
     internal_exons = filter_exons( internal_exons, rnaseq_cov )
     se_genes = filter_exons( se_genes, rnaseq_cov, 
-                             num_start_bases_to_skip=200, 
-                             num_stop_bases_to_skip=400 )
+                             num_start_bases_to_skip=NUM_TSS_BASES_TO_SKIP, 
+                             num_stop_bases_to_skip=NUM_TES_BASES_TO_SKIP )
 
-    elements = Bins(chrm, strand, chain(
+    elements = Bins(gene.chrm, gene.strand, chain(
             jn_bins, cage_peaks, polya_peaks, 
             tss_exons, internal_exons, tes_exons, se_genes) )
-    if strand == '-':
+    if gene.strand == '-':
         elements = elements.reverse_strand( gene.stop - gene.start + 1 )
     elements = elements.shift( gene.start )
     elements.append( gene )
 
-    if strand == '-':
+    if gene.strand == '-':
         gene_bins = gene_bins.reverse_strand( gene.stop - gene.start + 1 )
     gene_bins = gene_bins.shift( gene.start )
     
@@ -1383,7 +1402,7 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp,
 
         gene_jns, gene_ref_elements = extract_elements_for_gene( gene )
         elements, pseudo_exons, new_gene_boundaries = find_exons_in_gene(
-            ( chrm, strand, contig_len ), gene, 
+            gene, contig_len,
             rnaseq_reads, cage_reads, polya_reads, gene_jns,
             gene_ref_elements['promoters'], 
             gene_ref_elements['polya'])
@@ -1578,7 +1597,8 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
     # build gene objects with the intervals
     gene_bndry_bins = []
     for start, stop in merged_gene_intervals:
-        gene_bin = Bin(start, stop, 'GENE', 'GENE', 'GENE')
+        gene_bin = Bins( contig, strand, [
+                Bin(start, stop, 'GENE', 'GENE', 'GENE'),] )
         gene_bndry_bins.append( gene_bin )
     
     log_statement( "" )
