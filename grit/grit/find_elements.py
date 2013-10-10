@@ -1713,6 +1713,8 @@ def parse_arguments():
     parser.add_argument( '--batch-mode', '-b', 
         default=False, action='store_true',
         help='Disable the ncurses frontend, and just print status messages to stderr.')
+    parser.add_argument( '--region', 
+        help='Only use the specified region ( currently only accepts a contig name ).')
     
     parser.add_argument( '--threads', '-t', default=1, type=int,
         help='The number of threads to use.')
@@ -1783,7 +1785,7 @@ def parse_arguments():
     return args.rnaseq_reads, reverse_rnaseq_strand, \
         args.cage_reads, args.rampage_reads, args.polya_reads, \
         ofp, args.reference, ref_elements_to_include, \
-        not args.batch_mode
+        not args.batch_mode, clean_chr_name(args.region)
 
 
 def load_promoter_reads(cage_bam, rampage_bam):
@@ -1802,7 +1804,7 @@ def load_promoter_reads(cage_bam, rampage_bam):
 def main():
     ( rnaseq_bams, reverse_rnaseq_strand, cage_bam, rampage_bam, polya_bam,
       ofp, ref_gtf_fname, ref_elements_to_include, 
-      use_ncurses ) = parse_arguments()
+      use_ncurses, region_to_use ) = parse_arguments()
     
     global log_statement
     log_ofstream = open( ".".join(ofp.name.split(".")[:-1]) + ".log", "w" )
@@ -1848,7 +1850,7 @@ def main():
         # Call the children processes
         all_args = []
         for contig, contig_len in contig_lens.iteritems():
-            #if contig != 'X': continue
+            if region_to_use != None and contig != region_to_use: continue
             for strand in '+-':
                 contig_genes = [ 
                     gene for gene in genes 
