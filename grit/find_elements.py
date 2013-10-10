@@ -372,34 +372,40 @@ def write_unified_bed( elements, ofp ):
         'INTERGENIC_SPACE': '254,254,34'
     }
 
-    def write_bin(bin):
-        chrm = elements.chrm
-        if FIX_CHRM_NAMES_FOR_UCSC:
-            chrm = fix_chrm_name_for_ucsc(chrm)
-        region = ( chrm, elements.strand, bin.start, bin.stop)
-        grp_id = feature_mapping[bin.type] + "_%s_%s_%i_%i" % region
-        
+    chrm = elements.chrm
+    if FIX_CHRM_NAMES_FOR_UCSC:
+        chrm = fix_chrm_name_for_ucsc(chrm)
+
+    for element in elements:
+        region = ( chrm, elements.strand, element.start, element.stop)
+
+        if isinstance(element, Bin):
+            blocks = []
+            use_thick_lines=(element.type != 'INTRON')
+            element_type = element.type
+            score = element.score
+        elif isinstance(element, Bins):
+            # subtract 1 because beds are 0-based
+            blocks = [(x.start-1, x.stop-1) for x in element]
+            use_thick_lines = True
+            element_type = 'GENE'
+            score = 1000
+        else: assert False
+
+        grp_id = element_type + "_%s_%s_%i_%i" % region
+
         # subtract 1 because we work in 1 based coords, but beds are 0-based
         # also, add 1 to stop because beds are open-closed ( which means no net 
         # change for the stop coordinate )
         bed_line = create_bed_line( chrm, elements.strand, 
-                                    bin.start-1, bin.stop, 
-                                    feature_mapping[bin.type],
-                                    score=bin.score,
-                                    color=color_mapping[bin.type],
-                                    use_thick_lines=(bin.type != 'INTRON'))
+                                    element.start-1, element.stop, 
+                                    feature_mapping[element_type],
+                                    score=score,
+                                    color=color_mapping[element_type],
+                                    use_thick_lines=use_thick_lines,
+                                    blocks=blocks)
         ofp.write( bed_line + "\n"  )
-
-    for element in elements:
-        if isinstance(element, Bin):
-            write_bin(element)
-        elif isinstance(element, Bins):
-            for bin in element:
-                write_bin( bin )
-            full_gene = Bin( element.start, element.stop, 'GENE', 'GENE', 'INTERGENIC_SPACE' )
-            write_bin( full_gene )
-        else: assert False
-
+    
     return
 
 class Bins( list ):
@@ -1764,7 +1770,7 @@ def parse_arguments():
                                                    args.use_reference_polyas)
     
     ofp = ThreadSafeFile( args.ofname, "w" )
-    ofp.write('track name="%s" visibility=2 itemRgb="On"\n' % ofp.name)
+    ofp.write('track name="%s" visibility=2 itemRgb="On" useScore=1\n'%ofp.name)
     
     if ( args.cage_reads == None 
          and args.rampage_reads == None 
@@ -1785,7 +1791,8 @@ def parse_arguments():
     return args.rnaseq_reads, reverse_rnaseq_strand, \
         args.cage_reads, args.rampage_reads, args.polya_reads, \
         ofp, args.reference, ref_elements_to_include, \
-        not args.batch_mode, clean_chr_name(args.region)
+        not args.batch_mode, \
+        clean_chr_name(args.region) if args.region != None else None
 
 
 def load_promoter_reads(cage_bam, rampage_bam):
