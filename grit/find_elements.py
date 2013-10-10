@@ -37,9 +37,9 @@ NTHREADS = 1
 MAX_THREADS_PER_CONTIG = 16
 TOTAL_MAPPED_READS = None
 
-MIN_INTRON_SIZE = 60
+MIN_INTRON_SIZE = 100
 MAX_INTRON_SIZE = int(1e6)
-MIN_GENE_LENGTH = 100
+MIN_GENE_LENGTH = 400
 # the maximum number of bases to expand gene boundaries from annotated genes
 MAX_GENE_EXPANSION = 1000
 
@@ -138,9 +138,23 @@ def cluster_segments_2( boundaries, jns ):
 
     segments = []
     for g in genes_graph.clusters():
-        segments.append( (boundaries[min(g)]+1, boundaries[max(g)+1]-1) )
-
-    return flatten( segments )
+        #if len(g) < 2: continue
+        segment = []
+        prev_i = g[0]
+        segment.append( [boundaries[prev_i]+1, ])
+        for i in g[1:]:
+            if i > prev_i + 1:
+                segment[-1].append( boundaries[prev_i+1]-1 )
+                segment.append( [boundaries[i]+1, ])
+                prev_i = i
+            else:
+                assert i == prev_i + 1
+                prev_i += 1
+        segment[-1].append( boundaries[g[-1]+1]-1 )
+        
+        segments.append(segment)
+    
+    return segments
 
 
 def find_empty_regions( cov, thresh=1e-6, min_length=MIN_INTRON_SIZE ):
@@ -382,6 +396,8 @@ def write_unified_bed( elements, ofp ):
         elif isinstance(element, Bins):
             for bin in element:
                 write_bin( bin )
+            full_gene = Bin( element.start, element.stop, 'GENE', 'GENE', 'INTERGENIC_SPACE' )
+            write_bin( full_gene )
         else: assert False
 
     return
@@ -1166,10 +1182,9 @@ def re_segment_gene( gene, (chrm, strand, contig_len),
     # and end with cage signal )
     intergenic_bins = find_intergenic_space(
         (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_peaks )
-    if len(intergenic_bins) == 0: return []
-
+    
     # find the empty space inside of these, but with a much shorter
-    # allowed distnace because oft he additional information
+    # allowed distance because of the additional information
     for intergenic_bin in intergenic_bins:
         if intergenic_bin.stop - intergenic_bin.start + 1 < 10:
             continue
@@ -1191,13 +1206,16 @@ def re_segment_gene( gene, (chrm, strand, contig_len),
     split_points.append(gene.stop-gene.start+1 )
     split_points.sort()
     intervals = cluster_segments_2( split_points, jns )
-
+    if len(intervals) <= 1: 
+        return [gene,]
+    
     # add the intergenic space, since there could be genes in the interior
-    new_genes = Bins(chrm, strand)
-    for start, stop in intervals: 
-        if stop-start+1 < MIN_GENE_LENGTH: continue
-        new_gene = Bins( gene.chrm, gene.strand, 
-                         [ Bin(start, stop, "ESTART","ESTOP","GENE"), ] )
+    new_genes = []
+    for segments in intervals: 
+        new_gene = Bins( gene.chrm, gene.strand )
+        for start, stop in segments:
+            new_gene.append( Bin(start, stop, "ESTART","ESTOP","GENE") )
+        if gene.stop-gene.start+1 < MIN_GENE_LENGTH: continue
         if strand == '-': 
             new_gene = new_gene.shift(contig_len-gene.stop).reverse_strand(contig_len)
         else:
@@ -1219,6 +1237,15 @@ def filter_jns(jns, rnaseq_cov, gene):
     
     return filtered_junctions
 
+def find_coverage_in_gene(gene, reads):
+    cov = numpy.zeros(gene.stop-gene.start+1, dtype=float)
+    for x in gene:
+        seg_cov = reads.build_read_coverage_array( 
+            gene.chrm, gene.strand, x.start, x.stop )
+        cov[x.start-gene.start:x.stop-gene.start+1] = seg_cov
+    if gene.strand == '-': cov = cov[::-1]
+    return cov
+
 def build_raw_elements_in_gene( gene, 
                                 rnaseq_reads, cage_reads, polya_reads,
                                 jns, cage_peaks, polya_peaks  ):
@@ -1226,32 +1253,35 @@ def build_raw_elements_in_gene( gene,
     and make the appropriate conversion into gene coordiantes.
     
     """
+    def points_are_inside_gene(start, stop):
+        start_inside = any( x.start <= start <= x.stop for x in gene )
+        stop_inside = any( x.start <= stop <= x.stop for x in gene )
+        return start_inside and stop_inside
+    
     cage_cov, polya_cov = None, None
     
     gene_len = gene.stop - gene.start + 1
     jns = [ (x1-gene.start, x2-gene.start, cnt)  
-            for x1, x2, cnt in jns ]
+            for x1, x2, cnt in jns
+            if points_are_inside_gene(x1, x2)]
     
     cage_peaks = [ (x1-gene.start, x2-gene.start)
-                   for x1, x2 in cage_peaks ]
+                   for x1, x2 in cage_peaks 
+                   if points_are_inside_gene(x1, x2)]
     assert all( 0 <= start <= stop for start, stop in cage_peaks )
     
     if cage_reads != None:
-        cage_cov = cage_reads.build_read_coverage_array( 
-            gene.chrm, gene.strand, gene.start, gene.stop )
-        if gene.strand == '-': cage_cov = cage_cov[::-1]
+        cage_cov = find_coverage_in_gene(gene, cage_reads)
     
     polya_peaks = [ (x1-gene.start, x2-gene.start)
-                    for x1, x2 in polya_peaks ]
+                    for x1, x2 in polya_peaks
+                    if points_are_inside_gene(x1, x2)]
     assert all( 0 <= start <= stop for start, stop in polya_peaks )
     
     if polya_reads != None:
-        polya_cov = polya_reads.build_read_coverage_array( 
-            gene.chrm, gene.strand, gene.start, gene.stop )
-        if gene.strand == '-': polya_cov = polya_cov[::-1]
+        polya_cov = find_coverage_in_gene(gene, polya_reads)
     
-    rnaseq_cov = rnaseq_reads.build_read_coverage_array( 
-        gene.chrm, gene.strand, gene.start, gene.stop )
+    rnaseq_cov = find_coverage_in_gene( gene, rnaseq_reads )
     
     if gene.strand == '-':
         jns = [ (gene_len-x2, gene_len-x1, cnt) for x1, x2, cnt in jns ]
@@ -1269,7 +1299,6 @@ def find_exons_in_gene( gene, contig_len,
                         rnaseq_reads, cage_reads, polya_reads,
                         jns, cage_peaks=[], polya_peaks=[] ):
     assert isinstance( gene, Bins )
-
     ###########################################################
     # Shift all of the input data to be in the gene region, and 
     # reverse it when necessary
@@ -1295,13 +1324,14 @@ def find_exons_in_gene( gene, contig_len,
     if polya_reads != None:
         polya_peaks.extend( find_polya_peaks_in_gene( 
             (gene.chrm, gene.strand), gene, polya_cov, rnaseq_cov ) )
-
-    new_genes = re_segment_gene( 
-        gene, (gene.chrm, gene.strand, contig_len),
-        rnaseq_cov, jns, cage_peaks, polya_peaks )
-    if len(new_genes) > 1:
-        return None, None, new_genes        
         
+    if len(gene) == 1 and (len(cage_peaks) > 0 and len(polya_peaks) > 0):
+        new_genes = re_segment_gene( 
+            gene, (gene.chrm, gene.strand, contig_len),
+            rnaseq_cov, jns, cage_peaks, polya_peaks )
+        if len(new_genes) > 1:
+            return None, None, new_genes        
+    
     se_genes = find_se_genes( 
         (gene.chrm, gene.strand), rnaseq_cov, jns, cage_peaks, polya_peaks )
     
@@ -1809,7 +1839,7 @@ def main():
         # Call the children processes
         all_args = []
         for contig, contig_len in contig_lens.iteritems():
-            #if contig != 'X': continue
+            if contig != 'X': continue
             for strand in '+-':
                 contig_genes = [ 
                     gene for gene in genes 
