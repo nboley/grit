@@ -110,8 +110,8 @@ def run_bam2wig(fname, op_prefix, assay,
     assert assay in ["rnaseq", "cage", "rampage", "polya"], \
         "Unrecognized assay '%s'" % assay
     command = ["python", os.path.join(os.path.dirname(__file__), "bam2wig.py" )]
-    command.extend( ("--mapped-reads-fname", op_prefix ))
-    command.extend( ("--out-fname-prefix", fname ))
+    command.extend( ("--mapped-reads-fname", fname ))
+    command.extend( ("--out-fname-prefix", op_prefix ))
     command.extend( ("--assay",  assay))
     command.extend( ("--threads",  str(nthreads)))
     if reverse_read_strand:
