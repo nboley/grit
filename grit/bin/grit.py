@@ -54,7 +54,7 @@ def run_find_elements( all_rnaseq_reads, all_rnaseq_read_types,
 
     command.extend( ("--ofname", elements_ofname) )
     if args.batch_mode: command.append( "--batch-mode" )
-    if args.region != None: command.append( "--region %s" % args.region )
+    if args.region != None: command.extend( ("--region", "%s" % args.region) )
     command.extend( ("--threads", str(args.threads)) )
     if args.verbose: command.append( "--verbose" )
     
