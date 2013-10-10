@@ -54,6 +54,7 @@ def run_find_elements( all_rnaseq_reads, all_rnaseq_read_types,
 
     command.extend( ("--ofname", elements_ofname) )
     if args.batch_mode: command.append( "--batch-mode" )
+    if args.region != None: command.append( "--region %s" % args.region )
     command.extend( ("--threads", str(args.threads)) )
     if args.verbose: command.append( "--verbose" )
     
@@ -263,11 +264,12 @@ def parse_arguments():
         help='Whether or not to print debugging information.')
 
     parser.add_argument( '--ucsc', default=False, action='store_true',
-        help='Try to format contig names in the ucsc format (typically by prepending a chr).')
-    
+        help='Try to format contig names in the ucsc format (typically by prepending a chr).')    
     parser.add_argument( '--batch-mode', '-b', 
         default=False, action='store_true',
         help='Disable the ncurses frontend, and just print status messages to stderr.')
+    parser.add_argument( '--region', 
+        help='Only use the specified region ( currently only accepts a contig name ).')
     
     parser.add_argument( '--threads', '-t', default=1, type=int,
         help='The number of threads to use.')
