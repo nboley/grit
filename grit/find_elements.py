@@ -1287,8 +1287,7 @@ def build_raw_elements_in_gene( gene,
         jns = [ (gene_len-x2, gene_len-x1, cnt) for x1, x2, cnt in jns ]
         cage_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in cage_peaks ]
         polya_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in polya_peaks ]
-        rnaseq_cov = rnaseq_cov[::-1]
-
+    
     polya_peaks = filter_polya_peaks(polya_peaks, rnaseq_cov, jns)
     
     jns = filter_jns(jns, rnaseq_cov, gene)
@@ -1325,6 +1324,10 @@ def find_exons_in_gene( gene, contig_len,
         polya_peaks.extend( find_polya_peaks_in_gene( 
             (gene.chrm, gene.strand), gene, polya_cov, rnaseq_cov ) )
         
+    if len(cage_peaks) == 0 or len(polya_peaks) == 0:
+        return Bins(gene.chrm, gene.strand), None, None
+        
+    
     if len(gene) == 1 and (len(cage_peaks) > 0 and len(polya_peaks) > 0):
         new_genes = re_segment_gene( 
             gene, (gene.chrm, gene.strand, contig_len),
@@ -1379,7 +1382,8 @@ def find_exons_in_gene( gene, contig_len,
     return elements, gene_bins, None
         
 
-def find_exons_worker( (genes_queue, genes_queue_lock), ofp, 
+def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running), 
+                       ofp, 
                        (chrm, strand, contig_len),
                        jns, rnaseq_reads, cage_reads, polya_reads,
                        ref_elements ):
@@ -1410,23 +1414,21 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp,
     polya_reads = polya_reads.reload() if polya_reads != None else None
     
     while True:
-        log_statement( "Waiting for genes queue lock" )
-        if genes_queue_lock != None:
-            i = 1
-            while not genes_queue_lock.acquire(timeout=1.0):
-                log_statement( "Waited %.2f sec for gene queue lock" % i )
-                i += 1
-            if len(genes_queue) == 0:
+        genes_queue_lock.acquire()
+        if len(genes_queue) == 0:
+            if n_threads_running.value == 0:
                 genes_queue_lock.release()
                 break
-            gene = genes_queue.pop()
-            genes_queue_lock.release()
+            else:
+                genes_queue_lock.release()
+                log_statement( "Waiting for gene to process" )
+                time.sleep(0.1)
+                continue
         else:
-            assert NTHREADS == 1
-            if len( genes_queue ) == 0: 
-                break
             gene = genes_queue.pop()
-    
+            n_threads_running.value += 1
+        genes_queue_lock.release()
+        
         log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" % 
                        (chrm, strand, gene.start, gene.stop) )
 
@@ -1444,6 +1446,8 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp,
                 genes_queue.append( gene )
             if genes_queue_lock != None:
                 genes_queue_lock.release()
+            with genes_queue_lock:
+                n_threads_running.value -= 1
             continue
         
         # merge in the reference elements
@@ -1459,6 +1463,9 @@ def find_exons_worker( (genes_queue, genes_queue_lock), ofp,
         
         if WRITE_DEBUG_DATA:
             pseudo_exons.writeBed( ofp )
+
+        with genes_queue_lock:
+            n_threads_running.value -= 1
         
         log_statement( "FINISHED Finding Exons in Chrm %s Strand %s Pos %i-%i" %
                        (chrm, strand, gene.start, gene.stop) )
@@ -1537,16 +1544,18 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     
     log_statement( "Finding exons in contig '%s' on '%s' strand" 
                    % ( chrm, strand ) )
+    genes_queue_lock = multiprocessing.Lock()
+    threads_are_running = multiprocessing.Value('i', 0)
     if NTHREADS > 1:
         manager = multiprocessing.Manager()
         genes_queue = manager.list()
-        genes_queue_lock = multiprocessing.Lock()
     else:
-        genes_queue, genes_queue_lock = [], None
-        
+        genes_queue = []
+    
     genes_queue.extend( gene_bndry_bins )
     sorted_jns = sorted( junctions )
-    args = [ (genes_queue, genes_queue_lock), ofp, (chrm, strand, contig_len),
+    args = [ (genes_queue, genes_queue_lock, threads_are_running), 
+             ofp, (chrm, strand, contig_len),
               sorted_jns, rnaseq_reads, cage_reads, polya_reads, ref_elements ]
     
     #global NTHREADS
