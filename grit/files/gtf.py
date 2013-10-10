@@ -210,11 +210,17 @@ def _load_gene_from_gtf_lines( gene_id, gene_lines, transcripts_data ):
         gene_start = min(t.start for t in transcripts )
         gene_stop = max(t.stop for t in transcripts )
         gene_meta_data = {}
-    else:
+    elif len(gene_lines) == 1:
         gene_data = gene_lines[0]
         gene_chrm, gene_strand, gene_start, gene_stop = gene_data.region
+        # since gff's are 1 based
+        gene_start -= 1
+        gene_stop -= 1
         gene_meta_data = gene_data.meta_data
-
+    else:
+        if VERBOSE: print >> sys.stderr, "Skipping '%s': multiple gene lines." % gene_id
+        return None
+        
     if gene_start != min(t.start for t in transcripts ) \
             or gene_stop != max(t.stop for t in transcripts ):
         if VERBOSE: print >> sys.stderr, "Skipping '%s': gene boundaries dont match the transcript boundaries." % gene_id
