@@ -50,6 +50,7 @@ EXON_EXT_CVG_RATIO_THRESH = 5
 POLYA_MERGE_SIZE = 100
 
 CAGE_PEAK_WIN_SIZE = 30
+CAGE_FILTER_ALPHA = 0.99
 MIN_NUM_CAGE_TAGS = 5
 MIN_NUM_POLYA_TAGS = 2
 MAX_CAGE_FRAC = 0.05
@@ -186,22 +187,6 @@ def merge_empty_labels( poss ):
         del poss[start:stop+1]
 
     return poss
-
-def get_qrange_long( np, w_step, w_window ):
-    L = len(np)-w_window
-    if L < 2:
-       nm, nx = get_qrange_short( np )
-       return nm, nx
-    Q = []
-    for pos in xrange(0, L, w_step):
-        Q.append( np[pos:pos+w_window].mean() )
-    Q = numpy.asarray(Q)
-    Q.sort()
-    return Q[int(len(Q)*0.1)], Q[int(len(Q)*0.9)]
-
-def get_qrange_short( np ):
-    L = len(np)
-    return np.min(), np.max()
 
 def filter_exon(exon, wig, num_start_bases_to_skip=0, num_stop_bases_to_skip=0):
     '''Find all the exons that are sufficiently homogenous and expressed.
@@ -753,7 +738,7 @@ def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
     rnaseq_cov = numpy.array( rnaseq_cov+1-1e-6, dtype=int)
     max_val = rnaseq_cov.max()
     thresholds = TOTAL_MAPPED_READS*beta.ppf( 
-        0.999, 
+        CAGE_FILTER_ALPHA, 
         numpy.arange(max_val+1)+1, 
         numpy.zeros(max_val+1)+(TOTAL_MAPPED_READS+1) 
     )
@@ -1329,10 +1314,11 @@ def find_exons_in_gene( gene, contig_len,
     if polya_reads != None:
         polya_peaks.extend( find_polya_peaks_in_gene( 
             (gene.chrm, gene.strand), gene, polya_cov, rnaseq_cov ) )
-        
+    
+    ## TODO - re-enable to give cleaner gene boundaries. As is, we'll provide
+    ## boundaries for regions in which we can not produce transcripts
     if len(cage_peaks) == 0 or len(polya_peaks) == 0:
         return Bins(gene.chrm, gene.strand), None, None
-        
     
     if len(gene) == 1 and (len(cage_peaks) > 0 and len(polya_peaks) > 0):
         new_genes = re_segment_gene( 
@@ -1785,10 +1771,11 @@ def parse_arguments():
          and not args.use_reference_polyas ):
         raise ValueError, "Either --polya-reads or --use-reference-tes or --use-reference-polyas must be set"
     
-    reverse_rnaseq_strand = ( 
-        True if args.rnaseq_read_type == 'backward' else False )
+    rnaseq_strands_need_to_be_reversed = [ 
+        bool(read_type.lower() == 'backward')
+        for read_type in args.rnaseq_read_type ]
     
-    return args.rnaseq_reads, reverse_rnaseq_strand, \
+    return args.rnaseq_reads, rnaseq_strands_need_to_be_reversed, \
         args.cage_reads, args.rampage_reads, args.polya_reads, \
         ofp, args.reference, ref_elements_to_include, \
         not args.batch_mode, \
@@ -1809,7 +1796,8 @@ def load_promoter_reads(cage_bam, rampage_bam):
     return None
 
 def main():
-    ( rnaseq_bams, reverse_rnaseq_strand, cage_bam, rampage_bam, polya_bam,
+    ( rnaseq_bams, rnaseq_strands_need_to_be_reversed, 
+      cage_bam, rampage_bam, polya_bam,
       ofp, ref_gtf_fname, ref_elements_to_include, 
       use_ncurses, region_to_use ) = parse_arguments()
     
@@ -1826,7 +1814,8 @@ def main():
         rnaseq_reads = MergedReads([ 
             RNAseqReads(rnaseq_bam.name).init(
                 reverse_read_strand=reverse_rnaseq_strand)
-            for rnaseq_bam in rnaseq_bams ])
+            for rnaseq_bam, reverse_rnaseq_strand in 
+            zip(rnaseq_bams, rnaseq_strands_need_to_be_reversed) ])
         
         global TOTAL_MAPPED_READS
         if TOTAL_MAPPED_READS == None:

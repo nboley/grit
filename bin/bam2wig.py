@@ -84,11 +84,14 @@ def build_chrm_sizes_file(reads):
     
     return chrm_sizes_file
 
-def generate_wiggle(reads, ofps, num_threads=1 ):
+def generate_wiggle(reads, ofps, num_threads=1, contig=None ):
     all_args = []
     
     for chrm_length, chrm  in sorted(izip(reads.lengths, reads.references)):
         strands = ['+', '-'] if len(ofps) == 2 else [None,]
+        # skip regions not in the specified contig, if requested 
+        if contig != None and clean_chr_name(chrm) != clean_chr_name(contig): 
+            continue
         for strand in strands:
             ofp = ofps[strand]
             all_args.append((ofp, reads, chrm, chrm_length, strand ))
@@ -134,6 +137,8 @@ def parse_arguments():
     parser.add_argument( '--threads', '-t', default=1, type=int,
                          help='The number of threads to run.')
     
+    parser.add_argument( '--region', 
+        help='Only use the specified region ( currently only accepts a contig name ).')
     parser.add_argument( '--reverse-read-strand', '-r', default=False, action='store_true',
         help='Whether or not to reverse the strand of the read ( only sensible for RNAseq reads ). default: False')
     parser.add_argument( '--read-filter', default=None, choices=['1','2'],
@@ -151,7 +156,8 @@ def parse_arguments():
         raise ValueError, "Unrecongized assay (%s)" % args.assay
     
     return ( args.assay, args.mapped_reads_fname, args.out_fname_prefix, 
-             args.bigwig, args.reverse_read_strand, read_filter, args.threads )
+             args.bigwig, args.reverse_read_strand, read_filter, 
+             args.region, args.threads )
         
 
 def build_bigwig_from_bedgraph(bedgraph_fp, chrm_sizes_file, op_fname):
@@ -171,7 +177,7 @@ def build_bigwig_from_bedgraph(bedgraph_fp, chrm_sizes_file, op_fname):
 
 def main():
     ( assay, reads_fname, op_prefix, build_bigwig, 
-      reverse_read_strand, read_filter, num_threads ) = parse_arguments()
+      reverse_read_strand, read_filter, region, num_threads) = parse_arguments()
     
     # initialize the assay specific options
     if assay == 'cage':
@@ -223,7 +229,7 @@ def main():
                           % ( os.path.basename(op_prefix), strand_str ) )
     
     
-    generate_wiggle( reads, ofps, num_threads )             
+    generate_wiggle( reads, ofps, num_threads, region )
     
     # finally, if we are building a bigwig, build it, and then remove the bedgraph files
     if build_bigwig:
