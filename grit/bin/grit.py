@@ -104,7 +104,7 @@ def run_build_transcripts(elements_fname, ofprefix,
     
     return
 
-def run_bam2wig(fname, op_prefix, assay, 
+def run_bam2wig(fname, op_prefix, assay, region,
                 nthreads, reverse_read_strand, verbose):
     print >> sys.stderr, "Building bedgraph for %s" % fname
     assert assay in ["rnaseq", "cage", "rampage", "polya"], \
@@ -117,6 +117,7 @@ def run_bam2wig(fname, op_prefix, assay,
     if reverse_read_strand:
         command.append( "--reverse-read-strand" )
     if verbose: command.append( "--verbose" )
+    if region != None: command.extend( ("--region", "%s" % region) )
     subprocess.check_call(command)
 
 def run_all_bam2wigs( all_rnaseq_reads, all_rnaseq_read_types, 
@@ -125,18 +126,22 @@ def run_all_bam2wigs( all_rnaseq_reads, all_rnaseq_read_types,
     for rnaseq_reads, rnaseq_reads_type in zip(
             all_rnaseq_reads, all_rnaseq_read_types):
         run_bam2wig(rnaseq_reads.name, os.path.basename(rnaseq_reads.name),
-                    'rnaseq', args.threads, bool(rnaseq_reads_type=='backward'),
+                    'rnaseq', args.region,
+                    args.threads, bool(rnaseq_reads_type=='backward'),
                     args.verbose)
     for rampage_reads in all_rampage_reads:
         run_bam2wig(rampage_reads.name, os.path.basename(rampage_reads.name),
-                    'rampage', args.threads, False, args.verbose)    
+                    'rampage', args.region,
+                    args.threads, False, args.verbose)
     for cage_reads in all_cage_reads:
         run_bam2wig(cage_reads.name, os.path.basename(cage_reads.name),
-                    'cage', args.threads, False, args.verbose)    
+                    'cage', args.region, 
+                    args.threads, False, args.verbose)    
     if args.polya_reads != None:
         run_bam2wig(args.polya_reads.name, 
                     os.path.basename(args.polya_reads.name),
-                    'polya', args.threads, False, args.verbose)
+                    'polya', args.region,
+                    args.threads, False, args.verbose)
     return
 
 def truth_value(string):

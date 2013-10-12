@@ -519,10 +519,14 @@ class RAMPAGEReads(Reads):
             #assert not rd.is_paired
             if rd.mapq <= 1: continue
             if not rd.is_read1: continue
-            if rd.pos < start: continue
             rd_strand = '-' if rd.is_reverse else '+'
             if strand != rd_strand: continue
-            cvg[max(0,rd.pos-start)] += 1
+
+            if strand == '-': peak_pos = rd.pos + 2*rd.qlen
+            else: peak_pos = rd.pos
+            if peak_pos < start or peak_pos > stop:
+                continue
+            cvg[peak_pos-start] += 1
         
         return cvg
 
