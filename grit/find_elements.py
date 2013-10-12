@@ -126,9 +126,9 @@ def cluster_segments_2( boundaries, jns ):
     edges = set()
     for start, stop, cnt in jns:
         start_bin = boundaries.searchsorted( start-1 )-1
-        #if start_bin < 0: continue
+        if start_bin < 0: continue
         stop_bin = boundaries.searchsorted( stop+1 )-1
-        #if stop_bin > len(boundaries): continue
+        if stop_bin > len(boundaries): continue
         if start_bin != stop_bin:
             edges.add((int(min(start_bin, stop_bin)), 
                        int(max(start_bin, stop_bin))))
@@ -1427,7 +1427,7 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
                 break
             else:
                 genes_queue_lock.release()
-                log_statement( "Waiting for gene to process" )
+                log_statement( "Waiting for gene to process (%i)" % n_threads_running.value )
                 time.sleep(0.1)
                 continue
         else:

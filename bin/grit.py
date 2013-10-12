@@ -129,15 +129,14 @@ def run_all_bam2wigs( all_rnaseq_reads, all_rnaseq_read_types,
                     args.verbose)
     for rampage_reads in all_rampage_reads:
         run_bam2wig(rampage_reads.name, os.path.basename(rampage_reads.name),
-                    'rampage', args.threads, True, args.verbose)    
+                    'rampage', args.threads, False, args.verbose)    
     for cage_reads in all_cage_reads:
         run_bam2wig(cage_reads.name, os.path.basename(cage_reads.name),
-                    'cage', args.threads, True, args.verbose)    
+                    'cage', args.threads, False, args.verbose)    
     if args.polya_reads != None:
         run_bam2wig(args.polya_reads.name, 
                     os.path.basename(args.polya_reads.name),
                     'polya', args.threads, False, args.verbose)
-    
     return
 
 def truth_value(string):
