@@ -627,14 +627,16 @@ def build_design_matrices( gene, rnaseq_reads, fl_dists, all_promoter_reads=[],
     
     num_transcripts = expected_rnaseq_array.shape[1]
     if max_num_transcripts != None and num_transcripts > max_num_transcripts:
+        # transcripts to remove
         low_expression_ts = set()
         test = (observed_rnaseq_array+1)/expected_rnaseq_array.max(1)
         for index in numpy.arange(observed_rnaseq_array.shape[0])[test.argsort()]:
             if num_transcripts - len(low_expression_ts) <= max_num_transcripts:
                 break
             new_low_expression = set(expected_rnaseq_array[index,].nonzero()[0])
+            # if this would remove every transcript, skip it
             if len( low_expression_ts.union(new_low_expression) ) == num_transcripts:
-                break
+                continue
             low_expression_ts.update( new_low_expression )
         
         high_expression_ts = numpy.array(
