@@ -12,15 +12,19 @@ config = {
     'url': 'http://grit-bio.org/',
     'download_url': 'http://grit-bio.org/git/',
     'author_email': 'npboley@gmail.com',
-    'version': '0.1.1',
-    'packages': ['grit'],
-    'setup_requires': ['Cython', 'numpy', 'scipy', 'networkx', 'igraph', 'pysam'],
+    'version': '0.1.2',
+    'packages': ['grit', 'grit.analyze', 'grit.build', 'grit.files', 
+                 'grit.lib', 'grit.proteomics', 
+                 'grit.random_forest', 'grit.simulator'],
+                 
+    'setup_requires': ['Cython','numpy','scipy', 'networkx', 'igraph', 'pysam'],
     'scripts': [],
     'name': 'GRIT'
 }
 
 for_ubuntu = """
-sudo aptitude install cython  python-dev python-numpy python-scipy python-igraph python-pip python-networkx
+sudo aptitude install cython  python-dev python-numpy python-scipy \
+                      python-igraph python-pip python-networkx
 easy_install pysam
 """
 
