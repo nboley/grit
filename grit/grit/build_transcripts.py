@@ -213,6 +213,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                                      cb_alpha=0.1):
     try:
         if work_type == 'gene':
+            log_statement("Building transcript and ORFs for Gene %s" % gene_id)
             with op_lock:
                 contig = output[ (gene_id, 'contig') ]
                 strand = output[ (gene_id, 'strand') ]
@@ -260,6 +261,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 with input_queue_lock:
                     input_queue.append( (
                             'design_matrices', (gene_id, None, None)) )
+            log_statement("")
 
         elif work_type == 'design_matrices':
             log_statement( "Finding design matrix for Gene %s" % gene_id  )
