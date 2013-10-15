@@ -76,21 +76,25 @@ def run_build_transcripts(elements_fname, ofprefix,
     
     command.extend( ("--elements", elements_fname) )    
     
-    command.extend( ("--rnaseq-reads", rnaseq_reads.name) )
-    command.extend( ("--rnaseq-read-type", rnaseq_read_type) )
-    if num_mapped_rnaseq_reads != None: 
-        command.extend( ("--num-mapped-rnaseq-reads",
-                         str(num_mapped_rnaseq_reads) ))
-    
-    command.append( "--estimate-confidence-bounds" )
-    
-    if cage_reads != None: 
-        command.extend( ("--cage-reads", cage_reads.name) )
-    if rampage_reads != None:
-        command.extend( ("--rampage-reads", rampage_reads.name) )
-    
-    if polya_reads != None:
-        command.extend( ("--polya-reads", polya_reads.name) )
+
+    if args.only_build_candidate_transcripts:
+        command.append( "--only-build-candidate-transcripts" )
+    else:
+        command.extend( ("--rnaseq-reads", rnaseq_reads.name) )
+        command.extend( ("--rnaseq-read-type", rnaseq_read_type) )
+        if num_mapped_rnaseq_reads != None: 
+            command.extend( ("--num-mapped-rnaseq-reads",
+                             str(num_mapped_rnaseq_reads) ))    
+        if cage_reads != None: 
+            command.extend( ("--cage-reads", cage_reads.name) )
+        if rampage_reads != None:
+            command.extend( ("--rampage-reads", rampage_reads.name) )
+
+        if polya_reads != None:
+            command.extend( ("--polya-reads", polya_reads.name) )
+        
+        command.append( "--estimate-confidence-bounds" )
+
     
     if args.fasta != None: command.extend( ("--fasta", args.fasta.name) )
     
@@ -258,7 +262,11 @@ def parse_arguments():
     parser.add_argument( '--use-reference-polyas', 
                          help='Use polya sites inferred from the end of reference transcripts.',
                          default=False, action='store_true')
-    
+
+    parser.add_argument( '--only-build-candidate-transcripts', 
+                         help='Do not estiamte transcript frequencies - just build trnascripts.',
+                         default=False, action='store_true')
+
     parser.add_argument( '--ofprefix', '-o', default="discovered",
         help='Output files prefix. (default: discovered)')
     
