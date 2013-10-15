@@ -1,5 +1,3 @@
-__version__ = "0.1.1"
-
 import sys, os
 import time
 import math
@@ -524,8 +522,6 @@ def load_junctions_in_bam( reads, (chrm, strand, region_start, region_stop) ):
 
         junctions = defaultdict( int )
         for jn, cnt in all_jns:
-            if jn[1] - jn[0] + 1 > MAX_INTRON_SIZE:
-                continue
             junctions[jn] += cnt
 
         return sorted(junctions.iteritems())
@@ -550,7 +546,7 @@ def load_junctions( rnaseq_reads, cage_reads, polya_reads,
     for (start, stop), cnt in rnaseq_junctions:
         if (float(cnt)+1)/jn_starts[start] < 0.01: continue
         if (float(cnt)+1)/jn_stops[stop] < 0.01: continue
-        if stop - start > 10000000: continue
+        if stop - start + 1 > MAX_INTRON_SIZE: continue
         filtered_junctions[(start, stop)] = cnt
     
     # add in the cage and polya reads, for connectivity
