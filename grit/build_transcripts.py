@@ -24,7 +24,7 @@ from f_matrix import build_design_matrices
 import frequency_estimation
 from frag_len import load_fl_dists, FlDist, build_normal_density
 
-MAX_NUM_TRANSCRIPTS = 100
+MAX_NUM_TRANSCRIPTS = 500
 
 from lib.logging import Logger
 # log statement is set in the main init, and is a global
