@@ -51,7 +51,7 @@ CAGE_PEAK_WIN_SIZE = 30
 CAGE_FILTER_ALPHA = 0.99
 MIN_NUM_CAGE_TAGS = 5
 MIN_NUM_POLYA_TAGS = 2
-MAX_CAGE_FRAC = 0.05
+MAX_CAGE_FRAC = 0.01
 NUM_TSS_BASES_TO_SKIP = 200
 NUM_TES_BASES_TO_SKIP = 300
 
@@ -100,13 +100,16 @@ def build_empty_array():
     return numpy.array(())
 
 def cluster_segments( segments, jns ):
+    if len(segments) == 0:
+        return []
+    
     boundaries = numpy.array(sorted(chain(*segments)))
     edges = set()
     for (start, stop), cnt in jns:
         start_bin = boundaries.searchsorted( start-1 )-1
         if start_bin < 0: continue
         stop_bin = boundaries.searchsorted( stop+1 )-1
-        if stop_bin > len(boundaries): continue
+        if stop_bin >= len(boundaries): continue
         if start_bin != stop_bin:
             edges.add((int(min(start_bin, stop_bin)), 
                        int(max(start_bin, stop_bin))))
@@ -121,13 +124,16 @@ def cluster_segments( segments, jns ):
     return flatten( segments )
 
 def cluster_segments_2( boundaries, jns ):
+    if len(boundaries) < 2:
+        return []
+    
     boundaries = numpy.array(sorted(boundaries))
     edges = set()
     for start, stop, cnt in jns:
         start_bin = boundaries.searchsorted( start-1 )-1
         if start_bin < 0: continue
         stop_bin = boundaries.searchsorted( stop+1 )-1
-        if stop_bin > len(boundaries): continue
+        if stop_bin >= len(boundaries): continue
         if start_bin != stop_bin:
             edges.add((int(min(start_bin, stop_bin)), 
                        int(max(start_bin, stop_bin))))
@@ -646,6 +652,8 @@ def find_gene_boundaries((chrm, strand, contig_len),
         with accepted_segments_lock:
             for bndries in accepted_segments:
                 locs.extend( bndries )
+        if len(locs) == 0:
+            return locs
         
         # merge adjoining segments
         locs.sort()

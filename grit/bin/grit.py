@@ -183,7 +183,10 @@ def parse_control_file(control_fp):
                 assert line.read_type == 'backward'
                 cage_reads.append(open(line.filename))
             elif line.assay == 'rampage':
-                raise NotImplemented, "RAMPAGE not implemented in control file"
+                assert truth_value(line.paired) == False
+                assert truth_value(line.stranded) == True
+                assert line.read_type == 'backward'
+                rampage_reads.append(open(line.filename))
             elif line.assay == 'polya':
                 assert truth_value(line.paired) == False
                 assert truth_value(line.stranded) == True
