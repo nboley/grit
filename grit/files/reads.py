@@ -473,7 +473,9 @@ class CAGEReads(Reads):
         
         return self
     
-    def build_read_coverage_array( self, chrm, strand, start, stop ):
+    def build_read_coverage_array( self, chrm, strand, start, stop, 
+                                   read_pair=None ):
+        assert read_pair == None
         full_region_len = stop - start + 1
         cvg = numpy.zeros(full_region_len)
         for rd in self.fetch( chrm, start, stop ):
@@ -512,7 +514,9 @@ class RAMPAGEReads(Reads):
         
         return self
     
-    def build_read_coverage_array( self, chrm, strand, start, stop ):
+    def build_read_coverage_array( self, chrm, strand, start, stop,
+                                   read_pair=None ):
+        assert read_pair == None
         full_region_len = stop - start + 1
         cvg = numpy.zeros(full_region_len)
         for rd in self.fetch( chrm, start, stop ):
@@ -552,7 +556,10 @@ class PolyAReads(Reads):
         
         return self
     
-    def build_read_coverage_array( self, chrm, strand, start, stop ):
+    def build_read_coverage_array( self, chrm, strand, start, stop,
+                                   read_pair=None ):
+        assert read_pair == None
+        
         full_region_len = stop - start + 1
         cvg = numpy.zeros(full_region_len)
         for rd in self.fetch( chrm, start, stop ):
