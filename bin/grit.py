@@ -388,9 +388,15 @@ def main():
             cage_reads, rampage_reads, polya_reads,
             ofprefix, args)
         
-        query = "SELECT DISTINCT rep_id FROM data WHERE sample_type = '{}'"
-        rep_ids = [ x[0] for x in 
-                    conn.execute(query.format(sample_type)).fetchall()]
+        # if we used a control file, and thus have sample types, then find 
+        # the unqiue repids for this sample
+        if sample_type != None:
+            query = "SELECT DISTINCT rep_id FROM data WHERE sample_type = '{}'"
+            rep_ids = [ x[0] for x in 
+                        conn.execute(query.format(sample_type)).fetchall()]
+        # otherwise, use everything by setting hte rep id to None
+        else: rep_ids = [None,]
+        
         for rep_id in rep_ids:
             ( rnaseq_reads, rnaseq_read_types, cage_reads, rampage_reads,
               polya_reads ) = get_run_data(conn, args, sample_type, rep_id)
