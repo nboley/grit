@@ -1665,12 +1665,13 @@ def parse_arguments():
     parser.add_argument( '--num-mapped-rnaseq-reads', type=int,
         help="The total number of mapped rnaseq reads ( needed to calculate the FPKM ). This only needs to be set if it isn't found by a call to samtools idxstats." )
     
-    parser.add_argument( '--cage-reads', type=argparse.FileType('rb'),
+    parser.add_argument( '--cage-reads', nargs='+',type=argparse.FileType('rb'),
         help='BAM file containing mapped cage reads.')
-    parser.add_argument( '--rampage-reads', type=argparse.FileType('rb'),
+    parser.add_argument( '--rampage-reads', nargs='+',
+                         type=argparse.FileType('rb'),
         help='BAM file containing mapped rampage reads.')
 
-    parser.add_argument( '--polya-reads',type=argparse.FileType('rb'),
+    parser.add_argument( '--polya-reads',nargs='+',type=argparse.FileType('rb'),
         help='BAM file containing mapped polya reads.')
     
     parser.add_argument( '--reference', help='Reference GTF')
@@ -1786,22 +1787,27 @@ def parse_arguments():
         clean_chr_name(args.region) if args.region != None else None
 
 
-def load_promoter_reads(cage_bam, rampage_bam):
-    if cage_bam != None:
+def load_promoter_reads(cage_bams, rampage_bams):
+    assert cage_bams == None or rampage_bams == None, \
+        "Can not use both RAMPAGE and CAGE reads"
+    if cage_bams != None:
         if VERBOSE: log_statement( 'Loading CAGE read bams' )
-        return CAGEReads(cage_bam.name).init(
-            reverse_read_strand=True)
+        return MergedReads([ 
+                CAGEReads(cage_bam.name).init(reverse_read_strand=True)
+                for cage_bam in cage_bams ])
+            
     
-    if rampage_bam != None:
+    if rampage_bams != None:
         if VERBOSE: log_statement( 'Loading RAMPAGE read bams' )            
-        return RAMPAGEReads(rampage_bam.name).init(
-            reverse_read_strand=True)
+        return MergedReads([ 
+                RAMPAGEReads(rampage_bam.name).init(reverse_read_strand=True)
+                for rampage_bam in rampage_bams ])
     
     return None
 
 def main():
     ( rnaseq_bams, rnaseq_strands_need_to_be_reversed, 
-      cage_bam, rampage_bam, polya_bam,
+      cage_bams, rampage_bams, polya_bams,
       ofp, ref_gtf_fname, ref_elements_to_include, 
       use_ncurses, region_to_use ) = parse_arguments()
     
@@ -1829,12 +1835,15 @@ def main():
         assert TOTAL_MAPPED_READS > 0
         
         if VERBOSE: log_statement( 'Loading promoter reads bams' )        
-        promoter_reads = load_promoter_reads(cage_bam, rampage_bam)
+        promoter_reads = load_promoter_reads(cage_bams, rampage_bams)
 
         if VERBOSE: log_statement( 'Loading polyA reads bams' )        
-        polya_reads = ( PolyAReads(polya_bam.name).init(
-                reverse_read_strand=True, pairs_are_opp_strand=True) 
-                        if polya_bam != None else None )
+        polya_reads = None
+        if polya_bams != None:
+            polya_reads = MergedReads([
+                    PolyAReads(polya_bam.name).init(
+                        reverse_read_strand=True, pairs_are_opp_strand=True) 
+                    for polya_bam in polya_bams ])
         
         contigs, contig_lens = get_contigs_and_lens( 
             [ reads for reads in [rnaseq_reads, promoter_reads, polya_reads]
