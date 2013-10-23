@@ -269,9 +269,9 @@ def estimate_transcript_frequencies_line_search(
             continue
      
         curr_lhd = calc_lhd( x, observed_array, expected_array)
-        if i > 3 and (alpha == 0 or curr_lhd - prev_lhd < abs_tol):
+        if i > 10 and (alpha == 0 or curr_lhd - prev_lhd < abs_tol):
             zeros_counter += 1
-            if zeros_counter > 3:
+            if zeros_counter > 10:
                 break            
         else:
             zeros_counter = 0
@@ -376,7 +376,7 @@ def estimate_confidence_bound( observed_array,
     def take_param_decreasing_step(x):
         gradient = numpy.zeros(n)
         gradient[fixed_index] = -1 if bound_type == 'LOWER' else 1
-        gradient = project_onto_simplex( x + 1.*gradient ) - x
+        gradient = project_onto_simplex( x + 0.1*gradient ) - x
         gradient_l1_size = numpy.absolute(gradient).sum()
         # if we can't go anywhere, then dont move
         if gradient_l1_size > 0:
@@ -406,7 +406,7 @@ def estimate_confidence_bound( observed_array,
         coord_gradient = project_onto_simplex( x + 0.1*coord_gradient ) - x
         coord_gradient /= ( numpy.absolute(coord_gradient).sum() + 1e-12 )
 
-        # find the theta that makes the paramater we are optimizing fixed
+        # find the theta that makes the parameter we are optimizing fixed
         denominator = lhd_gradient[fixed_index] - coord_gradient[fixed_index]
         if denominator == 0: theta = 1.
         else: theta = lhd_gradient[fixed_index]/denominator
@@ -430,7 +430,8 @@ def estimate_confidence_bound( observed_array,
                 print "MAX LHD ", x[fixed_index], \
                     calc_lhd(x, observed_array, expected_array) - min_lhd, \
                     "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
-        
+
+        x += alpha*gradient    
         assert calc_lhd(x, observed_array, expected_array) >= min_lhd
         return x
 
