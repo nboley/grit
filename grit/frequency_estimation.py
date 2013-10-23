@@ -32,6 +32,8 @@ DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
 ABS_TOL = 1e-5
 
+MAX_NUM_ITERATIONS = 1000
+
 class TooFewReadsError( ValueError ):
     pass
 
@@ -131,7 +133,7 @@ def line_search( x, f, gradient, max_feasible_step_size ):
         return 0, True
     if f(x + max_feasible_step_size*gradient) > \
             f(x + (max_feasible_step_size-FD_SS)*gradient):
-        assert f(x + max_feasible_step_size*gradient) > f(x)
+        assert f(x + max_feasible_step_size*gradient) >= f(x)
         return max_feasible_step_size, False
     if 2*FD_SS > max_feasible_step_size: 
         return 0, True
@@ -269,9 +271,9 @@ def estimate_transcript_frequencies_line_search(
             continue
      
         curr_lhd = calc_lhd( x, observed_array, expected_array)
-        if i > 10 and (alpha == 0 or curr_lhd - prev_lhd < abs_tol):
+        if i > 3 and (alpha == 0 or curr_lhd - prev_lhd < abs_tol):
             zeros_counter += 1
-            if zeros_counter > 10:
+            if zeros_counter > 3:
                 break            
         else:
             zeros_counter = 0
@@ -443,7 +445,7 @@ def estimate_confidence_bound( observed_array,
     x = mle_estimate.copy()
     prev_x = mle_estimate[fixed_index]
     n_successes = 0
-    while True:        
+    for i in xrange(MAX_NUM_ITERATIONS):        
         # take a downhill step
         x, curr_lhd = take_param_decreasing_step(x)
         if bound_type == 'LOWER' \
