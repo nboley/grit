@@ -426,12 +426,12 @@ def estimate_confidence_bound( observed_array,
                 x, lambda x: calc_lhd(x, observed_array, expected_array),
                 gradient, max_feasible_step_size)
             assert alpha >= 0
+            x += alpha*gradient    
             if DEBUG_OPTIMIZATION:
                 print "MAX LHD ", x[fixed_index], \
                     calc_lhd(x, observed_array, expected_array) - min_lhd, \
                     "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
 
-        x += alpha*gradient    
         assert calc_lhd(x, observed_array, expected_array) >= min_lhd
         return x
 
