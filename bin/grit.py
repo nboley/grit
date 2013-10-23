@@ -202,7 +202,7 @@ def verify_args_are_sufficient(args, rnaseq_reads,
          and not args.use_reference_promoters):
         raise ValueError, "--cage-reads or --rampage-reads or --use-reference-tss or --use-reference-promoters must be set"
     
-    if cage_reads == None and rampage_reads == None:
+    if cage_reads != None and rampage_reads != None:
         raise ValueError, "--cage-reads and --rampage-reads may not both be set"
     
     if ( polya_reads == None

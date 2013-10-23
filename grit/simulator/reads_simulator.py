@@ -84,15 +84,15 @@ def build_sam_line( transcript, read_len, offset, read_identifier, quality_strin
     seq = transcript.seq[ offset : (offset + read_len) ]
 
     # initialize sam lines with read identifiers and then add appropriate fields
-    sam_line = '\t'.join( ( \
-            read_identifier, str( flag ), transcript.chrm, str( start ), '255', \
-                cigar, "*", '0', str( insert_size ), seq, quality_string, "NM:i:0", \
-                "NH:i:1" )  ) + "\n"
+    sam_line = '\t'.join( ( 
+            read_identifier, str( flag ), 'chr' + transcript.chrm, str( start ),
+            '255', cigar, "*", '0', str( insert_size ), seq, quality_string, 
+            "NM:i:0", "NH:i:1" )  ) + "\n"
 
     return sam_line
 
-def build_sam_lines( transcript, read_len, frag_len, offset, \
-                         read_identifier, read_quals ):
+def build_sam_lines( transcript, read_len, frag_len, offset, 
+                     read_identifier, read_quals ):
     """build paired end SAM formatted lines with given information
 
     """
@@ -113,18 +113,18 @@ def build_sam_lines( transcript, read_len, frag_len, offset, \
     # adjust five and three prime read start positions to correct genomic positions
     start = [ transcript.start, transcript.start ]
     start[ up_strm_read ] += calc_genomic_offset( transcript, offset )
-    start[ dn_strm_read ] += calc_genomic_offset( transcript, \
-                                                 (offset + frag_len - read_len) )
-
+    start[ dn_strm_read ] += calc_genomic_offset( 
+        transcript, (offset + frag_len - read_len) )
+    
     # set cigar string for five and three prime reads
     cigar = [ None, None ]
-    cigar[ up_strm_read ] = get_cigar( transcript, offset, (offset + read_len) )
-    cigar[ dn_strm_read ] = get_cigar( transcript, (offset + frag_len - read_len), \
+    cigar[ up_strm_read ] = get_cigar( transcript, offset, (offset+read_len) )
+    cigar[ dn_strm_read ] = get_cigar( transcript, (offset+frag_len-read_len),
                                       (offset + frag_len) )
 
     # calculate insert size by difference of genomic offset and genomic offset+frag_len
-    insert_size = calc_genomic_offset( transcript, (offset + frag_len) ) - \
-        calc_genomic_offset( transcript, offset )
+    insert_size = ( calc_genomic_offset( transcript, (offset + frag_len) ) - 
+                    calc_genomic_offset( transcript, offset ) )
     insert_size = [ insert_size, insert_size ]
     insert_size[ dn_strm_read ] *= -1
 
@@ -138,10 +138,10 @@ def build_sam_lines( transcript, read_len, frag_len, offset, \
     sam_lines = [ read_identifier + '\t', read_identifier + '\t' ]    
     for i in (0,1):
         other_i = 0 if i else 1
-        sam_lines[i] += '\t'.join( ( \
-                str( flag[i] ), transcript.chrm, str( start[i] ), "255", cigar[i], \
-                    "=", str( start[other_i] ), str( insert_size[i] ), seq[i], \
-                    ordered_quals[i], "NM:i:0", "NH:i:1" ) ) + "\n"
+        sam_lines[i] += '\t'.join( (
+                str( flag[i] ), 'chr' + transcript.chrm, str( start[i] ),"255",
+                cigar[i], "=", str( start[other_i] ), str( insert_size[i] ), 
+                seq[i], ordered_quals[i], "NM:i:0", "NH:i:1" ) ) + "\n"
 
     return sam_lines
 
@@ -241,12 +241,13 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end, \
             read_len = int( math.ceil( fl / float(2) ) )
 
         # get two random quality scores
-        read_quals = [ get_random_qual_score( read_len ), \
-                           get_random_qual_score( read_len ) ]
+        read_quals = [ get_random_qual_score( read_len ), 
+                       get_random_qual_score( read_len ) ]
 
-        # build the sam lines
-        return build_sam_lines( transcript, read_len, fl, \
-                                    offset, read_identifier, read_quals )
+        sam_lines = build_sam_lines( 
+            transcript, read_len, fl, offset, read_identifier, read_quals )
+        
+        return sam_lines
     
     def get_fl_min():
         if isinstance( fl_dist, int ):
@@ -320,9 +321,9 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end, \
     sam_basename = out_prefix
     with open( sam_basename + ".sam", 'w' ) as sam_fp:
         while curr_read_index <= num_frags:
-            # pick a transcript to randomly take a read from. Note that they should
-            # be chosen in proportion to the *expected number of reads*, not their
-            # relative frequencies.
+            # pick a transcript to randomly take a read from. Note that they 
+            # should be chosen in proportion to the *expected number of reads*,
+            # not their relative frequencies.
             transcript_index = \
                 transcript_weights_cumsum.searchsorted( random(), side='left' )
             transcript = transcripts[ transcript_index ]
@@ -339,7 +340,8 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end, \
         transcript.release()
 
     # create sorted bam file and index it
-    sam_header_path = os.path.join( os.path.dirname(sys.argv[0]), 'sam_header.txt' )
+    sam_header_path = os.path.join( 
+        os.path.dirname(sys.argv[0]), 'sam_header.txt' )
     call = 'cat {0} {1}.sam | samtools view -bS - | samtools sort - {1}.sorted'
     os.system( call.format( sam_header_path, sam_basename ) )
     os.system( 'samtools index {0}.sorted.bam'.format( sam_basename ) )
@@ -589,8 +591,9 @@ class CustomGene( dict ):
                 data = (self.chrm, self.strand, start, stop, freq )
                 self[ self.gene_name ][ trans_name ].add_exon( data )
 
-def build_objs( gtf_fp, fl_dist_const, fl_dist_obj_fn, fl_dist_norm, full_fragment, \
-                    read_len, fasta_fn, qual_fn, custom_trans ):
+def build_objs( gtf_fp, fl_dist_const, fl_dist_obj_fn, 
+                fl_dist_norm, full_fragment,
+                read_len, fasta_fn, qual_fn, custom_trans ):
     if custom_trans:
         custom_trans = parse_custom_trans_string( custom_trans_string )
         genes = CustomGene( gtf_fp, custom_trans )
@@ -733,9 +736,10 @@ if __name__ == "__main__":
         num_frags, single_end, full_fragment, read_len, out_prefix, custom_trans, \
         run_slide = parse_arguments()
     
-    genes, fl_dist, fasta, quals = build_objs( \
-        gtf_fp, fl_dist_const, fl_dist_obj_fn, fl_dist_norm, full_fragment, read_len, \
-            fasta_fn, qual_fn, custom_trans ) 
+    genes, fl_dist, fasta, quals = build_objs( 
+        gtf_fp, fl_dist_const, 
+        fl_dist_obj_fn, fl_dist_norm, full_fragment, read_len, 
+        fasta_fn, qual_fn, custom_trans ) 
 
     """Test a single read for debugging
     transcript = genes.values()[0].values()[0]
