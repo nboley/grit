@@ -333,8 +333,8 @@ def build_iters( items ):
     
     return iters 
 
-def iter_gff_lines( regions_iter, grp_id_iter=None, score='.', \
-                         feature='.', source='.', frame='.' ):
+def iter_gff_lines( regions_iter, grp_id_iter=None, score='.', 
+                    feature='.', source='.', frame='.' ):
     if isinstance( grp_id_iter, str ):
         raise ValueError, "Group ID must be an iterator."
     

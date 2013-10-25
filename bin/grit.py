@@ -391,7 +391,8 @@ def main():
         # if we used a control file, and thus have sample types, then find 
         # the unqiue repids for this sample
         if sample_type != None:
-            query = "SELECT DISTINCT rep_id FROM data WHERE sample_type = '{}'"
+            query = "SELECT DISTINCT rep_id FROM data \
+                     WHERE sample_type = '{}' AND rep_id != '*'"
             rep_ids = [ x[0] for x in 
                         conn.execute(query.format(sample_type)).fetchall()]
         # otherwise, use everything by setting hte rep id to None
