@@ -616,7 +616,7 @@ def build_design_matrices( gene, rnaseq_reads, fl_dists, all_promoter_reads=[],
             gene, rnaseq_reads, fl_dists )
     if len( expected_rnaseq_cnts ) == 0:
         return numpy.zeros(0), numpy.zeros(0), []
-        
+    
     expected_rnaseq_array, observed_rnaseq_array, unobservable_rnaseq_trans = \
         build_expected_and_observed_arrays( 
             expected_rnaseq_cnts, observed_rnaseq_cnts, True )
@@ -690,10 +690,6 @@ def find_nonoverlapping_exons_covered_by_segment(exon_bndrys, start, stop):
     """Return the pseudo bins that a given segment has at least one basepair in.
 
     """
-    # BUG XXX
-    start += 1
-    stop +=1 
-    
     bin_1 = exon_bndrys.searchsorted(start, side='right')-1
     # if the start falls before all bins
     if bin_1 == -1: return ()
