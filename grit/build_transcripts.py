@@ -289,7 +289,6 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                     = build_design_matrices( gene, rnaseq_reads, fl_dists, 
                                              chain(promoter_reads, polya_reads),
                                              MAX_NUM_TRANSCRIPTS)
-                                             
             except ValueError, inst:
                 error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
                     os.getpid(), gene_id, 
@@ -571,7 +570,8 @@ def load_elements( fp ):
     for line in fp:
         if line.startswith( 'track' ): continue
         chrm, start, stop, element_type, score, strand = line.split()[:6]
-        # subtract 1 from stop becausee beds are closed open
+        # subtract 1 from stop becausee beds are closed open, and we 
+        # wnat everything in 0-based closed-closed
         all_elements[(chrm, strand)][element_type].add( 
             (int(start), int(stop)-1) )
     
