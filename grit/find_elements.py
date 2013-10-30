@@ -491,8 +491,9 @@ def load_junctions_worker(all_jns, all_jns_lock, args):
     log_statement( "" )
     return
 
-def load_junctions_in_bam( reads, (chrm, strand, region_start, region_stop) ):
-    if NTHREADS == 1:
+def load_junctions_in_bam( reads, (chrm, strand, region_start, region_stop), 
+                           single_thread_mode=False ):
+    if single_thread_mode or NTHREADS == 1:
         jns = extract_junctions_in_region( 
             reads, chrm, strand, region_start, region_stop )
         return [ (jn, cnt) for jn, cnt in jns 
@@ -534,12 +535,14 @@ def load_junctions_in_bam( reads, (chrm, strand, region_start, region_stop) ):
     assert False
     
 def load_junctions( rnaseq_reads, cage_reads, polya_reads, 
-                    (chrm, strand, region_start, region_stop) ):
+                    (chrm, strand, region_start, region_stop),
+                    single_thread_mode=False):
     # load and filter the ranseq reads. We can't filter all of the reads because
     # they are on differnet scales, so we only filter the RNAseq and use the 
     # cage and polya to get connectivity at the boundaries.
     rnaseq_junctions = load_junctions_in_bam(
-        rnaseq_reads, (chrm, strand, region_start, region_stop))
+        rnaseq_reads, (chrm, strand, region_start, region_stop),
+        single_thread_mode )
     
     # filter junctions
     jn_starts = defaultdict( int )
@@ -559,7 +562,8 @@ def load_junctions( rnaseq_reads, cage_reads, polya_reads,
     for reads in [cage_reads, polya_reads]:
         if reads == None: continue
         for jn, cnt in load_junctions_in_bam(
-                reads, (chrm, strand, region_start, region_stop)):
+                reads, (chrm, strand, region_start, region_stop),
+                single_thread_mode):
             filtered_junctions[jn] += 0
     return filtered_junctions
 
@@ -1243,7 +1247,7 @@ def find_coverage_in_gene(gene, reads):
 
 def build_raw_elements_in_gene( gene, 
                                 rnaseq_reads, cage_reads, polya_reads,
-                                jns, cage_peaks, polya_peaks  ):
+                                cage_peaks, polya_peaks  ):
     """Find the read coverage arrays, junctions lists,
     and make the appropriate conversion into gene coordiantes.
     
@@ -1256,8 +1260,11 @@ def build_raw_elements_in_gene( gene,
     cage_cov, polya_cov = None, None
     
     gene_len = gene.stop - gene.start + 1
+    jns = load_junctions(rnaseq_reads, cage_reads, polya_reads,
+                         (gene.chrm, gene.strand, gene.start, gene.stop),
+                         single_thread_mode=True)
     jns = [ (x1-gene.start, x2-gene.start, cnt)  
-            for x1, x2, cnt in jns
+            for (x1, x2), cnt in sorted(jns.iteritems())
             if points_are_inside_gene(x1, x2)]
     
     cage_peaks = [ (x1-gene.start, x2-gene.start)
@@ -1291,7 +1298,7 @@ def build_raw_elements_in_gene( gene,
 
 def find_exons_in_gene( gene, contig_len,
                         rnaseq_reads, cage_reads, polya_reads,
-                        jns, cage_peaks=[], polya_peaks=[] ):
+                        cage_peaks=[], polya_peaks=[] ):
     assert isinstance( gene, Bins )
     ###########################################################
     # Shift all of the input data to be in the gene region, and 
@@ -1300,7 +1307,7 @@ def find_exons_in_gene( gene, contig_len,
     rnaseq_cov, cage_cov, cage_peaks, polya_cov, polya_peaks, jns  \
           = build_raw_elements_in_gene( 
             gene, rnaseq_reads, cage_reads, polya_reads, 
-            jns, cage_peaks, polya_peaks) 
+            cage_peaks, polya_peaks) 
     ### END Prepare input data #########################################
 
     # initialize the cage peaks with the reference provided set
@@ -1340,7 +1347,6 @@ def find_exons_in_gene( gene, contig_len,
         (gene.chrm, gene.strand), rnaseq_cov, jns, cage_peaks, "CAGE")
     tes_exons = find_gene_bndry_exons(
         (gene.chrm, gene.strand), rnaseq_cov, jns, polya_peaks, "POLYA_SEQ")
-        
     gene_bins = Bins(gene.chrm, gene.strand, build_labeled_segments( 
             (gene.chrm, gene.strand), rnaseq_cov, jns ) )
     
@@ -1431,7 +1437,7 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
         gene_jns, gene_ref_elements = extract_elements_for_gene( gene )
         elements, pseudo_exons, new_gene_boundaries = find_exons_in_gene(
             gene, contig_len,
-            rnaseq_reads, cage_reads, polya_reads, gene_jns,
+            rnaseq_reads, cage_reads, polya_reads, 
             gene_ref_elements['promoters'], 
             gene_ref_elements['polya'])
         
