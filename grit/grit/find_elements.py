@@ -40,8 +40,6 @@ MIN_GENE_LENGTH = 400
 # the maximum number of bases to expand gene boundaries from annotated genes
 MAX_GENE_EXPANSION = 1000
 
-MIN_REGION_LEN = 50
-MIN_EMPTY_REGION_LEN = 100
 MIN_EXON_BPKM = 0.01
 EXON_EXT_CVG_RATIO_THRESH = 5
 POLYA_MERGE_SIZE = 100
@@ -481,9 +479,27 @@ class Bins( list ):
         
         return
 
-def load_junctions_worker(all_jns, all_jns_lock, args):
-    log_statement( "Finding jns in '%s:%s:%i-%i'" % args[1:5] )
-    jns = extract_junctions_in_region( *args )
+def load_junctions_worker(all_jns, all_jns_lock, 
+                          segments_queue, segments_queue_lock, 
+                          (reads, chrm, strand)):
+    log_statement( "Finding jns in '%s:%s'" % (chrm, strand) )
+    jns = []
+    while len(segments_queue) > 0:
+        with segments_queue_lock:
+            if len(segments_queue) == 0: break
+            start, stop = segments_queue.pop()
+        if VERBOSE: 
+            log_statement("Finding jns in '%s:%s:%i:%i'" % 
+                          (chrm, strand, start, stop))
+        jns.extend(extract_junctions_in_region(
+                reads, chrm, strand, start, stop, True))
+        # try to qcquire the lock and, if we can, offload the acquired jns
+        if all_jns_lock.acquire(block=False):
+            all_jns.extend( jns )
+            del jns[:]
+            all_jns_lock.release()
+    
+    # finally, block until we can offload the remaining junctions
     with all_jns_lock:
         all_jns.extend( jns )
     del jns
@@ -492,39 +508,51 @@ def load_junctions_worker(all_jns, all_jns_lock, args):
 
 def load_junctions_in_bam( reads, (chrm, strand, region_start, region_stop), 
                            nthreads ):
+    log_statement( "Finding jns in '%s:%s:%i:%i'" % (
+            chrm, strand, region_start, region_stop) )
     if nthreads == 1:
         jns = extract_junctions_in_region( 
             reads, chrm, strand, region_start, region_stop )
         return [ (jn, cnt) for jn, cnt in jns 
                  if jn[1] - jn[0] + 1 <= MAX_INTRON_SIZE ]
     else:
-        seg_len = int((region_stop - region_start + 1)/nthreads)
-        segments =  [ [region_start + i*seg_len, 
-                       region_start + (i+1)*seg_len] for i in xrange(nthreads) ]
-        segments[0][0] = region_start
-        segments[-1][1] = region_stop
-        
         from multiprocessing import Process, Manager
         manager = Manager()
         all_jns = manager.list()
         all_jns_lock = multiprocessing.Lock()
 
+        segments_queue = manager.list()
+        segments_queue_lock = multiprocessing.Lock()
+        
+        # add all the regions to search for junctions in
+        seg_len = min(5000, int((region_stop - region_start + 1)/nthreads))
+        pos = region_start
+        while pos < region_stop:
+            segments_queue.append( (pos, pos+seg_len) )
+            pos += seg_len
+        # make sure the last region doesnt exten past the stop
+        segments_queue[-1] = (segments_queue[-1][0], region_stop)
+                
+
         ps = []
-        for start, stop in segments:
+        for i in xrange(nthreads):
             p = Process(target=load_junctions_worker,
                         args=( all_jns, all_jns_lock, 
-                               (reads, chrm, strand, start, stop, True) 
-                               ) )
-
+                               segments_queue, segments_queue_lock,
+                               (reads, chrm, strand) ) )
+            
             p.start()
             ps.append( p )
 
         log_statement( "Waiting on jn finding children in contig '%s' on '%s' strand" % ( chrm, strand ) )
-        while True:
-            if all( not p.is_alive() for p in ps ):
-                break
-            time.sleep( 0.1 )
-
+        while len(segments_queue) > 0:
+            log_statement( "Waiting on jn finding children (%i remain)" 
+                           % len(segments_queue) )
+            time.sleep( 0.5 )
+        
+        for p in ps: p.join()
+        #while any( not p.is_alive() for p in ps ):
+        
         junctions = defaultdict( int )
         for jn, cnt in all_jns:
             junctions[jn] += cnt
@@ -1315,11 +1343,14 @@ def find_exons_in_gene( gene, contig_len,
     # Shift all of the input data to be in the gene region, and 
     # reverse it when necessary
     
-    rnaseq_cov, cage_cov, cage_peaks, polya_cov, polya_peaks, jns  \
-          = build_raw_elements_in_gene( 
-            gene, rnaseq_reads, cage_reads, polya_reads, 
-            cage_peaks, introns, polya_peaks) 
+    ( rnaseq_cov, cage_cov, cage_peaks, polya_cov, polya_peaks,
+      jns) =  build_raw_elements_in_gene( 
+        gene, rnaseq_reads, cage_reads, polya_reads, 
+        cage_peaks, introns, polya_peaks)
     ### END Prepare input data #########################################
+    
+    log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" % 
+                   (gene.chrm, gene.strand, gene.start, gene.stop) )
 
     # initialize the cage peaks with the reference provided set
     cage_peaks = Bins( gene.chrm, gene.strand, (
@@ -1429,9 +1460,6 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
             n_threads_running.value += 1
         genes_queue_lock.release()
         
-        log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" % 
-                       (gene.chrm, gene.strand, gene.start, gene.stop) )
-
         gene_ref_elements = extract_elements_for_gene( gene )
         elements, pseudo_exons, new_gene_boundaries = find_exons_in_gene(
             gene, contig_lens[gene.chrm],
@@ -1861,7 +1889,7 @@ def main():
             contig_lens, 
             rnaseq_reads, promoter_reads, polya_reads,
             ref_genes, ref_elements_to_include, region_to_use)
-
+        
         find_exons( contig_lens, gene_segments, ofp,
                     rnaseq_reads, promoter_reads, polya_reads,
                     ref_genes, ref_elements_to_include, NTHREADS )            
