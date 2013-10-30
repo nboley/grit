@@ -47,9 +47,10 @@ POLYA_MERGE_SIZE = 100
 CAGE_PEAK_WIN_SIZE = 30
 CAGE_FILTER_ALPHA = 0.99
 MIN_NUM_CAGE_TAGS = 5
-MIN_NUM_POLYA_TAGS = 2
 MAX_CAGE_FRAC = 0.01
 NUM_TSS_BASES_TO_SKIP = 200
+
+MIN_NUM_POLYA_TAGS = 2
 NUM_TES_BASES_TO_SKIP = 300
 
 
@@ -481,70 +482,73 @@ class Bins( list ):
 
 def load_junctions_worker(all_jns, all_jns_lock, 
                           segments_queue, segments_queue_lock, 
-                          (reads, chrm, strand)):
-    log_statement( "Finding jns in '%s:%s'" % (chrm, strand) )
-    jns = []
+                          reads):
+    jns = defaultdict(list)
     while len(segments_queue) > 0:
         with segments_queue_lock:
             if len(segments_queue) == 0: break
-            start, stop = segments_queue.pop()
+            chrm, strand, start, stop = segments_queue.pop()
         if VERBOSE: 
             log_statement("Finding jns in '%s:%s:%i:%i'" % 
                           (chrm, strand, start, stop))
-        jns.extend(extract_junctions_in_region(
+        jns[(chrm, strand)].extend(
+            extract_junctions_in_region(
                 reads, chrm, strand, start, stop, True))
         # try to qcquire the lock and, if we can, offload the acquired jns
         if all_jns_lock.acquire(block=False):
-            all_jns.extend( jns )
-            del jns[:]
+            for key, region_jns in jns.iteritems():
+                if key not in all_jns: all_jns[key] = []
+                all_jns[key].extend( jns )
+            jns = defaultdict(list)
             all_jns_lock.release()
     
     # finally, block until we can offload the remaining junctions
     with all_jns_lock:
-        all_jns.extend( jns )
+        for key, region_jns in jns.iteritems():
+            if key not in all_jns: all_jns[key] = []
+            all_jns[key].extend( jns )
     del jns
     log_statement( "" )
     return
 
-def load_junctions_in_bam( reads, (chrm, strand, region_start, region_stop), 
-                           nthreads ):
-    log_statement( "Finding jns in '%s:%s:%i:%i'" % (
-            chrm, strand, region_start, region_stop) )
+def load_junctions_in_bam( reads, regions, nthreads): 
+    log_statement( "Finding jns" )
     if nthreads == 1:
-        jns = extract_junctions_in_region( 
-            reads, chrm, strand, region_start, region_stop )
-        return [ (jn, cnt) for jn, cnt in jns 
-                 if jn[1] - jn[0] + 1 <= MAX_INTRON_SIZE ]
+        jns = defaultdict(list)
+        for chrm, strand, region_start, region_stop in regions:
+            jns[(chrm, strand)].extend( extract_junctions_in_region( 
+                    reads, chrm, strand, region_start, region_stop ) )
+        return jns
     else:
         from multiprocessing import Process, Manager
         manager = Manager()
-        all_jns = manager.list()
+        all_jns = manager.dict()
         all_jns_lock = multiprocessing.Lock()
 
         segments_queue = manager.list()
         segments_queue_lock = multiprocessing.Lock()
         
-        # add all the regions to search for junctions in
-        seg_len = min(5000, int((region_stop - region_start + 1)/nthreads))
-        pos = region_start
-        while pos < region_stop:
-            segments_queue.append( (pos, pos+seg_len) )
-            pos += seg_len
-        # make sure the last region doesnt exten past the stop
-        segments_queue[-1] = (segments_queue[-1][0], region_stop)
-                
-
+        for chrm, strand, region_start, region_stop in regions:
+            # add all the regions to search for junctions in
+            seg_len = min(5000, int((region_stop - region_start + 1)/nthreads))
+            pos = region_start
+            while pos < region_stop:
+                segments_queue.append( (chrm, strand, pos, pos+seg_len) )
+                pos += seg_len
+            # make sure the last region doesnt exten past the stop
+            segments_queue[-1] = (
+                chrm, strand, segments_queue[-1][2], region_stop)
+        
         ps = []
         for i in xrange(nthreads):
             p = Process(target=load_junctions_worker,
                         args=( all_jns, all_jns_lock, 
-                               segments_queue, segments_queue_lock,
-                               (reads, chrm, strand) ) )
+                               segments_queue, segments_queue_lock, reads ))
             
             p.start()
             ps.append( p )
 
-        log_statement( "Waiting on jn finding children in contig '%s' on '%s' strand" % ( chrm, strand ) )
+        log_statement( "Waiting on jn finding children" )
         while len(segments_queue) > 0:
             log_statement( "Waiting on jn finding children (%i remain)" 
                            % len(segments_queue) )
@@ -553,11 +557,14 @@ def load_junctions_in_bam( reads, (chrm, strand, region_start, region_stop),
         for p in ps: p.join()
         #while any( not p.is_alive() for p in ps ):
         
-        junctions = defaultdict( int )
-        for jn, cnt in all_jns:
-            junctions[jn] += cnt
-
-        return sorted(junctions.iteritems())
+        junctions = {}
+        for key in all_jns.keys():
+            contig_jns = all_jns[key]
+            junctions[key] = defaultdict( int )
+            for jn, cnt in contig_jns:
+                junctions[jn] += cnt
+            junctions[key] = sorted(junctions[key].iteritems())
+        return junctions
     assert False
     
 def load_junctions( rnaseq_reads, cage_reads, polya_reads, 
@@ -567,8 +574,8 @@ def load_junctions( rnaseq_reads, cage_reads, polya_reads,
     # they are on differnet scales, so we only filter the RNAseq and use the 
     # cage and polya to get connectivity at the boundaries.
     rnaseq_junctions = load_junctions_in_bam(
-        rnaseq_reads, (chrm, strand, region_start, region_stop),
-        nthreads )
+        rnaseq_reads, [(chrm, strand, region_start, region_stop),],
+        nthreads )[(chrm, strand)]
     
     # filter junctions
     jn_starts = defaultdict( int )
@@ -587,9 +594,10 @@ def load_junctions( rnaseq_reads, cage_reads, polya_reads,
     # add in the cage and polya reads, for connectivity
     for reads in [cage_reads, polya_reads]:
         if reads == None: continue
-        for jn, cnt in load_junctions_in_bam(
-                reads, (chrm, strand, region_start, region_stop),
-                nthreads):
+        jns = load_junctions_in_bam(
+            reads, [(chrm, strand, region_start, region_stop),],
+            nthreads)
+        for jn, cnt in jns[(chrm, strand)]:
             filtered_junctions[jn] += 0
     return filtered_junctions
 
