@@ -1435,13 +1435,9 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
             gene_ref_elements['polya'])
         
         if new_gene_boundaries != None:
-            if genes_queue_lock != None:
-                genes_queue_lock.acquire()
-            for gene in new_gene_boundaries:
-                genes_queue.append( gene )
-            if genes_queue_lock != None:
-                genes_queue_lock.release()
             with genes_queue_lock:
+                for gene in new_gene_boundaries:
+                    genes_queue.append( gene )
                 n_threads_running.value -= 1
             continue
         
