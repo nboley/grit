@@ -1247,7 +1247,7 @@ def find_coverage_in_gene(gene, reads):
 
 def build_raw_elements_in_gene( gene, 
                                 rnaseq_reads, cage_reads, polya_reads,
-                                cage_peaks, polya_peaks  ):
+                                cage_peaks, jns, polya_peaks  ):
     """Find the read coverage arrays, junctions lists,
     and make the appropriate conversion into gene coordiantes.
     
@@ -1263,6 +1263,10 @@ def build_raw_elements_in_gene( gene,
     jns = load_junctions(rnaseq_reads, cage_reads, polya_reads,
                          (gene.chrm, gene.strand, gene.start, gene.stop),
                          single_thread_mode=True)
+    # merge in the reference junctions
+    for start, stop in jns:
+        jns[(start,stop)] += 0
+    
     jns = [ (x1-gene.start, x2-gene.start, cnt)  
             for (x1, x2), cnt in sorted(jns.iteritems())
             if points_are_inside_gene(x1, x2)]
@@ -1298,7 +1302,7 @@ def build_raw_elements_in_gene( gene,
 
 def find_exons_in_gene( gene, contig_len,
                         rnaseq_reads, cage_reads, polya_reads,
-                        cage_peaks=[], polya_peaks=[] ):
+                        cage_peaks=[], introns=[], polya_peaks=[] ):
     assert isinstance( gene, Bins )
     ###########################################################
     # Shift all of the input data to be in the gene region, and 
@@ -1307,7 +1311,7 @@ def find_exons_in_gene( gene, contig_len,
     rnaseq_cov, cage_cov, cage_peaks, polya_cov, polya_peaks, jns  \
           = build_raw_elements_in_gene( 
             gene, rnaseq_reads, cage_reads, polya_reads, 
-            cage_peaks, polya_peaks) 
+            cage_peaks, introns, polya_peaks) 
     ### END Prepare input data #########################################
 
     # initialize the cage peaks with the reference provided set
@@ -1427,6 +1431,7 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
             gene, contig_len,
             rnaseq_reads, cage_reads, polya_reads, 
             gene_ref_elements['promoters'], 
+            gene_ref_elements['introns'],
             gene_ref_elements['polya'])
         
         if new_gene_boundaries != None:
