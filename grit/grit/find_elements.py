@@ -1385,22 +1385,10 @@ def find_exons_in_gene( gene, contig_len,
         
 
 def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running), 
-                       ofp, 
-                       (chrm, strand, contig_len),
-                       jns, rnaseq_reads, cage_reads, polya_reads,
+                       ofp, contig_len,
+                       rnaseq_reads, cage_reads, polya_reads,
                        ref_elements ):
-    jn_starts = [ i[0][0] for i in jns ]
-    jn_stops = [ i[0][1] for i in jns ]
-    jn_values = [ i[1] for i in jns ]
-
     def extract_elements_for_gene( gene ):
-        # find the junctions associated with this gene
-        gj_sa = bisect( jn_stops, gene.start )
-        gj_so = bisect( jn_starts, gene.stop )
-        gene_jns = zip( jn_starts[gj_sa:gj_so], 
-                        jn_stops[gj_sa:gj_so], 
-                        jn_values[gj_sa:gj_so] )
-        
         gene_ref_elements = defaultdict(list)
         for key, vals in ref_elements.iteritems():
             if len( vals ) == 0: continue
@@ -1409,7 +1397,7 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
                 if start > gene.stop: break
                 gene_ref_elements[key].append((start, stop))
         
-        return gene_jns, gene_ref_elements
+        return gene_ref_elements
     
     rnaseq_reads = rnaseq_reads.reload()
     cage_reads = cage_reads.reload() if cage_reads != None else None
@@ -1432,9 +1420,9 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
         genes_queue_lock.release()
         
         log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" % 
-                       (chrm, strand, gene.start, gene.stop) )
+                       (gene.chrm, gene.strand, gene.start, gene.stop) )
 
-        gene_jns, gene_ref_elements = extract_elements_for_gene( gene )
+        gene_ref_elements = extract_elements_for_gene( gene )
         elements, pseudo_exons, new_gene_boundaries = find_exons_in_gene(
             gene, contig_len,
             rnaseq_reads, cage_reads, polya_reads, 
@@ -1470,7 +1458,7 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
             n_threads_running.value -= 1
         
         log_statement( "FINISHED Finding Exons in Chrm %s Strand %s Pos %i-%i" %
-                       (chrm, strand, gene.start, gene.stop) )
+                       (gene.chrm, gene.strand, gene.start, gene.stop) )
     
     log_statement( "" )
     return
@@ -1514,30 +1502,18 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     # load the reference elements
     ref_elements = extract_reference_elements( 
         ref_genes, ref_elements_to_include, strand )
-
-    # if we havn't provided genes, then find junctions for the entire
-    # contig. Otherwise, only look for junctions in the gene regions
-    if gene_bndry_bins == None:
-        region_start, region_stop = 0, contig_len
-    else:
-        region_start = min( gene.start for gene in gene_bndry_bins )
-        region_stop = max( gene.stop for gene in gene_bndry_bins )
-        
-    # load junctions from the RNAseq data
-    junctions = load_junctions( rnaseq_reads, cage_reads, polya_reads, 
-                                (chrm, strand, region_start, region_stop) )
-    
-    # update the junctions with the reference junctions, and sort them
-    for jn in ref_elements['introns']:
-        junctions[jn] += 0
-    junctions = sorted( junctions.iteritems() )
-
-    
-    # del introns from the reference elements because they've already been 
-    # merged into the set of junctions
-    del ref_elements['introns']
     
     if gene_bndry_bins == None:
+        # load junctions from the RNAseq data
+        junctions = load_junctions( rnaseq_reads, cage_reads, polya_reads, 
+                                    (chrm, strand, 0, contig_len) )
+
+        # update the junctions with the reference junctions, and sort them
+        if reference_elements.junctions:
+            for jn in ref_elements['introns']:
+                junctions[jn] += 0
+        junctions = sorted( junctions.iteritems() )
+
         log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
                        % ( chrm, strand ) )
         gene_bndry_bins = find_gene_boundaries( 
@@ -1555,10 +1531,9 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
         genes_queue = []
     
     genes_queue.extend( gene_bndry_bins )
-    sorted_jns = sorted( junctions )
     args = [ (genes_queue, genes_queue_lock, threads_are_running), 
-             ofp, (chrm, strand, contig_len),
-              sorted_jns, rnaseq_reads, cage_reads, polya_reads, ref_elements ]
+             ofp, contig_len,
+             rnaseq_reads, cage_reads, polya_reads, ref_elements ]
     
     #global NTHREADS
     #NTHREADS = 1
