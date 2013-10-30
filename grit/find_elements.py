@@ -494,25 +494,27 @@ def load_junctions_worker(all_jns, all_jns_lock,
         jns[(chrm, strand)].extend(
             extract_junctions_in_region(
                 reads, chrm, strand, start, stop, True))
-        # try to qcquire the lock and, if we can, offload the acquired jns
+        # try to acquire the lock and, if we can, offload the acquired jns
+        """
         if all_jns_lock.acquire(block=False):
             for key, region_jns in jns.iteritems():
                 if key not in all_jns: all_jns[key] = []
                 all_jns[key].extend( jns )
             jns = defaultdict(list)
             all_jns_lock.release()
-    
+        """
     # finally, block until we can offload the remaining junctions
     with all_jns_lock:
         for key, region_jns in jns.iteritems():
-            if key not in all_jns: all_jns[key] = []
-            all_jns[key].extend( jns )
+            if key not in all_jns: all_jns_key = []
+            else: all_jns_key = all_jns[key]
+            all_jns_key.extend( region_jns )
+            all_jns[key] = all_jns_key
     del jns
     log_statement( "" )
     return
 
 def load_junctions_in_bam( reads, regions, nthreads): 
-    log_statement( "Finding jns" )
     if nthreads == 1:
         jns = defaultdict(list)
         for chrm, strand, region_start, region_stop in regions:
@@ -550,55 +552,62 @@ def load_junctions_in_bam( reads, regions, nthreads):
 
         log_statement( "Waiting on jn finding children" )
         while len(segments_queue) > 0:
-            log_statement( "Waiting on jn finding children (%i remain)" 
-                           % len(segments_queue) )
+            log_statement( "Waiting on jn finding children (%i in queue)" 
+                           % len(segments_queue), do_log=False )
             time.sleep( 0.5 )
-        
+
+        log_statement("Waiting on jn finding children (0 in queue)", 
+                      do_log=False)
         for p in ps: p.join()
         #while any( not p.is_alive() for p in ps ):
-        
+
         junctions = {}
         for key in all_jns.keys():
-            contig_jns = all_jns[key]
-            junctions[key] = defaultdict( int )
-            for jn, cnt in contig_jns:
-                junctions[jn] += cnt
-            junctions[key] = sorted(junctions[key].iteritems())
+            contig_jns = defaultdict(int)
+            for jn, cnt in all_jns[key]:
+                contig_jns[jn] += cnt
+            junctions[key] = sorted(contig_jns.iteritems())
         return junctions
     assert False
     
-def load_junctions( rnaseq_reads, cage_reads, polya_reads, 
-                    (chrm, strand, region_start, region_stop),
-                    nthreads):
+def load_junctions( rnaseq_reads, promoter_reads, polya_reads, 
+                    regions, nthreads):
     # load and filter the ranseq reads. We can't filter all of the reads because
     # they are on differnet scales, so we only filter the RNAseq and use the 
     # cage and polya to get connectivity at the boundaries.
     rnaseq_junctions = load_junctions_in_bam(
-        rnaseq_reads, [(chrm, strand, region_start, region_stop),],
-        nthreads )[(chrm, strand)]
+        rnaseq_reads, regions, nthreads )
+    promoter_jns = None if promoter_reads == None else \
+        load_junctions_in_bam( promoter_reads, regions, nthreads)
+    polya_jns = None if polya_reads == None else \
+        load_junctions_in_bam( polya_reads, regions, nthreads)
+        
+        
+
+    filtered_junctions = defaultdict(lambda: defaultdict(int))
+    for chrm, strand, region_start, region_stop in regions:        
+        # filter junctions
+        jn_starts = defaultdict( int )
+        jn_stops = defaultdict( int )
+        for (start, stop), cnt in rnaseq_junctions[(chrm, strand)]:
+            jn_starts[start] = max( jn_starts[start], cnt )
+            jn_stops[stop] = max( jn_stops[stop], cnt )
+        
+        for (start, stop), cnt in rnaseq_junctions[(chrm, strand)]:
+            if (float(cnt)+1)/jn_starts[start] < 0.01: continue
+            if (float(cnt)+1)/jn_stops[stop] < 0.01: continue
+            if stop - start + 1 > MAX_INTRON_SIZE: continue
+            filtered_junctions[(chrm, strand)][(start, stop)] = cnt
+        
+        del rnaseq_junctions[(chrm, strand)]
+        
+        # add in the cage and polya reads, for connectivity
+        for connectivity_jns in (promoter_jns, polya_jns):
+            if connectivity_jns == None: continue
+            for jn, cnt in connectivity_jns[(chrm, strand)]:
+                filtered_junctions[(chrm, strand)][jn] += 0
+            del connectivity_jns[(chrm, strand)]
     
-    # filter junctions
-    jn_starts = defaultdict( int )
-    jn_stops = defaultdict( int )
-    for (start, stop), cnt in rnaseq_junctions:
-        jn_starts[start] = max( jn_starts[start], cnt )
-        jn_stops[stop] = max( jn_stops[stop], cnt )
-    
-    filtered_junctions = defaultdict(int)
-    for (start, stop), cnt in rnaseq_junctions:
-        if (float(cnt)+1)/jn_starts[start] < 0.01: continue
-        if (float(cnt)+1)/jn_stops[stop] < 0.01: continue
-        if stop - start + 1 > MAX_INTRON_SIZE: continue
-        filtered_junctions[(start, stop)] = cnt
-    
-    # add in the cage and polya reads, for connectivity
-    for reads in [cage_reads, polya_reads]:
-        if reads == None: continue
-        jns = load_junctions_in_bam(
-            reads, [(chrm, strand, region_start, region_stop),],
-            nthreads)
-        for jn, cnt in jns[(chrm, strand)]:
-            filtered_junctions[jn] += 0
     return filtered_junctions
 
 def find_initial_segmentation_worker( 
@@ -643,7 +652,7 @@ def find_initial_segmentation_worker(
 def find_gene_boundaries((chrm, strand, contig_len), 
                          rnaseq_reads, cage_reads, polya_reads,
                          ref_elements, ref_elements_to_include,
-                         nthreads=NTHREADS):
+                         junctions=None, nthreads=NTHREADS):
     def find_segments_with_signal( chrm, strand, rnaseq_reads ):
         # initialize a tiling of segments acfross the genome to check for signal
         # This is expensive, so we farm it out to worker processes. But, 
@@ -708,16 +717,17 @@ def find_gene_boundaries((chrm, strand, contig_len),
     log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
                    % ( chrm, strand ) )
         
-    # load junctions from the RNAseq data
-    junctions = load_junctions( rnaseq_reads, cage_reads, polya_reads, 
-                                (chrm, strand, 0, contig_len), nthreads )
-
+    if junctions == None:
+        # load junctions from the RNAseq data
+        junctions = load_junctions( 
+            rnaseq_reads, cage_reads, polya_reads, 
+            [(chrm, strand, 0, contig_len),], nthreads )[(chrm, strand)]
+    
     # update the junctions with the reference junctions, and sort them
     if ref_elements_to_include.junctions:
         for jn in ref_elements['introns']:
             junctions[jn] += 0
     junctions = sorted( junctions.iteritems() )
-    
     
     # find segment boundaries
     if VERBOSE: log_statement( 
@@ -1304,8 +1314,8 @@ def build_raw_elements_in_gene( gene,
     
     gene_len = gene.stop - gene.start + 1
     jns = load_junctions(rnaseq_reads, cage_reads, polya_reads,
-                         (gene.chrm, gene.strand, gene.start, gene.stop),
-                         nthreads=1)
+                         [(gene.chrm, gene.strand, gene.start, gene.stop),],
+                         nthreads=1)[(gene.chrm, gene.strand)]
     # merge in the reference junctions
     for start, stop in jns:
         jns[(start,stop)] += 0
@@ -1347,6 +1357,10 @@ def find_exons_in_gene( gene, contig_len,
                         rnaseq_reads, cage_reads, polya_reads,
                         cage_peaks=[], introns=[], polya_peaks=[] ):
     assert isinstance( gene, Bins )
+    
+    log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" % 
+                   (gene.chrm, gene.strand, gene.start, gene.stop) )
+    
     ###########################################################
     # Shift all of the input data to be in the gene region, and 
     # reverse it when necessary
@@ -1357,9 +1371,6 @@ def find_exons_in_gene( gene, contig_len,
         cage_peaks, introns, polya_peaks)
     ### END Prepare input data #########################################
     
-    log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" % 
-                   (gene.chrm, gene.strand, gene.start, gene.stop) )
-
     # initialize the cage peaks with the reference provided set
     cage_peaks = Bins( gene.chrm, gene.strand, (
         Bin(pk_start, pk_stop+1, "CAGE_PEAK_START","CAGE_PEAK_STOP","CAGE_PEAK")
@@ -1538,7 +1549,8 @@ def extract_reference_elements(genes, ref_elements_to_include):
 def find_all_gene_segments( contig_lens, 
                             rnaseq_reads, cage_reads, polya_reads,
                             ref_genes, ref_elements_to_include,
-                            region_to_use=None):
+                            region_to_use=None,
+                            junctions=None):
     assert not any(ref_elements_to_include) or ref_genes != None
     gene_bndry_bins = []
     
@@ -1555,6 +1567,16 @@ def find_all_gene_segments( contig_lens,
     # load the reference elements
     ref_elements = extract_reference_elements( 
         ref_genes, ref_elements_to_include )
+
+    if junctions == None:
+        regions = []
+        for contig, contig_len in contig_lens.iteritems():
+            if region_to_use != None and contig != region_to_use: continue
+            for strand in '+-':
+                regions.append( (contig, strand, 0, contig_len) )
+        
+        junctions = load_junctions( 
+            rnaseq_reads, cage_reads, polya_reads, regions, NTHREADS)
     
     for contig, contig_len in contig_lens.iteritems():
         if region_to_use != None and contig != region_to_use: continue
@@ -1565,7 +1587,7 @@ def find_all_gene_segments( contig_lens,
                 (contig, strand, contig_len), 
                 rnaseq_reads, cage_reads, polya_reads, 
                 ref_elements, ref_elements_to_include,
-                NTHREADS
+                junctions=junctions[(contig, strand)], nthreads=NTHREADS
             )
             gene_bndry_bins.extend( contig_gene_bndry_bins )
     
@@ -1574,8 +1596,10 @@ def find_all_gene_segments( contig_lens,
 def find_exons( contig_lens, gene_bndry_bins, ofp,
                 rnaseq_reads, cage_reads, polya_reads,
                 ref_genes, ref_elements_to_include,
-                nthreads=NTHREADS):
+                junctions=None, nthreads=None):
     assert not any(ref_elements_to_include) or ref_genes != None
+    if nthreads == None: nthreads = NTHREADS
+    assert junctions == None
     
     ref_elements = extract_reference_elements( 
         ref_genes, ref_elements_to_include )
@@ -1892,15 +1916,31 @@ def main():
         else:
             ref_genes = []
 
+        # load all junctions
+        regions = []
+        for contig, contig_len in contig_lens.iteritems():
+            if region_to_use != None and contig != region_to_use: continue
+            for strand in '+-':
+                regions.append( (contig, strand, 0, contig_len) )        
+        junctions = load_junctions( 
+            rnaseq_reads, promoter_reads, polya_reads, regions, NTHREADS)
+
         # load the reference elements
         gene_segments = find_all_gene_segments( 
             contig_lens, 
             rnaseq_reads, promoter_reads, polya_reads,
-            ref_genes, ref_elements_to_include, region_to_use)
+            ref_genes, ref_elements_to_include, 
+            region_to_use=region_to_use,
+            junctions=junctions)
+        
+        # sort genes from longest to shortest. This should help improve the 
+        # multicore performance
+        gene_segments.sort( key=lambda x: x.stop-x.start, reverse=True )
         
         find_exons( contig_lens, gene_segments, ofp,
                     rnaseq_reads, promoter_reads, polya_reads,
-                    ref_genes, ref_elements_to_include, NTHREADS )            
+                    ref_genes, ref_elements_to_include, 
+                    junctions=None, nthreads=NTHREADS )            
     except Exception, inst:
         log_statement( "FATAL ERROR" )
         log_statement( traceback.format_exc() )
