@@ -491,8 +491,8 @@ def load_junctions_worker(all_jns, all_jns_lock, args):
     return
 
 def load_junctions_in_bam( reads, (chrm, strand, region_start, region_stop), 
-                           single_thread_mode=False, nthreads=NTHREADS ):
-    if single_thread_mode or NTHREADS == 1:
+                           nthreads ):
+    if nthreads == 1:
         jns = extract_junctions_in_region( 
             reads, chrm, strand, region_start, region_stop )
         return [ (jn, cnt) for jn, cnt in jns 
@@ -534,13 +534,13 @@ def load_junctions_in_bam( reads, (chrm, strand, region_start, region_stop),
     
 def load_junctions( rnaseq_reads, cage_reads, polya_reads, 
                     (chrm, strand, region_start, region_stop),
-                    single_thread_mode=False):
+                    nthreads=NTHREADS):
     # load and filter the ranseq reads. We can't filter all of the reads because
     # they are on differnet scales, so we only filter the RNAseq and use the 
     # cage and polya to get connectivity at the boundaries.
     rnaseq_junctions = load_junctions_in_bam(
         rnaseq_reads, (chrm, strand, region_start, region_stop),
-        single_thread_mode )
+        nthreads )
     
     # filter junctions
     jn_starts = defaultdict( int )
@@ -561,7 +561,7 @@ def load_junctions( rnaseq_reads, cage_reads, polya_reads,
         if reads == None: continue
         for jn, cnt in load_junctions_in_bam(
                 reads, (chrm, strand, region_start, region_stop),
-                single_thread_mode):
+                nthreads):
             filtered_junctions[jn] += 0
     return filtered_junctions
 
@@ -1537,7 +1537,8 @@ def find_all_gene_segments( contig_lens,
             contig_gene_bndry_bins = find_gene_boundaries( 
                 (contig, strand, contig_len), 
                 rnaseq_reads, cage_reads, polya_reads, 
-                ref_genes, ref_elements_to_include
+                ref_genes, ref_elements_to_include,
+                NTHREADS
             )
             gene_bndry_bins.extend( contig_gene_bndry_bins )
     
@@ -1895,7 +1896,7 @@ def main():
             genes = load_gtf( ref_gtf_fname )
         else:
             genes = []
-
+        
         gene_segments = find_all_gene_segments( 
             contig_lens, 
             rnaseq_reads, promoter_reads, polya_reads,
