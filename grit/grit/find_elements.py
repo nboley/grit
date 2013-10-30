@@ -32,7 +32,6 @@ log_statement = None
 
 
 NTHREADS = 1
-MAX_THREADS_PER_CONTIG = 16
 TOTAL_MAPPED_READS = None
 
 MIN_INTRON_SIZE = 100
@@ -492,14 +491,13 @@ def load_junctions_worker(all_jns, all_jns_lock, args):
     return
 
 def load_junctions_in_bam( reads, (chrm, strand, region_start, region_stop), 
-                           single_thread_mode=False ):
+                           single_thread_mode=False, nthreads=NTHREADS ):
     if single_thread_mode or NTHREADS == 1:
         jns = extract_junctions_in_region( 
             reads, chrm, strand, region_start, region_stop )
         return [ (jn, cnt) for jn, cnt in jns 
                  if jn[1] - jn[0] + 1 <= MAX_INTRON_SIZE ]
     else:
-        nthreads = min( NTHREADS, MAX_THREADS_PER_CONTIG )
         seg_len = int((region_stop - region_start + 1)/nthreads)
         segments =  [ [region_start + i*seg_len, 
                        region_start + (i+1)*seg_len] for i in xrange(nthreads) ]
@@ -607,11 +605,9 @@ def find_initial_segmentation_worker(
     return
 
 def find_gene_boundaries((chrm, strand, contig_len), 
-                         rnaseq_reads, 
-                         cage_reads,
-                         polya_reads,
-                         junctions=None):
-    
+                         rnaseq_reads, cage_reads, polya_reads,
+                         ref_genes, ref_elements_to_include,
+                         nthreads=NTHREADS):
     def find_segments_with_signal( chrm, strand, rnaseq_reads ):
         # initialize a tiling of segments acfross the genome to check for signal
         # This is expensive, so we farm it out to worker processes. But, 
@@ -629,7 +625,7 @@ def find_gene_boundaries((chrm, strand, contig_len),
         accepted_segments_lock = manager.Lock()
         
         ps = []
-        for i in xrange(MAX_THREADS_PER_CONTIG):
+        for i in xrange(nthreads):
             args = (candidate_segments, candidate_segments_lock,
                     accepted_segments, accepted_segments_lock,
                     chrm, strand, rnaseq_reads, cage_reads, polya_reads )
@@ -672,10 +668,24 @@ def find_gene_boundaries((chrm, strand, contig_len),
                        % ( chrm, strand ) )
         return new_locs
             
-    # find all of the junctions
-    if None == junctions:
-        junctions = load_junctions(rnaseq_reads, cage_reads, polya_reads, 
-                                   (chrm, strand, contig_len))
+
+    log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
+                   % ( chrm, strand ) )
+        
+    # load the reference elements
+    ref_elements = extract_reference_elements( 
+        ref_genes, ref_elements_to_include, strand )
+    
+        # load junctions from the RNAseq data
+    junctions = load_junctions( rnaseq_reads, cage_reads, polya_reads, 
+                                (chrm, strand, 0, contig_len) )
+
+    # update the junctions with the reference junctions, and sort them
+    if ref_elements_to_include.junctions:
+        for jn in ref_elements['introns']:
+            junctions[jn] += 0
+    junctions = sorted( junctions.iteritems() )
+    
     
     # find segment boundaries
     if VERBOSE: log_statement( 
@@ -687,12 +697,13 @@ def find_gene_boundaries((chrm, strand, contig_len),
     
     if VERBOSE: log_statement( "Clustering segments for %s %s" % (chrm, strand))
     clustered_segments = cluster_segments( merged_segments, junctions )
-    
-    # build the gene bins, and write them out to the elements file
-    genes = []
+
+    # if we didn't find any genes, then return nothing
     if len( clustered_segments ) == 2:
-        return genes
+        return []
     
+    # build the gene bins
+    genes = []
     for start, stop in clustered_segments:
         if stop - start < MIN_GENE_LENGTH: continue
         gene = Bins( chrm, strand, [] )
@@ -1487,9 +1498,55 @@ def extract_reference_elements(genes, ref_elements_to_include, strand):
 
     return ref_elements
 
+def find_all_gene_segments( contig_lens, 
+                            rnaseq_reads, cage_reads, polya_reads,
+                            ref_genes, ref_elements_to_include,
+                            region_to_use=None):
+    assert not any(ref_elements_to_include) or ref_genes != None
+    gene_bndry_bins = []
+    
+    # if we are supposed to use the annotation genes
+    if ref_elements_to_include.genes == True:
+        for contig, contig_len in contig_lens.iteritems():
+            if region_to_use != None and contig != region_to_use: continue
+            for strand in '+-':
+                contig_gene_bndry_bins = load_gene_bndry_bins(
+                    ref_genes, contig, strand, contig_len)
+                gene_bndry_bins.extend( contig_gene_bndry_bins )
+        return gene_bndry_bins
+    
+    for contig, contig_len in contig_lens.iteritems():
+        if region_to_use != None and contig != region_to_use: continue
+        for strand in '+-':
+            # load the reference elements
+            ref_elements = extract_reference_elements( 
+                ref_genes, ref_elements_to_include, strand )
+
+            # load junctions from the RNAseq data
+            junctions = load_junctions( rnaseq_reads, cage_reads, polya_reads, 
+                                        (contig, strand, 0, contig_len) )
+
+            # update the junctions with the reference junctions, and sort them
+            if ref_elements_to_include.junctions:
+                for jn in ref_elements['introns']:
+                    junctions[jn] += 0
+            junctions = sorted( junctions.iteritems() )
+
+            log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
+                           % ( contig, strand ) )
+            contig_gene_bndry_bins = find_gene_boundaries( 
+                (contig, strand, contig_len), 
+                rnaseq_reads, cage_reads, polya_reads, 
+                ref_genes, ref_elements_to_include
+            )
+            gene_bndry_bins.extend( contig_gene_bndry_bins )
+    
+    return gene_bndry_bins
+
 def find_exons_in_contig( (chrm, strand, contig_len), ofp,
                           rnaseq_reads, cage_reads, polya_reads,
-                          ref_genes, ref_elements_to_include):
+                          ref_genes, ref_elements_to_include,
+                          nthreads=NTHREADS):
     assert not any(ref_elements_to_include) or ref_genes != None
     
     gene_bndry_bins = None
@@ -1510,7 +1567,7 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
                                     (chrm, strand, 0, contig_len) )
 
         # update the junctions with the reference junctions, and sort them
-        if reference_elements.junctions:
+        if ref_elements_to_include.junctions:
             for jn in ref_elements['introns']:
                 junctions[jn] += 0
         junctions = sorted( junctions.iteritems() )
@@ -1518,8 +1575,10 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
         log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
                        % ( chrm, strand ) )
         gene_bndry_bins = find_gene_boundaries( 
-            (chrm, strand, contig_len), rnaseq_reads, 
-            cage_reads, polya_reads, junctions )
+            (chrm, strand, contig_len), 
+            rnaseq_reads, cage_reads, polya_reads, 
+            ref_genes, ref_elements_to_include
+        )
     
     log_statement( "Finding exons in contig '%s' on '%s' strand" 
                    % ( chrm, strand ) )
@@ -1543,7 +1602,7 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     else:
         log_statement( "Waiting on exon finding children in contig '%s' on '%s' strand" % ( chrm, strand ) )
         ps = []
-        for i in xrange( min(NTHREADS, MAX_THREADS_PER_CONTIG) ):
+        for i in xrange( nthreads ):
             p = multiprocessing.Process(target=find_exons_worker, args=args)
             p.start()
             ps.append( p )
@@ -1556,7 +1615,6 @@ def find_exons_in_contig( (chrm, strand, contig_len), ofp,
     log_statement( "" )    
     return
 
-
 def load_gene_bndry_bins( genes, contig, strand, contig_len ):
     log_statement( "Loading gene boundaries from annotated genes in %s:%s" % (
             contig, strand) )
@@ -1568,7 +1626,8 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
         if gene.chrm != contig: continue
         if gene.strand != strand: continue
         gene_intervals.append((gene.start, gene.stop))
-
+    if len(gene_intervals) == 0: return []
+    
     ## merge overlapping genes regions by building a graph with nodes
     ## of all gene regions, and edges with all overlapping genes 
 
@@ -1702,8 +1761,6 @@ def parse_arguments():
 
     global NTHREADS
     NTHREADS = args.threads
-    global MAX_THREADS_PER_CONTIG
-    MAX_THREADS_PER_CONTIG = NTHREADS/2 if NTHREADS > 20 else NTHREADS
     
     global WRITE_DEBUG_DATA
     WRITE_DEBUG_DATA = args.write_debug_data
@@ -1796,8 +1853,9 @@ def main():
     global log_statement
     log_ofstream = open( ".".join(ofp.name.split(".")[:-1]) + ".log", "w" )
     log_statement = Logger(
-        nthreads=NTHREADS+max(1,(NTHREADS/MAX_THREADS_PER_CONTIG)), 
-        use_ncurses=use_ncurses, log_ofstream=log_ofstream)
+        nthreads=NTHREADS+1, 
+        use_ncurses=use_ncurses, 
+        log_ofstream=log_ofstream)
 
     # wrap everything in a try block so that we can with elegantly handle
     # uncaught exceptions
@@ -1837,7 +1895,37 @@ def main():
             genes = load_gtf( ref_gtf_fname )
         else:
             genes = []
+
+        gene_segments = find_all_gene_segments( 
+            contig_lens, 
+            rnaseq_reads, promoter_reads, polya_reads,
+            genes, ref_elements_to_include, region_to_use)
+
+
+        for seg in gene_segments:
+            print seg, type(seg)
+        assert False
         
+        # load the gene boundary bins
+        for contig, contig_len in contig_lens.iteritems():
+            for strand in '+-':
+                contig_genes = [ 
+                    gene for gene in genes 
+                    if gene.strand == strand and gene.chrm == contig ]
+                # skip this contig if we are only using reference genes and
+                # this gene is not in the contig
+                if ref_elements_to_include.genes and len(contig_genes) == 0:
+                    continue
+                all_args.append( ( 
+                        (contig, strand, contig_len), ofp,
+                        rnaseq_reads, promoter_reads, polya_reads, 
+                        contig_genes, ref_elements_to_include) )
+        
+        if NTHREADS == MAX_THREADS_PER_CONTIG:
+            for args in all_args:
+                find_exons_in_contig(*args)
+
+
         # Call the children processes
         all_args = []
         for contig, contig_len in contig_lens.iteritems():
