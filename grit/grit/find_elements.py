@@ -100,20 +100,27 @@ def build_empty_array():
 def cluster_segments( segments, jns ):
     if len(segments) == 0:
         return []
-    
+    segments = flatten(segments)
     boundaries = numpy.array(sorted(chain(*segments)))
     edges = set()
     for (start, stop), cnt in jns:
-        start_bin = boundaries.searchsorted( start-1 )-1
-        if start_bin < 0: continue
-        stop_bin = boundaries.searchsorted( stop+1 )-1
-        if stop_bin >= len(boundaries): continue
+        if start-1 < boundaries[0]: continue
+        if stop+1 >= boundaries[-1]: continue
+        start_bin = boundaries.searchsorted( start-1, side='right' )-1
+        assert start_bin >= 0
+        stop_bin = boundaries.searchsorted( stop+1, side='right' )-1
+        assert stop_bin < len(boundaries)-1
         if start_bin != stop_bin:
             edges.add((int(min(start_bin, stop_bin)), 
                        int(max(start_bin, stop_bin))))
 
-    genes_graph = Graph( len( boundaries )-1 )
-    genes_graph.add_edges( list( edges ) )
+    genes_graph = Graph( len(segments) )
+    try:
+        genes_graph.add_edges( list( edges ) )
+    except:
+        print log_statement( str(boundaries) )
+        print log_statement( str(edges) )
+        raise
 
     segments = []
     for g in genes_graph.clusters():
@@ -128,20 +135,21 @@ def cluster_segments_2( boundaries, jns ):
     boundaries = numpy.array(sorted(boundaries))
     edges = set()
     for start, stop, cnt in jns:
-        start_bin = boundaries.searchsorted( start-1 )-1
-        if start_bin < 0: continue
-        stop_bin = boundaries.searchsorted( stop+1 )-1
-        if stop_bin >= len(boundaries): continue
+        if start-1 < boundaries[0]: continue
+        if stop+1 >= boundaries[-1]: continue
+        start_bin = boundaries.searchsorted( start-1, side='right' )-1
+        assert start_bin >= 0
+        stop_bin = boundaries.searchsorted( stop+1, side='right' )-1
+        assert stop_bin < len(boundaries)-1
         if start_bin != stop_bin:
             edges.add((int(min(start_bin, stop_bin)), 
                        int(max(start_bin, stop_bin))))
-
+    
     genes_graph = Graph( len( boundaries )-1 )
     genes_graph.add_edges( list( edges ) )
 
     segments = []
     for g in genes_graph.clusters():
-        #if len(g) < 2: continue
         segment = []
         prev_i = g[0]
         segment.append( [boundaries[prev_i]+1, ])
