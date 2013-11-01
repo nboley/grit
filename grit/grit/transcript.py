@@ -99,16 +99,13 @@ class Gene( object ):
             else:
                 tss_exon = t.exons[0] if t.strand == '+' else t.exons[-1]
                 elements['tss_exon'].add(tss_exon)
-                promoter = (tss_exon[0], tss_exon[0]) \
-                    if t.strand == '+' else (tss_exon[1], tss_exon[1])
+                promoter = t.find_promoter()
                 elements['promoter'].add(promoter)
-
                 elements['internal_exon'].update( t.exons[1:-1] )
                 elements['intron'].update( t.introns )
                 tes_exon = t.exons[-1] if t.strand == '+' else t.exons[0] 
                 elements['tes_exon'].add(tes_exon)
-                polya = (tes_exon[1], tes_exon[1]) \
-                    if t.strand == '+' else (tes_exon[0], tes_exon[0])
+                polya = t.find_polya_region()
                 elements['polya'].add(polya)
         
         return elements
