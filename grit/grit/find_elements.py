@@ -20,8 +20,7 @@ from files.reads import MergedReads, RNAseqReads, CAGEReads, RAMPAGEReads, \
     PolyAReads, \
     clean_chr_name, fix_chrm_name_for_ucsc, get_contigs_and_lens, \
     guess_strand_from_fname, iter_coverage_intervals_for_read
-from files.junctions import extract_junctions_in_region, \
-    extract_junctions_in_contig
+from files.junctions import load_junctions_in_bam
 from files.bed import create_bed_line
 from files.gtf import parse_gtf_line, load_gtf
 
@@ -488,98 +487,8 @@ class Bins( list ):
         
         return
 
-def load_junctions_worker(all_jns, all_jns_lock, 
-                          segments_queue, segments_queue_lock, 
-                          reads):
-    jns = defaultdict(list)
-    while len(segments_queue) > 0:
-        with segments_queue_lock:
-            if len(segments_queue) == 0: break
-            chrm, strand, start, stop = segments_queue.pop()
-        if VERBOSE: 
-            log_statement("Finding jns in '%s:%s:%i:%i'" % 
-                          (chrm, strand, start, stop))
-        jns[(chrm, strand)].extend(
-            extract_junctions_in_region(
-                reads, chrm, strand, start, stop, True))
-        # try to acquire the lock and, if we can, offload the acquired jns
-        """
-        if all_jns_lock.acquire(block=False):
-            for key, region_jns in jns.iteritems():
-                if key not in all_jns: all_jns[key] = []
-                all_jns[key].extend( jns )
-            jns = defaultdict(list)
-            all_jns_lock.release()
-        """
-    # finally, block until we can offload the remaining junctions
-    with all_jns_lock:
-        for key, region_jns in jns.iteritems():
-            if key not in all_jns: all_jns_key = []
-            else: all_jns_key = all_jns[key]
-            all_jns_key.extend( region_jns )
-            all_jns[key] = all_jns_key
-    del jns
-    log_statement( "" )
-    return
-
-def load_junctions_in_bam( reads, regions, nthreads): 
-    if nthreads == 1:
-        jns = defaultdict(list)
-        for chrm, strand, region_start, region_stop in regions:
-            jns[(chrm, strand)].extend( extract_junctions_in_region( 
-                    reads, chrm, strand, region_start, region_stop ) )
-        return jns
-    else:
-        from multiprocessing import Process, Manager
-        manager = Manager()
-        all_jns = manager.dict()
-        all_jns_lock = multiprocessing.Lock()
-
-        segments_queue = manager.list()
-        segments_queue_lock = multiprocessing.Lock()
-        
-        for chrm, strand, region_start, region_stop in regions:
-            # add all the regions to search for junctions in
-            seg_len = min(5000, int((region_stop - region_start + 1)/nthreads))
-            pos = region_start
-            while pos < region_stop:
-                segments_queue.append( (chrm, strand, pos, pos+seg_len) )
-                pos += seg_len
-            # make sure the last region doesnt exten past the stop
-            segments_queue[-1] = (
-                chrm, strand, segments_queue[-1][2], region_stop)
-        
-        ps = []
-        for i in xrange(nthreads):
-            p = Process(target=load_junctions_worker,
-                        args=( all_jns, all_jns_lock, 
-                               segments_queue, segments_queue_lock, reads ))
-            
-            p.start()
-            ps.append( p )
-
-        log_statement( "Waiting on jn finding children" )
-        while len(segments_queue) > 0:
-            log_statement( "Waiting on jn finding children (%i in queue)" 
-                           % len(segments_queue), do_log=False )
-            time.sleep( 0.5 )
-
-        log_statement("Waiting on jn finding children (0 in queue)", 
-                      do_log=False)
-        for p in ps: p.join()
-        #while any( not p.is_alive() for p in ps ):
-
-        junctions = {}
-        for key in all_jns.keys():
-            contig_jns = defaultdict(int)
-            for jn, cnt in all_jns[key]:
-                contig_jns[jn] += cnt
-            junctions[key] = sorted(contig_jns.iteritems())
-        return junctions
-    assert False
-    
-def load_junctions( rnaseq_reads, promoter_reads, polya_reads, 
-                    regions, nthreads):
+def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads, 
+                               regions, nthreads, ratio_filter, max_jn_size ):
     # load and filter the ranseq reads. We can't filter all of the reads because
     # they are on differnet scales, so we only filter the RNAseq and use the 
     # cage and polya to get connectivity at the boundaries.
@@ -617,6 +526,15 @@ def load_junctions( rnaseq_reads, promoter_reads, polya_reads,
             del connectivity_jns[(chrm, strand)]
     
     return filtered_junctions
+
+def load_junctions( rnaseq_reads, promoter_reads, polya_reads,
+                    regions, nthreads):
+    return load_and_filter_junctions( 
+        rnaseq_reads, regions, 
+        promoter_reads, polya_reads, 
+        nthreads=nthreads, ratio_filter=0.01,
+        max_jn_size=MAX_INTRON_SIZE):
+    
 
 def find_initial_segmentation_worker( 
         candidate_boundaries, candidate_boundaries_lock,
