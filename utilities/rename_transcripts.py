@@ -172,11 +172,10 @@ def parse_arguments():
         raise ValueError, "If the sources file is provided you must provide an output filename prefix."
     
     # open the output files
-    if args.output_prefix != None:
-        ofp = open( args.output_prefix + ".gtf", "w" ) \
-            if args.output_prefix != None else sys.stdout
-        sources_ofp = open( args.output_prefix + ".sources", "w" ) \
-            if args.sources_fname != None else None
+    ofp = open( args.output_prefix + ".gtf", "w" ) \
+        if args.output_prefix != None else sys.stdout
+    sources_ofp = open( args.output_prefix + ".sources", "w" ) \
+        if args.sources_fname != None else None
     
     return args.reference_gtf, args.input_gtf, \
         args.sources_fname, ofp, sources_ofp

@@ -2,6 +2,7 @@
 
 import sys
 import numpy
+import time
 
 from itertools import product, izip
 import re
@@ -10,7 +11,7 @@ from collections import defaultdict, namedtuple
 
 import multiprocessing
 
-from reads import get_strand
+from reads import get_strand, get_contigs_and_lens
 
 VERBOSE = False
 
@@ -184,27 +185,19 @@ def extract_junctions_in_contig( reads, chrm, strand ):
 
 def load_junctions_worker(all_jns, all_jns_lock, 
                           segments_queue, segments_queue_lock, 
-                          reads):
+                          reads, log_statement=None):
     jns = defaultdict(list)
     while len(segments_queue) > 0:
         with segments_queue_lock:
             if len(segments_queue) == 0: break
             chrm, strand, start, stop = segments_queue.pop()
-        if VERBOSE: 
+        if log_statement != None and VERBOSE: 
             log_statement("Finding jns in '%s:%s:%i:%i'" % 
                           (chrm, strand, start, stop))
         jns[(chrm, strand)].extend(
             extract_junctions_in_region(
                 reads, chrm, strand, start, stop, True))
-        # try to acquire the lock and, if we can, offload the acquired jns
-        """
-        if all_jns_lock.acquire(block=False):
-            for key, region_jns in jns.iteritems():
-                if key not in all_jns: all_jns[key] = []
-                all_jns[key].extend( jns )
-            jns = defaultdict(list)
-            all_jns_lock.release()
-        """
+    
     # finally, block until we can offload the remaining junctions
     with all_jns_lock:
         for key, region_jns in jns.iteritems():
@@ -213,10 +206,16 @@ def load_junctions_worker(all_jns, all_jns_lock,
             all_jns_key.extend( region_jns )
             all_jns[key] = all_jns_key
     del jns
-    log_statement( "" )
+    if log_statement != None and VERBOSE: log_statement( "" )
     return
 
-def load_junctions_in_bam( reads, regions, nthreads=1): 
+def load_junctions_in_bam( reads, regions=None, nthreads=1, log_statement=None):
+    if regions == None:
+        regions = []
+        for contig, contig_len in zip(*get_contigs_and_lens([reads,])):
+            for strand in '+-':
+                regions.append( (contig, strand, 0, contig_len) )
+    
     if nthreads == 1:
         jns = defaultdict(list)
         for chrm, strand, region_start, region_stop in regions:
@@ -247,19 +246,23 @@ def load_junctions_in_bam( reads, regions, nthreads=1):
         for i in xrange(nthreads):
             p = Process(target=load_junctions_worker,
                         args=( all_jns, all_jns_lock, 
-                               segments_queue, segments_queue_lock, reads ))
+                               segments_queue, segments_queue_lock, reads,
+                               log_statement))
             
             p.start()
             ps.append( p )
 
-        log_statement( "Waiting on jn finding children" )
+        if log_statement != None and VERBOSE:
+            log_statement( "Waiting on jn finding children" )
         while len(segments_queue) > 0:
-            log_statement( "Waiting on jn finding children (%i in queue)" 
-                           % len(segments_queue), do_log=False )
+            if log_statement != None and VERBOSE:
+                log_statement( "Waiting on jn finding children (%i in queue)" 
+                               % len(segments_queue), do_log=False )
             time.sleep( 0.5 )
 
-        log_statement("Waiting on jn finding children (0 in queue)", 
-                      do_log=False)
+        if log_statement != None and VERBOSE:
+            log_statement("Waiting on jn finding children (0 in queue)", 
+                          do_log=False)
         for p in ps: p.join()
         #while any( not p.is_alive() for p in ps ):
 
@@ -271,4 +274,3 @@ def load_junctions_in_bam( reads, regions, nthreads=1):
             junctions[key] = sorted(contig_jns.iteritems())
         return junctions
     assert False
-    
