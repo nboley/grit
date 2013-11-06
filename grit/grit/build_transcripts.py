@@ -37,6 +37,8 @@ num_threads = 1
 DEBUG = True
 DEBUG_VERBOSE = True
 
+ALPHA = 0.025
+
 def log(text):
     if VERBOSE: log_fp.write(  text + "\n" )
     return
@@ -54,8 +56,11 @@ class ThreadSafeFile( file ):
 def calc_fpkm( gene, fl_dist, freqs, 
                num_reads_in_bam, num_reads_in_gene, 
                bound_alpha=0.5 ):
-    corrected_num_reads_in_gene = num_reads_in_bam*scipy.stats.beta.ppf(
-            bound_alpha, num_reads_in_gene+1, num_reads_in_bam+1)
+    # account for paired end reads
+    corrected_num_reads_in_gene = int(num_reads_in_bam*scipy.stats.beta.ppf(
+            bound_alpha, 
+            num_reads_in_gene+1e-6, 
+            num_reads_in_bam-num_reads_in_gene+1e-6))
     fpkms = []
     for t, freq in izip( gene.transcripts, freqs ):
         num_reads_in_t = corrected_num_reads_in_gene*freq
@@ -210,7 +215,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                                      input_queue, input_queue_lock,
                                      op_lock, output, 
                                      estimate_confidence_bounds,
-                                     cb_alpha=0.1):
+                                     cb_alpha=ALPHA):
     try:
         if work_type == 'gene':
             log_statement("Building transcript and ORFs for Gene %s" % gene_id)
@@ -309,16 +314,6 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                         ('ERROR', ((gene_id, trans_index), error_msg)))
                 
                 return
-
-            """
-            log_statement(
-                "Pre-filtering transcripts for Gene %s(%s:%s:%i-%i) - %i transcripts" \
-                    % (gene_id, gene.chrm, gene.strand, 
-                       gene.start, gene.stop, len(gene.transcripts) ) )
-            observed_array, expected_array, unobservable_transcripts = \
-                pre_filter_design_matrices(
-                    observed_array, expected_array, unobservable_transcripts)
-            """
             
             log_statement( "FINISHED DESIGN MATRICES %s" % gene_id )
             log_statement( "" )
@@ -979,7 +974,11 @@ def main():
 
             global NUMBER_OF_READS_IN_BAM
             if NUMBER_OF_READS_IN_BAM == None:
-                NUMBER_OF_READS_IN_BAM = sum( x.mapped for x in rnaseq_reads )
+                NUMBER_OF_READS_IN_BAM = 0
+                NUMBER_OF_READS_IN_BAM += sum( 
+                    x.mapped/2 for x in rnaseq_reads if x.reads_are_paired )
+                NUMBER_OF_READS_IN_BAM += sum( 
+                    x.mapped for x in rnaseq_reads if not x.reads_are_paired )
                 if NUMBER_OF_READS_IN_BAM == 0:
                     raise ValueError, "Can't determine the number of reads in the RNASeq BAM (by samtools idxstats). Please set --num-mapped-rnaseq-reads"
             assert NUMBER_OF_READS_IN_BAM > 0
