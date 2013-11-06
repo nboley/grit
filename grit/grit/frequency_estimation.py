@@ -467,9 +467,12 @@ def estimate_confidence_bound( observed_array,
             prev_x = x[fixed_index]
             n_successes = 0
         
-        
+
+    value = x[fixed_index] 
+    if value < ABS_TOL: value = 0.
+    if 1-value < ABS_TOL: value = 1.
     lhd = calc_lhd( x, observed_array, expected_array )
-    rv = chi2.sf( 2*(max_lhd-lhd), 1), x[fixed_index]
+    rv = chi2.sf( 2*(max_lhd-lhd), 1), value
     return rv    
 
 def estimate_confidence_bound_with_cvxopt( 
