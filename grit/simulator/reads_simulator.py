@@ -145,15 +145,15 @@ def build_sam_lines( transcript, read_len, frag_len, offset,
 
     return sam_lines
 
-def write_fastq_lines( fp1, fp2, transcript, read_len, frag_len, offset, \
-                           read_identifier ):
+def write_fastq_lines( fp1, fp2, transcript, read_len, frag_len, offset, 
+                       read_identifier ):
     """STUB for writing fastq lines to running through alignment pipeline
 
     """
     pass
 
-def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end, \
-                        full_fragment, read_len, out_prefix):
+def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end, 
+                    full_fragment, read_len, out_prefix):
     """write a SAM format file with the specified options
 
     """
@@ -210,7 +210,7 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end, \
         
         # get a unique string for this fragment
         global curr_read_index
-        read_identifier = 'SIM:%015d' % curr_read_index
+        read_identifier = 'SIM:%015d:%s' % (curr_read_index, transcript.name)
         curr_read_index += 1
         
         return fl, offset, read_identifier
@@ -264,7 +264,7 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end, \
     longest_trans = 0
     # sample a single transcript to get initial guess at shortest transcript
     shortest_trans = genes.values()[0].values()[0].get_length()
-
+    
     min_transcript_length = get_fl_min()
     for gene in genes.values():
         for transcript in gene.values():
@@ -276,9 +276,8 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end, \
             if transcript.length >= min_transcript_length:
                 transcripts.append( transcript )
                 # TODO:::for multiple genes this should be weighted across genes as well
-                transcript_weights.append( \
-                    transcript.freq * transcript.count_num_fragments( fl_dist ) )
-
+                transcript_weights.append( transcript.freq*transcript.length )
+            
             # update summary statistics
             if transcript.length > longest_trans:
                 longest_trans = transcript.length
