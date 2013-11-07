@@ -68,6 +68,10 @@ class FlDist( object ):
         else:
             return False
         assert False
+
+    def mean_fragment_length(self):
+        return float((self.fl_density*numpy.arange( 
+                    self.fl_min, self.fl_max+1 )).sum())
     
     def plot( self ):
         import matplotlib

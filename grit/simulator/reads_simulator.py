@@ -255,6 +255,17 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
         else:
             return fl_dist.fl_min
     
+    def calc_effective_length_and_scale_factor(t):
+        length = t.length
+        if length < fl_dist.fl_min: return 0
+        fl_min, fl_max = fl_dist.fl_min, min(length, fl_dist.fl_max)
+        allowed_fl_lens = numpy.arange(fl_min, fl_max+1)
+        weights = fl_dist.fl_density[
+            fl_min-fl_dist.fl_min:fl_max-fl_dist.fl_min+1]
+        sc_factor = min(20, 1./(weights.sum()))
+        mean_fl_len = float((allowed_fl_lens*weights).sum())
+        return length - mean_fl_len, sc_factor
+
     
     # initialize the transcript objects, and calculate their relative weights
     transcript_weights = []
@@ -276,7 +287,9 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
             if transcript.length >= min_transcript_length:
                 transcripts.append( transcript )
                 # TODO:::for multiple genes this should be weighted across genes as well
-                transcript_weights.append( transcript.freq*transcript.length )
+                length, sc_factor = calc_effective_length_and_scale_factor(
+                    transcript)
+                transcript_weights.append( transcript.freq*length )
             
             # update summary statistics
             if transcript.length > longest_trans:

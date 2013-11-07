@@ -53,21 +53,39 @@ class ThreadSafeFile( file ):
             file.write( self, string )
             self.flush()
 
-def calc_fpkm( gene, fl_dist, freqs, 
+def calc_fpkm( gene, fl_dists, freqs, 
                num_reads_in_bam, num_reads_in_gene, 
                bound_alpha=0.5 ):
+    fl_dist = fl_dists['mean']
     # account for paired end reads
     corrected_num_reads_in_gene = int(num_reads_in_bam*scipy.stats.beta.ppf(
             bound_alpha, 
             num_reads_in_gene+1e-6, 
             num_reads_in_bam-num_reads_in_gene+1e-6))
+
+    def calc_effective_length_and_scale_factor(t):
+        length = sum( e[1] - e[0] + 1 for e in t.exons ) 
+        # subtract for mappability problems at junctions
+        length -= 0*len(t.introns)
+        if length < fl_dist.fl_min: return 0
+        fl_min, fl_max = fl_dist.fl_min, min(length, fl_dist.fl_max)
+        allowed_fl_lens = numpy.arange(fl_min, fl_max+1)
+        weights = fl_dist.fl_density[
+            fl_min-fl_dist.fl_min:fl_max-fl_dist.fl_min+1]
+        sc_factor = min(20, 1./weights.sum())
+        mean_fl_len = float((allowed_fl_lens*weights).sum())
+        return length - mean_fl_len, sc_factor
+    
     fpkms = []
     for t, freq in izip( gene.transcripts, freqs ):
         num_reads_in_t = corrected_num_reads_in_gene*freq
-        t_len = sum( e[1] - e[0] + 1 for e in t.exons )
-        assert t_len > 0
+        effective_t_len, t_scale = calc_effective_length_and_scale_factor(t)
+        if effective_t_len <= 0: 
+            fpkms.append( 0 )
+            continue
+        assert effective_t_len > 0
         assert num_reads_in_bam > 0
-        fpk = num_reads_in_t/(t_len/1000.)
+        fpk = num_reads_in_t/(effective_t_len/1000.)
         fpkm = fpk/(num_reads_in_bam/1000000.)
         fpkms.append( fpkm )
     return fpkms
