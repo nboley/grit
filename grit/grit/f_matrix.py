@@ -581,14 +581,13 @@ def build_expected_and_observed_transcript_bndry_counts(
     
     return expected_cnts, observed_cnts
 
-def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
+def cluster_rows_old(expected_rnaseq_array, observed_rnaseq_array):
     corr_coefs = numpy.corrcoef(expected_rnaseq_array)
     if isinstance(corr_coefs, numpy.ndarray):
         edges = set()
         row, col = (corr_coefs == 1).nonzero()
         for row_i, col_i in zip( row, col ):
             edges.add((int(row_i), int(col_i)))
-
         graph = Graph( expected_rnaseq_array.shape[0] )
         graph.add_edges(edges) #[ (int(e[0]), int(e[1])) for e in edges])
         clusters = graph.clusters()
@@ -604,6 +603,30 @@ def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
         observed_rnaseq_array = new_observed_array
     
     return expected_rnaseq_array, observed_rnaseq_array
+
+def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
+    norm_rows = []
+    edges = []
+    for i, row in enumerate(expected_rnaseq_array):
+        norm_row = row/row.sum()
+        matching_indices = [ j for j, x in enumerate(norm_rows)
+                             if float(numpy.abs(x-norm_row).sum()) < 1e-6  ]
+        for j in matching_indices:
+            edges.append(( i, j))
+        norm_rows.append( norm_row  )
+    
+    graph = Graph( expected_rnaseq_array.shape[0] )
+    graph.add_edges(edges)
+    clusters = graph.clusters()
+
+    new_expected_array = numpy.zeros( 
+        (len(clusters), expected_rnaseq_array.shape[1]) )
+    new_observed_array = numpy.zeros( len(clusters), dtype=int )
+    for i, node in enumerate(graph.clusters()):
+        new_expected_array[i,:] = expected_rnaseq_array[node,].sum(0)
+        new_observed_array[i] = observed_rnaseq_array[node].sum()
+
+    return new_expected_array, new_observed_array
 
 def build_design_matrices( gene, rnaseq_reads, fl_dists, all_promoter_reads=[], 
                            max_num_transcripts=None  ):
