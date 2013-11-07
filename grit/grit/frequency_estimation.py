@@ -77,6 +77,7 @@ def find_identifiable_transcripts( expected_array ):
     return identifiable_transcripts
 
 def nnls( X, Y, fixed_indices_and_values={} ):    
+    from cvxopt import matrix, solvers
     X = matrix(X)
     Y = matrix(Y)
     
@@ -88,8 +89,8 @@ def nnls( X, Y, fixed_indices_and_values={} ):
     h = matrix(-MIN_TRANSCRIPT_FREQ, (n,1))
 
     # Add the equality constraints
-    A=matrix(0., (1+num_constraint,n))
-    b=matrix(0., (1+num_constraint,1))
+    A= matrix(0., (1+num_constraint,n))
+    b= matrix(0., (1+num_constraint,1))
 
     # Add the sum to one constraint
     A[0,:] = 1.
@@ -102,7 +103,7 @@ def nnls( X, Y, fixed_indices_and_values={} ):
     
     solvers.options['show_progress'] = DEBUG_OPTIMIZATION
     res = solvers.qp(P=X.T*X, q=-X.T*Y, G=G, h=h, A=A, b=b)
-    x = numpy.array(res['x']).T[0,]
+    x =  numpy.array(res['x']).T[0,]
     rss = ((numpy.array(X*res['x'] - Y)[0,])**2).sum()
     
     if DEBUG_OPTIMIZATION:
@@ -304,6 +305,7 @@ def estimate_transcript_frequencies(
         return numpy.ones( 1, dtype=float )
     
     x = numpy.array([1./n]*n)
+    #x = nnls(full_expected_array, observed_array)
     eps = 10.
     start_time = time.time()
     #log_statement( "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)" )
