@@ -394,7 +394,7 @@ def estimate_confidence_bound( observed_array,
         lhd = calc_lhd(x, observed_array, expected_array)
         assert lhd >= min_lhd
         if DEBUG_OPTIMIZATION:
-            print "DOWNHILL", x[fixed_index], lhd - min_lhd, \
+            print "DOWNHILL", x, x[fixed_index], x.sum(), lhd - min_lhd, \
                 "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
         return x, lhd
     
@@ -410,19 +410,46 @@ def estimate_confidence_bound( observed_array,
         coord_gradient = project_onto_simplex( x + 0.1*coord_gradient ) - x
         coord_gradient /= ( numpy.absolute(coord_gradient).sum() + 1e-12 )
 
-        # find the theta that makes the parameter we are optimizing fixed
-        denominator = lhd_gradient[fixed_index] - coord_gradient[fixed_index]
-        if denominator == 0: theta = 1.
-        else: theta = lhd_gradient[fixed_index]/denominator
+        # if the lhd step is already moving the paramater of itnerest in the 
+        # proper direction, we just take a normal lhd step
+        if ( bound_type == 'LOWER' and lhd_gradient[fixed_index] <= ABS_TOL ) \
+                or ( bound_type == 'UPPER' and lhd_gradient[fixed_index] >= -ABS_TOL ):
+            theta = 0
+        # otherwise, find out how miuch we need to step off of the maximum step
+        # to make our parameter not move in the wrong direction
+        else:
+            assert lhd_gradient[fixed_index] != 0
+            # we want lhd_gradient[fixed_index]*(1-theta) + theta*coord_gradient[fixed_index] == 0
+            # implies lhd[i] -theta*lhd[i] + theta*cg[i] == 0
+            #     =>  lhd[i] = theta*lhd[i] - theta*cg[i]
+            #     =>  lhd[i]/(lhd[i] - theta*cg[i]) = theta*
+            assert lhd_gradient[fixed_index] != 0
+            theta = lhd_gradient[fixed_index]/(lhd_gradient[fixed_index] - coord_gradient[fixed_index])
+
         gradient = (1-theta)*lhd_gradient + theta*coord_gradient
-        projection = project_onto_simplex( x + 1.*gradient )
+        projection = project_onto_simplex( x + 0.1*gradient )
         gradient = projection - x
-        gradient_l1_size = numpy.absolute(gradient).sum()
-        if gradient_l1_size > 0:
-            gradient /= gradient_l1_size
-            assert not numpy.isnan(gradient).all()
-            gradient[fixed_index] = max(0, gradient[fixed_index])
-            assert gradient[fixed_index] >= 0
+        gradient /= ( numpy.absolute(gradient).sum() + 1e-12 )
+
+        max_feasible_step_size, max_index = \
+            calc_max_feasible_step_size_and_limiting_index(x, gradient)
+        alpha, is_full_step = line_search(
+            x, lambda x: calc_lhd(x, observed_array, expected_array),
+            gradient, max_feasible_step_size)
+        assert alpha >= 0
+        x += alpha*gradient    
+        if DEBUG_OPTIMIZATION:
+            print "MAX LHD ", x, x[fixed_index], x.sum(), \
+                calc_lhd(x, observed_array, expected_array), max_lhd, min_lhd, \
+                "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
+
+        """ OLD CODE
+        #gradient_l1_size = numpy.absolute(gradient).sum()
+        if True or gradient_l1_size > 0:
+            #gradient /= gradient_l1_size
+            #assert not numpy.isnan(gradient).all()
+            #gradient[fixed_index] = max(0, gradient[fixed_index])
+            #assert gradient[fixed_index] >= 0
         
             max_feasible_step_size, max_index = \
                 calc_max_feasible_step_size_and_limiting_index(x, gradient)
@@ -432,13 +459,15 @@ def estimate_confidence_bound( observed_array,
             assert alpha >= 0
             x += alpha*gradient    
             if DEBUG_OPTIMIZATION:
-                print "MAX LHD ", x[fixed_index], \
-                    calc_lhd(x, observed_array, expected_array) - min_lhd, \
+                print "MAX LHD ", x, x[fixed_index], x.sum(), \
+                    calc_lhd(x, observed_array, expected_array), max_lhd, min_lhd, \
                     "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
-
+            #assert x.sum() < 1+ABS_TOL
+        """
+        
         assert calc_lhd(x, observed_array, expected_array) >= min_lhd
         return x
-
+        
     n = expected_array.shape[1]    
     max_lhd = calc_lhd(mle_estimate, observed_array, expected_array)
     max_test_stat = chi2.ppf( 1 - alpha, 1 )/2.    
