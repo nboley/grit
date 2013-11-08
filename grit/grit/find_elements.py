@@ -20,7 +20,7 @@ from files.reads import MergedReads, RNAseqReads, CAGEReads, RAMPAGEReads, \
     PolyAReads, \
     clean_chr_name, fix_chrm_name_for_ucsc, get_contigs_and_lens, \
     guess_strand_from_fname, iter_coverage_intervals_for_read
-from files.junctions import load_junctions_in_bam
+import files.junctions
 from files.bed import create_bed_line
 from files.gtf import parse_gtf_line, load_gtf
 
@@ -492,15 +492,13 @@ def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads,
     # load and filter the ranseq reads. We can't filter all of the reads because
     # they are on differnet scales, so we only filter the RNAseq and use the 
     # cage and polya to get connectivity at the boundaries.
-    rnaseq_junctions = load_junctions_in_bam(
-        rnaseq_reads, regions, nthreads )
+    rnaseq_junctions = files.junctions.load_junctions_in_bam(
+        rnaseq_reads, regions, nthreads=nthreads, log_statement=log_statement )
     promoter_jns = None if promoter_reads == None else \
-        load_junctions_in_bam( promoter_reads, regions, nthreads)
+        files.junctions.load_junctions_in_bam( promoter_reads, regions, nthreads)
     polya_jns = None if polya_reads == None else \
-        load_junctions_in_bam( polya_reads, regions, nthreads)
-        
-        
-
+        files.junctions.load_junctions_in_bam( polya_reads, regions, nthreads)
+    
     filtered_junctions = defaultdict(lambda: defaultdict(int))
     for chrm, strand, region_start, region_stop in regions:        
         # filter junctions
@@ -530,10 +528,9 @@ def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads,
 def load_junctions( rnaseq_reads, promoter_reads, polya_reads,
                     regions, nthreads):
     return load_and_filter_junctions( 
-        rnaseq_reads, regions, 
-        promoter_reads, polya_reads, 
-        nthreads=nthreads, ratio_filter=0.01,
-        max_jn_size=MAX_INTRON_SIZE):
+        rnaseq_reads, promoter_reads, polya_reads, 
+        regions, nthreads=nthreads, ratio_filter=0.01,
+        max_jn_size=MAX_INTRON_SIZE)
     
 
 def find_initial_segmentation_worker( 
@@ -578,7 +575,7 @@ def find_initial_segmentation_worker(
 def find_gene_boundaries((chrm, strand, contig_len), 
                          rnaseq_reads, cage_reads, polya_reads,
                          ref_elements, ref_elements_to_include,
-                         junctions=None, nthreads=NTHREADS):
+                         junctions, nthreads=NTHREADS):
     def find_segments_with_signal( chrm, strand, rnaseq_reads ):
         # initialize a tiling of segments acfross the genome to check for signal
         # This is expensive, so we farm it out to worker processes. But, 
@@ -1505,7 +1502,8 @@ def find_all_gene_segments( contig_lens,
                 regions.append( (contig, strand, 0, contig_len) )
         
         junctions = load_junctions( 
-            rnaseq_reads, cage_reads, polya_reads, regions, NTHREADS)
+            rnaseq_reads, cage_reads, polya_reads, 
+            regions, NTHREADS)
     
     for contig, contig_len in contig_lens.iteritems():
         if region_to_use != None and contig != region_to_use: continue
@@ -1716,6 +1714,7 @@ def parse_arguments():
     
     global VERBOSE
     VERBOSE = args.verbose
+    files.junctions.VERBOSE = VERBOSE
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
 
@@ -1853,6 +1852,7 @@ def main():
                 
         # load all junctions
         if ref_elements_to_include.genes == False:
+            if VERBOSE: log_statement( 'Loading junctions' )        
             junctions = load_junctions( 
                 rnaseq_reads, promoter_reads, polya_reads, regions, NTHREADS)
         else:

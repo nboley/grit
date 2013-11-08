@@ -227,7 +227,7 @@ def load_junctions_in_bam( reads, regions=None, nthreads=1, log_statement=None):
         manager = Manager()
         all_jns = manager.dict()
         all_jns_lock = multiprocessing.Lock()
-
+        
         segments_queue = manager.list()
         segments_queue_lock = multiprocessing.Lock()
         
