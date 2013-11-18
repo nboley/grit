@@ -32,7 +32,7 @@ DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
 ABS_TOL = 1e-5
 
-MAX_NUM_ITERATIONS = 1000
+MAX_NUM_ITERATIONS = 5000
 
 class TooFewReadsError( ValueError ):
     pass
@@ -309,7 +309,7 @@ def estimate_transcript_frequencies(
     eps = 10.
     start_time = time.time()
     #log_statement( "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)" )
-    for i in xrange( 500 ):
+    for i in xrange( 2000 ):
         prev_x = x.copy()
         
         x, lhds = estimate_transcript_frequencies_line_search(  
@@ -370,7 +370,9 @@ def estimate_confidence_bound( observed_array,
         
         # do a line search with brent
         step_size = brentq(brentq_fmin, min_step_size, max_step_size )
-        while brentq_fmin(step_size) < 0 and step_size > 0:
+        for i in xrange(100):
+            if brentq_fmin(step_size) >= 0 or step_size <= 0:
+                break
             step_size -= 1e-12
 
         rv = max(0, step_size)

@@ -113,7 +113,7 @@ def cluster_segments( segments, jns ):
             edges.add((int(min(start_bin, stop_bin)), 
                        int(max(start_bin, stop_bin))))
 
-    genes_graph = Graph( len(segments) )
+    genes_graph = Graph( len(boundaries)-1 )
     try:
         genes_graph.add_edges( list( edges ) )
     except:
@@ -589,6 +589,7 @@ def find_gene_boundaries((chrm, strand, contig_len),
             
             candidate_segments.append( 
                 (middle-MIN_GENE_LENGTH/2, middle+MIN_GENE_LENGTH/2) )
+        
         accepted_segments = manager.list()
         accepted_segments_lock = manager.Lock()
         
@@ -622,7 +623,7 @@ def find_gene_boundaries((chrm, strand, contig_len),
                 locs.extend( bndries )
         if len(locs) == 0:
             return locs
-        
+                
         # merge adjoining segments
         locs.sort()
         new_locs = [locs.pop(0),]
@@ -631,7 +632,7 @@ def find_gene_boundaries((chrm, strand, contig_len),
                 new_locs[-1] = (new_locs[-1][0], stop)
             else:
                 new_locs.append( (start, stop) )
-        
+                
         log_statement( "Finished segmentation in %s:%s" 
                        % ( chrm, strand ) )
         return new_locs
@@ -662,7 +663,7 @@ def find_gene_boundaries((chrm, strand, contig_len),
     
     if VERBOSE: log_statement( "Clustering segments for %s %s" % (chrm, strand))
     clustered_segments = cluster_segments( merged_segments, junctions )
-
+    
     # if we didn't find any genes, then return nothing
     if len( clustered_segments ) == 2:
         return []
@@ -1313,8 +1314,8 @@ def find_exons_in_gene( gene, contig_len,
     
     ## TODO - re-enable to give cleaner gene boundaries. As is, we'll provide
     ## boundaries for regions in which we can not produce transcripts
-    if len(cage_peaks) == 0 or len(polya_peaks) == 0:
-        return Bins(gene.chrm, gene.strand), None, None
+    #if len(cage_peaks) == 0 or len(polya_peaks) == 0:
+    #    return Bins(gene.chrm, gene.strand), None, None
     
     if resplit_genes and len(gene) == 1 and (
             len(cage_peaks) > 0 and len(polya_peaks) > 0):
@@ -1500,7 +1501,7 @@ def find_all_gene_segments( contig_lens,
             if region_to_use != None and contig != region_to_use: continue
             for strand in '+-':
                 regions.append( (contig, strand, 0, contig_len) )
-        
+
         junctions = load_junctions( 
             rnaseq_reads, cage_reads, polya_reads, 
             regions, NTHREADS)
@@ -1849,7 +1850,6 @@ def main():
             if region_to_use != None and contig != region_to_use: continue
             for strand in '+-':
                 regions.append( (contig, strand, 0, contig_len) )        
-                
         # load all junctions
         if ref_elements_to_include.genes == False:
             if VERBOSE: log_statement( 'Loading junctions' )        
@@ -1869,7 +1869,7 @@ def main():
         # sort genes from longest to shortest. This should help improve the 
         # multicore performance
         gene_segments.sort( key=lambda x: x.stop-x.start, reverse=True )
-        
+                
         find_exons( contig_lens, gene_segments, ofp,
                     rnaseq_reads, promoter_reads, polya_reads,
                     ref_genes, ref_elements_to_include, 
