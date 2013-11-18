@@ -67,7 +67,8 @@ def calc_fpkm( gene, fl_dists, freqs,
         length = sum( e[1] - e[0] + 1 for e in t.exons ) 
         # subtract for mappability problems at junctions
         length -= 0*len(t.introns)
-        if length < fl_dist.fl_min: return 0
+        if length < fl_dist.fl_min: 
+            return 0, 0
         fl_min, fl_max = fl_dist.fl_min, min(length, fl_dist.fl_max)
         allowed_fl_lens = numpy.arange(fl_min, fl_max+1)
         weights = fl_dist.fl_density[
@@ -399,7 +400,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                     output[(gene_id, 'ub')] = [None]*len(mle)
                     output[(gene_id, 'lb')] = [None]*len(mle)
                 
-                NUM_TRANS_IN_GRP = 50
+                NUM_TRANS_IN_GRP = 10
                 grouped_indices = []
                 for i in xrange(expected_array.shape[1]):
                     if i%NUM_TRANS_IN_GRP == 0:
@@ -882,29 +883,21 @@ def parse_arguments():
              args.estimate_confidence_bounds, args.write_design_matrices, 
              not args.batch_mode )
 
-def spawn_and_manage_children( input_queue, input_queue_lock,
-                               output_dict_lock, output_dict,
-                               finished_queue,
-                               write_design_matrices, 
-                               estimate_confidence_bounds):
-    ps = [None]*num_threads
-    time.sleep(0.1)
-    log_statement( "Waiting on children" )
-    while True:        
+def worker( input_queue, input_queue_lock,
+            output_dict_lock, output_dict,
+            finished_queue,
+            write_design_matrices, 
+            estimate_confidence_bounds):
+    for i in xrange(50):
         # get the data to process
         try:
             with input_queue_lock:
                 work_type, work_data = input_queue.pop()
         except IndexError, inst:
-            if len(input_queue) == 0 and all( 
-                    p == None or not p.is_alive() for p in ps ): 
+            if len(input_queue) == 0:
                 break
-            
-            # if the queue is empty but processing is still going on,
-            # then just sleep
-            time.sleep(1.0)
-            continue
-        
+            else:
+                continue
         
         if work_type == 'ERROR':
             ( gene_id, trans_index ), msg = work_data
@@ -921,30 +914,53 @@ def spawn_and_manage_children( input_queue, input_queue_lock,
             if write_design_matrices:
                 finished_queue.put( ('design_matrix', gene_id) )
         
-        # sleep until we have a free process index
-        while True:
-            if all( p != None and p.is_alive() for p in ps ):
-                time.sleep(0.1)
-                continue
-            break
-        
-        proc_i = min( i for i, p in enumerate(ps) 
-                      if p == None or not p.is_alive() )
-        
-        # find a finished process index
         args = (work_type, (gene_id, bam_fn, trans_index),
                 input_queue, input_queue_lock, 
                 output_dict_lock, output_dict, 
                 estimate_confidence_bounds )
+        estimate_gene_expression_worker(*args)
+    
+    return
+
+def spawn_and_manage_children( input_queue, input_queue_lock,
+                               output_dict_lock, output_dict,
+                               finished_queue,
+                               write_design_matrices, 
+                               estimate_confidence_bounds):
+    ps = [None]*num_threads
+    args = ( input_queue, input_queue_lock,
+             output_dict_lock, output_dict,
+             finished_queue,
+             write_design_matrices, 
+             estimate_confidence_bounds)
+    time.sleep(0.1)
+    log_statement( "Waiting on children" )
+    while True:        
+        # if there is nothign in the queue, and no children are alive, we're
+        # done so exit. Otherwise, wait until they finish
+        if len(input_queue) == 0:
+            if all( p == None or not p.is_alive() for p in ps ): 
+                break        
+            else:
+                time.sleep(1.)
+                continue
+        
+        # sleep until we have a free process index
+        while all( p != None and p.is_alive() for p in ps ):
+            time.sleep(1.0)
+        
+        proc_i = min( i for i, p in enumerate(ps) 
+                      if p == None or not p.is_alive() )
+        
         if num_threads > 1:
-            p = multiprocessing.Process(
-                target=estimate_gene_expression_worker, args=args )
+            p = multiprocessing.Process(target=worker, args=args)
             p.start()
             if ps[proc_i] != None: ps[proc_i].join()
             ps[proc_i] = p
         else:
-            estimate_gene_expression_worker(*args)
+            worker(*args)
     
+    log_statement( "" )
     return
 
 def main():

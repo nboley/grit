@@ -333,9 +333,6 @@ def parse_arguments():
         assert args.control == None, \
             "Can't currently provide read counts with a control file. Try adding them into the BAM header."
     
-    #if args.rampage_reads != None:
-    #    raise NotImplemented, "RAMPAGE is not currently implemented in grit.py."
-    
     if None == args.reference and args.use_reference_genes:
         raise ValueError, "--reference must be set if --use-reference-genes is set"
     if None == args.reference and args.use_reference_junctions:
