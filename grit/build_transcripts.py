@@ -888,7 +888,11 @@ def worker( input_queue, input_queue_lock,
             finished_queue,
             write_design_matrices, 
             estimate_confidence_bounds):
+    start_time = time.time()
     for i in xrange(50):
+        # if we've been in this worker longer than a minute, then we've
+        # probably used enough memory, so quick and spawn a new process
+        if time.time() - start_time > 60: return
         # get the data to process
         try:
             with input_queue_lock:
