@@ -563,9 +563,9 @@ class PolyAReads(Reads):
         full_region_len = stop - start + 1
         cvg = numpy.zeros(full_region_len)
         for rd in self.fetch( chrm, start, stop ):
-            # skip the read's pair, which doesn't contain a poly(a) site
-            if not rd.is_read1: continue
-
+            # skip the read pair which doesn't contain a poly(a) site
+            if rd.is_paired and rd.is_read1: continue
+            
             # determine the strand of the poly(A) site
             rd_strand = '-' if rd.is_reverse else '+'
             if self.reverse_read_strand:
@@ -580,7 +580,7 @@ class PolyAReads(Reads):
             if strand != rd_strand: continue
             if pos < start or pos > stop: continue
 
-            # find the statmap posterior probabiliy, if available
+            # find the statmap posterior probability, if available
             res = [ val for key, val in rd.tags if key == 'XP' ]
             post_prb = 1.0 if len(res) == 0 else res[0]
             
