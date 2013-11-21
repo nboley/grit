@@ -32,7 +32,7 @@ DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
 ABS_TOL = 1e-5
 
-MAX_NUM_ITERATIONS = 5000
+MAX_NUM_ITERATIONS = 1000
 
 class TooFewReadsError( ValueError ):
     pass
@@ -251,7 +251,7 @@ def estimate_transcript_frequencies_line_search(
     zeros = set()
     zeros_counter = 0
     
-    for i in xrange( 500 ):
+    for i in xrange( MAX_NUM_ITERATIONS ):
         # calculate the gradient and the maximum feasible step size
         gradient = calc_projected_gradient( x, expected_array, observed_array )
         gradient_size = numpy.absolute(gradient).sum()
@@ -309,7 +309,7 @@ def estimate_transcript_frequencies(
     eps = 10.
     start_time = time.time()
     #log_statement( "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)" )
-    for i in xrange( 2000 ):
+    for i in xrange( MAX_NUM_ITERATIONS ):
         prev_x = x.copy()
         
         x, lhds = estimate_transcript_frequencies_line_search(  
@@ -331,7 +331,7 @@ def estimate_transcript_frequencies(
             eps = max( eps, ABS_TOL )
         
     
-    for i in xrange( 5 ):
+    for i in xrange( 10 ):
         prev_x = x.copy()
         x, lhds = estimate_transcript_frequencies_line_search(  
             observed_array, full_expected_array, x, 
