@@ -266,6 +266,8 @@ def load_junctions_in_bam( reads, regions=None, nthreads=1, log_statement=None):
         for p in ps: p.join()
         #while any( not p.is_alive() for p in ps ):
 
+        if log_statement != None and VERBOSE:
+            log_statement("Merging junctions from threads")
         junctions = {}
         for key in all_jns.keys():
             contig_jns = defaultdict(int)

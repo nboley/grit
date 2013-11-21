@@ -493,12 +493,13 @@ def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads,
     # they are on differnet scales, so we only filter the RNAseq and use the 
     # cage and polya to get connectivity at the boundaries.
     rnaseq_junctions = files.junctions.load_junctions_in_bam(
-        rnaseq_reads, regions, nthreads=nthreads, log_statement=log_statement )
+        rnaseq_reads, regions, nthreads=nthreads, log_statement=log_statement)
     promoter_jns = None if promoter_reads == None else \
-        files.junctions.load_junctions_in_bam( promoter_reads, regions, nthreads)
+        files.junctions.load_junctions_in_bam(promoter_reads, regions, nthreads)
     polya_jns = None if polya_reads == None else \
-        files.junctions.load_junctions_in_bam( polya_reads, regions, nthreads)
+        files.junctions.load_junctions_in_bam(polya_reads, regions, nthreads)
     
+    if VERBOSE: log_statement("Filtering junctions")
     filtered_junctions = defaultdict(lambda: defaultdict(int))
     for chrm, strand, region_start, region_stop in regions:        
         # filter junctions
