@@ -4,6 +4,8 @@ from collections import defaultdict, namedtuple
 from itertools import chain
 import sqlite3
 
+JUST_PRINT_COMMANDS = False
+
 ControlFileEntry = namedtuple('ControlFileEntry', [
         'sample_type', 'rep_id', 
         'assay', 'paired', 'stranded', 'read_type', 
@@ -58,8 +60,10 @@ def run_find_elements( all_rnaseq_reads, all_rnaseq_read_types,
     command.extend( ("--threads", str(args.threads)) )
     if args.verbose: command.append( "--verbose" )
 
-    #print " ".join(command)
-    subprocess.check_call(command)
+    if JUST_PRINT_COMMANDS:
+        print " ".join(command)
+    else:
+        subprocess.check_call(command)
     
     return elements_ofname
 
@@ -112,8 +116,10 @@ def run_build_transcripts(elements_fname, ofprefix,
 
     if args.ucsc: command.append("--ucsc")
     
-    #print " ".join(command)
-    subprocess.check_call(command)
+    if JUST_PRINT_COMMANDS:
+        print " ".join(command)
+    else:
+        subprocess.check_call(command)
     
     return
 
@@ -131,7 +137,10 @@ def run_bam2wig(fname, op_prefix, assay, region,
         command.append( "--reverse-read-strand" )
     if verbose: command.append( "--verbose" )
     if region != None: command.extend( ("--region", "%s" % region) )
-    subprocess.check_call(command)
+    if JUST_PRINT_COMMANDS:
+        print " ".join(command)
+    else:
+        subprocess.check_call(command)
 
 def run_all_bam2wigs(conn, args):
     for rnaseq_reads, rnaseq_reads_type in get_elements( 
@@ -320,12 +329,18 @@ def parse_arguments():
         help='Disable the ncurses frontend, and just print status messages to stderr.')
     parser.add_argument( '--region', 
         help='Only use the specified region ( currently only accepts a contig name ).')
+    parser.add_argument( '--just-print-commands', action='store_true', default=False,
+        help='Only print the commands to run and exit.')
     
     parser.add_argument( '--threads', '-t', default=1, type=int,
         help='The number of threads to use.')
         
     args = parser.parse_args()
-
+    
+    global JUST_PRINT_COMMANDS
+    if args.just_print_commands:
+        JUST_PRINT_COMMANDS = True
+    
     if None == args.control and None == args.rnaseq_reads:
         raise ValueError, "--control or --rnaseq-reads must be set"
 
