@@ -86,7 +86,6 @@ def build_chrm_sizes_file(reads):
 
 def generate_wiggle(reads, ofps, num_threads=1, contig=None ):
     all_args = []
-    
     for chrm_length, chrm  in sorted(izip(reads.lengths, reads.references)):
         strands = ['+', '-'] if len(ofps) == 2 else [None,]
         # skip regions not in the specified contig, if requested 
@@ -154,6 +153,11 @@ def parse_arguments():
     
     if args.assay not in allowed_assays:
         raise ValueError, "Unrecongized assay (%s)" % args.assay
+    
+    region = args.region
+    if region != None:
+        if ':' in region or '-' in region:
+            assert False, "Invalid contig name: %s" % region
     
     return ( args.assay, args.mapped_reads_fname, args.out_fname_prefix, 
              args.bigwig, args.reverse_read_strand, read_filter, 

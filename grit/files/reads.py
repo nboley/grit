@@ -522,12 +522,14 @@ class RAMPAGEReads(Reads):
         for rd in self.fetch( chrm, start, stop ):
             #assert not rd.is_paired
             if rd.mapq <= 1: continue
-            if not rd.is_read1: continue
-            rd_strand = '-' if rd.is_reverse else '+'
+            if rd.is_read1 and not rd.is_reverse:
+                rd_strand = '+'
+            elif rd.is_read1 and rd.is_reverse:
+                rd_strand = '-'
+            else:
+                continue
             if strand != rd_strand: continue
-
-            if strand == '-': peak_pos = rd.pos + 2*rd.qlen
-            else: peak_pos = rd.pos
+            peak_pos = rd.pos
             if peak_pos < start or peak_pos > stop:
                 continue
             cvg[peak_pos-start] += 1
