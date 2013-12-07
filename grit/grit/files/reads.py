@@ -210,7 +210,7 @@ def get_contigs_and_lens( reads_files ):
     rv = zip(*sorted(rv.iteritems()))
     if len(rv) == 0:
         raise ValueError, "The bam files don't contain the same chromosome set.\nHint: make sure that the reads have been mapped to the same reference (this can be viewed with a call to samtools idxstats)"
-    return zip(*sorted(rv.iteritems()))
+    return rv
 
 class MergedReads( object ):
     """Replicate the reads functionality for multiple underlying bams.
