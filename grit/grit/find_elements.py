@@ -650,7 +650,7 @@ def find_gene_boundaries((chrm, strand, contig_len),
     
     # update the junctions with the reference junctions, and sort them
     if ref_elements_to_include.junctions:
-        for jn in ref_elements['introns']:
+        for jn in ref_elements['intron']:
             junctions[jn] += 0
     junctions = sorted( junctions.iteritems() )
     
@@ -1208,7 +1208,7 @@ def filter_jns(jns, rnaseq_cov, gene):
         if stop - start + 1 > MAX_INTRON_SIZE : continue
         left_intron_cvg = rnaseq_cov[start+10:start+30].sum()/20
         right_intron_cvg = rnaseq_cov[stop-30:stop-10].sum()/20        
-        if cnt*10 < left_intron_cvg or cnt*10 < right_intron_cvg:
+        if (cnt+1)*10 < left_intron_cvg or (cnt+1)*10 < right_intron_cvg:
             continue
         filtered_junctions.append( (start, stop, cnt) )
     
@@ -1240,7 +1240,7 @@ def build_raw_elements_in_gene( gene,
     gene_len = gene.stop - gene.start + 1
     jns = load_junctions(rnaseq_reads, cage_reads, polya_reads,
                          [(gene.chrm, gene.strand, gene.start, gene.stop),],
-                         nthreads=1)[(gene.chrm, gene.strand)]
+                         nthreads=1)[(gene.chrm, gene.strand)]    
     # merge in the reference junctions
     for start, stop in ref_jns:
         jns[(start,stop)] += 0
@@ -1411,7 +1411,7 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
             gene, contig_lens[gene.chrm],
             rnaseq_reads, cage_reads, polya_reads, 
             gene_ref_elements['promoters'], 
-            gene_ref_elements['introns'],
+            gene_ref_elements['intron'],
             gene_ref_elements['polya'],
             resplit_genes=(False == ref_elements_to_include.genes))
         
@@ -1449,10 +1449,9 @@ def extract_reference_elements(genes, ref_elements_to_include):
     ref_elements = defaultdict( lambda: defaultdict(set) )
     if not any(ref_elements_to_include):
         return ref_elements
-
+    
     for gene in genes:
         elements = gene.extract_elements()
-        
         # we add 1 to everything because find elements is 1 based, but 
         # extract elements is 0 based
         def add_elements(key):
@@ -1508,9 +1507,8 @@ def find_all_gene_segments( contig_lens,
         if VERBOSE: log_statement( 'Loading junctions' )        
         junctions = defaultdict(lambda: defaultdict(int))
         if ref_elements_to_include.junctions:
-            ref_elements = extract_reference_elements(ref_genes, ref_elements_to_include)
             for (chrm, strand), contig_ref_elements in ref_elements.iteritems():
-                for jn in contig_ref_elements['introns']:
+                for jn in contig_ref_elements['intron']:
                     junctions[(chrm, strand)][jn] += 0
         
         discovered_junctions = load_junctions( 
@@ -1519,7 +1517,7 @@ def find_all_gene_segments( contig_lens,
             for jn, cnt in contig_jns.iteritems():
                 junctions[(chrm, strand)][jn] += cnt
         del discovered_junctions
-
+        
     
     for contig, contig_len in contig_lens.iteritems():
         if region_to_use != None and contig != region_to_use: continue
