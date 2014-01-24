@@ -1033,7 +1033,7 @@ def main():
             
             polya_reads = [
                 PolyAReads(fp.name).init(
-                    reverse_read_strand=True, pairs_are_opp_strand=True)
+                    reverse_read_strand=False, pairs_are_opp_strand=True)
                 for fp in polya_bams  ]
             assert len(polya_reads) <= 1
             log_statement( "Finished loading data files." )
