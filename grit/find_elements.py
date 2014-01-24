@@ -1225,7 +1225,7 @@ def find_coverage_in_gene(gene, reads):
 
 def build_raw_elements_in_gene( gene, 
                                 rnaseq_reads, cage_reads, polya_reads,
-                                cage_peaks, jns, polya_peaks  ):
+                                ref_cage_peaks, ref_jns, ref_polya_peaks  ):
     """Find the read coverage arrays, junctions lists,
     and make the appropriate conversion into gene coordiantes.
     
@@ -1242,7 +1242,7 @@ def build_raw_elements_in_gene( gene,
                          [(gene.chrm, gene.strand, gene.start, gene.stop),],
                          nthreads=1)[(gene.chrm, gene.strand)]
     # merge in the reference junctions
-    for start, stop in jns:
+    for start, stop in ref_jns:
         jns[(start,stop)] += 0
     
     jns = [ (x1-gene.start, x2-gene.start, cnt)  
@@ -1250,7 +1250,7 @@ def build_raw_elements_in_gene( gene,
             if points_are_inside_gene(x1, x2)]
     
     cage_peaks = [ (x1-gene.start, x2-gene.start)
-                   for x1, x2 in cage_peaks 
+                   for x1, x2 in ref_cage_peaks 
                    if points_are_inside_gene(x1, x2)]
     assert all( 0 <= start <= stop for start, stop in cage_peaks )
     
@@ -1258,7 +1258,7 @@ def build_raw_elements_in_gene( gene,
         cage_cov = find_coverage_in_gene(gene, cage_reads)
     
     polya_peaks = [ (x1-gene.start, x2-gene.start)
-                    for x1, x2 in polya_peaks
+                    for x1, x2 in ref_polya_peaks
                     if points_are_inside_gene(x1, x2)]
     assert all( 0 <= start <= stop for start, stop in polya_peaks )
     
@@ -1449,24 +1449,26 @@ def extract_reference_elements(genes, ref_elements_to_include):
     ref_elements = defaultdict( lambda: defaultdict(set) )
     if not any(ref_elements_to_include):
         return ref_elements
-    
+
     for gene in genes:
         elements = gene.extract_elements()
+        
+        # we add 1 to everything because find elements is 1 based, but 
+        # extract elements is 0 based
+        def add_elements(key):
+            for start, stop in elements[key]:
+                ref_elements[(gene.chrm, gene.strand)][key].add((start+1, stop+1))
+
         if ref_elements_to_include.junctions:
-            ref_elements[(gene.chrm, gene.strand)]['introns'].update(
-                elements['intron'])
+            add_elements('intron')
         if ref_elements_to_include.promoters:
-            ref_elements[(gene.chrm, gene.strand)]['promoters'].update(
-                elements['promoter'])
+            add_elements('promoter')
         if ref_elements_to_include.polya_sites:
-            ref_elements[(gene.chrm, gene.strand)]['polya'].update(
-                elements['polya'])
+            add_elements('polya')
         if ref_elements_to_include.TSS:
-            ref_elements[(gene.chrm, gene.strand)]['tss_exons'].update(
-                elements['tss_exon'])
+            add_elements('tss_exon')
         if ref_elements_to_include.TES:
-            ref_elements[(gene.chrm, gene.strand)]['tes_exons'].update(
-                elements['tes_exon'])
+            add_elements('tes_exon')
     
     for contig_strand, elements in ref_elements.iteritems():
         for element_type, val in elements.iteritems():
@@ -1475,7 +1477,7 @@ def extract_reference_elements(genes, ref_elements_to_include):
     return ref_elements
 
 def find_all_gene_segments( contig_lens, 
-                            rnaseq_reads, cage_reads, polya_reads,
+                            rnaseq_reads, promoter_reads, polya_reads,
                             ref_genes, ref_elements_to_include,
                             region_to_use=None,
                             junctions=None):
@@ -1491,7 +1493,7 @@ def find_all_gene_segments( contig_lens,
                     ref_genes, contig, strand, contig_len)
                 gene_bndry_bins.extend( contig_gene_bndry_bins )
         return gene_bndry_bins
-
+    
     # load the reference elements
     ref_elements = extract_reference_elements( 
         ref_genes, ref_elements_to_include )
@@ -1503,9 +1505,21 @@ def find_all_gene_segments( contig_lens,
             for strand in '+-':
                 regions.append( (contig, strand, 0, contig_len) )
 
-        junctions = load_junctions( 
-            rnaseq_reads, cage_reads, polya_reads, 
-            regions, NTHREADS)
+        if VERBOSE: log_statement( 'Loading junctions' )        
+        junctions = defaultdict(lambda: defaultdict(int))
+        if ref_elements_to_include.junctions:
+            ref_elements = extract_reference_elements(ref_genes, ref_elements_to_include)
+            for (chrm, strand), contig_ref_elements in ref_elements.iteritems():
+                for jn in contig_ref_elements['introns']:
+                    junctions[(chrm, strand)][jn] += 0
+        
+        discovered_junctions = load_junctions( 
+            rnaseq_reads, promoter_reads, polya_reads, regions, NTHREADS)
+        for (chrm, strand), contig_jns in discovered_junctions.iteritems():
+            for jn, cnt in contig_jns.iteritems():
+                junctions[(chrm, strand)][jn] += cnt
+        del discovered_junctions
+
     
     for contig, contig_len in contig_lens.iteritems():
         if region_to_use != None and contig != region_to_use: continue
@@ -1514,7 +1528,7 @@ def find_all_gene_segments( contig_lens,
                            % ( contig, strand ) )
             contig_gene_bndry_bins = find_gene_boundaries( 
                 (contig, strand, contig_len), 
-                rnaseq_reads, cage_reads, polya_reads, 
+                rnaseq_reads, promoter_reads, polya_reads, 
                 ref_elements, ref_elements_to_include,
                 junctions=junctions[(contig, strand)], nthreads=NTHREADS
             )
@@ -1832,7 +1846,7 @@ def main():
         if polya_bams != None:
             polya_reads = MergedReads([
                     PolyAReads(polya_bam.name).init(
-                        reverse_read_strand=True, pairs_are_opp_strand=True) 
+                        reverse_read_strand=False, pairs_are_opp_strand=True) 
                     for polya_bam in polya_bams ])
         
         contigs, contig_lens = get_contigs_and_lens( 
@@ -1851,13 +1865,6 @@ def main():
             if region_to_use != None and contig != region_to_use: continue
             for strand in '+-':
                 regions.append( (contig, strand, 0, contig_len) )        
-        # load all junctions
-        if ref_elements_to_include.genes == False:
-            if VERBOSE: log_statement( 'Loading junctions' )        
-            junctions = load_junctions( 
-                rnaseq_reads, promoter_reads, polya_reads, regions, NTHREADS)
-        else:
-            junctions = None
         
         # load the reference elements
         gene_segments = find_all_gene_segments( 
@@ -1865,7 +1872,7 @@ def main():
             rnaseq_reads, promoter_reads, polya_reads,
             ref_genes, ref_elements_to_include, 
             region_to_use=region_to_use,
-            junctions=junctions)
+            junctions=None)
         
         # sort genes from longest to shortest. This should help improve the 
         # multicore performance
