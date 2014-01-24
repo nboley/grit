@@ -34,6 +34,7 @@ NTHREADS = 1
 TOTAL_MAPPED_READS = None
 
 MIN_INTRON_SIZE = 200
+MAX_EMPTY_REGION_SIZE = MIN_INTRON_SIZE
 MAX_INTRON_SIZE = int(1e6)
 MIN_GENE_LENGTH = 400
 # the maximum number of bases to expand gene boundaries from annotated genes
@@ -167,7 +168,7 @@ def cluster_segments_2( boundaries, jns ):
     return segments
 
 
-def find_empty_regions( cov, thresh=1e-6, min_length=MIN_INTRON_SIZE ):
+def find_empty_regions( cov, thresh=1e-6, min_length=MAX_EMPTY_REGION_SIZE ):
     x = numpy.diff( numpy.asarray( cov >= thresh, dtype=int ) )
     stops = numpy.nonzero(x==1)[0].tolist()
     if cov[-1] < thresh: stops.append(len(x))
@@ -1760,6 +1761,11 @@ def parse_arguments():
                                                    args.use_reference_tes,
                                                    args.use_reference_promoters,
                                                    args.use_reference_polyas)
+    # if we are using reference junctions, then it's ok to allow for bigger gaps
+    # because if there is an unobserved intron, it should be in the reference set
+    if args.use_reference_junctions:
+        global MAX_EMPTY_REGION_SIZE
+        MAX_EMPTY_REGION_SIZE = max(500, MAX_EMPTY_REGION_SIZE)
     
     ofp = ThreadSafeFile( args.ofname, "w" )
     ofp.write('track name="%s" visibility=2 itemRgb="On" useScore=1\n'%ofp.name)
