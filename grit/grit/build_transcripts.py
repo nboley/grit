@@ -24,7 +24,8 @@ from f_matrix import build_design_matrices
 import frequency_estimation
 from frag_len import load_fl_dists, FlDist, build_normal_density
 
-MAX_NUM_TRANSCRIPTS = 500
+MAX_NUM_TRANSCRIPTS = 200
+MAX_NUM_CANDIDATE_TRANSCRIPTS = 2500
 
 from lib.logging import Logger
 # log statement is set in the main init, and is a global
@@ -262,6 +263,8 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 transcript.polya_region = \
                    find_matching_polya_region_for_transcript(transcript, polyas)
                 transcripts.append( transcript )
+            if len(transcripts) > MAX_NUM_CANDIDATE_TRANSCRIPTS:
+                return
             
             gene_min = min( min(e) for e in chain(
                     tss_exons, tes_exons, se_transcripts))

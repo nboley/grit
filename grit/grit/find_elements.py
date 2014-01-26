@@ -33,19 +33,19 @@ log_statement = None
 NTHREADS = 1
 TOTAL_MAPPED_READS = None
 
-MIN_INTRON_SIZE = 200
-MAX_EMPTY_REGION_SIZE = MIN_INTRON_SIZE
+MIN_INTRON_SIZE = 50
+MAX_EMPTY_REGION_SIZE = 400 #MIN_INTRON_SIZE
 MAX_INTRON_SIZE = int(1e6)
 MIN_GENE_LENGTH = 400
 # the maximum number of bases to expand gene boundaries from annotated genes
 MAX_GENE_EXPANSION = 1000
 
-MIN_EXON_BPKM = 0.01
-EXON_EXT_CVG_RATIO_THRESH = 5
+MIN_EXON_BPKM = 0.1
+EXON_EXT_CVG_RATIO_THRESH = 3
 POLYA_MERGE_SIZE = 100
 
-CAGE_PEAK_WIN_SIZE = 30
-CAGE_FILTER_ALPHA = 0.99
+CAGE_PEAK_WIN_SIZE = 15
+CAGE_FILTER_ALPHA = 0.1
 MIN_NUM_CAGE_TAGS = 5
 MAX_CAGE_FRAC = 0.01
 NUM_TSS_BASES_TO_SKIP = 200
@@ -585,12 +585,12 @@ def find_gene_boundaries((chrm, strand, contig_len),
         manager = multiprocessing.Manager()
         candidate_segments = manager.list()
         candidate_segments_lock = manager.Lock()
-        for middle in xrange( MIN_GENE_LENGTH/2, 
-                              contig_len-MIN_GENE_LENGTH/2, 
-                              MIN_GENE_LENGTH ):
+        for middle in xrange( MAX_EMPTY_REGION_SIZE/2, 
+                              contig_len-MAX_EMPTY_REGION_SIZE/2, 
+                              MAX_EMPTY_REGION_SIZE ):
             
             candidate_segments.append( 
-                (middle-MIN_GENE_LENGTH/2, middle+MIN_GENE_LENGTH/2) )
+                (middle-MAX_EMPTY_REGION_SIZE/2,middle+MAX_EMPTY_REGION_SIZE/2))
         
         accepted_segments = manager.list()
         accepted_segments_lock = manager.Lock()
@@ -724,7 +724,7 @@ def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
     # from the background, at alpha = 0.001. 
     rnaseq_cov = numpy.array( rnaseq_cov+1-1e-6, dtype=int)
     max_val = rnaseq_cov.max()
-    thresholds = TOTAL_MAPPED_READS*beta.ppf( 
+    thresholds = 0.1*TOTAL_MAPPED_READS*beta.ppf( 
         CAGE_FILTER_ALPHA, 
         numpy.arange(max_val+1)+1, 
         numpy.zeros(max_val+1)+(TOTAL_MAPPED_READS+1) 
@@ -795,7 +795,7 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
     
     # merge the peaks
     def grow_peak( start, stop, grow_size=
-                   max(1, window_len/4), min_grow_ratio=0.2 ):
+                   max(1, window_len/4), min_grow_ratio=MAX_CAGE_FRAC ):
         # grow a peak at most max_num_peaks times
         max_mean_signal = cov[start:stop+1].mean()
         for i in xrange(max_num_peaks):
@@ -888,7 +888,7 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
     for peak, score in peaks_and_scores:
         peak_scores = scores[peak[0]:peak[1]+1]
         max_score = peak_scores.max()
-        good_indices = (peak_scores >= max_score*math.sqrt(MAX_CAGE_FRAC)).nonzero()[0]
+        good_indices = (peak_scores >= max_score*MAX_CAGE_FRAC).nonzero()[0]
         new_peak = [
                 peak[0] + int(good_indices.min() + 1), 
                 peak[0] + int(good_indices.max() + 2)  ]
@@ -1850,7 +1850,7 @@ def main():
         if polya_bams != None:
             polya_reads = MergedReads([
                     PolyAReads(polya_bam.name).init(
-                        reverse_read_strand=False, pairs_are_opp_strand=True) 
+                        reverse_read_strand=True, pairs_are_opp_strand=True) 
                     for polya_bam in polya_bams ])
         
         contigs, contig_lens = get_contigs_and_lens( 
