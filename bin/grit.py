@@ -151,6 +151,8 @@ def run_all_bam2wigs(conn, args):
                     args.verbose)
     for data_type in ('cage', 'rampage', 'polya'):
         for reads, in get_elements( conn, ('filename', ), data_type):
+            # unfortunately, sqllite returns none for an empty query
+            if reads == None: continue
             run_bam2wig(reads, os.path.basename(reads),
                         data_type, args.region,
                         args.threads, False, args.verbose)
