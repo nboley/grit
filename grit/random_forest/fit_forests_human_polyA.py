@@ -15,7 +15,7 @@ sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), "..") )
 
 from files.gtf import load_gtf, iter_gff_lines
 from files.reads import RNAseqReads, clean_chr_name
-GenomicInterval = namedtuple('GenomicInterval', ['chr', 'strand', 'start', 'stop'])
+GenomicInterval = namedtuple('GenomicInterval', ['chr','strand','start','stop'])
 
 VERBOSE = False
 DEBUG_VERBOSE = False
@@ -110,7 +110,7 @@ def parse_fasta( fn ):
     for line in fid:
         data = line.strip()
         if data.startswith('>'):
-            chrm = data[1:]
+            chrm = clean_chr_name(data[1:])
         else:
             if not genome.has_key(chrm):
                 genome[chrm] = []
@@ -131,7 +131,7 @@ def polyA_gff_2_dict( fn ):
     fid = open(fn)
     for line in fid:
         data = line.strip().split('\t')
-        chrm = data[0]  
+        chrm = clean_chr_name(data[0])
         strand = data[6]
         if strand == '-':
             p_site = int(data[3])
@@ -169,7 +169,7 @@ def get_elements_from_gene( gene, get_tss=True, get_jns=True, \
     introns = set()
     exons = set()
     
-    chrm, strand = gene.chrm, gene.strand
+    chrm, strand = clean_chr_name(gene.chrm), gene.strand
     transcripts = gene.transcripts
     
     for trans in transcripts:
@@ -221,7 +221,7 @@ def get_element_sets( genes, get_tss=True, get_jns=True, \
         tes_exons.update( i_tes_exons )
         exons.update( i_exons )
 
-    return sorted(tss_exons), sorted(introns), sorted( exons ), sorted(tes_exons)
+    return sorted(tss_exons),sorted(introns),sorted( exons ),sorted(tes_exons)
 
 
                       
@@ -229,18 +229,20 @@ def gtf_2_intersecters_and_dicts( gtf_fname ):
     '''
     parse a gtf file into two intersecters: CDSs and introns
     use the fast_gtf parser to get introns, and get CDSs via brute force
-    (I realize this is incredibly stupid, but don't want to muck up intron boundaries)
+    (I realize this is incredibly stupid, but don't want to muck up 
+    intron boundaries)
     '''
     # get the Intron intersecter and interval objects
     def GenomicInterval_2_intersecter_and_dict( GI ):
         II = dict()
         ID = dict()
         for intron in GI:
-            chrm = "chr" + intron.chr
+            chrm = clean_chr_name(intron.chr)
             strand = intron.strand
             if not II.has_key( ( chrm, strand ) ):
                 II[ (chrm,strand) ] = Intersecter()
-            II[ (chrm,strand) ].add( intron.start,intron.stop, [ intron.start,intron.stop ] )
+            II[ (chrm,strand) ].add( intron.start,intron.stop, 
+                                     [ intron.start,intron.stop ] )
             if not ID.has_key( ( chrm, intron.strand ) ):
                 ID[ (chrm,strand) ] = []
             ID[ (chrm,strand) ].append( [intron.start,intron.stop] )  
@@ -255,7 +257,7 @@ def gtf_2_intersecters_and_dicts( gtf_fname ):
             data = line.strip().split('\t')
             if not data[2] == 'CDS':
                 continue
-            chrm = data[0]
+            chrm = clean_chr_name(data[0])
             strand = data[6]
             start = int(data[3])
             end = int(data[4])
@@ -274,10 +276,13 @@ def gtf_2_intersecters_and_dicts( gtf_fname ):
         genes, True, True, True, True )
 
     # generate all the intersecters and intervals for the annotation
-    Introns_Sect, Introns_Dict = GenomicInterval_2_intersecter_and_dict( introns )
+    Introns_Sect, Introns_Dict = \
+        GenomicInterval_2_intersecter_and_dict( introns )
     Exons_Sect, Exons_Dict = GenomicInterval_2_intersecter_and_dict( exons )
     CDSs_Sect, CDSs_Dict = gtf_CDSs_2_intersecter_and_dict( gtf_fname ) 
-    return Introns_Sect, Introns_Dict, Exons_Sect, Exons_Dict, CDSs_Sect, CDSs_Dict
+    return ( Introns_Sect, Introns_Dict, 
+             Exons_Sect, Exons_Dict, 
+             CDSs_Sect, CDSs_Dict )
 
 
 
@@ -305,14 +310,16 @@ def get_overlapping_elements( tes_dict, elements_I, w ):
     over = dict()
     for (chrm,strand) in tes_dict.keys():
         if not elements_I.has_key((chrm,strand)):
-            print >>sys.stderr, "warning, element_intersecter does not contain the chrm: ", chrm
+            print >> sys.stderr, \
+                "warning, element_intersecter does not contain the chrm: ", chrm
             continue
         for tes in tes_dict[(chrm,strand)].keys():
             H = elements_I[(chrm,strand)].find(tes-start,tes+end)
             if H:
                 if not over.has_key( (chrm,strand) ):
                     over[ (chrm,strand) ] = dict()
-                over[ (chrm,strand) ][tes] = copy.deepcopy( tes_dict[ (chrm,strand) ][tes] )
+                over[ (chrm,strand) ][tes] = copy.deepcopy( 
+                    tes_dict[ (chrm,strand) ][tes] )
     return over
 
 
@@ -325,14 +332,16 @@ def remove_overlapping_elements( tes_dict, elements_I, w ):
     over = dict()
     for (chrm,strand) in tes_dict.keys():
         if not elements_I.has_key((chrm,strand)):
-            print >>sys.stderr, "warning, element_intersecter does not contain the chrm: ", chrm
+            print >> sys.stderr, \
+                "warning, element_intersecter does not contain the chrm: ", chrm
             continue
         for tes in tes_dict[(chrm,strand)].keys():
             H = elements_I[(chrm,strand)].find(tes-start,tes+end)
             if not H:
                 if not over.has_key( (chrm,strand) ):
                     over[ (chrm,strand) ] = dict()
-                over[ (chrm,strand) ][tes] = copy.deepcopy( tes_dict[ (chrm,strand) ][tes] )
+                over[ (chrm,strand) ][tes] = copy.deepcopy( 
+                    tes_dict[ (chrm,strand) ][tes] )
     return over
 
 
@@ -346,15 +355,18 @@ def extract_genome_sequence( genome, tes_dict, w ):
     end = w+1
     for (chrm,strand) in tes_dict.keys():
         if not genome.has_key(chrm):
-            print >>sys.stderr, "warning, genome sequence does not contain the chrm: ", chrm
+            print >> sys.stderr, \
+                "warning, genome sequence does not contain the chrm: ", chrm
             continue
         for tes in tes_dict[(chrm,strand)].keys():
             seq = genome[chrm][tes-start:tes+end]
             if strand == "-":
-                seqs.append([[chrm,strand,tes,tes_dict[(chrm,strand)][tes]], reverse_strand(seq)])
+                seqs.append([[chrm,strand,tes,tes_dict[(chrm,strand)][tes]], 
+                             reverse_strand(seq)])
             else:
                 assert strand == "+"
-                seqs.append([[chrm,strand,tes,tes_dict[(chrm,strand)][tes]], seq])
+                seqs.append([[chrm,strand,tes,tes_dict[(chrm,strand)][tes]], 
+                             seq])
     return seqs
 
 
@@ -397,17 +409,18 @@ def search_for_motif( seq_ind, motif ):
 
 
 
-def extract_covariates_from_seqs( seqs, w, polyA_density_curr, RNA_density, RNA_header ):
+def extract_covariates_from_seqs( seqs, w, polyA_density_curr, 
+                                  RNA_density, RNA_header ):
     '''
-    All the heavy lifting is done here, a massive function to get all the covariates
-    that turn out to be important.  
+    All the heavy lifting is done here, a massive function to get all the
+    covariates that turn out to be important.  
     '''
 
     # initilize point names:
     all_points = []
 
 
-    # here is the massive header of covariates that will be generated in this function
+    # here is the massive header of covariates that will be generated in this fn
     # note that RNA-seq and polyA (local density) covariates will be appended.
     header = ['name','read_count','triplet_ID-1','triplet_ID_center','triplet_ID+1', 'reads_within_10bp','reads_within_20bp','reads_within_50bp',
         'count_ATAAA_20_40', 'dist_ATAAA_20', 'dist_ATAAA_40', 'count_ATAAA_0_20', 'loc_ATAAA_0_20', 
@@ -446,7 +459,7 @@ def extract_covariates_from_seqs( seqs, w, polyA_density_curr, RNA_density, RNA_
             
         seq_ind = seqs_inds[ind]
         seq_index = seq[0]
-        chrm = seq_index[0]
+        chrm = clean_chr_name(seq_index[0])
         sequence_name = '_'.join(map(str,seq_index))
         all_points.append(sequence_name)
 
@@ -466,7 +479,8 @@ def extract_covariates_from_seqs( seqs, w, polyA_density_curr, RNA_density, RNA_
         local_density = polyA_density_curr[key_code] ###########################
         Big_X[ind].extend( local_density )
 
-        # search for all the words. NOTE: These are currently all upstream elements
+        # search for all the words. NOTE: These are currently all upstream 
+        # elements
         total_count = 0
         total_count_0_20 = 0
         word_cov = []
@@ -523,10 +537,6 @@ def extract_covariates_from_seqs( seqs, w, polyA_density_curr, RNA_density, RNA_
 
 
         # get the RNA densities 
-        if chrm.startswith('chr'):
-            key_code = [seq_index[0][3:]]
-            key_code.extend(seq_index[1:-1])
-            key_code = '_'.join(map(str,key_code))
         try:
             local_RNA = RNA_density[key_code]
         except:
@@ -696,8 +706,10 @@ def get_RNAseq_densities( all_reads, polyAs ):
             for pos, cnt in sorted(polyA.iteritems()):
                 sites.append( (chrm, strand, pos, cnt) )
     
-    if VERBOSE: print >> sys.stderr, \
-            "Finding poly(A) read coverage with %i threads" % NTHREADS
+    if VERBOSE: 
+        print >> sys.stderr, \
+            "Finding RNASeq read coverage around poly(A) sites with %i threads"\
+                % NTHREADS
     if NTHREADS == 1:
         get_RNAseq_density_worker( reads, sites, sites_lock, dense )
     else:
