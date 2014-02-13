@@ -299,6 +299,38 @@ class Reads( pysam.Samfile ):
         except AttributeError:
             self._contig_lens = dict( zip(self.references, self.lengths) )
             return self._contig_lens[self.fix_chrm_name(contig)]
+
+    def determine_reverse_read_strand_param( 
+            self, ref_genes, pairs_are_opp_strand, element_to_search,
+            MIN_NUM_READS_PER_GENE, MIN_GENES_TO_CHECK):
+        self._build_chrm_mapping()
+        
+        cnt_diff_strand = 0
+        cnt_same_strand = 0
+        for gene in ref_genes:
+            reads_match = {True: 0, False: 0}
+            exons = gene.extract_elements()['tss_exon']
+            for start, stop in exons:
+                for rd in self.fetch(gene.chrm, max(0, start-100), stop):
+                    rd_strand = get_strand(rd, False, pairs_are_opp_strand)
+                    if gene.strand == rd_strand: reads_match[True] += 1
+                    else: reads_match[False] += 1
+
+            # make sure that we have at least MIN_NUM_READS_PER_GENE 
+            # reads in this gene
+            if sum(reads_match.values()) < MIN_NUM_READS_PER_GENE: continue
+
+            if reads_match[True] > MIN_NUM_READS_PER_GENE*reads_match[False]:
+                cnt_same_strand += 1
+            if reads_match[False] > MIN_NUM_READS_PER_GENE*reads_match[True]:
+                cnt_diff_strand += 1
+
+            # if we;ve succesfully explored enough genes, then return
+            if cnt_same_strand > 10: return False
+            if cnt_diff_strand > 10: return True
+        
+        assert False, "Could not determine 'reverse_read_strand' parameter for '%s'" \
+            % self.filename
     
     def init(self, reads_are_paired, pairs_are_opp_strand, 
                    reads_are_stranded, reverse_read_strand ):
@@ -427,33 +459,6 @@ class Reads( pysam.Samfile ):
         return reads
 
 class RNAseqReads(Reads):    
-    def determine_reverse_read_strand_param(
-            self, ref_genes, pairs_are_opp_strand, 
-            MIN_NUM_READS_PER_GENE=100):
-        cnt_diff_strand = 0
-        cnt_same_strand = 0
-        for gene in ref_genes:
-            reads_match = {True: 0, False: 0}
-            exons = gene.extract_elements()['internal_exon']
-            for start, stop in exons:
-                for rd in self.fetch(gene.chrm, start, stop):
-                    rd_strand = get_strand(rd, False, pairs_are_opp_strand)
-                    if gene.strand == rd_strand: reads_match[True] += 1
-                    else: reads_match[False] += 1
-            # make sure that we have at least a hundred reads in this gene
-            
-            if sum(reads_match.values()) < MIN_NUM_READS_PER_GENE: continue
-            if reads_match[True] > MIN_NUM_READS_PER_GENE*reads_match[False]:
-                cnt_same_strand += 1
-            if reads_match[False] > MIN_NUM_READS_PER_GENE*reads_match[True]:
-                cnt_diff_strand += 1
-
-            if cnt_same_strand > 10: return False
-            if cnt_diff_strand > 10: return True
-        
-        assert False, "Could not determine 'reverse_read_strand' paramter for '%s'" \
-            % self.filename
-    
     def init(self, reverse_read_strand=None, reads_are_stranded=True, 
                    pairs_are_opp_strand=None, reads_are_paired=True,
                    ref_genes=None):        
@@ -461,15 +466,14 @@ class RNAseqReads(Reads):
         
         assert reads_are_paired == True, "GRIT can only use paired RNAseq reads"
         assert reads_are_stranded == True, "GRIT can only use stranded RNAseq"
-
-        self._build_chrm_mapping()
         
         if pairs_are_opp_strand == None:
             pairs_are_opp_strand = not read_pairs_are_on_same_strand( self )
-        
+
         if reverse_read_strand == None:
-            reverse_read_strand = self.determine_reverse_read_strand_param(
-                ref_genes, pairs_are_opp_strand)
+            reverse_read_strand = Reads.determine_reverse_read_strand_param(
+                self, ref_genes, pairs_are_opp_strand, 'internal_exon',
+                100, 10 )
         
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
@@ -482,20 +486,27 @@ class RNAseqReads(Reads):
         }
         
         return self
+    
 
 class CAGEReads(Reads):
-    def init(self, reverse_read_strand, pairs_are_opp_strand=None, 
-             reads_are_paired=False ):        
+    def init(self, reverse_read_strand=None, pairs_are_opp_strand=None, 
+             reads_are_paired=False, ref_genes=None ):        
+        assert reverse_read_strand in ('auto', None, True, False), \
+            "Invalid option for reverse read strand"
         reads_are_paired=False
+        pairs_are_opp_strand = False
         assert not reads_are_paired, "GRIT can not use paired CAGE reads."
-        
-        reads_are_stranded = True
-        
-        # reads strandedness
-        if pairs_are_opp_strand == None:
-            pairs_are_opp_strand = True if not reads_are_paired \
-                else not read_pairs_are_on_same_strand( self )
 
+        # CAGE reads are always stranded
+        reads_are_stranded = True
+
+        if reverse_read_strand in ('auto', None):
+            if ref_genes in([], None): 
+                raise ValueError, "Determining reverse_read_strand requires reference genes"
+            reverse_read_strand = Reads.determine_reverse_read_strand_param(
+                self, ref_genes, pairs_are_opp_strand, 'tss_exon',
+                100, 10 )
+        
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
         
@@ -516,11 +527,13 @@ class CAGEReads(Reads):
             #assert not rd.is_paired
             if rd.mapq <= 1: continue
             rd_strand = '-' if rd.is_reverse else '+'
+            if self.reverse_read_strand:
+                rd_strand = '+' if rd_strand == '-' else '-'
             if strand != rd_strand: continue
             if strand == '-':
-                peak_pos = rd.aend
+                peak_pos = max(rd.pos, rd.aend)
             else:
-                peak_pos = rd.pos
+                peak_pos = min(rd.pos, rd.aend)
             if peak_pos < start or peak_pos > stop:
                 continue
             cvg[peak_pos-start] += 1
@@ -537,6 +550,13 @@ class RAMPAGEReads(Reads):
         # reads strandedness
         if pairs_are_opp_strand == None:
             pairs_are_opp_strand = read_pairs_are_on_same_strand( self )
+
+        if reverse_read_strand in ('auto', None):
+            if ref_genes in([], None): 
+                raise ValueError, "Determining reverse_read_strand requires reference genes"
+            reverse_read_strand = Reads.determine_reverse_read_strand_param(
+                self, ref_genes, pairs_are_opp_strand, 'tss_exon',
+                100, 10 )
         
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
