@@ -1820,6 +1820,27 @@ def load_promoter_reads(cage_bams, rampage_bams):
     
     return None
 
+def load_rnaseq_reads(rnaseq_bams, rnaseq_strands_need_to_be_reversed, ref_genes=None):
+    if VERBOSE: log_statement( 'Loading RNAseq read bams' )
+    all_reads = []
+    for i, rnaseq_bam_fp in enumerate(rnaseq_bams):
+        reads = RNAseqReads(rnaseq_bam_fp.name)
+        rev_reads = None if None == rnaseq_strands_need_to_be_reversed else\
+            rnaseq_strands_need_to_be_reversed[i]
+        reads.init(reverse_read_strand=rev_reads, ref_genes=ref_genes)
+        all_reads.append(reads)
+    
+    rnaseq_reads = MergedReads(all_reads)
+    
+    global TOTAL_MAPPED_READS
+    if TOTAL_MAPPED_READS == None:
+        TOTAL_MAPPED_READS = rnaseq_reads.mapped
+        if TOTAL_MAPPED_READS == 0:
+            raise ValueError, "Can't determine the number of reads in the RNASeq BAM (by samtools idxstats). Please set --num-mapped-rnaseq-reads"
+    assert TOTAL_MAPPED_READS > 0
+
+    return rnaseq_reads
+
 def main():
     ( rnaseq_bams, rnaseq_strands_need_to_be_reversed, 
       cage_bams, rampage_bams, polya_bams,
@@ -1844,23 +1865,10 @@ def main():
             if VERBOSE: log_statement("Loading annotation file.")
             ref_genes = load_gtf( ref_gtf_fname )
         
-        if VERBOSE: log_statement( 'Loading RNAseq read bams' )
-        all_reads = []
-        for i, rnaseq_bam_fp in enumerate(rnaseq_bams):
-            reads = RNAseqReads(rnaseq_bam_fp.name)
-            rev_reads = None if None == rnaseq_strands_need_to_be_reversed else\
-                rnaseq_strands_need_to_be_reversed[i]
-            reads.init(reverse_read_strand=rev_reads, ref_genes=ref_genes)
-            all_reads.append(reads)
-        rnaseq_reads = MergedReads(all_reads)
-        
-        global TOTAL_MAPPED_READS
-        if TOTAL_MAPPED_READS == None:
-            TOTAL_MAPPED_READS = rnaseq_reads.mapped
-            if TOTAL_MAPPED_READS == 0:
-                raise ValueError, "Can't determine the number of reads in the RNASeq BAM (by samtools idxstats). Please set --num-mapped-rnaseq-reads"
-        assert TOTAL_MAPPED_READS > 0
-        
+        # load and initialize the rnaseq read bams. 
+        rnaseq_reads = load_rnaseq_reads(
+            rnaseq_bams, rnaseq_strands_need_to_be_reversed, ref_genes)
+                
         if VERBOSE: log_statement( 'Loading promoter reads bams' )        
         promoter_reads = load_promoter_reads(cage_bams, rampage_bams)
 
