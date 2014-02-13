@@ -12,7 +12,7 @@ config = {
     'url': 'http://grit-bio.org/',
     'download_url': 'http://grit-bio.org/git/',
     'author_email': 'npboley@gmail.com',
-    'version': '0.1.2',
+    'version': '1.0.0',
     'packages': ['grit', 'grit.analyze', 'grit.build', 'grit.files', 
                  'grit.lib', 'grit.proteomics', 
                  'grit.random_forest', 'grit.simulator'],
