@@ -1649,7 +1649,7 @@ def parse_arguments():
 
     class ValidateRnaSeqReadType(argparse.Action):
         def __call__(self, parser, args, values, option_string=None):
-            valid_strands = set(('forward', 'backward'))
+            valid_strands = set(('forward', 'backward', 'auto'))
             for strand in values:
                 if strand not in valid_strands:
                     raise ValueError('invalid strand {s!r}'.format(s=strand))
@@ -1661,10 +1661,10 @@ def parse_arguments():
     parser.add_argument( 
         '--rnaseq-reads', required=True, nargs="+",type=argparse.FileType('rb'),
         help='BAM file containing mapped RNAseq reads.')
-    parser.add_argument( '--rnaseq-read-type', required=True, nargs='+',
+    parser.add_argument( '--rnaseq-read-type', nargs='+', 
                          action=ValidateRnaSeqReadType,
-                         metavar=["forward", "backward"],
-        help='Whether or not the first RNAseq read in a pair needs to be reversed to be on the correct strand.')
+                         metavar=["forward", "backward", "auto"],
+        help="If 'forward' then the first RNAseq read in a pair that maps to the genome without being reverse complemented is assumed to be on the correct strand. default: auto")
     parser.add_argument( '--num-mapped-rnaseq-reads', type=int,
         help="The total number of mapped rnaseq reads ( needed to calculate the FPKM ). This only needs to be set if it isn't found by a call to samtools idxstats." )
     
@@ -1739,6 +1739,11 @@ def parse_arguments():
     
     global FIX_CHRM_NAMES_FOR_UCSC
     FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
+
+    if ((    args.rnaseq_read_type == None 
+            or any(x=='auto' for x in args.rnaseq_read_type) )
+        and None == args.reference ):
+        raise ValueError, "--reference must be set if --rnaseq-read-type is not set or set to 'auto' (GRIT needs an annotation to determine the rnaseq read type)"
     
     if None == args.reference and args.use_reference_genes:
         raise ValueError, "--reference must be set if --use-reference-genes is set"
@@ -1783,9 +1788,12 @@ def parse_arguments():
          and not args.use_reference_polyas ):
         raise ValueError, "Either --polya-reads or --use-reference-tes or --use-reference-polyas must be set"
     
-    rnaseq_strands_need_to_be_reversed = [ 
-        bool(read_type.lower() == 'backward')
-        for read_type in args.rnaseq_read_type ]
+    if args.rnaseq_read_type == None:
+        rnaseq_strands_need_to_be_reversed = None
+    else:
+        rnaseq_strands_need_to_be_reversed = [ 
+            bool(read_type.lower() == 'backward')
+            for read_type in args.rnaseq_read_type ]
     
     return args.rnaseq_reads, rnaseq_strands_need_to_be_reversed, \
         args.cage_reads, args.rampage_reads, args.polya_reads, \
@@ -1828,12 +1836,23 @@ def main():
     # wrap everything in a try block so that we can with elegantly handle
     # uncaught exceptions
     try:
+        # if we need to infer the rnaseq stand, then we need to load the 
+        # annotation. Initialize ref_genes to None so that we can load
+        # it later if necessary
+        ref_genes = None
+        if None == rnaseq_strands_need_to_be_reversed:
+            if VERBOSE: log_statement("Loading annotation file.")
+            ref_genes = load_gtf( ref_gtf_fname )
+        
         if VERBOSE: log_statement( 'Loading RNAseq read bams' )
-        rnaseq_reads = MergedReads([ 
-            RNAseqReads(rnaseq_bam.name).init(
-                reverse_read_strand=reverse_rnaseq_strand)
-            for rnaseq_bam, reverse_rnaseq_strand in 
-            zip(rnaseq_bams, rnaseq_strands_need_to_be_reversed) ])
+        all_reads = []
+        for i, rnaseq_bam_fp in enumerate(rnaseq_bams):
+            reads = RNAseqReads(rnaseq_bam_fp.name)
+            rev_reads = None if None == rnaseq_strands_need_to_be_reversed else\
+                rnaseq_strands_need_to_be_reversed[i]
+            reads.init(reverse_read_strand=rev_reads, ref_genes=ref_genes)
+            all_reads.append(reads)
+        rnaseq_reads = MergedReads(all_reads)
         
         global TOTAL_MAPPED_READS
         if TOTAL_MAPPED_READS == None:
@@ -1857,8 +1876,8 @@ def main():
             [ reads for reads in [rnaseq_reads, promoter_reads, polya_reads]
               if reads != None ] )
         contig_lens = dict(zip(contigs, contig_lens))
-        
-        if any( ref_elements_to_include ):
+
+        if ref_genes == None and any( ref_elements_to_include ):
             if VERBOSE: log_statement("Loading annotation file.")
             ref_genes = load_gtf( ref_gtf_fname )
         else:
