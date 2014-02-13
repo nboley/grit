@@ -21,6 +21,19 @@ VERBOSE = False
 DEBUG_VERBOSE = False
 NTHREADS = 1
 
+"""
+TODO
+
+Use pysam fasta parser
+Use GRIT gene loader
+replace get_elements_from_gene with the GRIT elements code
+
+split into:
+train from bam, polya-site-seq assay, and GRIT run
+predict on just a bam
+
+"""
+
 ################################################################################
 
 
@@ -32,19 +45,21 @@ def reverse_strand( seq ):
 # The upstream and downstream motifs
 #
 # Retelska et al. BMC Genomics 2006 7:176   doi:10.1186/1471-2164-7-176
-use = '''92.1 2.26 1.36 4.26
-74.72 0.54 4.57 20.14
-1.76 1.02 3.25 93.94
-98.43 0.15 1.36 0.04
-96.67 2.49 0.28 0.55
-99.46 0.18 0.18 0.17'''.split('\n')
+use = '''92.1 2.26 1.36 4.26  0
+74.72 0.54 4.57 20.14 0
+1.76 1.02 3.25 93.94 0
+98.43 0.15 1.36 0.04 0
+96.67 2.49 0.28 0.55 0
+99.46 0.18 0.18 0.17 0'''.split('\n')
 #import pdb; pdb.set_trace()
 mRNA_LUSE = [ map(float,u.split(' ')) for u in use ]
 LUSE = [ mRNA[::-1] for mRNA in mRNA_LUSE[::-1] ] 
 
 
 # Retelska et al. BMC Genomics 2006 7:176   doi:10.1186/1471-2164-7-176 and meme
-mRNA_list = ['ataaa', 'attaaa', 'agtaaa', 'tataaa', 'aataaa', 'aattaaa', 'aagtaaa', 'atataaa']
+mRNA_list = ['ataaa', 'attaaa', 'agtaaa', 
+             'tataaa', 'aataaa', 'aattaaa', 
+             'aagtaaa', 'atataaa']
 word_list = []
 for word in mRNA_list:
     word_list.append( reverse_strand( word ) ) 
@@ -54,13 +69,13 @@ for word in mRNA_list:
 # T G/T G/T T/G G/T G/T C/T
 # T T T T G T T 
 # Retelska et al. BMC Genomics 2006 7:176   doi:10.1186/1471-2164-7-176
-dse = '''8.72 6.62 10.52 74.13
-1.72 18.64 37.31 42.3
-4.94 20.65 9.25 65.15
-1.52 68.43 14.13 15.89
-8.66 0.15 0.00 91.16
-0.11 7.63 59.4 32.85
-9.08 20.42 22.58 47.9'''.split('\n')
+dse = '''8.72 6.62 10.52 74.13 0
+1.72 18.64 37.31 42.3 0
+4.94 20.65 9.25 65.15 0
+1.52 68.43 14.13 15.89 0
+8.66 0.15 0.00 91.16 0
+0.11 7.63 59.4 32.85 0
+9.08 20.42 22.58 47.9 0'''.split('\n')
 
 mRNA_LDSE = [ map(float,d.split(' ')) for d in dse ]
 LDSE = [ mRNA[::-1] for mRNA in mRNA_LDSE[::-1] ] 
@@ -158,7 +173,8 @@ def polyA_dict_2_intersecter( polyA ):
         if not polyA_I.has_key((chrm,strand)):
             polyA_I[(chrm,strand)] = Intersecter()
         for p_site in polyA[(chrm,strand)]:
-            polyA_I[(chrm,strand)].add( p_site,p_site, [ p_site, polyA[(chrm,strand)][p_site] ] ) 
+            polyA_I[(chrm,strand)].add( 
+                p_site, p_site, [p_site, polyA[(chrm,strand)][p_site]] ) 
     return polyA_I
             
 
@@ -533,7 +549,10 @@ def extract_covariates_from_seqs( seqs, w, polyA_density_curr,
 
         ##### Add a covariate ##################################################
         # add all the motif-related covariates #################################
-        Big_X[ind].extend( [mx_U_20_40, loc_mx_U_20_40, mx_mU_20_40, loc_mx_mU_20_40, mx_D_55_80, loc_mx_D_55_80, mx_D_80_100, loc_mx_D_80_100, D_sum_55_80, D_sum_80_100] )
+        Big_X[ind].extend( [mx_U_20_40, loc_mx_U_20_40, mx_mU_20_40, 
+                            loc_mx_mU_20_40, mx_D_55_80, loc_mx_D_55_80, 
+                            mx_D_80_100, loc_mx_D_80_100, 
+                            D_sum_55_80, D_sum_80_100] )
 
 
         # get the RNA densities 
@@ -855,6 +874,13 @@ def parse_arguments():
                   args.true_positive_tes, args.rnaseq_reads )
     for fp in ret_files: fp.close()
     return [ fp.name for fp in ret_files ]
+
+
+def fit_forest(rnaseq_reads, polya_reads, true_polya_regions):
+    pass
+
+def predict_active_polya_sites(forest, rnaseq_reads, candidate_polya_sites):
+    pass
 
 
 def main():
