@@ -427,18 +427,49 @@ class Reads( pysam.Samfile ):
         return reads
 
 class RNAseqReads(Reads):    
-    def init(self, reverse_read_strand, reads_are_stranded=True, 
-                   pairs_are_opp_strand=None, reads_are_paired=True):        
+    def determine_reverse_read_strand_param(
+            self, ref_genes, pairs_are_opp_strand, 
+            MIN_NUM_READS_PER_GENE=100):
+        cnt_diff_strand = 0
+        cnt_same_strand = 0
+        for gene in ref_genes:
+            reads_match = {True: 0, False: 0}
+            exons = gene.extract_elements()['internal_exon']
+            for start, stop in exons:
+                for rd in self.fetch(gene.chrm, start, stop):
+                    rd_strand = get_strand(rd, False, pairs_are_opp_strand)
+                    if gene.strand == rd_strand: reads_match[True] += 1
+                    else: reads_match[False] += 1
+            # make sure that we have at least a hundred reads in this gene
+            
+            if sum(reads_match.values()) < MIN_NUM_READS_PER_GENE: continue
+            if reads_match[True] > MIN_NUM_READS_PER_GENE*reads_match[False]:
+                cnt_same_strand += 1
+            if reads_match[False] > MIN_NUM_READS_PER_GENE*reads_match[True]:
+                cnt_diff_strand += 1
+
+            if cnt_same_strand > 10: return False
+            if cnt_diff_strand > 10: return True
+        
+        assert False, "Could not determine 'reverse_read_strand' paramter for '%s'" \
+            % self.filename
+    
+    def init(self, reverse_read_strand=None, reads_are_stranded=True, 
+                   pairs_are_opp_strand=None, reads_are_paired=True,
+                   ref_genes=None):        
         assert self.is_indexed()
         
         assert reads_are_paired == True, "GRIT can only use paired RNAseq reads"
         assert reads_are_stranded == True, "GRIT can only use stranded RNAseq"
+
+        self._build_chrm_mapping()
         
         if pairs_are_opp_strand == None:
             pairs_are_opp_strand = not read_pairs_are_on_same_strand( self )
         
         if reverse_read_strand == None:
-            reverse_read_strand = self.determine_reverse_read_strand_param()
+            reverse_read_strand = self.determine_reverse_read_strand_param(
+                ref_genes, pairs_are_opp_strand)
         
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )

@@ -766,8 +766,8 @@ def parse_arguments():
     parser.add_argument( '--rnaseq-reads', 
                          type=argparse.FileType('rb'), nargs='+',
         help='BAM files containing mapped RNAseq reads ( must be indexed ).')
-    parser.add_argument( '--rnaseq-read-type',
-        choices=["forward", "backward"],
+    parser.add_argument( '--rnaseq-read-type', default='auto',
+        choices=["forward", "backward", "auto"],
         help='Whether or not the first RNAseq read in a pair needs to be reversed to be on the correct strand.')
     
     parser.add_argument( '--cage-reads', type=file, default=[], nargs='*', 
