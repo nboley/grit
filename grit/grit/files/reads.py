@@ -309,13 +309,13 @@ class Reads( pysam.Samfile ):
         cnt_same_strand = 0
         for gene in ref_genes:
             reads_match = {True: 0, False: 0}
-            exons = gene.extract_elements()['tss_exon']
+            exons = gene.extract_elements()[element_to_search]
             for start, stop in exons:
-                for rd in self.fetch(gene.chrm, max(0, start-100), stop):
+                for rd in self.fetch(gene.chrm, max(0, start), stop):
                     rd_strand = get_strand(rd, False, pairs_are_opp_strand)
                     if gene.strand == rd_strand: reads_match[True] += 1
                     else: reads_match[False] += 1
-
+            
             # make sure that we have at least MIN_NUM_READS_PER_GENE 
             # reads in this gene
             if sum(reads_match.values()) < MIN_NUM_READS_PER_GENE: continue
@@ -592,7 +592,8 @@ class RAMPAGEReads(Reads):
 
 
 class PolyAReads(Reads):
-    def init(self, reverse_read_strand, pairs_are_opp_strand=None ):       
+    def init(self, reverse_read_strand=None, pairs_are_opp_strand=None, 
+             ref_genes=None ):
         assert self.is_indexed()
 
         reads_are_paired = True
@@ -601,6 +602,13 @@ class PolyAReads(Reads):
         # reads strandedness
         if pairs_are_opp_strand == None:
             pairs_are_opp_strand = read_pairs_are_on_same_strand( self )
+
+        if reverse_read_strand in ('auto', None):
+            if ref_genes in([], None): 
+                raise ValueError, "Determining reverse_read_strand requires reference genes"
+            reverse_read_strand = Reads.determine_reverse_read_strand_param(
+                self, ref_genes, pairs_are_opp_strand, 'tes_exon',
+                100, 10 )
         
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
@@ -623,7 +631,7 @@ class PolyAReads(Reads):
             if rd.is_paired and rd.is_read1: continue
             
             # determine the strand of the poly(A) site
-            rd_strand = '-' if rd.is_reverse else '+'
+            rd_strand = '+' if rd.is_reverse else '-'
             if self.reverse_read_strand:
                 rd_strand = '-' if rd_strand == '+' else '+'
             
