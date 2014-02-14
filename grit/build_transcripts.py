@@ -14,6 +14,9 @@ import Queue
 import multiprocessing
 from lib.multiprocessing_utils import Pool
 
+import lib.arg_parsing
+from lib.arg_parsing import initialize_reads_from_args
+
 from files.gtf import load_gtf, Transcript, Gene
 from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads, \
     fix_chrm_name_for_ucsc
@@ -749,7 +752,15 @@ def initialize_processing_data( elements, genes, fl_dists,
 
 def parse_arguments():
     import argparse
-
+    
+    class ValidateReadType(argparse.Action):
+        def __call__(self, parser, args, values, option_string=None):
+            valid_strands = set(('forward', 'backward', 'auto'))
+            for strand in values:
+                if strand not in valid_strands:
+                    raise ValueError('invalid strand {s!r}'.format(s=strand))
+            setattr(args, self.dest, values)
+    
     parser = argparse.ArgumentParser(
         description='Determine valid transcripts and estimate frequencies.')
     parser.add_argument( '--ofname', help='Output filename.', 
@@ -772,11 +783,24 @@ def parse_arguments():
     
     parser.add_argument( '--cage-reads', type=file, default=[], nargs='*', 
         help='BAM files containing mapped cage reads.')
+    parser.add_argument( '--cage-read-type', nargs='+', 
+                         action=ValidateReadType,
+                         metavar=["forward", "backward", "auto"],
+        help="If 'forward' then the reads that maps to the genome without being reverse complemented are assumed to be on the '+'. default: auto")
+
     parser.add_argument( '--rampage-reads', type=file, default=[], nargs='*',
         help='BAM files containing mapped rampage reads.')
-
+    parser.add_argument( '--rampage-read-type', nargs='+', 
+                         action=ValidateReadType,
+                         metavar=["forward", "backward", "auto"],
+        help="If 'forward' then the first read in a pair that maps to the genome without being reverse complemented are assumed to be on the '+' strand. default: auto")
+    
     parser.add_argument( '--polya-reads', type=file, default=[], nargs='*', 
         help='BAM files containing mapped poly(A)-seq reads.')
+    parser.add_argument( '--polya-read-type', nargs='+', 
+                         action=ValidateReadType,
+                         metavar=["forward", "backward", "auto"],
+        help="If 'forward' then the reads that maps to the genome without being reverse complemented are assumed to be on the '+'. default: auto")
     
     parser.add_argument( '--fasta', type=file,
         help='Fasta file containing the genome sequence - if provided the ORF finder is automatically run.')
@@ -827,10 +851,7 @@ def parse_arguments():
     if args.only_build_candidate_transcripts == True \
             and args.estimate_confidence_bounds == True:
         raise ValueError, "--only-build-candidate-transcripts and --estimate-confidence-bounds may not both be set"
-    
-    reverse_rnaseq_strand = ( 
-        True if args.rnaseq_read_type == 'backward' else False )
-    
+        
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
     frequency_estimation.DEBUG_VERBOSE = DEBUG_VERBOSE
@@ -838,7 +859,8 @@ def parse_arguments():
     global VERBOSE
     VERBOSE = ( args.verbose or DEBUG_VERBOSE )
     frequency_estimation.VERBOSE = VERBOSE
-        
+    lib.arg_parsing.VERBOSE = VERBOSE
+    
     global PROCESS_SEQUENTIALLY
     if args.threads == 1:
         PROCESS_SEQUENTIALLY = True
@@ -878,13 +900,12 @@ def parse_arguments():
                 "gene_short_name", "tss_id", "locus", "length", "coverageFPKM", 
                 "FPKM_conf_lo", "FPKM_conf_hi", "FPKM_status" ]
 
-    expression_ofp.write( "\t".join(columns) + "\n" )
+    expression_ofp.write( "\t".join(columns) + "\n" )        
     
-    return ( args.elements, args.transcripts, args.rnaseq_reads, 
-             args.cage_reads, args.rampage_reads, args.polya_reads,
-             gtf_ofp, expression_ofp, args.fasta, reverse_rnaseq_strand, 
+    return ( args.elements, args.transcripts, 
+             gtf_ofp, expression_ofp, args.fasta, 
              args.estimate_confidence_bounds, args.write_design_matrices, 
-             not args.batch_mode )
+             not args.batch_mode, args )
 
 def worker( input_queue, input_queue_lock,
             output_dict_lock, output_dict,
@@ -973,10 +994,19 @@ def spawn_and_manage_children( input_queue, input_queue_lock,
 def main():
     # Get file objects from command line
     (exons_bed_fp, transcripts_gtf_fp, 
-     rnaseq_bams, cage_bams, rampage_bams, polya_bams,
-     gtf_ofp, expression_ofp, fasta, reverse_rnaseq_strand,
+     gtf_ofp, expression_ofp, fasta, 
      estimate_confidence_bounds, write_design_matrices, 
-     use_ncurses) = parse_arguments()
+     use_ncurses, args) = parse_arguments()
+
+
+    ( rnaseq_bams, rnaseq_read_type, 
+      cage_bams, cage_read_type, 
+      rampage_bams, rampage_read_type, 
+      polya_bams, polya_read_type ) = (
+        args.rnaseq_reads, args.rnaseq_read_type, 
+        args.cage_reads, args.cage_read_type, 
+        args.rampage_reads, args.rampage_read_type, 
+        args.polya_reads, args.polya_read_type )
     
     global log_statement
     # add an extra thread for the background writer
@@ -985,6 +1015,7 @@ def main():
                            use_ncurses=use_ncurses, 
                            log_ofstream=log_fp )
     frequency_estimation.log_statement = log_statement
+    lib.arg_parsing.log_statement = log_statement
     
     try:
         manager = multiprocessing.Manager()
@@ -1005,11 +1036,18 @@ def main():
             genes = load_gtf( transcripts_gtf_fp )
             elements = extract_elements_from_genes(genes)
             log_statement( "Finished Loading %s" % transcripts_gtf_fp.name )
+
         
         if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
             log_statement( "Loading data files." )
+            if 'forward' == rnaseq_read_type.lower():
+                rev_read_strand = False
+            elif 'backward' == rnaseq_read_type.lower():
+                rev_read_strand = False
+            else:
+                raise ValueError, "Unrecognized read strand type '%s'" % rnaseq_read_type
             rnaseq_reads = [ RNAseqReads(fp.name).init(
-                             reverse_read_strand=reverse_rnaseq_strand) 
+                             reverse_read_strand=rev_read_strand)
                              for fp in rnaseq_bams ]
             for fp in rnaseq_bams: fp.close()    
 
@@ -1027,6 +1065,7 @@ def main():
             cage_reads = [ CAGEReads(fp.name).init(reverse_read_strand=True) 
                            for fp in cage_bams ]    
             for fp in cage_bams: fp.close()
+            
             rampage_reads = [ 
                 RAMPAGEReads(fp.name).init(reverse_read_strand=True) 
                 for fp in rampage_bams ]
@@ -1040,7 +1079,7 @@ def main():
                 for fp in polya_bams  ]
             assert len(polya_reads) <= 1
             log_statement( "Finished loading data files." )
-            
+                        
             # estimate the fragment length distribution
             log_statement( "Estimating the fragment length distribution" )
             fl_dists = build_fl_dists( 
