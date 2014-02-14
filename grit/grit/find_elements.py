@@ -25,6 +25,9 @@ from files.bed import create_bed_line
 from files.gtf import parse_gtf_line, load_gtf
 
 from lib.logging import Logger
+import lib.arg_parsing
+from lib.arg_parsing import initialize_reads_from_args
+
 # log statement is set in the main init, and is a global
 # function which facilitates smart, ncurses based logging
 log_statement = None
@@ -1686,6 +1689,10 @@ def parse_arguments():
 
     parser.add_argument( '--polya-reads',nargs='+',type=argparse.FileType('rb'),
         help='BAM file containing mapped polya reads.')
+    parser.add_argument( '--polya-read-type', nargs='+', 
+                         action=ValidateReadType,
+                         metavar=["forward", "backward", "auto"],
+        help="If 'forward' then the reads that maps to the genome without being reverse complemented are assumed to be on the '+'. default: auto")
     
     parser.add_argument( '--reference', help='Reference GTF')
     parser.add_argument( '--use-reference-genes', 
@@ -1740,6 +1747,7 @@ def parse_arguments():
     global VERBOSE
     VERBOSE = args.verbose
     files.junctions.VERBOSE = VERBOSE
+    lib.arg_parsing.VERBOSE = VERBOSE
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
 
@@ -1750,21 +1758,14 @@ def parse_arguments():
     global FIX_CHRM_NAMES_FOR_UCSC
     FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
 
-    if ((    args.rnaseq_read_type == None 
-            or any(x=='auto' for x in args.rnaseq_read_type) )
-        and None == args.reference ):
-        raise ValueError, "--reference must be set if --rnaseq-read-type is not set or set to 'auto' (GRIT needs an annotation to determine the rnaseq read type)"
-
-    if ((    args.cage_read_type == None 
-            or any(x=='auto' for x in args.cage_read_type) )
-        and None == args.reference ):
-        raise ValueError, "--reference must be set if --cage-read-type is not set or set to 'auto' (GRIT needs an annotation to determine the read type)"
-
-    if ((    args.rampage_read_type == None 
-            or any(x=='auto' for x in args.rampage_read_type) )
-        and None == args.reference ):
-        raise ValueError, "--reference must be set if --rampage-read-type is not set or set to 'auto' (GRIT needs an annotation to determine the rampage read type)"
-
+    global log_statement
+    log_ofstream = open( ".".join(args.ofname.split(".")[:-1]) + ".log", "w" )
+    log_statement = Logger(
+        nthreads=NTHREADS+1, 
+        use_ncurses=(not args.batch_mode), 
+        log_ofstream=log_ofstream)
+    lib.arg_parsing.log_statement = log_statement
+    
     
     if None == args.reference and args.use_reference_genes:
         raise ValueError, "--reference must be set if --use-reference-genes is set"
@@ -1809,128 +1810,33 @@ def parse_arguments():
          and not args.use_reference_polyas ):
         raise ValueError, "Either --polya-reads or --use-reference-tes or --use-reference-polyas must be set"
     
-    if args.rnaseq_read_type == None:
-        rnaseq_strands_need_to_be_reversed = ['auto']*len(args.rnaseq_reads)
-    else:
-        rnaseq_strands_need_to_be_reversed = [ 
-            bool(read_type.lower() == 'backward')
-            for read_type in args.rnaseq_read_type ]
-
-    if args.cage_read_type == None:
-        cage_strands_need_to_be_reversed = ['auto']*(0 if args.cage_reads == None else len(args.cage_reads))
-    else:
-        cage_strands_need_to_be_reversed = [ 
-            bool(read_type.lower() == 'backward')
-            for read_type in args.cage_read_type ]
-
-    if args.rampage_read_type == None:
-        rampage_strands_need_to_be_reversed = ['auto']*(0 if args.rampage_reads == None else len(args.rampage_reads))
-    else:
-        rampage_strands_need_to_be_reversed = [ 
-            bool(read_type.lower() == 'backward')
-            for read_type in args.rampage_read_type ]
+    (promoter_reads, rnaseq_reads, polya_reads, 
+     ref_genes) = initialize_reads_from_args(args)
     
-    return ( args.rnaseq_reads, rnaseq_strands_need_to_be_reversed, 
-             args.cage_reads, cage_strands_need_to_be_reversed, 
-             args.rampage_reads, rampage_strands_need_to_be_reversed, 
-             args.polya_reads, 
-             ofp, args.reference, ref_elements_to_include, 
-             not args.batch_mode, 
-             clean_chr_name(args.region) if args.region != None else None )
-
-
-def load_promoter_reads(cage_bams, cage_strands_need_to_be_reversed,
-                        rampage_bams, rampage_strands_need_to_be_reversed,
-                        ref_genes = None):
-    assert cage_bams == None or rampage_bams == None, \
-        "Can not use both RAMPAGE and CAGE reads"
-    if cage_bams != None: 
-        bams = cage_bams
-        reads_class = CAGEReads
-        strands_need_to_be_reversed = cage_strands_need_to_be_reversed
-    elif rampage_bams != None: 
-        bams =rampage_bams
-        reads_class = RAMPAGEReads
-        strands_need_to_be_reversed = rampage_strands_need_to_be_reversed
-    else: return None
-
-    all_reads = []
-    for i, bam_fp in enumerate(bams):
-        reads = reads_class(bam_fp.name)
-        rev_reads = None if strands_need_to_be_reversed == None else \
-            strands_need_to_be_reversed[i]
-        reads.init(reverse_read_strand=rev_reads, ref_genes=ref_genes)
-        all_reads.append(reads)
-    
-    return MergedReads(all_reads)
-
-def load_rnaseq_reads(rnaseq_bams, rnaseq_strands_need_to_be_reversed, ref_genes=None):
-    if VERBOSE: log_statement( 'Loading RNAseq read bams' )
-    all_reads = []
-    for i, rnaseq_bam_fp in enumerate(rnaseq_bams):
-        reads = RNAseqReads(rnaseq_bam_fp.name)
-        rev_reads = None if None == rnaseq_strands_need_to_be_reversed else\
-            rnaseq_strands_need_to_be_reversed[i]
-        reads.init(reverse_read_strand=rev_reads, ref_genes=ref_genes)
-        all_reads.append(reads)
-    
-    rnaseq_reads = MergedReads(all_reads)
-    
-    global TOTAL_MAPPED_READS
     if TOTAL_MAPPED_READS == None:
         TOTAL_MAPPED_READS = rnaseq_reads.mapped
         if TOTAL_MAPPED_READS == 0:
             raise ValueError, "Can't determine the number of reads in the RNASeq BAM (by samtools idxstats). Please set --num-mapped-rnaseq-reads"
     assert TOTAL_MAPPED_READS > 0
 
-    return rnaseq_reads
+    
+    return ( promoter_reads, rnaseq_reads, polya_reads,
+             ofp, ref_genes, ref_elements_to_include, 
+             clean_chr_name(args.region) if args.region != None else None )
 
 def main():
-    ( rnaseq_bams, rnaseq_strands_need_to_be_reversed, 
-      cage_bams, cage_strands_need_to_be_reversed,
-      rampage_bams, rampage_strands_need_to_be_reversed,
-      polya_bams,
-      ofp, ref_gtf_fname, ref_elements_to_include, 
-      use_ncurses, region_to_use ) = parse_arguments()
-    
-    global log_statement
-    log_ofstream = open( ".".join(ofp.name.split(".")[:-1]) + ".log", "w" )
-    log_statement = Logger(
-        nthreads=NTHREADS+1, 
-        use_ncurses=use_ncurses, 
-        log_ofstream=log_ofstream)
-
+    ( promoter_reads, rnaseq_reads, polya_reads,
+      ofp, ref_genes, ref_elements_to_include, 
+      region_to_use ) = parse_arguments()
+        
     # wrap everything in a try block so that we can with elegantly handle
     # uncaught exceptions
     try:
         # if we need to infer the rnaseq stand, then we need to load the 
         # annotation. Initialize ref_genes to None so that we can load
         # it later if necessary
-        if ref_gtf_fname != None:
-            if VERBOSE: log_statement("Loading annotation file.")
-            ref_genes = load_gtf( ref_gtf_fname )
-        else:
-            ref_genes = []
-        
-        # load and initialize the rnaseq read bam, including the global
-        # TOTAL_MAPPED_READS variable
-        rnaseq_reads = load_rnaseq_reads(
-            rnaseq_bams, rnaseq_strands_need_to_be_reversed, ref_genes)
+
                 
-        if VERBOSE: log_statement( 'Loading promoter reads bams' )        
-        promoter_reads = load_promoter_reads(
-            cage_bams, cage_strands_need_to_be_reversed,
-            rampage_bams, rampage_strands_need_to_be_reversed,
-            ref_genes=ref_genes)
-        
-        if VERBOSE: log_statement( 'Loading polyA reads bams' )        
-        polya_reads = None
-        if polya_bams != None:
-            polya_reads = MergedReads([
-                    PolyAReads(polya_bam.name).init(
-                        reverse_read_strand=True, pairs_are_opp_strand=True) 
-                    for polya_bam in polya_bams ])
-        
         contigs, contig_lens = get_contigs_and_lens( 
             [ reads for reads in [rnaseq_reads, promoter_reads, polya_reads]
               if reads != None ] )
@@ -1961,11 +1867,9 @@ def main():
     except Exception, inst:
         log_statement( "FATAL ERROR" )
         log_statement( traceback.format_exc() )
-        log_ofstream.close()
         log_statement.close()
         raise
     else:
-        log_ofstream.close()
         log_statement.close()
     
 if __name__ == '__main__':
