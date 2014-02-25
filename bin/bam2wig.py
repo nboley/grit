@@ -8,8 +8,8 @@ import time
 from itertools import izip
 
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), ".." ) )
-from grit.files.reads import iter_coverage_intervals_for_read, clean_chr_name, \
-    get_strand, CAGEReads, RAMPAGEReads, RNAseqReads, PolyAReads
+from grit.files.reads import clean_chr_name, \
+    CAGEReads, RAMPAGEReads, RNAseqReads, PolyAReads
 from grit.lib.multiprocessing_utils import ProcessSafeOPStream
 
 import multiprocessing
@@ -196,9 +196,8 @@ def main():
         assert not reverse_read_strand
     elif assay == 'polya':
         reads = PolyAReads( reads_fname, "rb" )
-        reads.init(reverse_read_strand=True, pairs_are_opp_strand=True)
+        reads.init(reverse_read_strand=reverse_read_strand, pairs_are_opp_strand=True)
         stranded = True
-        assert not reverse_read_strand
     elif assay == 'rnaseq':
         reads = RNAseqReads( reads_fname, "rb" )
         # the read strand reversal is done later, so set this to False
