@@ -492,8 +492,14 @@ class CAGEReads(Reads):
                 peak_pos = rd.pos
             if peak_pos < start or peak_pos > stop:
                 continue
-            cvg[peak_pos-start] += 1
-        
+            
+            # get the posterior mapping probability, if it exists
+            cnt = 1.
+            for tag, value in rd.tags:
+                if tag == 'XP':
+                    cnt = value
+                    break
+            cvg[peak_pos-start] += cnt
         return cvg
 
 class RAMPAGEReads(Reads):
