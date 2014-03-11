@@ -70,7 +70,8 @@ def get_read_group( r1, r2 ):
         return None
 
 
-def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000, max_num_reads_to_check=5000000 ):
+def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000, 
+                                   max_num_reads_to_check=100000 ):
     # keep track of which fractiona re on the sam strand
     paired_cnts = {'no_mate': 0, 'same_strand': 1e-4, 'diff_strand': 1e-4}
     
@@ -78,6 +79,9 @@ def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000, max_nu
     num_observed_reads = 0
     for read in bam_obj:
         num_observed_reads += 1
+        if num_observed_reads > max_num_reads_to_check:
+            break
+        
         if read.is_paired and read.mate_is_unmapped:
             continue
         
@@ -99,10 +103,7 @@ def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000, max_nu
                 return True
             elif float(paired_cnts['diff_strand'])/paired_cnts['same_strand'] > 5:
                 return False
-            
-        if num_good_reads > max_num_reads_to_check:
-            break
-
+    
     # if we have run out of reads, see if we can build the statistic
     if paired_cnts['no_mate'] >= 0.95*num_good_reads:
         return True
@@ -353,11 +354,14 @@ class Reads( pysam.Samfile ):
 
     def is_indexed( self ):
         return True
-
+    
+    def get_strand(self, read):
+        return get_strand( 
+            read, self.reverse_read_strand, self.pairs_are_opp_strand )
+    
     def iter_reads( self, chrm, strand, start=None, stop=None ):
         for read in self.fetch( chrm, start, stop  ):
-            rd_strand = get_strand( 
-                read, self.reverse_read_strand, self.pairs_are_opp_strand )
+            rd_strand = self.get_strand(read)
             if rd_strand == strand:
                 yield read
         
@@ -496,7 +500,7 @@ class CAGEReads(Reads):
             # get the posterior mapping probability, if it exists
             cnt = 1.
             for tag, value in rd.tags:
-                if tag == 'XP':
+                if tag == 'XP' and isinstance(value, float):
                     cnt = value
                     break
             cvg[peak_pos-start] += cnt
