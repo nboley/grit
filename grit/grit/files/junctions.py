@@ -19,6 +19,7 @@ CONSENSUS_PLUS = 'GTAG'
 CONSENSUS_MINUS = 'CTAC'
 
 MIN_INTRON_LEN = 20
+MIN_FLANKING_SIZE = 12
 
 def get_jn_type( chrm, upstrm_intron_pos, dnstrm_intron_pos, 
                  fasta, jn_strand="UNKNOWN" ):
@@ -109,43 +110,39 @@ class Junction( _JnNamedTuple ):
         return create_gff_line( 
             self.region, group_id_str, score=count, feature='intron' )
 
+def iter_jns_in_read( read ):
+    # quickly check if read could span a single intron
+    if len( read.cigar ) < 3:
+        return
+    
+    # find all of the intron indices
+    intron_indices = [i for i, (contig_type, length) in enumerate(read.cigar)
+                      if contig_type == 3]
+    
+    # return if any of the junctions are too short
+    if any(read.cigar[i][1] < MIN_INTRON_LEN for i in intron_indices):
+        return
 
-def read_spans_single_intron( read ):
-    # quickly check if read could spans a single intron
-    if len( read.cigar ) != 3:
-        return False
-    
-    # check that cigar regions are alternating matching(exon) and \
-    # skipping(intron) regions
-    for i, cigar_region in enumerate(read.cigar):
-        if (i % 2 == 0 and cigar_region[0] != 0) or \
-                (i % 2 == 1 and cigar_region[0] != 3):
-            return False
-    
-    # if the read is not primary then do not include it in the counts
-    if read.is_secondary:
-        return False
-    
-    return True
+    # only accept reads with exactly 1 junction
+    if len(intron_indices) != 1: 
+        return
 
-def extract_junctions_in_region( reads, chrm, strand, start=None, end=None, 
-                                 allow_introns_to_span_start=False,
-                                 allow_introns_to_span_end=False):
-    reads.reload()
-    all_junctions = defaultdict(int)
-    for i, read in enumerate(reads.iter_reads(chrm, strand, start, end)):
-        # increment the number of times we've seen this read
-        if not read_spans_single_intron( read ):
-            continue
+    intron_index = intron_indices[0]
+    # iterate thorough all of the junctions
+    for intron_index in intron_indices:
+        # if the intron is at the beggining or end of the read, that doesn't 
+        # make any sense, so skip this read
+        if intron_index == 0: return
+        if intron_index == (len(read.cigar)-1): return
         
-        # find the introns
-        gaps = [ (i, size) for i, (code, size) in enumerate(read.cigar)
-                 if code == 3 and size > MIN_INTRON_LEN]
-        
-        # skip reads without exactly 1 substatnial gap
-        if len( gaps ) != 1: continue        
-        intron_index, intron_len = gaps[0]
-        
+        # skip introns that aren't flanked by a reference match
+        if read.cigar[intron_index-1][0] != 0: continue
+        if read.cigar[intron_index+1][0] != 0: continue
+
+        # skip introns whose reference match is too short
+        if read.cigar[intron_index-1][1] < MIN_FLANKING_SIZE: continue
+        if read.cigar[intron_index+1][1] < MIN_FLANKING_SIZE: continue
+
         # Find the start base of the intron. We need to add all of the 
         # match and skip bases, and delete the deletions
         n_pre_intron_bases = 0
@@ -160,22 +157,34 @@ def extract_junctions_in_region( reads, chrm, strand, start=None, end=None,
         upstrm_intron_pos = read.pos + n_pre_intron_bases + 1
         dnstrm_intron_pos = upstrm_intron_pos + read.cigar[intron_index][1] - 1
         
-        assert upstrm_intron_pos - dnstrm_intron_pos + 1 < MIN_INTRON_LEN
-                
-        # Filter out reads that aren't fully in the region
-        if start != None:
-            if dnstrm_intron_pos < start: continue
-            if not allow_introns_to_span_start and upstrm_intron_pos < start:
-                continue
+        yield (upstrm_intron_pos, dnstrm_intron_pos)
         
-        if end != None:
-            if upstrm_intron_pos > end: continue
-            if not allow_introns_to_span_end and dnstrm_intron_pos > end:
-                continue
-        
-        # increment count of junction reads at this read position
-        # for this intron or initialize it to 1
-        all_junctions[ (upstrm_intron_pos, dnstrm_intron_pos) ] += 1
+    return
+
+
+def extract_junctions_in_region( reads, chrm, strand, start=None, end=None, 
+                                 allow_introns_to_span_start=False,
+                                 allow_introns_to_span_end=False):
+    reads.reload()
+    all_junctions = defaultdict(int)
+    for i, read in enumerate(reads.iter_reads(chrm, strand, start, end)):
+        for upstrm_intron_pos, dnstrm_intron_pos in iter_jns_in_read( read ):
+            assert upstrm_intron_pos - dnstrm_intron_pos + 1 < MIN_INTRON_LEN
+
+            # Filter out reads that aren't fully in the region
+            if start != None:
+                if dnstrm_intron_pos < start: continue
+                if not allow_introns_to_span_start and upstrm_intron_pos<start:
+                    continue
+
+            if end != None:
+                if upstrm_intron_pos > end: continue
+                if not allow_introns_to_span_end and dnstrm_intron_pos>end:
+                    continue
+
+            # increment count of junction reads at this read position
+            # for this intron or initialize it to 1
+            all_junctions[ (upstrm_intron_pos, dnstrm_intron_pos) ] += 1
     
     return sorted( all_junctions.iteritems() )
 
