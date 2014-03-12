@@ -40,15 +40,21 @@ def get_chrm( read, bam_obj ):
 
 def get_strand( read, reverse_read_strand, pairs_are_opp_strand ):
     # make sure that the read is on the correct strand
-    if pairs_are_opp_strand  \
-            and ( ( read.is_read1 and not read.is_reverse ) \
-                      or ( read.is_read2 and read.is_reverse ) ):
-        strand = '+'
-    elif not pairs_are_opp_strand and not read.is_reverse:
-        strand = '+'
+    if read.is_paired:
+        if pairs_are_opp_strand  \
+                and ( ( read.is_read1 and not read.is_reverse ) \
+                          or ( read.is_read2 and read.is_reverse ) ):
+            strand = '+'
+        elif not pairs_are_opp_strand and not read.is_reverse:
+            strand = '+'
+        else:
+            strand = '-'
     else:
-        strand = '-'
-
+        if not read.is_reverse:
+            strand = '+'
+        else:
+            strand = '-'
+    
     if reverse_read_strand:
         if strand == '+':
             strand = '-'
@@ -320,15 +326,14 @@ class Reads( pysam.Samfile ):
             # make sure that we have at least MIN_NUM_READS_PER_GENE 
             # reads in this gene
             if sum(reads_match.values()) < MIN_NUM_READS_PER_GENE: continue
-
             if reads_match[True] > MIN_NUM_READS_PER_GENE*reads_match[False]:
                 cnt_same_strand += 1
             if reads_match[False] > MIN_NUM_READS_PER_GENE*reads_match[True]:
                 cnt_diff_strand += 1
-
-            # if we;ve succesfully explored enough genes, then return
-            if cnt_same_strand > 10: return False
-            if cnt_diff_strand > 10: return True
+            
+            # if we've succesfully explored enough genes, then return
+            if cnt_same_strand > 10 and cnt_same_strand > 5*cnt_diff_strand: return False
+            if cnt_diff_strand > 10 and cnt_diff_strand > 5*cnt_same_strand: return True
         
         assert False, "Could not determine 'reverse_read_strand' parameter for '%s'" \
             % self.filename
@@ -619,7 +624,6 @@ class PolyAReads(Reads):
             reverse_read_strand = Reads.determine_reverse_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'tes_exon',
                 100, 10 )
-        
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
         
@@ -641,9 +645,7 @@ class PolyAReads(Reads):
             if rd.is_paired and rd.is_read1: continue
             
             # determine the strand of the poly(A) site
-            rd_strand = '+' if rd.is_reverse else '-'
-            if self.reverse_read_strand:
-                rd_strand = '-' if rd_strand == '+' else '+'
+            rd_strand = self.get_strand(rd)
             
             # determine which pos of the read corresponds to the 
             # poly(a) site

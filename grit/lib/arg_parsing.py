@@ -144,5 +144,4 @@ def initialize_reads_from_args(args):
 
     polya_reads = load_polya_reads(
         args.polya_reads, polya_strands_need_to_be_reversed, ref_genes=ref_genes)
-
     return promoter_reads, rnaseq_reads, polya_reads, ref_genes
