@@ -1824,11 +1824,15 @@ def parse_arguments():
              clean_chr_name(args.region) if args.region != None else None )
 
 def find_elements( promoter_reads, rnaseq_reads, polya_reads,
-                   ofp, ref_genes, ref_elements_to_include, 
+                   ofname, ref_genes, ref_elements_to_include, 
                    region_to_use=None):
     # wrap everything in a try block so that we can with elegantly handle
     # uncaught exceptions
     try:
+        ofp = ThreadSafeFile( ofname, "w" )
+        ofp.write('track name="%s" visibility=2 itemRgb="On" useScore=1\n' \
+                  % ofname)
+        
         contigs, contig_lens = get_contigs_and_lens( 
             [ reads for reads in [rnaseq_reads, promoter_reads, polya_reads]
               if reads != None ] )
@@ -1859,10 +1863,12 @@ def find_elements( promoter_reads, rnaseq_reads, polya_reads,
     except Exception, inst:
         log_statement( "FATAL ERROR" )
         log_statement( traceback.format_exc() )
-        log_statement.close()
+        ofp.close()
         raise
     else:
-        log_statement.close()
+        ofp.close()
+    
+    return ofname
 
 def main():
     ( promoter_reads, rnaseq_reads, polya_reads,
