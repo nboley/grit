@@ -26,10 +26,7 @@ from frag_len import load_fl_dists, FlDist, build_normal_density
 
 MAX_NUM_TRANSCRIPTS = 200
 MAX_NUM_CANDIDATE_TRANSCRIPTS = 2500
-
-
 ALPHA = 0.025
-
 
 class ThreadSafeFile( file ):
     def __init__( *args ):
@@ -46,6 +43,7 @@ def calc_fpkm( gene, fl_dists, freqs,
                bound_alpha=0.5 ):
     fl_dist = fl_dists['mean']
     # account for paired end reads
+    #### Fix this in the optimization stage XXX BUG
     corrected_num_reads_in_gene = int(num_reads_in_bam*scipy.stats.beta.ppf(
             bound_alpha, 
             num_reads_in_gene+1e-6, 

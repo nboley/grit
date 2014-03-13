@@ -95,7 +95,6 @@ def flatten( regions ):
     else:
         return new_regions
 
-
 def build_empty_array():
     return numpy.array(())
 
