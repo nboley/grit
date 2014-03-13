@@ -14,9 +14,6 @@ import Queue
 import multiprocessing
 from lib.multiprocessing_utils import Pool
 
-import lib.arg_parsing
-from lib.arg_parsing import initialize_reads_from_args
-
 from files.gtf import load_gtf, Transcript, Gene
 from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads, \
     fix_chrm_name_for_ucsc
@@ -30,22 +27,9 @@ from frag_len import load_fl_dists, FlDist, build_normal_density
 MAX_NUM_TRANSCRIPTS = 200
 MAX_NUM_CANDIDATE_TRANSCRIPTS = 2500
 
-from lib.logging import Logger
-# log statement is set in the main init, and is a global
-# function which facilitates smart, ncurses based logging
-log_statement = None
-
-log_fp = sys.stderr
-NTHREADS = 1
-
-#DEBUG = True
-#DEBUG_VERBOSE = True
 
 ALPHA = 0.025
 
-def log(text):
-    if VERBOSE: log_fp.write(  text + "\n" )
-    return
 
 class ThreadSafeFile( file ):
     def __init__( *args ):
@@ -606,8 +590,7 @@ def extract_elements_from_genes( genes ):
     
     return convert_elements_to_arrays( all_elements )
 
-def build_fl_dists( elements, reads,
-                    analyze_pdf_fname=None ):
+def build_fl_dists( elements, reads ):
     from frag_len import estimate_fl_dists, analyze_fl_dists, \
         estimate_normal_fl_dist_from_reads
     from transcript import iter_nonoverlapping_exons
@@ -629,8 +612,8 @@ def build_fl_dists( elements, reads,
     # estiamte the fragment length distribution
     if len( fragments ) == 0:
         fl_dists, fragments = estimate_normal_fl_dist_from_reads( reads )
-    if False and None != fragments and  None != analyze_pdf_fname:
-        analyze_fl_dists( fragments, analyze_pdf_fname )
+    #if False and None != fragments and  None != analyze_pdf_fname:
+    #    analyze_fl_dists( fragments, analyze_pdf_fname )
     
     return fl_dists
 
@@ -711,8 +694,7 @@ def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
                 fl_dists, fasta )
     
     log_statement("")
-    return
-    
+    return    
 
 def initialize_processing_data( elements, genes, fl_dists,
                                 rnaseq_reads, promoter_reads,
@@ -742,163 +724,6 @@ def initialize_processing_data( elements, genes, fl_dists,
         p.apply( add_elements_for_contig_and_strand, all_args )
     
     return
-
-def parse_arguments():
-    import argparse
-    
-    class ValidateReadType(argparse.Action):
-        def __call__(self, parser, args, values, option_string=None):
-            valid_strands = set(('forward', 'backward', 'auto'))
-            for strand in values:
-                if strand not in valid_strands:
-                    raise ValueError('invalid strand {s!r}'.format(s=strand))
-            setattr(args, self.dest, values)
-    
-    parser = argparse.ArgumentParser(
-        description='Determine valid transcripts and estimate frequencies.')
-    parser.add_argument( '--ofname', help='Output filename.', 
-                         default="discovered.transcripts.gtf")
-    parser.add_argument( '--expression-ofname', 
-                         help='Output filename for expression levels.', 
-                         default="discovered.isoforms.fpkm_tracking")
-
-    parser.add_argument( '--elements', type=file,
-        help='Bed file containing elements')
-    parser.add_argument( '--transcripts', type=file,
-        help='GTF file containing transcripts for which to estimate expression')
-    
-    parser.add_argument( '--rnaseq-reads', 
-                         type=argparse.FileType('rb'), nargs='+',
-        help='BAM files containing mapped RNAseq reads ( must be indexed ).')
-    parser.add_argument( '--rnaseq-read-type', default='auto',
-        choices=["forward", "backward", "auto"],
-        help='Whether or not the first RNAseq read in a pair needs to be reversed to be on the correct strand.')
-    
-    parser.add_argument( '--cage-reads', type=file, default=[], nargs='*', 
-        help='BAM files containing mapped cage reads.')
-    parser.add_argument( '--cage-read-type', nargs='+', 
-                         action=ValidateReadType,
-                         metavar=["forward", "backward", "auto"],
-        help="If 'forward' then the reads that maps to the genome without being reverse complemented are assumed to be on the '+'. default: auto")
-
-    parser.add_argument( '--rampage-reads', type=file, default=[], nargs='*',
-        help='BAM files containing mapped rampage reads.')
-    parser.add_argument( '--rampage-read-type', nargs='+', 
-                         action=ValidateReadType,
-                         metavar=["forward", "backward", "auto"],
-        help="If 'forward' then the first read in a pair that maps to the genome without being reverse complemented are assumed to be on the '+' strand. default: auto")
-    
-    parser.add_argument( '--polya-reads', type=file, default=[], nargs='*', 
-        help='BAM files containing mapped poly(A)-seq reads.')
-    parser.add_argument( '--polya-read-type', nargs='+', 
-                         action=ValidateReadType,
-                         metavar=["forward", "backward", "auto"],
-        help="If 'forward' then the reads that maps to the genome without being reverse complemented are assumed to be on the '+'. default: auto")
-    
-    parser.add_argument( '--fasta', type=file,
-        help='Fasta file containing the genome sequence - if provided the ORF finder is automatically run.')
-    
-    parser.add_argument( '--only-build-candidate-transcripts', default=False,
-        action="store_true",
-        help='If set, we will output all possible transcripts without expression estimates.')
-    parser.add_argument( '--estimate-confidence-bounds', '-c', default=False,
-        action="store_true",
-        help='Whether or not to calculate confidence bounds ( this is slow )')
-    parser.add_argument( '--write-design-matrices', default=False,
-        action="store_true",
-        help='Write the design matrices out to a matlab-style matrix file.')
-    parser.add_argument( '--num-mapped-rnaseq-reads', type=int,
-        help="The total number of mapped rnaseq reads ( needed to calculate the FPKM ). This only needs to be set if it isn't found by a call to samtools idxstats." )
-    
-    parser.add_argument( '--threads', '-t', type=int , default=1,
-        help='Number of threads spawn for multithreading (default=1)')
-    
-    parser.add_argument( '--verbose', '-v', default=False, action='store_true',
-                             help='Whether or not to print status information.')
-    parser.add_argument( '--debug-verbose', default=False, action='store_true',
-                             help='Prints the optimization path updates.')
-
-    parser.add_argument( '--ucsc', default=False, action='store_true',
-        help='Try to format contig names in the ucsc format (typically by prepending a chr).')    
-    parser.add_argument( '--batch-mode', '-b', 
-        default=False, action='store_true',
-        help='Disable the ncurses frontend, and just print status messages to stderr.')
-    
-    args = parser.parse_args()
-        
-    if args.elements == None and args.transcripts == None:
-        raise ValueError, "--elements or --transcripts must be set"
-
-    if args.elements != None and args.transcripts != None:
-        raise ValueError, "--elements and --transcripts must not both be set"
-
-    if args.transcripts != None  and args.rnaseq_reads == None:
-        raise ValueError, "--rnaseq-reads must be set if --transcripts is set"
-
-    if args.only_build_candidate_transcripts == True \
-            and args.elements == None:
-        raise ValueError, "need --elements if --only-build-candidate-transcripts is set"
-    if args.only_build_candidate_transcripts == True \
-            and args.rnaseq_reads != None:
-        raise ValueError, "It doesn't make sense to set --rnaseq-reads if --only-build-candidate-transcripts is not set"
-    if args.only_build_candidate_transcripts == True \
-            and args.estimate_confidence_bounds == True:
-        raise ValueError, "--only-build-candidate-transcripts and --estimate-confidence-bounds may not both be set"
-        
-    global DEBUG_VERBOSE
-    DEBUG_VERBOSE = args.debug_verbose
-    frequency_estimation.DEBUG_VERBOSE = DEBUG_VERBOSE
-    
-    global VERBOSE
-    VERBOSE = ( args.verbose or DEBUG_VERBOSE )
-    frequency_estimation.VERBOSE = VERBOSE
-    lib.arg_parsing.VERBOSE = VERBOSE
-    
-    global PROCESS_SEQUENTIALLY
-    if args.threads == 1:
-        PROCESS_SEQUENTIALLY = True
-
-    global FIX_CHRM_NAMES_FOR_UCSC
-    FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
-    
-    global TOTAL_MAPPED_READS
-    TOTAL_MAPPED_READS = ( None if args.num_mapped_rnaseq_reads == None 
-                           else args.num_mapped_rnaseq_reads )
-    
-    global ONLY_BUILD_CANDIDATE_TRANSCRIPTS
-    ONLY_BUILD_CANDIDATE_TRANSCRIPTS = args.only_build_candidate_transcripts
-    if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS and args.rnaseq_reads == None:
-        raise ValueError, "Must provide RNAseq data to estimate transcript frequencies"
-
-    if args.rnaseq_reads != None and args.rnaseq_read_type == None:
-        raise ValueError, "--rnaseq-read-type must be set if --rnaseq-reads is set"
-
-    if args.rnaseq_reads == None and args.rnaseq_read_type != None:
-        raise ValueError, "It doesn't make sense to set --rnaseq-read-type if --rnaseq-reads is not set"
-    
-    global NTHREADS
-    NTHREADS = args.threads
-    
-    gtf_ofp = ThreadSafeFile( args.ofname, "w" )
-    if args.ofname == None:
-        track_name = ".".join( os.path.basename(x.name) 
-                               for x in args.rnaseq_reads)
-    else:
-        track_name = args.ofname
-    
-    gtf_ofp.write( "track name=transcripts.%s useScore=1\n" % track_name )
-
-    expression_ofp = ThreadSafeFile( args.expression_ofname, "w" )
-    columns = [ "tracking_id", "class_code", "nearest_ref_id", "gene_id", 
-                "gene_short_name", "tss_id", "locus", "length", "coverageFPKM", 
-                "FPKM_conf_lo", "FPKM_conf_hi", "FPKM_status" ]
-
-    expression_ofp.write( "\t".join(columns) + "\n" )        
-    
-    return ( args.elements, args.transcripts, 
-             gtf_ofp, expression_ofp, args.fasta, 
-             args.estimate_confidence_bounds, args.write_design_matrices, 
-             not args.batch_mode, args )
 
 def worker( input_queue, input_queue_lock,
             output_dict_lock, output_dict,
@@ -1021,8 +846,7 @@ def build_and_quantify_transcripts(
         if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
             # estimate the fragment length distribution
             log_statement( "Estimating the fragment length distribution" )
-            fl_dists = build_fl_dists( 
-                elements, rnaseq_reads, log_fp.name + ".fldist.pdf" )
+            fl_dists = build_fl_dists( elements, rnaseq_reads )
             log_statement( "Finished estimating the fragment length distribution" )
         else:
             fl_dists, rnaseq_reads, promoter_reads, polya_reads \
@@ -1055,25 +879,9 @@ def build_and_quantify_transcripts(
         write_p.join()
     except Exception, inst:
         log_statement(traceback.format_exc())
-        log_statement.close()
         raise
-    else:
-        log_statement.close()
     finally:
         gtf_ofp.close()
-        log_fp.close()
         expression_ofp.close()
     
     return
-
-def main():
-    # Get file objects from command line
-    (exons_bed_fp, transcripts_gtf_fp, 
-     gtf_ofp, expression_ofp, fasta, 
-     estimate_confidence_bounds, write_design_matrices, 
-     use_ncurses, args) = parse_arguments()
-
-
-
-if __name__ == "__main__":
-    main()
