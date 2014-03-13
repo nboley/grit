@@ -36,10 +36,10 @@ from lib.logging import Logger
 log_statement = None
 
 log_fp = sys.stderr
-num_threads = 1
+NTHREADS = 1
 
-DEBUG = True
-DEBUG_VERBOSE = True
+#DEBUG = True
+#DEBUG_VERBOSE = True
 
 ALPHA = 0.025
 
@@ -380,7 +380,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 mle = frequency_estimation.estimate_transcript_frequencies( 
                     observed_array, expected_array)
                 num_reads_in_gene = observed_array.sum()
-                num_reads_in_bam = NUMBER_OF_READS_IN_BAM
+                num_reads_in_bam = TOTAL_MAPPED_READS
                 fpkms = calc_fpkm( gene, fl_dists, mle, 
                                    num_reads_in_bam, num_reads_in_gene )
             except ValueError, inst:
@@ -471,7 +471,7 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                     gene = output[(gene_id, 'gene')]
                     fl_dists = output[(gene_id, 'fl_dists')]
                     num_reads_in_gene = observed_array.sum()
-                    num_reads_in_bam = NUMBER_OF_READS_IN_BAM
+                    num_reads_in_bam = TOTAL_MAPPED_READS
                     ub_fpkms = calc_fpkm( gene, fl_dists, 
                                           [ ubs[i] for i in xrange(len(mle)) ], 
                                           num_reads_in_bam, num_reads_in_gene,
@@ -606,20 +606,16 @@ def extract_elements_from_genes( genes ):
     
     return convert_elements_to_arrays( all_elements )
 
-def build_fl_dists( elements, rnaseq_reads,
+def build_fl_dists( elements, reads,
                     analyze_pdf_fname=None ):
     from frag_len import estimate_fl_dists, analyze_fl_dists, \
         estimate_normal_fl_dist_from_reads
     from transcript import iter_nonoverlapping_exons
     from files.gtf import GenomicInterval
-    assert len( rnaseq_reads ) == 1
-    reads = rnaseq_reads[0]
     
     def iter_good_exons():
         num = 0
-        for (chrm, strand), exons in sorted( 
-                elements.iteritems(), 
-                key=lambda x: reads.contig_len(x[0][0]) ):
+        for (chrm, strand), exons in sorted( elements.iteritems()):
             for start,stop in iter_nonoverlapping_exons(exons['internal_exon']):
                 num += 1
                 yield GenomicInterval(chrm, strand, start, stop)
@@ -632,10 +628,7 @@ def build_fl_dists( elements, rnaseq_reads,
     # if we can't estiamte it from the good exons, then use all reads to 
     # estiamte the fragment length distribution
     if len( fragments ) == 0:
-        x = reads.filename
-        tmp_reads = Samfile( x )
-        fl_dists, fragments = estimate_normal_fl_dist_from_reads( tmp_reads )
-        tmp_reads.close()
+        fl_dists, fragments = estimate_normal_fl_dist_from_reads( reads )
     if False and None != fragments and  None != analyze_pdf_fname:
         analyze_fl_dists( fragments, analyze_pdf_fname )
     
@@ -649,15 +642,15 @@ def add_universal_processing_data((contig, strand), gene_id, output_dict,
     """
     output_dict[ (gene_id, 'contig') ] = contig
     output_dict[ (gene_id, 'strand') ] = strand
-
+    
     output_dict[ (gene_id, 'rnaseq_reads') ] = (
-        [(x.filename, x._init_kwargs) for x in rnaseq_reads] 
+        [(x.filename, x._init_kwargs) for x in rnaseq_reads._reads] 
         if rnaseq_reads != None else None )
     output_dict[ (gene_id, 'promoter_reads') ] = (
-        [(type(x), x.filename, x._init_kwargs) for x in promoter_reads]
+        [(type(x), x.filename, x._init_kwargs) for x in promoter_reads._reads]
         if promoter_reads != None else None )
     output_dict[ (gene_id, 'polya_reads') ] = (
-        [(type(x), x.filename, x._init_kwargs) for x in polya_reads]
+        [(type(x), x.filename, x._init_kwargs) for x in polya_reads._reads]
         if polya_reads != None else None )
     output_dict[ (gene_id, 'fasta_fn') ] = ( None 
         if fasta == None else fasta.name )
@@ -711,7 +704,7 @@ def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
             output_dict[ (gene_id, 'introns') ] = grpd_exons['intron']
 
             output_dict[ (gene_id, 'gene') ] = None
-
+            
             add_universal_processing_data(
                 (contig, strand), gene_id, output_dict, 
                 rnaseq_reads, promoter_reads, polya_reads, 
@@ -745,7 +738,7 @@ def initialize_processing_data( elements, genes, fl_dists,
         for (contig, strand), grpd_exons in elements.iteritems():
             all_args.append( [(contig, strand), grpd_exons] + args_template )
 
-        p = Pool(num_threads)
+        p = Pool(NTHREADS)
         p.apply( add_elements_for_contig_and_strand, all_args )
     
     return
@@ -868,9 +861,9 @@ def parse_arguments():
     global FIX_CHRM_NAMES_FOR_UCSC
     FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
     
-    global NUMBER_OF_READS_IN_BAM
-    NUMBER_OF_READS_IN_BAM = ( None if args.num_mapped_rnaseq_reads == None 
-                               else args.num_mapped_rnaseq_reads )
+    global TOTAL_MAPPED_READS
+    TOTAL_MAPPED_READS = ( None if args.num_mapped_rnaseq_reads == None 
+                           else args.num_mapped_rnaseq_reads )
     
     global ONLY_BUILD_CANDIDATE_TRANSCRIPTS
     ONLY_BUILD_CANDIDATE_TRANSCRIPTS = args.only_build_candidate_transcripts
@@ -883,8 +876,8 @@ def parse_arguments():
     if args.rnaseq_reads == None and args.rnaseq_read_type != None:
         raise ValueError, "It doesn't make sense to set --rnaseq-read-type if --rnaseq-reads is not set"
     
-    global num_threads
-    num_threads = args.threads
+    global NTHREADS
+    NTHREADS = args.threads
     
     gtf_ofp = ThreadSafeFile( args.ofname, "w" )
     if args.ofname == None:
@@ -955,7 +948,7 @@ def spawn_and_manage_children( input_queue, input_queue_lock,
                                finished_queue,
                                write_design_matrices, 
                                estimate_confidence_bounds):
-    ps = [None]*num_threads
+    ps = [None]*NTHREADS
     args = ( input_queue, input_queue_lock,
              output_dict_lock, output_dict,
              finished_queue,
@@ -980,7 +973,7 @@ def spawn_and_manage_children( input_queue, input_queue_lock,
         proc_i = min( i for i, p in enumerate(ps) 
                       if p == None or not p.is_alive() )
         
-        if num_threads > 1:
+        if NTHREADS > 1:
             p = multiprocessing.Process(target=worker, args=args)
             p.start()
             if ps[proc_i] != None: ps[proc_i].join()
@@ -991,31 +984,19 @@ def spawn_and_manage_children( input_queue, input_queue_lock,
     log_statement( "" )
     return
 
-def main():
-    # Get file objects from command line
-    (exons_bed_fp, transcripts_gtf_fp, 
-     gtf_ofp, expression_ofp, fasta, 
-     estimate_confidence_bounds, write_design_matrices, 
-     use_ncurses, args) = parse_arguments()
-
-
-    ( rnaseq_bams, rnaseq_read_type, 
-      cage_bams, cage_read_type, 
-      rampage_bams, rampage_read_type, 
-      polya_bams, polya_read_type ) = (
-        args.rnaseq_reads, args.rnaseq_read_type, 
-        args.cage_reads, args.cage_read_type, 
-        args.rampage_reads, args.rampage_read_type, 
-        args.polya_reads, args.polya_read_type )
+def build_and_quantify_transcripts(
+    promoter_reads, rnaseq_reads, polya_reads,
+    exons_bed_fp, transcripts_gtf_fp, 
+    ofprefix, fasta=None,
+    estimate_confidence_bounds=True ):
+    """Build transcripts
+    """
+    write_design_matrices=False
     
-    global log_statement
-    # add an extra thread for the background writer
-    log_fp = open( gtf_ofp.name + ".log", "w" )
-    log_statement = Logger(num_threads+1, 
-                           use_ncurses=use_ncurses, 
-                           log_ofstream=log_fp )
+    gtf_ofp = open("%s.gtf" % ofprefix, "w")
+    expression_ofp = open("%s.expression.csv" % ofprefix, "w")
+
     frequency_estimation.log_statement = log_statement
-    lib.arg_parsing.log_statement = log_statement
     
     try:
         manager = multiprocessing.Manager()
@@ -1024,7 +1005,7 @@ def main():
         finished_queue = manager.Queue()
         output_dict_lock = multiprocessing.Lock()    
         output_dict = manager.dict()
-
+        
         elements, genes = None, None
         if exons_bed_fp != None:
             log_statement( "Loading %s" % exons_bed_fp.name )
@@ -1036,50 +1017,8 @@ def main():
             genes = load_gtf( transcripts_gtf_fp )
             elements = extract_elements_from_genes(genes)
             log_statement( "Finished Loading %s" % transcripts_gtf_fp.name )
-
         
         if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
-            log_statement( "Loading data files." )
-            if 'forward' == rnaseq_read_type.lower():
-                rev_read_strand = False
-            elif 'backward' == rnaseq_read_type.lower():
-                rev_read_strand = False
-            else:
-                raise ValueError, "Unrecognized read strand type '%s'" % rnaseq_read_type
-            rnaseq_reads = [ RNAseqReads(fp.name).init(
-                             reverse_read_strand=rev_read_strand)
-                             for fp in rnaseq_bams ]
-            for fp in rnaseq_bams: fp.close()    
-
-            global NUMBER_OF_READS_IN_BAM
-            if NUMBER_OF_READS_IN_BAM == None:
-                NUMBER_OF_READS_IN_BAM = 0
-                NUMBER_OF_READS_IN_BAM += sum( 
-                    x.mapped/2 for x in rnaseq_reads if x.reads_are_paired )
-                NUMBER_OF_READS_IN_BAM += sum( 
-                    x.mapped for x in rnaseq_reads if not x.reads_are_paired )
-                if NUMBER_OF_READS_IN_BAM == 0:
-                    raise ValueError, "Can't determine the number of reads in the RNASeq BAM (by samtools idxstats). Please set --num-mapped-rnaseq-reads"
-            assert NUMBER_OF_READS_IN_BAM > 0
-            
-            cage_reads = [ CAGEReads(fp.name).init(reverse_read_strand=True) 
-                           for fp in cage_bams ]    
-            for fp in cage_bams: fp.close()
-            
-            rampage_reads = [ 
-                RAMPAGEReads(fp.name).init(reverse_read_strand=True) 
-                for fp in rampage_bams ]
-            for fp in rampage_bams: fp.close()
-            promoter_reads = [] + cage_reads + rampage_reads
-            assert len(promoter_reads) <= 1    
-            
-            polya_reads = [
-                PolyAReads(fp.name).init(
-                    reverse_read_strand=False, pairs_are_opp_strand=True)
-                for fp in polya_bams  ]
-            assert len(polya_reads) <= 1
-            log_statement( "Finished loading data files." )
-                        
             # estimate the fragment length distribution
             log_statement( "Estimating the fragment length distribution" )
             fl_dists = build_fl_dists( 
@@ -1097,15 +1036,15 @@ def main():
             input_queue, input_queue_lock, 
             output_dict, output_dict_lock )    
         log_statement( "Finished initializing processing data" )
-
+        
         write_p = multiprocessing.Process(
             target=write_finished_data_to_disk, args=(
                 output_dict, output_dict_lock, 
                 finished_queue, gtf_ofp, expression_ofp,
                 estimate_confidence_bounds, write_design_matrices ) )
-
+        
         write_p.start()    
-
+        
         spawn_and_manage_children( input_queue, input_queue_lock,
                                    output_dict_lock, output_dict, 
                                    finished_queue,
@@ -1126,6 +1065,15 @@ def main():
         expression_ofp.close()
     
     return
+
+def main():
+    # Get file objects from command line
+    (exons_bed_fp, transcripts_gtf_fp, 
+     gtf_ofp, expression_ofp, fasta, 
+     estimate_confidence_bounds, write_design_matrices, 
+     use_ncurses, args) = parse_arguments()
+
+
 
 if __name__ == "__main__":
     main()

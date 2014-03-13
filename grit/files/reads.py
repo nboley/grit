@@ -266,8 +266,8 @@ class MergedReads( object ):
         return
     
     def iter_paired_reads( self, chrm, strand, start, stop ):
-        for reads in self.reads:
-            for rd1, rd2 in reads.iter_paired_reads( chrm, start, stop  ):
+        for reads in self._reads:
+            for rd1, rd2 in reads.iter_paired_reads(chrm, strand, start, stop):
                 yield rd1, rd2
         return
     

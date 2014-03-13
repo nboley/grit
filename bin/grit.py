@@ -11,6 +11,7 @@ from grit.files.reads import (
 from grit.lib.logging import Logger
 
 import grit.find_elements
+import grit.build_transcripts
 
 
 VERBOSE = False
@@ -356,7 +357,13 @@ class Samples(object):
         query = "SELECT DISTINCT sample_type FROM data"
         with self.conn:
             return [x[0] for x in self.conn.execute(query).fetchall()]
-    
+
+    def get_rep_ids(self, sample_type):
+        query = "SELECT DISTINCT rep_id FROM data \
+                 WHERE sample_type = '{}' AND rep_id != '*'"
+        with self.conn:
+            return [ x[0] for x in 
+                     self.conn.execute(query.format(sample_type)).fetchall()]
 
 def load_ref_elements_to_include(args):
     if None == args.reference and args.use_reference_genes:
@@ -390,6 +397,11 @@ def parse_arguments():
     parser.add_argument( '--control', type=file, 
         help='GRIT control file. Allows better control over the types of input files.')
 
+    parser.add_argument( '--GTF', "-G", type=file, default=None, 
+        help='Estimate transcript abundance using the supplied gtf file (do not discover elements or build transcripts).')
+    parser.add_argument( '--elements', type=file, default=None, 
+        help='Do not find elements - use the provided elements to build transcript models.')
+    
     parser.add_argument( '--rnaseq-reads', type=argparse.FileType('rb'), 
         help='BAM file containing mapped RNAseq reads.')
     parser.add_argument( '--rnaseq-read-type', 
@@ -419,34 +431,42 @@ def parse_arguments():
                          default='auto',
         help="If 'forward' then the reads that maps to the genome without being reverse complemented are assumed to be on the '+'. default: auto")
 
-    parser.add_argument( '--build-bedgraphs', default=False,action='store_true',
-                         help='Build read coverage bedgraphs.')
-    
-    parser.add_argument( '--reference', help='Reference GTF', type=file)
     parser.add_argument( '--fasta', type=file,
         help='Fasta file containing the genome sequence - if provided the ORF finder is automatically run.')
+    
+    parser.add_argument( '--reference', help='Reference GTF', type=file)
     parser.add_argument( '--use-reference-genes', 
-                         help='Use genes boundaries from the reference annotation.', 
-                         default=False, action='store_true')
+                         default=False, action='store_true',
+        help='Use genes boundaries from the reference annotation.')
     parser.add_argument( '--use-reference-junctions', 
-                         help='Include junctions from the reference annotation.',
-                         default=False, action='store_true')
+                         default=False, action='store_true',
+        help='Include junctions from the reference annotation.')
     parser.add_argument( '--use-reference-tss', 
-                         help='Use TSS\'s taken from the reference annotation.',
-                         default=False, action='store_true')
+                         default=False, action='store_true',
+        help='Use TSS\'s taken from the reference annotation.')
     parser.add_argument( '--use-reference-tes', 
-                         help='Use TES\'s taken from the reference annotation.',
-                         default=False, action='store_true')
+                         default=False, action='store_true',
+        help='Use TES\'s taken from the reference annotation.')
     parser.add_argument( '--use-reference-promoters', 
-                         help='Use promoters\'s inferred from the start of reference transcripts.',
-                         default=False, action='store_true')
+                         default=False, action='store_true',
+        help='Use promoters\'s inferred from the start of reference transcripts.')
     parser.add_argument( '--use-reference-polyas', 
-                         help='Use polya sites inferred from the end of reference transcripts.',
-                         default=False, action='store_true')
+                         default=False, action='store_true',
+        help='Use polya sites inferred from the end of reference transcripts.')
 
+    parser.add_argument( '--build-bedgraphs', 
+                         default=False, action='store_true',
+        help='Build read coverage bedgraphs.')
+    parser.add_argument( '--only-build-elements', 
+                         default=False, action='store_true',
+        help='Only build transcript elements - do not build transcript models.')
     parser.add_argument( '--only-build-candidate-transcripts', 
-                         help='Do not estiamte transcript frequencies - just build trnascripts.',
-                         default=False, action='store_true')
+                         default=False, action='store_true',
+        help='Do not estimate transcript frequencies - just build transcript models.')
+    parser.add_argument( '--dont-estimate-confidence-bounds',
+                         default=False,
+                         action="store_true",
+        help='If set, do not estimate confidence bounds.')
 
     parser.add_argument( '--ofprefix', '-o', default="discovered",
         help='Output files prefix. (default: discovered)')
@@ -478,10 +498,14 @@ def parse_arguments():
     VERBOSE = args.verbose
     grit.find_elements.VERBOSE = VERBOSE
     grit.files.junctions.VERBOSE = VERBOSE
+    grit.build_transcripts.VERBOSE = VERBOSE
+    grit.frequency_estimation.VERBOSE = VERBOSE
     
     global DEBUG_VERBOSE
     DEBUG_VERBOSE = args.debug_verbose
     grit.find_elements.DEBUG_VERBOSE = args.debug_verbose
+    grit.build_transcripts.DEBUG_VERBOSE = DEBUG_VERBOSE
+    grit.frequency_estimation.DEBUG_VERBOSE = DEBUG_VERBOSE
 
     global WRITE_DEBUG_DATA
     WRITE_DEBUG_DATA = args.write_debug_data
@@ -490,14 +514,27 @@ def parse_arguments():
     global NTHREADS
     NTHREADS = args.threads
     grit.find_elements.NTHREADS = NTHREADS
+    grit.build_transcripts.NTHREADS = NTHREADS
     
     global TOTAL_MAPPED_READS
     TOTAL_MAPPED_READS = 1e6
     grit.find_elements.TOTAL_MAPPED_READS = 1e6
-
+    grit.build_transcripts.TOTAL_MAPPED_READS = 1e6    
+    
+    global ONLY_BUILD_CANDIDATE_TRANSCRIPTS
+    ONLY_BUILD_CANDIDATE_TRANSCRIPTS = args.only_build_candidate_transcripts
+    grit.build_transcripts.ONLY_BUILD_CANDIDATE_TRANSCRIPTS = \
+        ONLY_BUILD_CANDIDATE_TRANSCRIPTS
+    
+    args.estimate_confidence_bounds = (
+        not args.dont_estimate_confidence_bounds)
+    if ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+        args.estimate_confidence_bounds = False
+    
     global FIX_CHRM_NAMES_FOR_UCSC
     FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
     grit.find_elements.FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
+    grit.build_transcripts.FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
     
     global log_statement
     log_ofstream = open( args.ofprefix + ".log", "w" )
@@ -506,62 +543,85 @@ def parse_arguments():
         use_ncurses=(not args.batch_mode), 
         log_ofstream=log_ofstream)
     grit.find_elements.log_statement = log_statement
+    grit.build_transcripts.log_statement = log_statement
+    grit.frequency_estimation.log_statement = log_statement
     
     args.region = clean_chr_name(args.region)
+
+    args.ref_elements_to_include = load_ref_elements_to_include(args)
     
     return args
 
-def main():
-    args = parse_arguments()
-
-    # parse the reference elements to include
-    ref_elements_to_include = load_ref_elements_to_include(args)
+def discover_elements(sample_data, args):
+    """Discover elements for all samples
     
-    # load the samples into database, and the reference genes if necessary
-    sample_data = Samples(args)
-
-    # if the reference genes weren't loaded while parsing the data, and we
-    # need the reference elements, then load the reference genes now
-    if any(ref_elements_to_include) and sample_data.ref_genes == None:
-        if VERBOSE: log_statement("Loading annotation file.")
-        sample_data.ref_genes = load_gtf(args.reference)
-    
+    """
+    elements = {}
     for sample_type in sample_data.get_sample_types():
-        ofp = open("%s.%s.elements.bed" % (args.ofprefix, sample_type), "w")
-        
-        promoter_reads, rnaseq_reads, polya_reads = sample_data.get_reads(
-            sample_type)
-        
-        elements_fname = grit.find_elements.find_elements(
-            promoter_reads, rnaseq_reads, polya_reads,
-            ofp, sample_data.ref_genes, ref_elements_to_include, 
-            region_to_use=args.region)
-        
-        """
-        # if we used a control file, and thus have sample types, then find 
-        # the unqiue repids for this sample
-        if sample_type != None:
-            query = "SELECT DISTINCT rep_id FROM data \
-                     WHERE sample_type = '{}' AND rep_id != '*'"
-            rep_ids = [ x[0] for x in 
-                        conn.execute(query.format(sample_type)).fetchall()]
-        # otherwise, use everything by setting hte rep id to None
-        else: rep_ids = [None,]
-        
-        for rep_id in rep_ids:
-            ( rnaseq_reads, rnaseq_read_types, cage_reads, rampage_reads,
-              polya_reads ) = get_run_data(conn, args, sample_type, rep_id)
+        promoter_reads, rnaseq_reads, polya_reads = \
+            sample_data.get_reads(sample_type)
 
-            ofprefix = args.ofprefix
-            if sample_type != None: ofprefix += ("." + sample_type)
-            if rep_id != None: ofprefix += ("." + rep_id)
-            
-            run_build_transcripts( 
-                elements_fname, ofprefix, 
-                rnaseq_reads, rnaseq_read_types, 
-                args.num_mapped_rnaseq_reads,
-                cage_reads, rampage_reads, polya_reads, args)
-                """
+        elements_fname = "%s.%s.elements.bed" % (
+            args.ofprefix, sample_type)
+        grit.find_elements.find_elements(
+            promoter_reads, rnaseq_reads, polya_reads,
+            elements_fname, sample_data.ref_genes, 
+            args.ref_elements_to_include, 
+            region_to_use=args.region)
+        elements[sample_type] = (open(elements_fname), None)
+    
+    return elements
+
+def main():
+    try:
+        args = parse_arguments()
+        
+        # load the samples into database, and the reference genes if necessary
+        sample_data = Samples(args)
+        
+        # if the reference genes weren't loaded while parsing the data, and we
+        # need the reference elements, then load the reference genes now
+        if any(args.ref_elements_to_include) and sample_data.ref_genes == None:
+            if VERBOSE: log_statement("Loading annotation file.")
+            sample_data.ref_genes = load_gtf(args.reference)
+        
+        # find elements if necessary, load the gtf if we are running in 
+        # quantification mode
+        if args.GTF != None:
+            assert not ONLY_BUILD_CANDIDATE_TRANSCRIPTS
+            assert not args.only_build_elements
+            assert args.elements == None
+            sample_types = sample_data.get_sample_types()
+            if len(sample_types) != 1: 
+                raise ValueError, "Can not provide --elements and data from multiple sample types."
+            elements = {sample_types[0]: (None, args.GTF)}
+        elif args.elements !=  None:
+            assert not args.only_build_elements
+            sample_types = sample_data.get_sample_types()
+            if len(sample_types) != 1: 
+                raise ValueError, "Can not provide --elements and data from multiple sample types."
+            sample_type = sample_types[0]
+            elements = {sample_type: (args.elements, None)}
+        else:
+            elements = discover_elements(sample_data, args)
+        
+        # if we are only building elements, then we are done
+        if not args.only_build_elements:
+            for sample_type, (elements_fp, gtf_fp) in elements.iteritems():
+                for rep_id in sample_data.get_rep_ids(sample_type):
+                    promoter_reads, rnaseq_reads, polya_reads = \
+                        sample_data.get_reads(sample_type, rep_id)
+                    
+                    ofprefix = "%s.%s.%s" % (args.ofprefix, sample_type, rep_id)
+                    
+                    grit.build_transcripts.build_and_quantify_transcripts(
+                        promoter_reads, rnaseq_reads, polya_reads,
+                        elements_fp, gtf_fp, 
+                        ofprefix,
+                        fasta=args.fasta, 
+                        estimate_confidence_bounds=args.estimate_confidence_bounds )
+    finally:
+        log_statement.close()
 
 if __name__ == '__main__':
     main()
