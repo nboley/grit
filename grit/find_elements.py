@@ -31,9 +31,8 @@ from lib.arg_parsing import initialize_reads_from_args
 # log statement is set in the main init, and is a global
 # function which facilitates smart, ncurses based logging
 log_statement = None
-
-
-NTHREADS = 1
+VERBOSE = None
+NTHREADS = None
 TOTAL_MAPPED_READS = None
 
 MIN_INTRON_SIZE = 50
@@ -1824,19 +1823,12 @@ def parse_arguments():
              ofp, ref_genes, ref_elements_to_include, 
              clean_chr_name(args.region) if args.region != None else None )
 
-def main():
-    ( promoter_reads, rnaseq_reads, polya_reads,
-      ofp, ref_genes, ref_elements_to_include, 
-      region_to_use ) = parse_arguments()
-        
+def find_elements( promoter_reads, rnaseq_reads, polya_reads,
+                   ofp, ref_genes, ref_elements_to_include, 
+                   region_to_use=None):
     # wrap everything in a try block so that we can with elegantly handle
     # uncaught exceptions
     try:
-        # if we need to infer the rnaseq stand, then we need to load the 
-        # annotation. Initialize ref_genes to None so that we can load
-        # it later if necessary
-
-                
         contigs, contig_lens = get_contigs_and_lens( 
             [ reads for reads in [rnaseq_reads, promoter_reads, polya_reads]
               if reads != None ] )
@@ -1871,7 +1863,15 @@ def main():
         raise
     else:
         log_statement.close()
-    
+
+def main():
+    ( promoter_reads, rnaseq_reads, polya_reads,
+      ofp, ref_genes, ref_elements_to_include, 
+      region_to_use ) = parse_arguments()
+    find_elements( promoter_reads, rnaseq_reads, polya_reads,
+                   ofp, ref_genes, ref_elements_to_include, 
+                   region_to_use )
+
 if __name__ == '__main__':
     main()
 
