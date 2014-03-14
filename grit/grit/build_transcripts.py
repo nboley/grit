@@ -15,8 +15,7 @@ import multiprocessing
 from lib.multiprocessing_utils import Pool
 
 from files.gtf import load_gtf, Transcript, Gene
-from files.reads import RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads, \
-    fix_chrm_name_for_ucsc
+from files.reads import fix_chrm_name_for_ucsc
 from transcript import cluster_exons, build_transcripts
 from proteomics.ORF import find_cds_for_gene
 
@@ -43,7 +42,8 @@ def calc_fpkm( gene, fl_dists, freqs,
                bound_alpha=0.5 ):
     fl_dist = fl_dists['mean']
     # account for paired end reads
-    #### Fix this in the optimization stage XXX BUG
+    #### Fix this in the optimization stage by using real read counts and then
+    #### a pseudo bin XXX BUG
     corrected_num_reads_in_gene = int(num_reads_in_bam*scipy.stats.beta.ppf(
             bound_alpha, 
             num_reads_in_gene+1e-6, 
@@ -219,6 +219,7 @@ def pre_filter_design_matrices(
 def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                                      input_queue, input_queue_lock,
                                      op_lock, output, 
+                                     promoter_reads, rnaseq_reads, polya_reads,
                                      estimate_confidence_bounds,
                                      cb_alpha=ALPHA):
     try:
@@ -284,22 +285,11 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                         % (gene_id, gene.chrm, gene.strand, 
                            gene.start, gene.stop, len(gene.transcripts) ) )
                 fl_dists = output[(gene_id, 'fl_dists')]
-                promoter_reads_init_data = output[(gene_id, 'promoter_reads')]
-                rnaseq_reads_init_data = output[(gene_id, 'rnaseq_reads')]
-                polya_reads_init_data = output[(gene_id, 'polya_reads')]
             
-            rnaseq_reads = [ RNAseqReads(fname).init(**kwargs) 
-                             for fname, kwargs in rnaseq_reads_init_data ][0]
-            promoter_reads = [ readsclass(fname).init(**kwargs) 
-                             for readsclass, fname, kwargs 
-                               in promoter_reads_init_data ]
-            polya_reads = [ readsclass(fname).init(**kwargs) 
-                             for readsclass, fname, kwargs 
-                               in polya_reads_init_data ]
             try:
                 expected_array, observed_array, unobservable_transcripts \
                     = build_design_matrices( gene, rnaseq_reads, fl_dists, 
-                                             chain(promoter_reads, polya_reads),
+                                             (promoter_reads, polya_reads),
                                              MAX_NUM_TRANSCRIPTS)
             except ValueError, inst:
                 error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
@@ -347,17 +337,12 @@ def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
                     output[(gene_id, 'design_matrices')]
                 gene = output[(gene_id, 'gene')]
                 fl_dists = output[(gene_id, 'fl_dists')]
-                promoter_reads = output[(gene_id, 'promoter_reads')]
-                rnaseq_reads_init_data = output[(gene_id, 'rnaseq_reads')]
             
             log_statement(
                 "Finding MLE for Gene %s(%s:%s:%i-%i) - %i transcripts" \
                     % (gene_id, gene.chrm, gene.strand, 
                        gene.start, gene.stop, len(gene.transcripts) ) )
             
-            rnaseq_reads = [ RNAseqReads(fname).init(args) 
-                             for fname, args in rnaseq_reads_init_data ][0]
-
             try:
                 mle = frequency_estimation.estimate_transcript_frequencies( 
                     observed_array, expected_array)
@@ -616,7 +601,6 @@ def build_fl_dists( elements, reads ):
     return fl_dists
 
 def add_universal_processing_data((contig, strand), gene_id, output_dict, 
-                                  rnaseq_reads, promoter_reads, polya_reads, 
                                   fl_dists, fasta):
     """Add stuff we need to provide whether we havea  list of 
        already built genes or not.
@@ -624,15 +608,6 @@ def add_universal_processing_data((contig, strand), gene_id, output_dict,
     output_dict[ (gene_id, 'contig') ] = contig
     output_dict[ (gene_id, 'strand') ] = strand
     
-    output_dict[ (gene_id, 'rnaseq_reads') ] = (
-        [(x.filename, x._init_kwargs) for x in rnaseq_reads._reads] 
-        if rnaseq_reads != None else None )
-    output_dict[ (gene_id, 'promoter_reads') ] = (
-        [(type(x), x.filename, x._init_kwargs) for x in promoter_reads._reads]
-        if promoter_reads != None else None )
-    output_dict[ (gene_id, 'polya_reads') ] = (
-        [(type(x), x.filename, x._init_kwargs) for x in polya_reads._reads]
-        if polya_reads != None else None )
     output_dict[ (gene_id, 'fasta_fn') ] = ( None 
         if fasta == None else fasta.name )
 
@@ -688,7 +663,6 @@ def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
             
             add_universal_processing_data(
                 (contig, strand), gene_id, output_dict, 
-                rnaseq_reads, promoter_reads, polya_reads, 
                 fl_dists, fasta )
     
     log_statement("")
@@ -705,7 +679,6 @@ def initialize_processing_data( elements, genes, fl_dists,
                 output_dict[(gene.id, 'gene')] = gene
                 add_universal_processing_data(
                     (gene.chrm, gene.strand), gene.id, output_dict, 
-                    rnaseq_reads, promoter_reads, polya_reads, 
                     fl_dists, fasta )
             with input_queue_lock:
                 input_queue.append(('design_matrices', (gene.id, None, None)))
@@ -725,13 +698,22 @@ def initialize_processing_data( elements, genes, fl_dists,
 
 def worker( input_queue, input_queue_lock,
             output_dict_lock, output_dict,
+            promoter_reads,
+            rnaseq_reads,
+            polya_reads,
             finished_queue,
             write_design_matrices, 
             estimate_confidence_bounds):
+    # reload all the reads, to make sure that this process has its
+    # own file pointer
+    promoter_reads.reload()
+    rnaseq_reads.reload()
+    polya_reads.reload()
+    
     start_time = time.time()
     for i in xrange(50):
-        # if we've been in this worker longer than a minute, then we've
-        # probably used enough memory, so quick and spawn a new process
+        # if we've been in this worker longer than a minute, then 
+        # so quit and re-spawn to free any unused memory
         if time.time() - start_time > 60: return
         # get the data to process
         try:
@@ -761,6 +743,7 @@ def worker( input_queue, input_queue_lock,
         args = (work_type, (gene_id, bam_fn, trans_index),
                 input_queue, input_queue_lock, 
                 output_dict_lock, output_dict, 
+                promoter_reads, rnaseq_reads, polya_reads,
                 estimate_confidence_bounds )
         estimate_gene_expression_worker(*args)
     
@@ -768,12 +751,16 @@ def worker( input_queue, input_queue_lock,
 
 def spawn_and_manage_children( input_queue, input_queue_lock,
                                output_dict_lock, output_dict,
+                               promoter_reads,
+                               rnaseq_reads,
+                               polya_reads,
                                finished_queue,
                                write_design_matrices, 
                                estimate_confidence_bounds):
     ps = [None]*NTHREADS
     args = ( input_queue, input_queue_lock,
              output_dict_lock, output_dict,
+             promoter_reads, rnaseq_reads, polya_reads,
              finished_queue,
              write_design_matrices, 
              estimate_confidence_bounds)
@@ -869,6 +856,9 @@ def build_and_quantify_transcripts(
         
         spawn_and_manage_children( input_queue, input_queue_lock,
                                    output_dict_lock, output_dict, 
+                                   promoter_reads,
+                                   rnaseq_reads,
+                                   polya_reads,
                                    finished_queue,
                                    write_design_matrices, 
                                    estimate_confidence_bounds)

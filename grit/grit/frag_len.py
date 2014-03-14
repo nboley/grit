@@ -516,7 +516,7 @@ def find_fragments( reads, exons ):
     return fragment_sizes
 
 
-def estimate_normal_fl_dist_from_reads( reads, max_num_fragments_to_sample=500 ):
+def estimate_normal_fl_dist_from_reads(reads, max_num_fragments_to_sample=500):
     frag_lens = []
     for rd1 in reads.fetch():
         try:
