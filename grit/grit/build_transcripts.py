@@ -23,6 +23,8 @@ from f_matrix import build_design_matrices
 import frequency_estimation
 from frag_len import load_fl_dists, FlDist, build_normal_density
 
+import cPickle as pickle
+
 MAX_NUM_TRANSCRIPTS = 200
 MAX_NUM_CANDIDATE_TRANSCRIPTS = 2500
 ALPHA = 0.025
@@ -216,121 +218,95 @@ def pre_filter_design_matrices(
     expected_array = expected_array[:,high_exp_ts]
     return observed_array, expected_array, unobservable_transcripts
 
-def estimate_gene_expression_worker( work_type, (gene_id,sample_id,trans_index),
+def build_genes_worker(gene_id, op_lock, output):
+    log_statement("Building transcript and ORFs for Gene %s" % gene_id)
+    with op_lock:
+        contig = output[ (gene_id, 'contig') ]
+        strand = output[ (gene_id, 'strand') ]
+        tss_exons = output[ (gene_id, 'tss_exons') ]
+        internal_exons = output[(gene_id, 'internal_exons')]
+        tes_exons = output[ (gene_id, 'tes_exons') ]
+        se_transcripts = output[ (gene_id, 'se_transcripts') ]
+        introns = output[ (gene_id, 'introns') ]
+        promoters = output[ (gene_id, 'promoters') ]
+        polyas = output[ (gene_id, 'polyas') ]
+        fasta_fn = output[ (gene_id, 'fasta_fn') ]
+
+    transcripts = []
+    for i, exons in enumerate( build_transcripts( 
+            tss_exons, internal_exons, tes_exons,
+            se_transcripts, introns, strand ) ):
+        transcript = Transcript(
+            "%s_%i" % ( gene_id, i ), contig, strand, 
+            exons, cds_region=None, gene_id=gene_id)
+        transcript.promoter = find_matching_promoter_for_transcript(
+            transcript, promoters)
+        transcript.polya_region = \
+           find_matching_polya_region_for_transcript(transcript, polyas)
+        transcripts.append( transcript )
+
+    gene_min = min( min(e) for e in chain(
+            tss_exons, tes_exons, se_transcripts))
+    gene_max = max( max(e) for e in chain(
+            tss_exons, tes_exons, se_transcripts))
+    gene = Gene(gene_id, contig,strand, gene_min, gene_max, transcripts)
+
+    if fasta_fn != None:
+        fasta = Fastafile( fasta_fn )
+        gene.transcripts = find_cds_for_gene( 
+            gene, fasta, only_longest_orf=True )
+
+    return gene
+
+def build_design_matrices_worker(gene_id, op_lock, output,
+                                 (rnaseq_reads, promoter_reads, polya_reads)):
+    log_statement( "Finding design matrix for Gene %s" % gene_id  )
+    with op_lock:
+        gene = output[(gene_id, 'gene')]
+        fl_dists = output[(gene.id, 'fl_dists')]
+    log_statement( 
+        "Finding design matrix for Gene %s(%s:%s:%i-%i) - %i transcripts"\
+            % (gene.id, gene.chrm, gene.strand, 
+               gene.start, gene.stop, len(gene.transcripts) ) )
+    
+    try:
+        expected_array, observed_array, unobservable_transcripts \
+            = build_design_matrices( gene, rnaseq_reads, fl_dists, 
+                                     (promoter_reads, polya_reads),
+                                     MAX_NUM_TRANSCRIPTS)
+    except ValueError, inst:
+        error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
+            os.getpid(), gene.id, 
+            gene.chrm, gene.strand, gene.start, gene.stop, inst)
+        log_statement( error_msg )
+        with input_queue_lock:
+            input_queue.append(
+                ('ERROR', ((gene.id, trans_index), 
+                           traceback.format_exc())))
+        return
+    except MemoryError, inst:
+        error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
+            os.getpid(), gene.id, 
+            gene.chrm, gene.strand, gene.start, gene.stop, inst)
+        log_statement( error_msg )
+        with input_queue_lock:
+            input_queue.append(
+                ('ERROR', ((gene.id, trans_index), error_msg)))
+
+        return
+
+    log_statement( "FINISHED DESIGN MATRICES %s" % gene.id )
+    log_statement( "" )
+    return observed_array, expected_array, unobservable_transcripts
+
+
+def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
                                      input_queue, input_queue_lock,
                                      op_lock, output, 
-                                     promoter_reads, rnaseq_reads, polya_reads,
                                      estimate_confidence_bounds,
                                      cb_alpha=ALPHA):
     try:
-        if work_type == 'gene':
-            log_statement("Building transcript and ORFs for Gene %s" % gene_id)
-            with op_lock:
-                contig = output[ (gene_id, 'contig') ]
-                strand = output[ (gene_id, 'strand') ]
-                tss_exons = output[ (gene_id, 'tss_exons') ]
-                internal_exons = output[(gene_id, 'internal_exons')]
-                tes_exons = output[ (gene_id, 'tes_exons') ]
-                se_transcripts = output[ (gene_id, 'se_transcripts') ]
-                introns = output[ (gene_id, 'introns') ]
-                promoters = output[ (gene_id, 'promoters') ]
-                polyas = output[ (gene_id, 'polyas') ]
-                fasta_fn = output[ (gene_id, 'fasta_fn') ]
-            
-            transcripts = []
-            for i, exons in enumerate( build_transcripts( 
-                    tss_exons, internal_exons, tes_exons,
-                    se_transcripts, introns, strand ) ):
-                transcript = Transcript(
-                    "%s_%i" % ( gene_id, i ), contig, strand, 
-                    exons, cds_region=None, gene_id=gene_id)
-                transcript.promoter = find_matching_promoter_for_transcript(
-                    transcript, promoters)
-                transcript.polya_region = \
-                   find_matching_polya_region_for_transcript(transcript, polyas)
-                transcripts.append( transcript )
-            if len(transcripts) > MAX_NUM_CANDIDATE_TRANSCRIPTS:
-                return
-            
-            gene_min = min( min(e) for e in chain(
-                    tss_exons, tes_exons, se_transcripts))
-            gene_max = max( max(e) for e in chain(
-                    tss_exons, tes_exons, se_transcripts))
-            gene = Gene(gene_id, contig,strand, gene_min, gene_max, transcripts)
-
-            if fasta_fn != None:
-                fasta = Fastafile( fasta_fn )
-                gene.transcripts = find_cds_for_gene( 
-                    gene, fasta, only_longest_orf=True )
-            
-            with op_lock:
-                output[(gene_id, 'gene')] = gene
-
-            # only try and build the design matrix if we were able to build full
-            # length transcripts
-            if ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
-                input_queue.append(('FINISHED', (gene_id, None, None)))
-            elif len( gene.transcripts ) > 0:
-                with input_queue_lock:
-                    input_queue.append( (
-                            'design_matrices', (gene_id, None, None)) )
-            log_statement("")
-
-        elif work_type == 'design_matrices':
-            log_statement( "Finding design matrix for Gene %s" % gene_id  )
-            with op_lock:
-                gene = output[(gene_id, 'gene')]
-                log_statement( 
-                    "Finding design matrix for Gene %s(%s:%s:%i-%i) - %i transcripts"\
-                        % (gene_id, gene.chrm, gene.strand, 
-                           gene.start, gene.stop, len(gene.transcripts) ) )
-                fl_dists = output[(gene_id, 'fl_dists')]
-            
-            try:
-                expected_array, observed_array, unobservable_transcripts \
-                    = build_design_matrices( gene, rnaseq_reads, fl_dists, 
-                                             (promoter_reads, polya_reads),
-                                             MAX_NUM_TRANSCRIPTS)
-            except ValueError, inst:
-                error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
-                    os.getpid(), gene_id, 
-                    gene.chrm, gene.strand, gene.start, gene.stop, inst)
-                log_statement( error_msg )
-                with input_queue_lock:
-                    input_queue.append(
-                        ('ERROR', ((gene_id, trans_index), 
-                                   traceback.format_exc())))
-                return
-            except MemoryError, inst:
-                error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
-                    os.getpid(), gene_id, 
-                    gene.chrm, gene.strand, gene.start, gene.stop, inst)
-                log_statement( error_msg )
-                with input_queue_lock:
-                    input_queue.append(
-                        ('ERROR', ((gene_id, trans_index), error_msg)))
-                
-                return
-            
-            log_statement( "FINISHED DESIGN MATRICES %s" % gene_id )
-            log_statement( "" )
-
-            with op_lock:
-                try:
-                    output[(gene_id, 'design_matrices')] = ( 
-                       observed_array, expected_array, unobservable_transcripts)
-                except SystemError, inst:                
-                    error_msg =  "SYSTEM ERROR: %i: Skipping %s: %s" % ( 
-                        os.getpid(), gene_id, inst )
-                    log_statement( error_msg )
-                    with input_queue_lock:
-                        input_queue.append(
-                            ('ERROR', ((gene_id, trans_index), error_msg)))
-                    return
-
-            with input_queue_lock:
-                input_queue.append( ('mle', (gene_id, None, None)) )
-        elif work_type == 'mle':
+        if work_type == 'mle':
             log_statement( "Finding MLE for Gene %s" % gene_id  )
             with op_lock:
                 observed_array, expected_array, unobservable_transcripts = \
@@ -479,7 +455,7 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
         
         # write out the design matrix
         try:            
-            if write_type == 'design_matrix' and write_design_matrices:
+            if write_type == 'design_matrices' and write_design_matrices:
                 if DEBUG_VERBOSE: 
                     log_statement("Writing design matrix mat to '%s'" % ofname)
                 observed,expected,missed = output_dict[(key,'design_matrices')]
@@ -706,9 +682,8 @@ def worker( input_queue, input_queue_lock,
             estimate_confidence_bounds):
     # reload all the reads, to make sure that this process has its
     # own file pointer
-    promoter_reads.reload()
-    rnaseq_reads.reload()
-    polya_reads.reload()
+    for reads in ( promoter_reads, rnaseq_reads, polya_reads ):
+        if reads != None: reads.reload()
     
     start_time = time.time()
     for i in xrange(50):
@@ -720,10 +695,9 @@ def worker( input_queue, input_queue_lock,
             with input_queue_lock:
                 work_type, work_data = input_queue.pop()
         except IndexError, inst:
-            if len(input_queue) == 0:
-                break
-            else:
-                continue
+            if len(input_queue) == 0: break
+            else: continue
+        
         
         if work_type == 'ERROR':
             ( gene_id, trans_index ), msg = work_data
@@ -734,18 +708,36 @@ def worker( input_queue, input_queue_lock,
 
         if work_type == 'FINISHED':
             finished_queue.put( ('gtf', gene_id) )
-            continue
-
-        if work_type == 'mle':
+        elif work_type == 'gene':
+            # build the gene with transcripts, and optionally call orfs
+            gene = build_genes_worker(gene_id, output_dict_lock, output_dict)
+            # add the gene to the output structure
+            with output_dict_lock: output_dict[(gene_id, 'gene')] = gene
+            # if we are only building candidate transcripts, then we are done
+            if ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+                input_queue.append(('FINISHED', (gene_id, None, None)))
+            else:
+                with input_queue_lock:
+                    input_queue.append( ('design_matrices', (gene.id, None, None)) )
+        elif work_type == 'design_matrices':
+            # otherwise, we build the design matrices
+            observed_array, expected_array, unobservable_transcripts = \
+                build_design_matrices_worker(
+                    gene_id, output_dict_lock, output_dict,
+                    (rnaseq_reads, promoter_reads, polya_reads) )
+            with output_dict_lock: output_dict[(gene_id, 'design_matrices')] = (
+                observed_array, expected_array, unobservable_transcripts)
+            with input_queue_lock:
+                input_queue.append( ('mle', (gene_id, None, None)) )
             if write_design_matrices:
-                finished_queue.put( ('design_matrix', gene_id) )
-        
-        args = (work_type, (gene_id, bam_fn, trans_index),
+                finished_queue.put( ('design_matrices', gene_id) )
+        else:
+            assert work_type in ('mle', 'ub', 'lb')
+            estimate_expression_worker(
+                work_type, (gene_id, bam_fn, trans_index),
                 input_queue, input_queue_lock, 
                 output_dict_lock, output_dict, 
-                promoter_reads, rnaseq_reads, polya_reads,
-                estimate_confidence_bounds )
-        estimate_gene_expression_worker(*args)
+                estimate_confidence_bounds)
     
     return
 
