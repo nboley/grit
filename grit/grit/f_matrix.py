@@ -495,8 +495,7 @@ def build_expected_and_observed_arrays(
         unobservable_transcripts = set(range(expected_mat.shape[1])) \
             - set(nonzero_entries.tolist())
         observed_mat = numpy.array( observed_mat, dtype=numpy.int )
-        expected_mat = expected_mat[:,nonzero_entries]
-        expected_mat = expected_mat/expected_mat.sum(0)
+        expected_mat = expected_mat/(expected_mat.sum(0)+1e-12)
     
     return expected_mat, observed_mat, unobservable_transcripts
 
@@ -509,7 +508,7 @@ def build_expected_and_observed_rnaseq_counts( gene, reads, fl_dists ):
         list(build_nonoverlapping_indices( 
                 gene.transcripts, exon_boundaries ))
     
-    binned_reads = bin_reads( 
+    binned_reads = bin_rnaseq_reads( 
         reads, gene.chrm, gene.strand, exon_boundaries)
         
     observed_cnts = build_observed_cnts( binned_reads, fl_dists )    
@@ -581,29 +580,6 @@ def build_expected_and_observed_transcript_bndry_counts(
     
     return expected_cnts, observed_cnts
 
-def cluster_rows_old(expected_rnaseq_array, observed_rnaseq_array):
-    corr_coefs = numpy.corrcoef(expected_rnaseq_array)
-    if isinstance(corr_coefs, numpy.ndarray):
-        edges = set()
-        row, col = (corr_coefs == 1).nonzero()
-        for row_i, col_i in zip( row, col ):
-            edges.add((int(row_i), int(col_i)))
-        graph = Graph( expected_rnaseq_array.shape[0] )
-        graph.add_edges(edges) #[ (int(e[0]), int(e[1])) for e in edges])
-        clusters = graph.clusters()
-        
-        new_expected_array = numpy.zeros( 
-            (len(clusters), expected_rnaseq_array.shape[1]) )
-        new_observed_array = numpy.zeros( len(clusters), dtype=int )
-        for i, node in enumerate(graph.clusters()):
-            new_expected_array[i,:] = expected_rnaseq_array[node,].sum(0)
-            new_observed_array[i] = observed_rnaseq_array[node].sum()
-
-        expected_rnaseq_array = new_expected_array
-        observed_rnaseq_array = new_observed_array
-    
-    return expected_rnaseq_array, observed_rnaseq_array
-
 def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
     norm_rows = []
     edges = []
@@ -628,87 +604,6 @@ def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
 
     return new_expected_array, new_observed_array
 
-def build_design_matrices( gene, rnaseq_reads, fl_dists, all_promoter_reads=[], 
-                           max_num_transcripts=None  ):
-    if len( gene.transcripts ) == 0:
-        return numpy.zeros(0), numpy.zeros(0), []
-        
-    # bin the rnaseq reads
-    expected_rnaseq_cnts, observed_rnaseq_cnts = \
-        build_expected_and_observed_rnaseq_counts( 
-            gene, rnaseq_reads, fl_dists )
-    if len( expected_rnaseq_cnts ) == 0:
-        return numpy.zeros(0), numpy.zeros(0), []
-    
-    expected_rnaseq_array, observed_rnaseq_array, unobservable_rnaseq_trans = \
-        build_expected_and_observed_arrays( 
-            expected_rnaseq_cnts, observed_rnaseq_cnts, True )
-    del expected_rnaseq_cnts, observed_rnaseq_cnts
-    
-    expected_rnaseq_array, observed_rnaseq_array = cluster_rows(
-        expected_rnaseq_array, observed_rnaseq_array)
-    
-    num_transcripts = expected_rnaseq_array.shape[1]
-    if max_num_transcripts != None and num_transcripts > max_num_transcripts:
-        # transcripts to remove
-        low_expression_ts = set()
-        test = (observed_rnaseq_array+1)/expected_rnaseq_array.max(1)
-        for index in numpy.arange(observed_rnaseq_array.shape[0])[test.argsort()]:
-            if num_transcripts - len(low_expression_ts) <= max_num_transcripts:
-                break
-            new_low_expression = set(expected_rnaseq_array[index,].nonzero()[0])
-            # if this would remove every transcript, skip it
-            if len( low_expression_ts.union(new_low_expression) ) == num_transcripts:
-                continue
-            low_expression_ts.update( new_low_expression )
-        
-        high_expression_ts = numpy.array(
-            list(set(range(num_transcripts)) - low_expression_ts))
-        expected_rnaseq_array = expected_rnaseq_array[:,high_expression_ts]
-        
-        new_unobservable_transcripts = [] + list(unobservable_rnaseq_trans)
-        for low_exp_t_i in low_expression_ts:
-            new_unobservable_transcripts.append( low_exp_t_i + sum(
-                    x <= low_exp_t_i for x in unobservable_rnaseq_trans ))
-        unobservable_rnaseq_trans = set( new_unobservable_transcripts )
-
-        expected_rnaseq_array, observed_rnaseq_array = cluster_rows(
-            expected_rnaseq_array, observed_rnaseq_array)
-    
-    # rename the arrays, in case there is no 
-    expected_array = expected_rnaseq_array
-    observed_array = observed_rnaseq_array
-    unobservable_trans = unobservable_rnaseq_trans
-    
-    # deal with the, optional, promoter reads
-    for promoter_reads in all_promoter_reads:
-        # bin the CAGE data
-        expected_promoter_cnts, observed_promoter_cnts = \
-            build_expected_and_observed_transcript_bndry_counts( 
-            gene, promoter_reads )
-        expected_prom_array, observed_prom_array, unobservable_prom_trans = \
-            build_expected_and_observed_arrays( 
-            expected_promoter_cnts, observed_promoter_cnts, False )
-        del expected_promoter_cnts, observed_promoter_cnts
-
-        # combine the arrays
-        observed_array = numpy.delete( observed_array, 
-                      numpy.array(list(unobservable_prom_trans)) )
-        observed_prom_array = numpy.delete( observed_prom_array, 
-                      numpy.array(list(unobservable_trans)) )
-        observed_array = numpy.hstack((observed_prom_array, observed_array))
-
-        expected_array = numpy.delete( expected_array, 
-                      numpy.array(list(unobservable_prom_trans)), axis=1 )
-        expected_prom_array = numpy.delete( expected_prom_array, 
-                      numpy.array(list(unobservable_trans)), axis=1 )   
-
-        expected_array = numpy.vstack((expected_prom_array, expected_array))
-        unobservable_trans = unobservable_trans.union(
-            unobservable_prom_trans)
-    
-    return expected_array, observed_array, unobservable_trans
-
 def find_nonoverlapping_exons_covered_by_segment(exon_bndrys, start, stop):
     """Return the pseudo bins that a given segment has at least one basepair in.
 
@@ -728,7 +623,7 @@ def find_nonoverlapping_exons_covered_by_segment(exon_bndrys, start, stop):
     return tuple(xrange( bin_1, bin_2+1 ))
  
 
-def bin_reads( reads, chrm, strand, exon_boundaries ):
+def bin_rnaseq_reads( reads, chrm, strand, exon_boundaries ):
     """Bin reads into non-overlapping exons.
 
     exon_boundaries should be a numpy array that contains
@@ -774,6 +669,145 @@ def bin_reads( reads, chrm, strand, exon_boundaries ):
         binned_reads[( rlen, rg, tuple(sorted((bin1,bin2))))] += 1
     
     return dict(binned_reads)
+
+class DesignMatrix(object):
+    def filter_design_matrix(self):        
+        return
+    
+    def _build_rnaseq_arrays(self, gene, rnaseq_reads, fl_dists):
+        # bin the rnaseq reads
+        expected_rnaseq_cnts, observed_rnaseq_cnts = \
+            build_expected_and_observed_rnaseq_counts( 
+                gene, rnaseq_reads, fl_dists )
+        # if no transcripts are observable given the fl dist, then return nothing
+        if len( expected_rnaseq_cnts ) == 0:
+            return numpy.zeros(0), numpy.zeros(0), [], []
+
+        # build the expected and observed counts, and convert them to frequencies
+        ( expected_rnaseq_array, observed_rnaseq_array, unobservable_rnaseq_trans ) = \
+              build_expected_and_observed_arrays( 
+                expected_rnaseq_cnts, observed_rnaseq_cnts, normalize=True ) 
+        del expected_rnaseq_cnts, observed_rnaseq_cnts
+        expected_rnaseq_array, observed_rnaseq_array = cluster_rows(
+            expected_rnaseq_array, observed_rnaseq_array)
+        
+        self.array_types.append('RNASeq')
+        self.obs_cnt_arrays.append(observed_rnaseq_array)
+        self.expected_freq_arrays.append(expected_rnaseq_array)
+        self.unobservable_transcripts.update(unobservable_rnaseq_trans)
+    
+    def _build_gene_bnd_arrays(self, gene, reads, reads_type):
+        # bin the CAGE data
+        expected_cnts, observed_cnts = \
+            build_expected_and_observed_transcript_bndry_counts( 
+            gene, reads )
+        expected_array, observed_array, unobservable_trans = \
+            build_expected_and_observed_arrays( 
+            expected_cnts, observed_cnts, normalize=False )
+        del expected_cnts, observed_cnts
+
+        self.array_types.append('reads_type')
+        self.obs_cnt_arrays.append(observed_array)
+        self.expected_freq_arrays.append(expected_array)
+        self.unobservable_transcripts.update(unobservable_trans)
+        return
+
+    def merge_arrays(self):
+                # combine the arrays
+        observed_array = numpy.delete( observed_array, 
+                      numpy.array(list(unobservable_prom_trans)) )
+        observed_prom_array = numpy.delete( observed_prom_array, 
+                      numpy.array(list(unobservable_trans)) )
+        observed_array = numpy.hstack((observed_prom_array, observed_array))
+
+        expected_array = numpy.delete( expected_array, 
+                      numpy.array(list(unobservable_prom_trans)), axis=1 )
+        expected_prom_array = numpy.delete( expected_prom_array, 
+                      numpy.array(list(unobservable_trans)), axis=1 )   
+
+        expected_array = numpy.vstack((expected_prom_array, expected_array))
+        unobservable_trans = unobservable_trans.union(
+            unobservable_prom_trans)
+        num_bins.insert(0, len(observed_prom_array))
+
+        pass
+    
+    def transcript_indices(self):
+        """Sorted list transcript indices that the expected array was built for.
+        """
+        # it doesn't matter which design matric we use, because they 
+        # al have the same number of transcripts
+        num_transcripts = self.expected_freq_arrays[0].shape[1]
+        indices = set(xrange(num_transcripts)) - self.filtered_transcripts
+        return sorted(indices)
+    
+    def expected_and_observed(self):
+        if self._expected_and_observed != None:
+            return self._expected_and_observed
+        
+        # find the transcripts that we want to build the array for
+        indices = numpy.array(self.transcript_indices())
+        # stack all of the arrays, and filter out transcripts to skip
+        expected = numpy.vstack(self.expected_freq_arrays)[:,indices]
+        observed = numpy.hstack(self.obs_cnt_arrays)
+        # find which bins have 0 expected reads
+        bins_to_keep = (expected.sum(1) > 1e-6)
+        self._expected_and_observed = cluster_rows(
+            expected[bins_to_keep,], observed[bins_to_keep])
+        return self._expected_and_observed
+
+    def find_transcripts_to_filter(self, expected, observed, max_num_transcripts):
+        num_transcripts = expected.shape[1]
+        low_expression_ts = set(self.unobservable_transcripts)
+        if num_transcripts <= max_num_transcripts: 
+            return low_expression_ts
+
+        # cluster bins
+        expected, observed = cluster_rows(expected, observed)
+
+        # transcripts to remove
+        test = (observed+1)/expected.max(1)
+        for index in numpy.arange(observed.shape[0])[test.argsort()]:
+            if num_transcripts - len(low_expression_ts) <= max_num_transcripts:
+                break
+            new_low_expression = set(expected[index,].nonzero()[0])
+            # if this would remove every transcript, skip it
+            if len( low_expression_ts.union(new_low_expression) ) == num_transcripts:
+                continue
+            low_expression_ts.update( new_low_expression )
+
+        return low_expression_ts
+    
+    def __init__(self, gene, fl_dists,
+                 rnaseq_reads, five_p_reads, three_p_reads,
+                 max_num_transcripts=None):
+        self.array_types = []
+        self.obs_cnt_arrays = []
+        self.expected_freq_arrays = []
+        self.unobservable_transcripts = set()
+        self.filtered_transcripts = None
+        self.max_num_transcripts = max_num_transcripts
+        
+        self._expected_and_observed = None
+        
+        if len( gene.transcripts ) == 0:
+            return
+        
+        self._build_rnaseq_arrays(gene, rnaseq_reads, fl_dists)
+        self._build_gene_bnd_arrays(gene, five_p_reads, 'five_p_reads')
+        self._build_gene_bnd_arrays(gene, three_p_reads, 'three_p_reads')
+        
+        # initialize the filtered_transcripts to the unobservable transcripts
+        self.filtered_transcripts = set(list(self.unobservable_transcripts))
+        
+        # update the set to satisfy the max_num_transcripts restriction
+        if max_num_transcripts != None:
+            self.filtered_transcripts =  self.find_transcripts_to_filter(
+                self.expected_freq_arrays[0], 
+                self.obs_cnt_arrays[0], 
+                self.max_num_transcripts)
+        
+        return
 
 
 def tests( ):
