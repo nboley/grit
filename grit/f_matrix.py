@@ -17,7 +17,7 @@ import frag_len
 from itertools import product, izip, chain
 from collections import defaultdict
 
-from files.reads import ( iter_coverage_regions_for_read, get_read_group,
+from files.reads import ( iter_coverage_intervals_for_read, get_read_group,
                           CAGEReads, RAMPAGEReads, PolyAReads )
 
 
@@ -529,11 +529,11 @@ def build_expected_and_observed_transcript_bndry_counts(
         gene, reads, bndry_type=None ):
     if bndry_type == None:
         # try to infer the boundary type from the reads type
-        if isinstance(reads, CAGEReads): bndry_type = "CAGE"
-        elif isinstance(reads, RAMPAGEReads): bndry_type = "CAGE"
-        elif isinstance(reads, PolyAReads): bndry_type = "POLYA"
-        else: assert False, "Can't infer boundary read type (%s)" % type(reads)
-    assert bndry_type in ["CAGE", "POLYA"]
+        if reads.type == 'CAGE': bndry_type = "five_prime"
+        elif reads.type == 'PolyA': bndry_type = "three_prime"
+        elif reads.type == 'RAMPAGE': bndry_type = "five_prime"
+        else: assert False, "Unsupported boundary read type (%s)" % reads.type
+    assert bndry_type in ["five_prime", "three_prime"]
     
     cvg_array = numpy.zeros(gene.stop-gene.start+1)
     cvg_array += reads.build_read_coverage_array( 
@@ -542,9 +542,9 @@ def build_expected_and_observed_transcript_bndry_counts(
     # find all the bndry peak regions
     peaks = list()
     for transcript in gene.transcripts:
-        if bndry_type == 'CAGE':
+        if bndry_type == 'five_prime':
             peaks.append( transcript.find_promoter() )
-        elif bndry_type == 'POLYA':
+        elif bndry_type == 'three_prime':
             peaks.append( transcript.find_polya_region() )
         else: assert False
     
@@ -743,8 +743,7 @@ def bin_reads( reads, chrm, strand, exon_boundaries ):
     # find the unique subset of contiguous read sub-locations
     read_locs = set()
     for r in chain(*paired_reads):
-        for chrm, strand, start, stop in iter_coverage_regions_for_read( 
-                r, reads, reads.reverse_read_strand,reads.pairs_are_opp_strand):
+        for start, stop in iter_coverage_intervals_for_read( r ):
             read_locs.add( (start, stop) )
     
     # build a mapping from contiguous regions into the non-overlapping exons (
@@ -757,9 +756,7 @@ def bin_reads( reads, chrm, strand, exon_boundaries ):
 
     def build_bin_for_read( read ):
         bin = set()
-        for chrm, strand, start, stop in iter_coverage_regions_for_read(
-                read, reads, 
-                reads.reverse_read_strand, reads.pairs_are_opp_strand):
+        for start, stop in iter_coverage_intervals_for_read( read ):
             bin.update( read_locs_into_bins[(start, stop)] )
         return tuple(sorted(bin))
     

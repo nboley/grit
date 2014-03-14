@@ -248,6 +248,13 @@ class MergedReads( object ):
         
         return
     
+    def mate(self, rd):
+        for reads in self._reads:
+            f_pos = reads.tell()
+            mate = reads.mate(rd)
+            reads.seek(f_pos)
+            return mate
+    
     @property
     def mapped(self):
         return sum( reads.mapped for reads in self._reads )

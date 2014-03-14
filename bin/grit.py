@@ -7,7 +7,9 @@ import sqlite3
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), ".." ) )
 from grit.files.gtf import load_gtf
 from grit.files.reads import (
-    MergedReads, RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads, clean_chr_name)
+    MergedReads, clean_chr_name,
+    RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads )
+
 from grit.lib.logging import Logger
 
 import grit.find_elements
