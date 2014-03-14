@@ -19,14 +19,14 @@ from files.reads import fix_chrm_name_for_ucsc
 from transcript import cluster_exons, build_transcripts
 from proteomics.ORF import find_cds_for_gene
 
-from f_matrix import build_design_matrices
+from f_matrix import DesignMatrix
 import frequency_estimation
 from frag_len import load_fl_dists, FlDist, build_normal_density
 
 import cPickle as pickle
 
 MAX_NUM_TRANSCRIPTS = 200
-MAX_NUM_CANDIDATE_TRANSCRIPTS = 2500
+MAX_NUM_CANDIDATE_TRANSCRIPTS = 500
 ALPHA = 0.025
 
 class ThreadSafeFile( file ):
@@ -270,10 +270,9 @@ def build_design_matrices_worker(gene_id, op_lock, output,
                gene.start, gene.stop, len(gene.transcripts) ) )
     
     try:
-        expected_array, observed_array, unobservable_transcripts \
-            = build_design_matrices( gene, rnaseq_reads, fl_dists, 
-                                     (promoter_reads, polya_reads),
-                                     MAX_NUM_TRANSCRIPTS)
+        f_mat = DesignMatrix(gene, fl_dists, 
+                             rnaseq_reads, promoter_reads, polya_reads,
+                             MAX_NUM_TRANSCRIPTS)
     except ValueError, inst:
         error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
             os.getpid(), gene.id, 
@@ -297,7 +296,7 @@ def build_design_matrices_worker(gene_id, op_lock, output,
 
     log_statement( "FINISHED DESIGN MATRICES %s" % gene.id )
     log_statement( "" )
-    return observed_array, expected_array, unobservable_transcripts
+    return f_mat
 
 
 def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
@@ -309,9 +308,8 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
         if work_type == 'mle':
             log_statement( "Finding MLE for Gene %s" % gene_id  )
             with op_lock:
-                observed_array, expected_array, unobservable_transcripts = \
-                    output[(gene_id, 'design_matrices')]
                 gene = output[(gene_id, 'gene')]
+                f_mat = output[(gene_id, 'design_matrices')]
                 fl_dists = output[(gene_id, 'fl_dists')]
             
             log_statement(
@@ -320,6 +318,7 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
                        gene.start, gene.stop, len(gene.transcripts) ) )
             
             try:
+                expected_array, observed_array = f_mat.expected_and_observed()
                 mle = frequency_estimation.estimate_transcript_frequencies( 
                     observed_array, expected_array)
                 num_reads_in_gene = observed_array.sum()
@@ -367,10 +366,10 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
 
         elif work_type in ('lb', 'ub'):
             with op_lock:
-                observed_array, expected_array, unobservable_transcripts = \
-                    output[(gene_id, 'design_matrices')]
+                f_mat = output[(gene_id, 'design_matrices')]
                 mle_estimate = output[(gene_id, 'mle')]
-            
+            expected_array, observed_array = f_mat.expected_and_observed()
+
             bnd_type = 'LOWER' if work_type == 'lb' else 'UPPER'
 
             if type(trans_index) == int:
@@ -478,10 +477,12 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
 
                 with output_dict_lock:
                     gene = output_dict[(key, 'gene')]
-                    unobservable_transcripts = output_dict[
-                        (key, 'design_matrices')][2]if (
-                        not ONLY_BUILD_CANDIDATE_TRANSCRIPTS ) else []
-                        
+                    unobservable_transcripts = []
+                    if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+                        f_mat = output_dict[(key, 'design_matrices')]
+                        unobservable_transcripts = sorted(
+                            f_mat.filtered_transcripts)
+                                            
                     mles = output_dict[(key, 'mle')] \
                         if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
                     fpkms = output_dict[(key, 'fpkm')] \
@@ -684,7 +685,10 @@ def worker( input_queue, input_queue_lock,
     # own file pointer
     for reads in ( promoter_reads, rnaseq_reads, polya_reads ):
         if reads != None: reads.reload()
-    
+
+    # perform a maximum of 50 operations before restarting the process. This
+    # is to stop python from leaking memory. We also respawn any process that
+    # has been running for longer than a minute
     start_time = time.time()
     for i in xrange(50):
         # if we've been in this worker longer than a minute, then 
@@ -698,14 +702,14 @@ def worker( input_queue, input_queue_lock,
             if len(input_queue) == 0: break
             else: continue
         
-        
         if work_type == 'ERROR':
             ( gene_id, trans_index ), msg = work_data
             log_statement( str(gene_id) + "\tERROR\t" + msg, only_log=True ) 
             continue
-        else:
-            gene_id, bam_fn, trans_index = work_data
 
+        # unpack the work data
+        gene_id, bam_fn, trans_index = work_data
+        
         if work_type == 'FINISHED':
             finished_queue.put( ('gtf', gene_id) )
         elif work_type == 'gene':
@@ -721,12 +725,11 @@ def worker( input_queue, input_queue_lock,
                     input_queue.append( ('design_matrices', (gene.id, None, None)) )
         elif work_type == 'design_matrices':
             # otherwise, we build the design matrices
-            observed_array, expected_array, unobservable_transcripts = \
-                build_design_matrices_worker(
-                    gene_id, output_dict_lock, output_dict,
-                    (rnaseq_reads, promoter_reads, polya_reads) )
-            with output_dict_lock: output_dict[(gene_id, 'design_matrices')] = (
-                observed_array, expected_array, unobservable_transcripts)
+            f_mat = build_design_matrices_worker(
+                gene_id, output_dict_lock, output_dict,
+                (rnaseq_reads, promoter_reads, polya_reads) )
+            with output_dict_lock: 
+                output_dict[(gene_id, 'design_matrices')] = f_mat
             with input_queue_lock:
                 input_queue.append( ('mle', (gene_id, None, None)) )
             if write_design_matrices:
