@@ -711,26 +711,6 @@ class DesignMatrix(object):
         self.expected_freq_arrays.append(expected_array)
         self.unobservable_transcripts.update(unobservable_trans)
         return
-
-    def merge_arrays(self):
-                # combine the arrays
-        observed_array = numpy.delete( observed_array, 
-                      numpy.array(list(unobservable_prom_trans)) )
-        observed_prom_array = numpy.delete( observed_prom_array, 
-                      numpy.array(list(unobservable_trans)) )
-        observed_array = numpy.hstack((observed_prom_array, observed_array))
-
-        expected_array = numpy.delete( expected_array, 
-                      numpy.array(list(unobservable_prom_trans)), axis=1 )
-        expected_prom_array = numpy.delete( expected_prom_array, 
-                      numpy.array(list(unobservable_trans)), axis=1 )   
-
-        expected_array = numpy.vstack((expected_prom_array, expected_array))
-        unobservable_trans = unobservable_trans.union(
-            unobservable_prom_trans)
-        num_bins.insert(0, len(observed_prom_array))
-
-        pass
     
     def transcript_indices(self):
         """Sorted list transcript indices that the expected array was built for.
@@ -788,14 +768,22 @@ class DesignMatrix(object):
         self.filtered_transcripts = None
         self.max_num_transcripts = max_num_transcripts
         
+        # initialize sum currently unset variables
+        self.num_rnaseq_reads, self.num_fp_reads, self.num_tp_reads = (
+            None, None, None)
         self._expected_and_observed = None
         
         if len( gene.transcripts ) == 0:
             return
         
         self._build_rnaseq_arrays(gene, rnaseq_reads, fl_dists)
-        self._build_gene_bnd_arrays(gene, five_p_reads, 'five_p_reads')
-        self._build_gene_bnd_arrays(gene, three_p_reads, 'three_p_reads')
+        self.num_rnaseq_reads = sum(self.obs_cnt_arrays[-1])
+        if five_p_reads != None:
+            self._build_gene_bnd_arrays(gene, five_p_reads, 'five_p_reads')
+            self.num_fp_reads = sum(self.obs_cnt_arrays[-1])
+        if three_p_reads != None:
+            self._build_gene_bnd_arrays(gene, three_p_reads, 'three_p_reads')
+            self.num_tp_reads = sum(self.obs_cnt_arrays[-1])
         
         # initialize the filtered_transcripts to the unobservable transcripts
         self.filtered_transcripts = set(list(self.unobservable_transcripts))

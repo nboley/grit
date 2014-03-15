@@ -254,9 +254,9 @@ class Samples(object):
         polya_reads = self._load_polya_reads(sample_type, rep_id)
         self.verify_args_are_sufficient( 
             rnaseq_reads, promoter_reads, polya_reads )
-        return ( MergedReads(promoter_reads), 
-                 MergedReads(rnaseq_reads), 
-                 MergedReads(polya_reads) )
+        return (None if len(promoter_reads)==0 else MergedReads(promoter_reads), 
+                None if len(rnaseq_reads) == 0 else MergedReads(rnaseq_reads), 
+                None if len(polya_reads) == 0 else MergedReads(polya_reads) )
     
     def get_sample_types(self):
         query = "SELECT DISTINCT sample_type FROM data"
