@@ -174,50 +174,6 @@ def find_matching_polya_region_for_transcript(transcript, polyas):
     
     return matching_polya
 
-def pre_filter_design_matrices(
-        observed_array, expected_array, unobservable_transcripts):
-    # find the indices of the various starts
-    low_expression_ts = set()
-    """
-    # find the intervals where the multinomial change occurs
-    all_mult_regions = []
-    for trans_i, t in enumerate(expected_array.T):
-        mult_regions = []
-        for i, val in enumerate(expected_array[0,:].cumsum()):
-            if abs(val - int(val + 1e-12)) < 1e-12:
-                mult_regions.append(i)
-        all_mult_regions.append( mult_regions )
-
-    assert all( len(all_mult_regions[0]) == len(x) 
-                for x in all_mult_regions )
-    merged_mult_regions = [0,]
-    for i in xrange(len(all_mult_regions[0])):
-        merged_mult_regions.append(max(x[i] for x in all_mult_regions)+1)
-    """
-    mult_regions = [(0,1), (1,len(observed_array))]
-
-    for start, stop in mult_regions:
-        N = observed_array[start:stop].sum()
-        for trans_i, t in enumerate(expected_array.T):
-            t = t[start:stop]
-            non_zero_expected = t.nonzero()
-            cnts = observed_array[start:stop][non_zero_expected]
-            N_t = float(cnts.sum())
-            ps = t[non_zero_expected]
-            rv = scipy.stats.binom(N_t, 0.05*(N/N_t)*ps[start:stop])
-            if (rv.ppf(0.10) > cnts[start:stop]).any():
-                low_expression_ts.add(trans_i)
-
-    new_unobservable_transcripts = [] + list(unobservable_transcripts)
-    for low_exp_t_i in low_expression_ts:
-        new_unobservable_transcripts.append( low_exp_t_i + sum(
-                x <= low_exp_t_i for x in unobservable_transcripts ))
-    unobservable_transcripts = set( new_unobservable_transcripts )
-    high_exp_ts = numpy.array(sorted(set(range(expected_array.shape[1]))
-                                     - low_expression_ts), dtype=int)
-    expected_array = expected_array[:,high_exp_ts]
-    return observed_array, expected_array, unobservable_transcripts
-
 def build_genes_worker(gene_id, op_lock, output):
     log_statement("Building transcript and ORFs for Gene %s" % gene_id)
     with op_lock:
@@ -455,9 +411,12 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
         # write out the design matrix
         try:            
             if write_type == 'design_matrices' and write_design_matrices:
+                raise NotImplemented, "This was for debugging, and hasn't been maintained. Althouhg it would be relatively easy to fix if necessary"
+                # to fix this, I would add a 'write' method to the DesignMatrix class and then
+                # call it from here
                 if DEBUG_VERBOSE: 
                     log_statement("Writing design matrix mat to '%s'" % ofname)
-                observed,expected,missed = output_dict[(key,'design_matrices')]
+                f_mat = output_dict[(key,'design_matrices')]
                 ofname = "./%s_%s.mat" % ( key[0], os.path.basename(key[1]) )
                 if DEBUG_VERBOSE: log_statement("Writing mat to '%s'" % ofname)
                 savemat( ofname, {'observed': observed, 'expected': expected}, 
@@ -670,6 +629,10 @@ def initialize_processing_data( elements, genes, fl_dists,
 
         p = Pool(NTHREADS)
         p.apply( add_elements_for_contig_and_strand, all_args )
+
+    output_dict['num_rnaseq_reads'] = 0
+    output_dict['num_cage_reads'] = 0
+    output_dict['num_polya_reads'] = 0
     
     return
 
@@ -730,6 +693,11 @@ def worker( input_queue, input_queue_lock,
                 (rnaseq_reads, promoter_reads, polya_reads) )
             with output_dict_lock: 
                 output_dict[(gene_id, 'design_matrices')] = f_mat
+                output_dict['num_rnaseq_reads'] += f_mat.num_rnaseq_reads
+                if f_mat.num_fp_reads != None:
+                    output_dict['num_cage_reads'] += f_mat.num_fp_reads
+                if f_mat.num_tp_reads != None:
+                    output_dict['num_polya_reads'] += f_mat.num_tp_reads
             with input_queue_lock:
                 input_queue.append( ('mle', (gene_id, None, None)) )
             if write_design_matrices:
