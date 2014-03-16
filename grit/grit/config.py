@@ -1,3 +1,5 @@
+VERSION = "1.1.0"
+
 # config options shared across modules
 
 MAX_NUM_TRANSCRIPTS = 1000

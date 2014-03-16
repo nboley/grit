@@ -224,9 +224,9 @@ def build_design_matrices_worker(gene_id,
         gene = output[(gene_id, 'gene')]
         fl_dists = output[(gene.id, 'fl_dists')]
     config.log_statement( 
-        "Finding design matrix for Gene %s(%s:%s:%i-%i) - %i transcripts"\
-            % (gene.id, gene.chrm, gene.strand, 
-               gene.start, gene.stop, len(gene.transcripts) ) )
+        "Finding design matrix for Gene %s(%s:%s:%i-%i) - %i transcripts"%(
+            gene.id, gene.chrm, gene.strand, 
+            gene.start, gene.stop, len(gene.transcripts) ) )
     
     try:
         f_mat = DesignMatrix(gene, fl_dists, 
@@ -236,7 +236,7 @@ def build_design_matrices_worker(gene_id,
         error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
             os.getpid(), gene.id, 
             gene.chrm, gene.strand, gene.start, gene.stop, inst)
-        config.log_statement( error_msg )
+        config.log_statement( error_msg, log=True )
         with input_queue_lock:
             input_queue.append(
                 ('ERROR', ((gene.id, None), 
@@ -246,7 +246,7 @@ def build_design_matrices_worker(gene_id,
         error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
             os.getpid(), gene.id, 
             gene.chrm, gene.strand, gene.start, gene.stop, inst)
-        config.log_statement( error_msg )
+        config.log_statement( error_msg, log=True )
         with input_queue_lock:
             input_queue.append(
                 ('ERROR', ((gene.id, None), error_msg)))
@@ -292,7 +292,7 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
                     
             except ValueError, inst:
                 error_msg = "Skipping %s: %s" % ( gene_id, inst )
-                config.log_statement( error_msg )
+                config.log_statement( error_msg, log=True )
                 with input_queue_lock:
                     input_queue.append(('ERROR', (
                                 (gene_id, trans_index), 
@@ -357,7 +357,7 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
                     "FINISHED %s BOUND %s\t%s\t%i/%i\t%.2e\t%.2e" % (
                     bnd_type, gene_id, None, 
                     trans_index+1, mle_estimate.shape[0], 
-                    bnd, p_value ), do_log=True )
+                    bnd, p_value ) )
                 res.append((trans_index, bnd))
             config.log_statement( 
                 "FINISHED Estimating %s confidence bound for gene %s transcript %i-%i/%i" % ( 
@@ -673,7 +673,7 @@ def worker( input_queue, input_queue_lock,
         
         if work_type == 'ERROR':
             ( gene_id, trans_index ), msg = work_data
-            config.log_statement( str(gene_id) + "\tERROR\t" + msg, only_log=True ) 
+            config.log_statement( str(gene_id) + "\tERROR\t" + msg, log=True ) 
             continue
 
         # unpack the work data
@@ -869,7 +869,7 @@ def build_and_quantify_transcripts(
         finished_queue.put( ('FINISHED', None) )
         write_p.join()
     except Exception, inst:
-        config.log_statement(traceback.format_exc())
+        config.log_statement(traceback.format_exc(), log=True, display=False)
         raise
     finally:
         gtf_ofp.close()

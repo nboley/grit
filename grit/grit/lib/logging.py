@@ -3,7 +3,8 @@ import time
 import curses
 import multiprocessing
 
-__version__ = "0.1.1"
+import config
+
 MAX_REFRESH_TIME = 1e-2
 MAX_NCOL = 120
 N_LOG_ROWS = 10
@@ -29,7 +30,7 @@ def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
     log_border.border()
     log = log_border.subpad( N_LOG_ROWS, min(ncol, MAX_NCOL)-2, 1, 1)
 
-    header.addstr(0, 0, "GRIT (version %s)" % (__version__, ) )
+    header.addstr(0, 0, "GRIT (version %s)" % config.VERSION )
     
     while True:
         start_time = time.time()
@@ -105,16 +106,24 @@ class Logger( object ):
         
         return
     
-    def __call__( self, message, only_log=False, do_log=None ):
-        if self.log_ofstream != None:
-            if message != "":
-                self.log_ofstream.write(message.strip() + "\n" )
-                self.log_ofstream.flush()
-        if not self.use_ncurses:
-            if message != "":
-                sys.stderr.write(message.strip() + "\n" )
+    def __call__( self, message, display=True, log=False ):
+        # if the message is empty, always display and never log
+        if message == "": 
+            display = True
+            log = False
+        # if we want to log this, and we have an output stream, write this
+        # to the log
+        if log and self.log_ofstream != None:
+            self.log_ofstream.write(message.strip() + "\n" )
+            self.log_ofstream.flush()
             
-        if self.use_ncurses:
+        # if we're not using ncurses, then write the message to standard err
+        if display and not self.use_ncurses:
+            sys.stderr.write(message.strip() + "\n" )
+        
+        # if we are using ncurses, and this is a message to display, then add
+        # it to the display queue
+        if display and self.use_ncurses:
             self.msgs_lock.acquire()
             try: 
                 p_index = self.pid_to_index_mapping.index( os.getpid() )
@@ -124,8 +133,7 @@ class Logger( object ):
                 self.pid_to_index_mapping[p_index] = os.getpid()
 
             # only log message from main
-            if do_log == None: do_log = True if p_index == 0 else False
-            self.msgs.append( (p_index, only_log or do_log, message) )
+            self.msgs.append( (p_index, log, message) )
             self.msgs_lock.release()
         
         time.sleep(1e-2)
