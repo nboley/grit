@@ -13,7 +13,7 @@ import multiprocessing
 
 from reads import get_strand, get_contigs_and_lens
 
-VERBOSE = False
+import config
 
 CONSENSUS_PLUS = 'GTAG'
 CONSENSUS_MINUS = 'CTAC'
@@ -193,15 +193,14 @@ def extract_junctions_in_contig( reads, chrm, strand ):
         reads, chrm, strand, start=None, end=None )
 
 def load_junctions_worker(all_jns, all_jns_lock, 
-                          segments_queue, segments_queue_lock, 
-                          reads, log_statement=None):
+                          segments_queue, segments_queue_lock, reads):
     jns = defaultdict(list)
     while len(segments_queue) > 0:
         with segments_queue_lock:
             if len(segments_queue) == 0: break
             chrm, strand, start, stop = segments_queue.pop()
-        if log_statement != None and VERBOSE: 
-            log_statement("Finding jns in '%s:%s:%i:%i'" % 
+        if config.VERBOSE: 
+            config.log_statement("Finding jns in '%s:%s:%i:%i'" % 
                           (chrm, strand, start, stop))
         jns[(chrm, strand)].extend(
             extract_junctions_in_region(
@@ -215,10 +214,10 @@ def load_junctions_worker(all_jns, all_jns_lock,
             all_jns_key.extend( region_jns )
             all_jns[key] = all_jns_key
     del jns
-    if log_statement != None and VERBOSE: log_statement( "" )
+    if config.VERBOSE: config.log_statement( "" )
     return
 
-def load_junctions_in_bam( reads, regions=None, nthreads=1, log_statement=None):
+def load_junctions_in_bam( reads, regions=None, nthreads=1):
     if regions == None:
         regions = []
         for contig, contig_len in zip(*get_contigs_and_lens([reads,])):
@@ -255,28 +254,27 @@ def load_junctions_in_bam( reads, regions=None, nthreads=1, log_statement=None):
         for i in xrange(nthreads):
             p = Process(target=load_junctions_worker,
                         args=( all_jns, all_jns_lock, 
-                               segments_queue, segments_queue_lock, reads,
-                               log_statement))
+                               segments_queue, segments_queue_lock, reads))
             
             p.start()
             ps.append( p )
 
-        if log_statement != None and VERBOSE:
-            log_statement( "Waiting on jn finding children" )
+        if config.VERBOSE:
+            config.log_statement( "Waiting on jn finding children" )
         while len(segments_queue) > 0:
-            if log_statement != None and VERBOSE:
-                log_statement( "Waiting on jn finding children (%i in queue)" 
+            if config.VERBOSE:
+                config.log_statement( "Waiting on jn finding children (%i in queue)" 
                                % len(segments_queue), do_log=False )
             time.sleep( 0.5 )
 
-        if log_statement != None and VERBOSE:
-            log_statement("Waiting on jn finding children (0 in queue)", 
+        if config.VERBOSE:
+            config.log_statement("Waiting on jn finding children (0 in queue)", 
                           do_log=False)
         for p in ps: p.join()
         #while any( not p.is_alive() for p in ps ):
 
-        if log_statement != None and VERBOSE:
-            log_statement("Merging junctions from threads")
+        if config.VERBOSE:
+            config.log_statement("Merging junctions from threads")
         junctions = {}
         for key in all_jns.keys():
             contig_jns = defaultdict(int)

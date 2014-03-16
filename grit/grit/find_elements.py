@@ -28,33 +28,7 @@ from lib.logging import Logger
 import lib.arg_parsing
 from lib.arg_parsing import initialize_reads_from_args
 
-# log statement is set in the main init, and is a global
-# function which facilitates smart, ncurses based logging
-log_statement = None
-VERBOSE = None
-NTHREADS = None
-TOTAL_MAPPED_READS = None
-
-MIN_INTRON_SIZE = 50
-MAX_EMPTY_REGION_SIZE = 400 #MIN_INTRON_SIZE
-MAX_INTRON_SIZE = int(1e6)
-MIN_GENE_LENGTH = 400
-# the maximum number of bases to expand gene boundaries from annotated genes
-MAX_GENE_EXPANSION = 1000
-
-MIN_EXON_BPKM = 0.1
-EXON_EXT_CVG_RATIO_THRESH = 3
-POLYA_MERGE_SIZE = 100
-
-CAGE_PEAK_WIN_SIZE = 15
-CAGE_FILTER_ALPHA = 0.1
-MIN_NUM_CAGE_TAGS = 5
-MAX_CAGE_FRAC = 0.01
-NUM_TSS_BASES_TO_SKIP = 200
-
-MIN_NUM_POLYA_TAGS = 2
-NUM_TES_BASES_TO_SKIP = 300
-
+import config
 
 class ThreadSafeFile( file ):
     def __init__( self, *args ):
@@ -119,8 +93,8 @@ def cluster_segments( segments, jns ):
     try:
         genes_graph.add_edges( list( edges ) )
     except:
-        print log_statement( str(boundaries) )
-        print log_statement( str(edges) )
+        print config.log_statement( str(boundaries) )
+        print config.log_statement( str(edges) )
         raise
 
     segments = []
@@ -169,7 +143,8 @@ def cluster_segments_2( boundaries, jns ):
     return segments
 
 
-def find_empty_regions( cov, thresh=1e-6, min_length=MAX_EMPTY_REGION_SIZE ):
+def find_empty_regions( cov, thresh=1e-6, 
+                        min_length=config.MAX_EMPTY_REGION_SIZE ):
     x = numpy.diff( numpy.asarray( cov >= thresh, dtype=int ) )
     stops = numpy.nonzero(x==1)[0].tolist()
     if cov[-1] < thresh: stops.append(len(x))
@@ -205,13 +180,13 @@ def filter_exon(exon, wig, num_start_bases_to_skip=0, num_stop_bases_to_skip=0):
     '''
     start = exon.start + num_start_bases_to_skip
     end = exon.stop - num_stop_bases_to_skip
-    if end - start < MIN_INTRON_SIZE: return False
+    if end - start < config.MIN_EXON_SIZE: return False
     vals = wig[start:end+1]
-    n_div = max( 1, int(len(vals)/MIN_INTRON_SIZE) )
+    n_div = max( 1, int(len(vals)/config.MAX_EMPTY_REGION_SIZE) )
     div_len = len(vals)/n_div
     for i in xrange(n_div):
         seg = vals[i*div_len:(i+1)*div_len]
-        if seg.mean() < MIN_EXON_BPKM:
+        if seg.mean() < config.MIN_EXON_BPKM:
             return True
 
     return False
@@ -369,7 +344,7 @@ def write_unified_bed( elements, ofp ):
     }
 
     chrm = elements.chrm
-    if FIX_CHRM_NAMES_FOR_UCSC:
+    if config.FIX_CHRM_NAMES_FOR_UCSC:
         chrm = fix_chrm_name_for_ucsc(chrm)
 
     for element in elements:
@@ -409,7 +384,7 @@ class Bins( list ):
         self.chrm = chrm
         self.strand = strand
         self.extend( iter )
-        if FIX_CHRM_NAMES_FOR_UCSC:
+        if config.FIX_CHRM_NAMES_FOR_UCSC:
             chrm = fix_chrm_name_for_ucsc(chrm)
         
         self._bed_template = "\t".join( [chrm, '{start}', '{stop}', '{name}', 
@@ -480,7 +455,7 @@ class Bins( list ):
             if filter != None and bin.type != filter:
                 continue
             chrm = elements.chrm
-            if FIX_CHRM_NAMES_FOR_UCSC:
+            if config.FIX_CHRM_NAMES_FOR_UCSC:
                 chrm = fix_chrm_name_for_ucsc(self.chrm)
             region = GenomicInterval(chrm, self.strand, 
                                      bin.start, bin.stop)
@@ -495,13 +470,13 @@ def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads,
     # they are on differnet scales, so we only filter the RNAseq and use the 
     # cage and polya to get connectivity at the boundaries.
     rnaseq_junctions = files.junctions.load_junctions_in_bam(
-        rnaseq_reads, regions, nthreads=nthreads, log_statement=log_statement)
+        rnaseq_reads, regions, nthreads=nthreads)
     promoter_jns = None if promoter_reads == None else \
         files.junctions.load_junctions_in_bam(promoter_reads, regions, nthreads)
     polya_jns = None if polya_reads == None else \
         files.junctions.load_junctions_in_bam(polya_reads, regions, nthreads)
     
-    if VERBOSE: log_statement("Filtering junctions")
+    if config.VERBOSE: config.log_statement("Filtering junctions")
     filtered_junctions = defaultdict(lambda: defaultdict(int))
     for chrm, strand, region_start, region_stop in regions:        
         # filter junctions
@@ -514,7 +489,7 @@ def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads,
         for (start, stop), cnt in rnaseq_junctions[(chrm, strand)]:
             if (float(cnt)+1)/jn_starts[start] < 0.01: continue
             if (float(cnt)+1)/jn_stops[stop] < 0.01: continue
-            if stop - start + 1 > MAX_INTRON_SIZE: continue
+            if stop - start + 1 > config.MAX_INTRON_SIZE: continue
             filtered_junctions[(chrm, strand)][(start, stop)] = cnt
         
         del rnaseq_junctions[(chrm, strand)]
@@ -533,7 +508,7 @@ def load_junctions( rnaseq_reads, promoter_reads, polya_reads,
     return load_and_filter_junctions( 
         rnaseq_reads, promoter_reads, polya_reads, 
         regions, nthreads=nthreads, ratio_filter=0.01,
-        max_jn_size=MAX_INTRON_SIZE)
+        max_jn_size=config.MAX_INTRON_SIZE)
     
 
 def find_initial_segmentation_worker( 
@@ -541,7 +516,7 @@ def find_initial_segmentation_worker(
         accepted_boundaries, accepted_boundaries_lock,
         chrm, strand, 
         rnaseq_reads, cage_reads, polya_reads ):
-    log_statement( "Finding Segments (%s:%s)" % ( chrm, strand ))
+    config.log_statement( "Finding Segments (%s:%s)" % ( chrm, strand ))
     def no_signal( start, stop ):
         try: next( rnaseq_reads.iter_reads(chrm, strand, start, stop ) )
         except StopIteration: pass
@@ -569,16 +544,16 @@ def find_initial_segmentation_worker(
         if not no_signal( start, stop ):
             locs.append( (start, stop) )
     
-    log_statement( "Putting Segments in Queue (%s, %s)" % (chrm, strand) )
+    config.log_statement( "Putting Segments in Queue (%s, %s)" % (chrm, strand) )
     with accepted_boundaries_lock:
         accepted_boundaries.append( locs )
-    log_statement( "" )
+    config.log_statement( "" )
     return
 
 def find_gene_boundaries((chrm, strand, contig_len), 
                          rnaseq_reads, cage_reads, polya_reads,
                          ref_elements, ref_elements_to_include,
-                         junctions, nthreads=NTHREADS):
+                         junctions, nthreads=config.NTHREADS):
     def find_segments_with_signal( chrm, strand, rnaseq_reads ):
         # initialize a tiling of segments acfross the genome to check for signal
         # This is expensive, so we farm it out to worker processes. But, 
@@ -586,12 +561,13 @@ def find_gene_boundaries((chrm, strand, contig_len),
         manager = multiprocessing.Manager()
         candidate_segments = manager.list()
         candidate_segments_lock = manager.Lock()
-        for middle in xrange( MAX_EMPTY_REGION_SIZE/2, 
-                              contig_len-MAX_EMPTY_REGION_SIZE/2, 
-                              MAX_EMPTY_REGION_SIZE ):
+        for middle in xrange( config.MAX_EMPTY_REGION_SIZE/2, 
+                              contig_len-config.MAX_EMPTY_REGION_SIZE/2, 
+                              config.MAX_EMPTY_REGION_SIZE ):
             
             candidate_segments.append( 
-                (middle-MAX_EMPTY_REGION_SIZE/2,middle+MAX_EMPTY_REGION_SIZE/2))
+                (middle-config.MAX_EMPTY_REGION_SIZE/2,
+                 middle+config.MAX_EMPTY_REGION_SIZE/2))
         
         accepted_segments = manager.list()
         accepted_segments_lock = manager.Lock()
@@ -608,7 +584,7 @@ def find_gene_boundaries((chrm, strand, contig_len),
         
         n_bndries = len(candidate_segments)
         while True:
-            log_statement(
+            config.log_statement(
                 "Waiting on segmentation children in %s:%s (%i/%i remain)" 
                 % (chrm, strand, len(candidate_segments), n_bndries),
                 do_log=False )
@@ -617,7 +593,7 @@ def find_gene_boundaries((chrm, strand, contig_len),
                 break
             time.sleep( 0.5 )
 
-        log_statement( "Merging segments queue in %s:%s" 
+        config.log_statement( "Merging segments queue in %s:%s" 
                        % ( chrm, strand ) )        
 
         locs = []
@@ -636,12 +612,12 @@ def find_gene_boundaries((chrm, strand, contig_len),
             else:
                 new_locs.append( (start, stop) )
                 
-        log_statement( "Finished segmentation in %s:%s" 
+        config.log_statement( "Finished segmentation in %s:%s" 
                        % ( chrm, strand ) )
         return new_locs
             
 
-    log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
+    config.log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
                    % ( chrm, strand ) )
         
     if junctions == None:
@@ -657,14 +633,14 @@ def find_gene_boundaries((chrm, strand, contig_len),
     junctions = sorted( junctions.iteritems() )
     
     # find segment boundaries
-    if VERBOSE: log_statement( 
+    if config.VERBOSE: config.log_statement( 
         "Finding segments for %s:%s" % (chrm, strand) )
     segments = find_segments_with_signal(chrm, strand, rnaseq_reads)
     
     # because the segments are disjoint, they are implicitly merged
     merged_segments = segments
     
-    if VERBOSE: log_statement( "Clustering segments for %s %s" % (chrm, strand))
+    if config.VERBOSE: config.log_statement( "Clustering segments for %s %s" % (chrm, strand))
     clustered_segments = cluster_segments( merged_segments, junctions )
     
     # if we didn't find any genes, then return nothing
@@ -674,7 +650,7 @@ def find_gene_boundaries((chrm, strand, contig_len),
     # build the gene bins
     genes = []
     for start, stop in clustered_segments:
-        if stop - start < MIN_GENE_LENGTH: continue
+        if stop - start < config.MIN_GENE_LENGTH: continue
         gene = Bins( chrm, strand, [] )
         gene.append( Bin(max(1,start-10), min(stop+10,contig_len), 
                           "ESTART", "ESTOP", "GENE" ) )
@@ -725,18 +701,18 @@ def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
     # from the background, at alpha = 0.001. 
     rnaseq_cov = numpy.array( rnaseq_cov+1-1e-6, dtype=int)
     max_val = rnaseq_cov.max()
-    thresholds = 0.1*TOTAL_MAPPED_READS*beta.ppf( 
-        CAGE_FILTER_ALPHA, 
+    thresholds = config.TOTAL_MAPPED_READS*beta.ppf( 
+        config.CAGE_FILTER_ALPHA, 
         numpy.arange(max_val+1)+1, 
-        numpy.zeros(max_val+1)+(TOTAL_MAPPED_READS+1) 
+        numpy.zeros(max_val+1)+(config.TOTAL_MAPPED_READS+1) 
     )
     max_scores = thresholds[ rnaseq_cov ]
     cage_cov[ cage_cov < max_scores ] = 0    
     
     
-    raw_peaks = find_peaks( cage_cov, window_len=CAGE_PEAK_WIN_SIZE, 
-                            min_score=MIN_NUM_CAGE_TAGS,
-                            max_score_frac=MAX_CAGE_FRAC,
+    raw_peaks = find_peaks( cage_cov, window_len=config.CAGE_PEAK_WIN_SIZE, 
+                            min_score=config.MIN_NUM_CAGE_TAGS,
+                            max_score_frac=config.MAX_CAGE_FRAC,
                             max_num_peaks=100)
     
     cage_peaks = Bins( chrm, strand )
@@ -773,7 +749,7 @@ def find_polya_peaks_in_gene( ( chrm, strand ), gene, polya_cov, rnaseq_cov ):
     """
     
     raw_peaks = find_peaks( polya_cov, window_len=30, 
-                            min_score=MIN_NUM_POLYA_TAGS,
+                            min_score=config.MIN_NUM_POLYA_TAGS,
                             max_score_frac=0.05,
                             max_num_peaks=100)
     polya_sites = Bins( chrm, strand )
@@ -796,7 +772,7 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
     
     # merge the peaks
     def grow_peak( start, stop, grow_size=
-                   max(1, window_len/4), min_grow_ratio=MAX_CAGE_FRAC ):
+                   max(1, window_len/4), min_grow_ratio=config.MAX_CAGE_FRAC ):
         # grow a peak at most max_num_peaks times
         max_mean_signal = cov[start:stop+1].mean()
         for i in xrange(max_num_peaks):
@@ -813,7 +789,8 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
                 return (start, stop)
             
             # if the expansion isn't greater than the min ratio, then return
-            if max(upstream_sig,downstream_sig) < MAX_CAGE_FRAC*max_mean_signal:
+            if max(upstream_sig,downstream_sig) < \
+                    config.MAX_CAGE_FRAC*max_mean_signal:
                 return (start, stop)
             
             # otherwise, we know one does
@@ -822,8 +799,8 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
             else:
                 start = max(0, start - grow_size )
         
-        if VERBOSE:
-            log_statement( 
+        if config.VERBOSE:
+            config.log_statement( 
                 "Warning: reached max peak iteration at %i-%i ( signal %.2f )"
                     % (start, stop, cov[start:stop+1].sum() ) )
         return (start, stop )
@@ -834,7 +811,7 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
         numpy.append(0, numpy.cumsum( cov )) )
     scores = cumsum_cvg_array[window_len:] - cumsum_cvg_array[:-window_len]
     indices = numpy.argsort( scores )
-    min_score = max( min_score, MAX_CAGE_FRAC*scores[ indices[-1] ] )
+    min_score = max( min_score, config.MAX_CAGE_FRAC*scores[ indices[-1] ] )
     for index in reversed(indices):
         if not overlaps_prev_peak( index ):
             score = scores[ index ]
@@ -889,7 +866,7 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
     for peak, score in peaks_and_scores:
         peak_scores = scores[peak[0]:peak[1]+1]
         max_score = peak_scores.max()
-        good_indices = (peak_scores >= max_score*MAX_CAGE_FRAC).nonzero()[0]
+        good_indices = (peak_scores >= max_score*config.MAX_CAGE_FRAC).nonzero()[0]
         new_peak = [
                 peak[0] + int(good_indices.min() + 1), 
                 peak[0] + int(good_indices.max() + 2)  ]
@@ -900,7 +877,7 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
     peaks_and_scores = sorted( new_peaks_and_scores )
     max_score = max( s for p, s in peaks_and_scores )
     return [ pk for pk, score in peaks_and_scores \
-                 if score >= MAX_CAGE_FRAC*max_score
+                 if score >= config.MAX_CAGE_FRAC*max_score
                  and score > min_score ]
 
 
@@ -917,11 +894,12 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
         
         # make sure the average coverage is high enough
         bin_cvg = bin.mean_cov(rnaseq_cov)   
-        if bin_cvg < MIN_EXON_BPKM:
+        if bin_cvg < config.MIN_EXON_BPKM:
             break
 
         if bin.stop - bin.start > 20 and \
-                (start_bin_cvg+1e-6)/(bin_cvg+1e-6) > EXON_EXT_CVG_RATIO_THRESH:
+                (start_bin_cvg+1e-6)/(bin_cvg+1e-6) > \
+                config.EXON_EXT_CVG_RATIO_THRESH:
             break
                 
         # update the bin coverage. In cases where the coverage increases from
@@ -937,8 +915,8 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
     return internal_exons
 
 def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov,
-                                min_ext_ratio=EXON_EXT_CVG_RATIO_THRESH, 
-                                min_bpkm=MIN_EXON_BPKM):
+                                min_ext_ratio=config.EXON_EXT_CVG_RATIO_THRESH, 
+                                min_bpkm=config.MIN_EXON_BPKM):
     exons = []
     ee_indices = []
     start_bin_cvg = start_bin.mean_cov( rnaseq_cov )
@@ -1155,7 +1133,7 @@ def re_segment_gene( gene, (chrm, strand, contig_len),
                      rnaseq_cov, jns, cage_peaks, polya_peaks):
     # find long emtpy regions, that we may have missed int he previous scan
     empty_regions = find_empty_regions( 
-        rnaseq_cov, thresh=1e-6, min_length=MIN_GENE_LENGTH )
+        rnaseq_cov, thresh=1e-6, min_length=config.MIN_GENE_LENGTH )
     
     # find intergenic bins ( those that start with polya signal,
     # and end with cage signal )
@@ -1194,7 +1172,7 @@ def re_segment_gene( gene, (chrm, strand, contig_len),
         new_gene = Bins( gene.chrm, gene.strand )
         for start, stop in segments:
             new_gene.append( Bin(start, stop, "ESTART","ESTOP","GENE") )
-        if gene.stop-gene.start+1 < MIN_GENE_LENGTH: continue
+        if gene.stop-gene.start+1 < config.MIN_GENE_LENGTH: continue
         if strand == '-': 
             new_gene = new_gene.shift(contig_len-gene.stop).reverse_strand(contig_len)
         else:
@@ -1207,7 +1185,7 @@ def filter_jns(jns, rnaseq_cov, gene):
     filtered_junctions = []
     for (start, stop, cnt) in jns:
         if start < 0 or stop >= gene.stop - gene.start + 1: continue
-        if stop - start + 1 > MAX_INTRON_SIZE : continue
+        if stop - start + 1 > config.MAX_INTRON_SIZE : continue
         left_intron_cvg = rnaseq_cov[start+10:start+30].sum()/20
         right_intron_cvg = rnaseq_cov[stop-30:stop-10].sum()/20        
         if (cnt+1)*10 < left_intron_cvg or (cnt+1)*10 < right_intron_cvg:
@@ -1286,7 +1264,7 @@ def find_exons_in_gene( gene, contig_len,
                         resplit_genes=True):
     assert isinstance( gene, Bins )
     
-    log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" % 
+    config.log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" % 
                    (gene.chrm, gene.strand, gene.start, gene.stop) )
     
     ###########################################################
@@ -1343,21 +1321,24 @@ def find_exons_in_gene( gene, contig_len,
     jn_bins = Bins(gene.chrm, gene.strand, [])
     for start, stop, cnt in jns:
         if stop - start <= 0:
-            log_statement( "BAD JUNCTION: %s %s %s" % (start, stop, cnt) )
+            config.log_statement( "BAD JUNCTION: %s %s %s" % (start, stop, cnt) )
             continue
         bin = Bin(start, stop, 'R_JN', 'D_JN', 'INTRON', cnt)
         jn_bins.append( bin )
     
     # skip the first 200 bases to account for the expected lower coverage near 
     # the transcript bounds
-    tss_exons = filter_exons(tss_exons, rnaseq_cov, 
-                             num_start_bases_to_skip=NUM_TSS_BASES_TO_SKIP)
-    tes_exons = filter_exons(tes_exons, rnaseq_cov, 
-                             num_stop_bases_to_skip=NUM_TES_BASES_TO_SKIP)
+    tss_exons = filter_exons(
+        tss_exons, rnaseq_cov, 
+        num_start_bases_to_skip=config.NUM_TSS_BASES_TO_SKIP)
+    tes_exons = filter_exons(
+        tes_exons, rnaseq_cov, 
+        num_stop_bases_to_skip=config.NUM_TES_BASES_TO_SKIP)
     internal_exons = filter_exons( internal_exons, rnaseq_cov )
-    se_genes = filter_exons( se_genes, rnaseq_cov, 
-                             num_start_bases_to_skip=NUM_TSS_BASES_TO_SKIP, 
-                             num_stop_bases_to_skip=NUM_TES_BASES_TO_SKIP )
+    se_genes = filter_exons( 
+        se_genes, rnaseq_cov, 
+        num_start_bases_to_skip=config.NUM_TSS_BASES_TO_SKIP, 
+        num_stop_bases_to_skip=config.NUM_TES_BASES_TO_SKIP )
 
     elements = Bins(gene.chrm, gene.strand, chain(
             jn_bins, cage_peaks, polya_peaks, 
@@ -1400,7 +1381,7 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
                 break
             else:
                 genes_queue_lock.release()
-                log_statement( "Waiting for gene to process (%i)" % n_threads_running.value )
+                config.log_statement( "Waiting for gene to process (%i)" % n_threads_running.value )
                 time.sleep(0.1)
                 continue
         else:
@@ -1435,16 +1416,16 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
                                  "TES_EXON") )
         write_unified_bed( elements, ofp)
         
-        if WRITE_DEBUG_DATA:
+        if config.WRITE_DEBUG_DATA:
             pseudo_exons.writeBed( ofp )
 
         with genes_queue_lock:
             n_threads_running.value -= 1
         
-        log_statement( "FINISHED Finding Exons in Chrm %s Strand %s Pos %i-%i" %
+        config.log_statement( "FINISHED Finding Exons in Chrm %s Strand %s Pos %i-%i" %
                        (gene.chrm, gene.strand, gene.start, gene.stop) )
     
-    log_statement( "" )
+    config.log_statement( "" )
     return
 
 def extract_reference_elements(genes, ref_elements_to_include):
@@ -1506,7 +1487,7 @@ def find_all_gene_segments( contig_lens,
             for strand in '+-':
                 regions.append( (contig, strand, 0, contig_len) )
 
-        if VERBOSE: log_statement( 'Loading junctions' )        
+        if config.VERBOSE: config.log_statement( 'Loading junctions' )        
         junctions = defaultdict(lambda: defaultdict(int))
         if ref_elements_to_include.junctions:
             for (chrm, strand), contig_ref_elements in ref_elements.iteritems():
@@ -1514,7 +1495,7 @@ def find_all_gene_segments( contig_lens,
                     junctions[(chrm, strand)][jn] += 0
         
         discovered_junctions = load_junctions( 
-            rnaseq_reads, promoter_reads, polya_reads, regions, NTHREADS)
+            rnaseq_reads, promoter_reads, polya_reads, regions, config.NTHREADS)
         for (chrm, strand), contig_jns in discovered_junctions.iteritems():
             for jn, cnt in contig_jns.iteritems():
                 junctions[(chrm, strand)][jn] += cnt
@@ -1524,13 +1505,13 @@ def find_all_gene_segments( contig_lens,
     for contig, contig_len in contig_lens.iteritems():
         if region_to_use != None and contig != region_to_use: continue
         for strand in '+-':
-            log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
+            config.log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
                            % ( contig, strand ) )
             contig_gene_bndry_bins = find_gene_boundaries( 
                 (contig, strand, contig_len), 
                 rnaseq_reads, promoter_reads, polya_reads, 
                 ref_elements, ref_elements_to_include,
-                junctions=junctions[(contig, strand)], nthreads=NTHREADS
+                junctions=junctions[(contig, strand)], nthreads=config.NTHREADS
             )
             gene_bndry_bins.extend( contig_gene_bndry_bins )
     
@@ -1541,7 +1522,7 @@ def find_exons( contig_lens, gene_bndry_bins, ofp,
                 ref_genes, ref_elements_to_include,
                 junctions=None, nthreads=None):
     assert not any(ref_elements_to_include) or ref_genes != None
-    if nthreads == None: nthreads = NTHREADS
+    if nthreads == None: nthreads = config.NTHREADS
     assert junctions == None
     
     ref_elements = extract_reference_elements( 
@@ -1549,7 +1530,7 @@ def find_exons( contig_lens, gene_bndry_bins, ofp,
     
     genes_queue_lock = multiprocessing.Lock()
     threads_are_running = multiprocessing.Value('i', 0)
-    if NTHREADS > 1:
+    if config.NTHREADS > 1:
         manager = multiprocessing.Manager()
         genes_queue = manager.list()
     else:
@@ -1563,7 +1544,7 @@ def find_exons( contig_lens, gene_bndry_bins, ofp,
     if nthreads == 1:
         find_exons_worker(*args)
     else:
-        log_statement( "Waiting on exon finding children" )
+        config.log_statement( "Waiting on exon finding children" )
         ps = []
         for i in xrange( nthreads ):
             p = multiprocessing.Process(target=find_exons_worker, args=args)
@@ -1575,11 +1556,11 @@ def find_exons( contig_lens, gene_bndry_bins, ofp,
                 break
             time.sleep( 0.1 )
 
-    log_statement( "" )    
+    config.log_statement( "" )    
     return
 
 def load_gene_bndry_bins( genes, contig, strand, contig_len ):
-    log_statement( "Loading gene boundaries from annotated genes in %s:%s" % (
+    config.log_statement( "Loading gene boundaries from annotated genes in %s:%s" % (
             contig, strand) )
 
     ## find the gene regions in this contig. Note that these
@@ -1629,9 +1610,9 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
         merged_gene_intervals[i][1] = int(mid)-1
         merged_gene_intervals[i+1][0] = int(mid)+1    
     merged_gene_intervals[0][0] = max( 
-        1, merged_gene_intervals[0][0]-MAX_GENE_EXPANSION)
+        1, merged_gene_intervals[0][0]-config.MAX_GENE_EXPANSION)
     merged_gene_intervals[-1][1] = min( 
-        contig_len-1, merged_gene_intervals[-1][1]+MAX_GENE_EXPANSION)
+        contig_len-1, merged_gene_intervals[-1][1]+config.MAX_GENE_EXPANSION)
 
     # build gene objects with the intervals
     gene_bndry_bins = []
@@ -1640,7 +1621,7 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
                 Bin(start, stop, 'GENE', 'GENE', 'GENE'),] )
         gene_bndry_bins.append( gene_bin )
     
-    log_statement( "" )
+    config.log_statement( "" )
     
     return gene_bndry_bins
 
@@ -1680,10 +1661,10 @@ def find_elements( promoter_reads, rnaseq_reads, polya_reads,
         find_exons( contig_lens, gene_segments, ofp,
                     rnaseq_reads, promoter_reads, polya_reads,
                     ref_genes, ref_elements_to_include, 
-                    junctions=None, nthreads=NTHREADS )            
+                    junctions=None, nthreads=config.NTHREADS )            
     except Exception, inst:
-        log_statement( "FATAL ERROR" )
-        log_statement( traceback.format_exc() )
+        config.log_statement( "FATAL ERROR" )
+        config.log_statement( traceback.format_exc() )
         ofp.close()
         raise
     else:

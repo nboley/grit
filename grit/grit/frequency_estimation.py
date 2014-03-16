@@ -11,18 +11,14 @@ from scipy.stats import chi2
 from scipy.optimize import fminbound, brentq, bisect, line_search
 from scipy.io import savemat
 
+import config
+
 import time
 def make_time_str(et):
     hours = et//3600
     mins = et//60 - 60*hours
     secs = et - 3660*hours - 60*mins
     return "%i:%i:%.4f" % ( hours, mins, secs )
-
-VERBOSE = False
-DEBUG_VERBOSE = False
-
-def log_statement(message, only_log=False ):
-    print >> sys.stderr, message
 
 MIN_TRANSCRIPT_FREQ = 1e-12
 # finite differences step size
@@ -64,7 +60,7 @@ def is_row_identifiable(X, i_to_check):
     dims = {'l': n, 'q': [n+1], 's': []}
     x = solvers.coneqp(A.T*A, -A.T*b, G, h, dims)
     error = float(((A*x['x'] - b).T*(A*x['x'] - b))[0])
-    if DEBUG_VERBOSE: 
+    if config.DEBUG_VERBOSE: 
         print "SLACK for transcript %i: %e" % ( i_to_check, error )
     
     return bool(error > 1e-6)
@@ -109,9 +105,9 @@ def nnls( X, Y, fixed_indices_and_values={} ):
     if DEBUG_OPTIMIZATION:
         for key, val in res.iteritems():
             if key in 'syxz': continue
-            log_statement( "%s:\t%s" % ( key.ljust(22), val ) )
+            config.log_statement( "%s:\t%s" % ( key.ljust(22), val ) )
         
-        log_statement( "RSS: ".ljust(22) + str(rss) )
+        config.log_statement( "RSS: ".ljust(22) + str(rss) )
     
     return x
 
@@ -160,18 +156,18 @@ def line_search( x, f, gradient, max_feasible_step_size ):
 def project_onto_simplex( x, debug=False ):
     if ( x >= 0 ).all() and abs( 1-x.sum()  ) < 1e-6: return x
     sorted_x = numpy.sort(x)[::-1]
-    if debug: log_statement( "sorted x: %s" % sorted_x )
+    if debug: config.log_statement( "sorted x: %s" % sorted_x )
     n = len(sorted_x)
-    if debug: log_statement( "cumsum: %s" % sorted_x.cumsum() )
-    if debug: log_statement( "arange: %s" % numpy.arange(1,n+1) )
+    if debug: config.log_statement( "cumsum: %s" % sorted_x.cumsum() )
+    if debug: config.log_statement( "arange: %s" % numpy.arange(1,n+1) )
     rhos = sorted_x - (1./numpy.arange(1,n+1))*( sorted_x.cumsum() - 1 )
-    if debug: log_statement( "rhos: %s" % rhos )
+    if debug: config.log_statement( "rhos: %s" % rhos )
     rho = (rhos > 0).nonzero()[0].max() + 1
-    if debug: log_statement( "rho: %s" % rho )
+    if debug: config.log_statement( "rho: %s" % rho )
     theta = (1./rho)*( sorted_x[:rho].sum()-1)
-    if debug: log_statement( "theta: %s" % theta )
+    if debug: config.log_statement( "theta: %s" % theta )
     x_minus_theta = x - theta
-    if debug: log_statement( "x - theta: %s" % x_minus_theta )
+    if debug: config.log_statement( "x - theta: %s" % x_minus_theta )
     x_minus_theta[ x_minus_theta < 0 ] = MIN_TRANSCRIPT_FREQ
     return x_minus_theta
 
@@ -287,7 +283,7 @@ def estimate_transcript_frequencies_line_search(
         prev_lhd = curr_lhd
         lhds.append( curr_lhd )
         if DEBUG_OPTIMIZATION:
-            log_statement( "%i\t%.2f\t%.6e\t%i" % ( 
+            config.log_statement( "%i\t%.2f\t%.6e\t%i" % ( 
                     i, curr_lhd, curr_lhd - prev_lhd, len(x) ) )
     
     final_x = numpy.ones(n)*MIN_TRANSCRIPT_FREQ
@@ -308,7 +304,7 @@ def estimate_transcript_frequencies(
     #x = nnls(full_expected_array, observed_array)
     eps = 10.
     start_time = time.time()
-    #log_statement( "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)" )
+    #config.log_statement( "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)" )
     for i in xrange( MAX_NUM_ITERATIONS ):
         prev_x = x.copy()
         
@@ -318,8 +314,8 @@ def estimate_transcript_frequencies(
         
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
-        if DEBUG_VERBOSE:
-            log_statement( "Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
+        if config.DEBUG_VERBOSE:
+            config.log_statement( "Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
                 i, lhd, (lhd - prev_lhd)/len(lhds), len(lhds ), eps, 
                 make_time_str((time.time()-start_time)/len(lhds)) ) )
             
@@ -338,8 +334,8 @@ def estimate_transcript_frequencies(
             dont_zero=True, abs_tol=ABS_TOL )
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
-        if DEBUG_VERBOSE:
-            log_statement( "Non-Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
+        if config.DEBUG_VERBOSE:
+            config.log_statement( "Non-Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
                 i, lhd, (lhd - prev_lhd)/len(lhds), len(lhds), eps,
                 make_time_str((time.time()-start_time)/len(lhds))) )
         

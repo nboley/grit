@@ -25,9 +25,7 @@ from frag_len import load_fl_dists, FlDist, build_normal_density
 
 import cPickle as pickle
 
-MAX_NUM_TRANSCRIPTS = 200
-MAX_NUM_CANDIDATE_TRANSCRIPTS = 500
-ALPHA = 0.025
+import config
 
 class ThreadSafeFile( file ):
     def __init__( *args ):
@@ -42,6 +40,9 @@ class ThreadSafeFile( file ):
 def calc_fpkm( gene, fl_dists, freqs, 
                num_reads_in_bam, num_reads_in_gene, 
                bound_alpha=0.5 ):
+    num_reads_in_bam = num_reads_in_bam[1]
+    num_reads_in_gene = num_reads_in_gene[1]
+    
     fl_dist = fl_dists['mean']
     # account for paired end reads
     #### Fix this in the optimization stage by using real read counts and then
@@ -108,7 +109,7 @@ def write_gene_to_gtf( ofp, gene, mles=None, lbs=None, ubs=None, fpkms=None,
             frac = int((1000.*ubs[index-n_skipped_ts])/(1e-8+max(lbs)))
             transcript.score = max(1,min(1000,frac))
         
-        if FIX_CHRM_NAMES_FOR_UCSC:
+        if config.FIX_CHRM_NAMES_FOR_UCSC:
             transcript.chrm = fix_chrm_name_for_ucsc(transcript.chrm)
         
         ofp.write( transcript.build_gtf_lines(
@@ -175,7 +176,7 @@ def find_matching_polya_region_for_transcript(transcript, polyas):
     return matching_polya
 
 def build_genes_worker(gene_id, op_lock, output):
-    log_statement("Building transcript and ORFs for Gene %s" % gene_id)
+    config.log_statement("Building transcript and ORFs for Gene %s" % gene_id)
     with op_lock:
         contig = output[ (gene_id, 'contig') ]
         strand = output[ (gene_id, 'strand') ]
@@ -214,13 +215,15 @@ def build_genes_worker(gene_id, op_lock, output):
 
     return gene
 
-def build_design_matrices_worker(gene_id, op_lock, output,
+def build_design_matrices_worker(gene_id, 
+                                 input_queue, input_queue_lock,
+                                 op_lock, output,
                                  (rnaseq_reads, promoter_reads, polya_reads)):
-    log_statement( "Finding design matrix for Gene %s" % gene_id  )
+    config.log_statement( "Finding design matrix for Gene %s" % gene_id  )
     with op_lock:
         gene = output[(gene_id, 'gene')]
         fl_dists = output[(gene.id, 'fl_dists')]
-    log_statement( 
+    config.log_statement( 
         "Finding design matrix for Gene %s(%s:%s:%i-%i) - %i transcripts"\
             % (gene.id, gene.chrm, gene.strand, 
                gene.start, gene.stop, len(gene.transcripts) ) )
@@ -228,30 +231,30 @@ def build_design_matrices_worker(gene_id, op_lock, output,
     try:
         f_mat = DesignMatrix(gene, fl_dists, 
                              rnaseq_reads, promoter_reads, polya_reads,
-                             MAX_NUM_TRANSCRIPTS)
+                             config.MAX_NUM_TRANSCRIPTS)
     except ValueError, inst:
         error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
             os.getpid(), gene.id, 
             gene.chrm, gene.strand, gene.start, gene.stop, inst)
-        log_statement( error_msg )
+        config.log_statement( error_msg )
         with input_queue_lock:
             input_queue.append(
-                ('ERROR', ((gene.id, trans_index), 
+                ('ERROR', ((gene.id, None), 
                            traceback.format_exc())))
         return
     except MemoryError, inst:
         error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
             os.getpid(), gene.id, 
             gene.chrm, gene.strand, gene.start, gene.stop, inst)
-        log_statement( error_msg )
+        config.log_statement( error_msg )
         with input_queue_lock:
             input_queue.append(
-                ('ERROR', ((gene.id, trans_index), error_msg)))
+                ('ERROR', ((gene.id, None), error_msg)))
 
         return
 
-    log_statement( "FINISHED DESIGN MATRICES %s" % gene.id )
-    log_statement( "" )
+    config.log_statement( "FINISHED DESIGN MATRICES %s" % gene.id )
+    config.log_statement( "" )
     return f_mat
 
 
@@ -259,16 +262,22 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
                                      input_queue, input_queue_lock,
                                      op_lock, output, 
                                      estimate_confidence_bounds,
-                                     cb_alpha=ALPHA):
+                                     cb_alpha=config.CB_SIG_LEVEL):
     try:
+        config.log_statement( "Loading estimation data for Gene %s" % gene_id  )
+        with op_lock:
+            gene = output[(gene_id, 'gene')]
+            f_mat = output[(gene_id, 'design_matrices')]
+            fl_dists = output[(gene_id, 'fl_dists')]
+            num_rnaseq_reads = output['num_rnaseq_reads']
+            num_cage_reads = output['num_cage_reads']
+            num_polya_reads = output['num_polya_reads']
+        num_reads_in_bams = (num_cage_reads, num_rnaseq_reads, num_polya_reads)
+        num_reads_in_gene = (
+            f_mat.num_fp_reads, f_mat.num_rnaseq_reads, f_mat.num_tp_reads)
+        
         if work_type == 'mle':
-            log_statement( "Finding MLE for Gene %s" % gene_id  )
-            with op_lock:
-                gene = output[(gene_id, 'gene')]
-                f_mat = output[(gene_id, 'design_matrices')]
-                fl_dists = output[(gene_id, 'fl_dists')]
-            
-            log_statement(
+            config.log_statement(
                 "Finding MLE for Gene %s(%s:%s:%i-%i) - %i transcripts" \
                     % (gene_id, gene.chrm, gene.strand, 
                        gene.start, gene.stop, len(gene.transcripts) ) )
@@ -277,13 +286,13 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 expected_array, observed_array = f_mat.expected_and_observed()
                 mle = frequency_estimation.estimate_transcript_frequencies( 
                     observed_array, expected_array)
-                num_reads_in_gene = observed_array.sum()
-                num_reads_in_bam = TOTAL_MAPPED_READS
-                fpkms = calc_fpkm( gene, fl_dists, mle, 
-                                   num_reads_in_bam, num_reads_in_gene )
+                fpkms = calc_fpkm( 
+                    gene, fl_dists, mle, 
+                    num_reads_in_bams, num_reads_in_gene )
+                    
             except ValueError, inst:
                 error_msg = "Skipping %s: %s" % ( gene_id, inst )
-                log_statement( error_msg )
+                config.log_statement( error_msg )
                 with input_queue_lock:
                     input_queue.append(('ERROR', (
                                 (gene_id, trans_index), 
@@ -292,7 +301,7 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
             
             log_lhd = frequency_estimation.calc_lhd( 
                 mle, observed_array, expected_array)
-            log_statement( "FINISHED MLE %s\t%.2f - updating queues" % ( 
+            config.log_statement( "FINISHED MLE %s\t%.2f - updating queues" % ( 
                     gene_id, log_lhd ) )
             
             with op_lock:
@@ -304,10 +313,9 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
                     output[(gene_id, 'ub')] = [None]*len(mle)
                     output[(gene_id, 'lb')] = [None]*len(mle)
                 
-                NUM_TRANS_IN_GRP = 10
                 grouped_indices = []
                 for i in xrange(expected_array.shape[1]):
-                    if i%NUM_TRANS_IN_GRP == 0:
+                    if i%config.NUM_TRANS_IN_GRP == 0:
                         grouped_indices.append( [] )
                     grouped_indices[-1].append( i )
 
@@ -318,11 +326,10 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
             else:
                 with input_queue_lock:
                     input_queue.append(('FINISHED', (gene_id, None, None)))
-            log_statement("")
+            config.log_statement("")
 
         elif work_type in ('lb', 'ub'):
             with op_lock:
-                f_mat = output[(gene_id, 'design_matrices')]
                 mle_estimate = output[(gene_id, 'mle')]
             expected_array, observed_array = f_mat.expected_and_observed()
 
@@ -335,24 +342,24 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 trans_indices = trans_index
 
             res = []
-            log_statement( 
+            config.log_statement( 
                 "Estimating %s confidence bound for gene %s transcript %i-%i/%i" % ( 
                     bnd_type,gene_id,trans_indices[0]+1, trans_indices[-1]+1, 
                     mle_estimate.shape[0]))
             for trans_index in trans_indices:
-                if DEBUG_VERBOSE: log_statement( 
+                if config.DEBUG_VERBOSE: config.log_statement( 
                     "Estimating %s confidence bound for gene %s transcript %i/%i" % ( 
                     bnd_type,gene_id,trans_index+1,mle_estimate.shape[0]))
                 p_value, bnd = frequency_estimation.estimate_confidence_bound( 
                     observed_array, expected_array, 
                     trans_index, mle_estimate, bnd_type, cb_alpha )
-                if DEBUG_VERBOSE: log_statement( 
+                if config.DEBUG_VERBOSE: config.log_statement( 
                     "FINISHED %s BOUND %s\t%s\t%i/%i\t%.2e\t%.2e" % (
                     bnd_type, gene_id, None, 
                     trans_index+1, mle_estimate.shape[0], 
                     bnd, p_value ), do_log=True )
                 res.append((trans_index, bnd))
-            log_statement( 
+            config.log_statement( 
                 "FINISHED Estimating %s confidence bound for gene %s transcript %i-%i/%i" % ( 
                     bnd_type,gene_id,trans_indices[0]+1, trans_indices[-1]+1, 
                     mle_estimate.shape[0]))
@@ -368,22 +375,20 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 if len(ubs) == len(lbs) == len(mle):
                     gene = output[(gene_id, 'gene')]
                     fl_dists = output[(gene_id, 'fl_dists')]
-                    num_reads_in_gene = observed_array.sum()
-                    num_reads_in_bam = TOTAL_MAPPED_READS
                     ub_fpkms = calc_fpkm( gene, fl_dists, 
                                           [ ubs[i] for i in xrange(len(mle)) ], 
-                                          num_reads_in_bam, num_reads_in_gene,
+                                          num_reads_in_bams, num_reads_in_gene,
                                           1.0 - cb_alpha)
                     output[(gene_id, 'ubs')] = ub_fpkms
                     lb_fpkms = calc_fpkm( gene, fl_dists, 
                                           [ lbs[i] for i in xrange(len(mle)) ], 
-                                          num_reads_in_bam, num_reads_in_gene,
+                                          num_reads_in_bams, num_reads_in_gene,
                                           cb_alpha )
                     output[(gene_id, 'lbs')] = lb_fpkms
                     with input_queue_lock:
                         input_queue.append(('FINISHED', (gene_id, None, None)))
             
-            log_statement("")
+            config.log_statement("")
     
     except Exception, inst:
         with input_queue_lock:
@@ -397,14 +402,14 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                                  gtf_ofp, expression_ofp,
                                  compute_confidence_bounds, 
                                  write_design_matrices ):
-    log_statement("Initializing background writer")
+    config.log_statement("Initializing background writer")
     while True:
         try:
             write_type, key = finished_genes_queue.get(timeout=0.1)
             if write_type == 'FINISHED':
                 break
         except Queue.Empty:
-            log_statement( "Waiting for write queue to fill." )
+            config.log_statement( "Waiting for write queue to fill." )
             time.sleep( 1 )
             continue
         
@@ -414,11 +419,11 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                 raise NotImplemented, "This was for debugging, and hasn't been maintained. Althouhg it would be relatively easy to fix if necessary"
                 # to fix this, I would add a 'write' method to the DesignMatrix class and then
                 # call it from here
-                if DEBUG_VERBOSE: 
-                    log_statement("Writing design matrix mat to '%s'" % ofname)
+                if config.DEBUG_VERBOSE: 
+                    config.log_statement("Writing design matrix mat to '%s'" % ofname)
                 f_mat = output_dict[(key,'design_matrices')]
                 ofname = "./%s_%s.mat" % ( key[0], os.path.basename(key[1]) )
-                if DEBUG_VERBOSE: log_statement("Writing mat to '%s'" % ofname)
+                if config.DEBUG_VERBOSE: config.log_statement("Writing mat to '%s'" % ofname)
                 savemat( ofname, {'observed': observed, 'expected': expected}, 
                          oned_as='column' )
                 ofname = "./%s_%s.observed.txt" % ( 
@@ -430,22 +435,22 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                 with open( ofname, "w" ) as ofp:
                     ofp.write("\n".join( "\t".join( "%e" % y for y in x ) 
                                          for x in expected ))
-                log_statement("" % ofname)
+                config.log_statement("" % ofname)
             if write_type == 'gtf':
-                log_statement( "Writing GENE %s to gtf" % key )
+                config.log_statement( "Writing GENE %s to gtf" % key )
 
                 with output_dict_lock:
                     gene = output_dict[(key, 'gene')]
                     unobservable_transcripts = []
-                    if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+                    if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
                         f_mat = output_dict[(key, 'design_matrices')]
                         unobservable_transcripts = sorted(
                             f_mat.filtered_transcripts)
                                             
                     mles = output_dict[(key, 'mle')] \
-                        if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
+                        if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
                     fpkms = output_dict[(key, 'fpkm')] \
-                        if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
+                        if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
                     lbs = output_dict[(key, 'lbs')] \
                         if compute_confidence_bounds else None
                     ubs = output_dict[(key, 'ubs')] \
@@ -461,7 +466,7 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
 
                 with output_dict_lock:
                     del output_dict[(key, 'gene')]
-                    if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+                    if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
                         del output_dict[(key, 'mle')]
                         del output_dict[(key, 'fpkm')]
                         del output_dict[(key, 'design_matrices')]
@@ -469,10 +474,10 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                         del output_dict[(key, 'lbs')]
                         del output_dict[(key, 'ubs')]
                 
-                log_statement( "" )
+                config.log_statement( "" )
         except Exception, inst:
-            log_statement( "FATAL ERROR" )
-            log_statement( traceback.format_exc() )
+            config.log_statement( "FATAL ERROR" )
+            config.log_statement( traceback.format_exc() )
         
     return
 
@@ -521,8 +526,8 @@ def build_fl_dists( elements, reads ):
             for start,stop in iter_nonoverlapping_exons(exons['internal_exon']):
                 num += 1
                 yield GenomicInterval(chrm, strand, start, stop)
-            if DEBUG_VERBOSE: 
-                log_statement("FL ESTIMATION: %s %s" % ((chrm, strand), num ))
+            if config.DEBUG_VERBOSE: 
+                config.log_statement("FL ESTIMATION: %s %s" % ((chrm, strand), num ))
         return
     
     good_exons = list(iter_good_exons())
@@ -561,7 +566,7 @@ def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
                                        rnaseq_reads,promoter_reads,polya_reads,
                                        fl_dists, fasta ):
     gene_id_num = 1
-    log_statement( "Clustering elements into genes for %s:%s" % ( contig, strand ) )
+    config.log_statement( "Clustering elements into genes for %s:%s" % ( contig, strand ) )
     for ( tss_es, tes_es, internal_es, 
           se_ts, promoters, polyas ) in cluster_exons( 
             set(map(tuple, grpd_exons['tss_exon'].tolist())), 
@@ -601,7 +606,7 @@ def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
                 (contig, strand), gene_id, output_dict, 
                 fl_dists, fasta )
     
-    log_statement("")
+    config.log_statement("")
     return    
 
 def initialize_processing_data( elements, genes, fl_dists,
@@ -627,7 +632,7 @@ def initialize_processing_data( elements, genes, fl_dists,
         for (contig, strand), grpd_exons in elements.iteritems():
             all_args.append( [(contig, strand), grpd_exons] + args_template )
 
-        p = Pool(NTHREADS)
+        p = Pool(config.NTHREADS)
         p.apply( add_elements_for_contig_and_strand, all_args )
 
     output_dict['num_rnaseq_reads'] = 0
@@ -637,6 +642,7 @@ def initialize_processing_data( elements, genes, fl_dists,
     return
 
 def worker( input_queue, input_queue_lock,
+            expression_queue, 
             output_dict_lock, output_dict,
             promoter_reads,
             rnaseq_reads,
@@ -667,7 +673,7 @@ def worker( input_queue, input_queue_lock,
         
         if work_type == 'ERROR':
             ( gene_id, trans_index ), msg = work_data
-            log_statement( str(gene_id) + "\tERROR\t" + msg, only_log=True ) 
+            config.log_statement( str(gene_id) + "\tERROR\t" + msg, only_log=True ) 
             continue
 
         # unpack the work data
@@ -681,7 +687,7 @@ def worker( input_queue, input_queue_lock,
             # add the gene to the output structure
             with output_dict_lock: output_dict[(gene_id, 'gene')] = gene
             # if we are only building candidate transcripts, then we are done
-            if ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+            if config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
                 input_queue.append(('FINISHED', (gene_id, None, None)))
             else:
                 with input_queue_lock:
@@ -689,8 +695,11 @@ def worker( input_queue, input_queue_lock,
         elif work_type == 'design_matrices':
             # otherwise, we build the design matrices
             f_mat = build_design_matrices_worker(
-                gene_id, output_dict_lock, output_dict,
+                gene_id, 
+                input_queue, input_queue_lock,
+                output_dict_lock, output_dict,
                 (rnaseq_reads, promoter_reads, polya_reads) )
+            if f_mat == None: continue
             with output_dict_lock: 
                 output_dict[(gene_id, 'design_matrices')] = f_mat
                 output_dict['num_rnaseq_reads'] += f_mat.num_rnaseq_reads
@@ -699,7 +708,7 @@ def worker( input_queue, input_queue_lock,
                 if f_mat.num_tp_reads != None:
                     output_dict['num_polya_reads'] += f_mat.num_tp_reads
             with input_queue_lock:
-                input_queue.append( ('mle', (gene_id, None, None)) )
+                expression_queue.append( ('mle', (gene_id, None, None)) )
             if write_design_matrices:
                 finished_queue.put( ('design_matrices', gene_id) )
         else:
@@ -712,32 +721,46 @@ def worker( input_queue, input_queue_lock,
     
     return
 
-def spawn_and_manage_children( input_queue, input_queue_lock,
+def spawn_and_manage_children( input_queue, expression_queue, input_queue_lock,
                                output_dict_lock, output_dict,
                                promoter_reads,
                                rnaseq_reads,
                                polya_reads,
                                finished_queue,
                                write_design_matrices, 
-                               estimate_confidence_bounds):
-    ps = [None]*NTHREADS
+                               estimate_confidence_bounds):    
+    ps = [None]*config.NTHREADS
     args = ( input_queue, input_queue_lock,
+             expression_queue, 
              output_dict_lock, output_dict,
              promoter_reads, rnaseq_reads, polya_reads,
              finished_queue,
              write_design_matrices, 
              estimate_confidence_bounds)
     time.sleep(0.1)
-    log_statement( "Waiting on children" )
+    config.log_statement( "Waiting on children" )
     while True:        
         # if there is nothign in the queue, and no children are alive, we're
         # done so exit. Otherwise, wait until they finish
         if len(input_queue) == 0:
-            if all( p == None or not p.is_alive() for p in ps ): 
-                break        
-            else:
+            # if any proccesses are still working, continue
+            if any( p != None and p.is_alive() for p in ps ):
                 time.sleep(1.)
                 continue
+            # we think we're completely done, but take a lock to make sure
+            with input_queue_lock:
+                if ( len(input_queue) == 0 and
+                     len(expression_queue) == 0 and
+                     all( p == None or not p.is_alive() for p in ps )):
+                         break
+            # if we need to migrate data from the expression queue into the
+            # input queue, then do it
+            with input_queue_lock:
+                if ( len(input_queue) == 0 and
+                     all( p == None or not p.is_alive() for p in ps )):
+                    assert len(expression_queue) > 0
+                    input_queue.extend(expression_queue)
+                    del expression_queue[:]
         
         # sleep until we have a free process index
         while all( p != None and p.is_alive() for p in ps ):
@@ -746,7 +769,7 @@ def spawn_and_manage_children( input_queue, input_queue_lock,
         proc_i = min( i for i, p in enumerate(ps) 
                       if p == None or not p.is_alive() )
         
-        if NTHREADS > 1:
+        if config.NTHREADS > 1:
             p = multiprocessing.Process(target=worker, args=args)
             p.start()
             if ps[proc_i] != None: ps[proc_i].join()
@@ -754,7 +777,7 @@ def spawn_and_manage_children( input_queue, input_queue_lock,
         else:
             worker(*args)
     
-    log_statement( "" )
+    config.log_statement( "" )
     return
 
 def build_and_quantify_transcripts(
@@ -765,49 +788,66 @@ def build_and_quantify_transcripts(
     """Build transcripts
     """
     write_design_matrices=False
-    
-    gtf_ofp = open("%s.gtf" % ofprefix, "w")
-    expression_ofp = open("%s.expression.csv" % ofprefix, "w")
 
-    frequency_estimation.log_statement = log_statement
+    # make sure that we're starting from the start of the 
+    # elements files
+    if exons_bed_fp != None: exons_bed_fp.seek(0)
+    if transcripts_gtf_fp != None: transcripts_gtf_fp.seek(0)
+    
+    gtf_ofp = ThreadSafeFile("%s.gtf" % ofprefix, "w")
+    gtf_ofp.write("track name=%s useScore=1\n" % ofprefix)
+    
+    expression_ofp = ThreadSafeFile("%s.expression.csv" % ofprefix, "w")
+    expression_ofp.write("\t".join(
+            ["tracking_id", "class_code", "nearest_ref_id", "gene_id", 
+             "gene_short_name", "tss_id", "locus", "length", "coverage", 
+             "FPKM", "FPKM_conf_lo","FPKM_conf_hi","FPKM_status"])+"\n")
     
     try:
         manager = multiprocessing.Manager()
+        # store commands to pass onto children
         input_queue = manager.list()
+        # initialize queues to store the expression commands. Since we dont
+        # know the total number of reads until the design matrices have been
+        # built, we do that first and then start every commands that's been 
+        # stored into expression queue
+        expression_queue = manager.list()
         input_queue_lock = multiprocessing.Lock()
+        # store data to be written out by the writer process
         finished_queue = manager.Queue()
+        # store data that all children need to be able to access
         output_dict_lock = multiprocessing.Lock()    
         output_dict = manager.dict()
         
         elements, genes = None, None
         if exons_bed_fp != None:
-            log_statement( "Loading %s" % exons_bed_fp.name )
+            config.log_statement( "Loading %s" % exons_bed_fp.name )
             elements = load_elements( exons_bed_fp )
-            log_statement( "Finished Loading %s" % exons_bed_fp.name )
+            config.log_statement( "Finished Loading %s" % exons_bed_fp.name )
         else:
             assert transcripts_gtf_fp != None
-            log_statement( "Loading %s" % transcripts_gtf_fp.name )
+            config.log_statement( "Loading %s" % transcripts_gtf_fp.name )
             genes = load_gtf( transcripts_gtf_fp )
             elements = extract_elements_from_genes(genes)
-            log_statement( "Finished Loading %s" % transcripts_gtf_fp.name )
+            config.log_statement( "Finished Loading %s" % transcripts_gtf_fp.name )
         
-        if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+        if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
             # estimate the fragment length distribution
-            log_statement( "Estimating the fragment length distribution" )
+            config.log_statement( "Estimating the fragment length distribution" )
             fl_dists = build_fl_dists( elements, rnaseq_reads )
-            log_statement( "Finished estimating the fragment length distribution" )
+            config.log_statement( "Finished estimating the fragment length distribution" )
         else:
             fl_dists, rnaseq_reads, promoter_reads, polya_reads \
                 = None, None, None, None
                 
-        log_statement( "Initializing processing data" )    
+        config.log_statement( "Initializing processing data" )    
         initialize_processing_data(             
             elements, genes, fl_dists,
             rnaseq_reads, promoter_reads,
             polya_reads, fasta,
             input_queue, input_queue_lock, 
             output_dict, output_dict_lock )    
-        log_statement( "Finished initializing processing data" )
+        config.log_statement( "Finished initializing processing data" )
         
         write_p = multiprocessing.Process(
             target=write_finished_data_to_disk, args=(
@@ -817,7 +857,7 @@ def build_and_quantify_transcripts(
         
         write_p.start()    
         
-        spawn_and_manage_children( input_queue, input_queue_lock,
+        spawn_and_manage_children( input_queue, expression_queue, input_queue_lock,
                                    output_dict_lock, output_dict, 
                                    promoter_reads,
                                    rnaseq_reads,
@@ -829,10 +869,11 @@ def build_and_quantify_transcripts(
         finished_queue.put( ('FINISHED', None) )
         write_p.join()
     except Exception, inst:
-        log_statement(traceback.format_exc())
+        config.log_statement(traceback.format_exc())
         raise
     finally:
         gtf_ofp.close()
         expression_ofp.close()
+        config.log_statement("Finished building transcripts")
     
     return

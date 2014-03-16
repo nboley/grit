@@ -681,8 +681,8 @@ class DesignMatrix(object):
                 gene, rnaseq_reads, fl_dists )
         # if no transcripts are observable given the fl dist, then return nothing
         if len( expected_rnaseq_cnts ) == 0:
-            return numpy.zeros(0), numpy.zeros(0), [], []
-
+            raise ValueError, "No observable bins"
+        
         # build the expected and observed counts, and convert them to frequencies
         ( expected_rnaseq_array, observed_rnaseq_array, unobservable_rnaseq_trans ) = \
               build_expected_and_observed_arrays( 
@@ -774,7 +774,7 @@ class DesignMatrix(object):
         self._expected_and_observed = None
         
         if len( gene.transcripts ) == 0:
-            return
+            raise ValueError, "No transcripts"
         
         self._build_rnaseq_arrays(gene, rnaseq_reads, fl_dists)
         self.num_rnaseq_reads = sum(self.obs_cnt_arrays[-1])
