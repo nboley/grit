@@ -15,12 +15,7 @@ from grit.lib.logging import Logger
 import grit.find_elements
 import grit.build_transcripts
 
-
-VERBOSE = False
-NTHREADS = 1
-log_statement = None
-
-JUST_PRINT_COMMANDS = False
+import grit.config as config
 
 ControlFileEntry = namedtuple('ControlFileEntry', [
         'sample_type', 'rep_id', 
@@ -147,7 +142,7 @@ class Samples(object):
         if any(x.read_type == 'auto' for x in self.control_entries):
             if args.reference == None:
                 raise ValueError, "One of the read_type entries is set to 'auto' but a reference was not provided"
-            if VERBOSE: log_statement("Loading annotation file.")
+            if config.VERBOSE: config.log_statement("Loading annotation file.")
             self.ref_genes = load_gtf( args.reference )
         
         # insert the various data sources into the database
@@ -248,12 +243,13 @@ class Samples(object):
         
         return all_reads
     
-    def get_reads(self, sample_type=None, rep_id=None):
+    def get_reads(self, sample_type=None, rep_id=None, verify_args=True):
         rnaseq_reads = self._load_rnaseq_reads(sample_type, rep_id)
         promoter_reads = self._load_promoter_reads(sample_type, rep_id)
         polya_reads = self._load_polya_reads(sample_type, rep_id)
-        self.verify_args_are_sufficient( 
-            rnaseq_reads, promoter_reads, polya_reads )
+        if verify_args:
+            self.verify_args_are_sufficient( 
+                rnaseq_reads, promoter_reads, polya_reads )
         return (None if len(promoter_reads)==0 else MergedReads(promoter_reads), 
                 None if len(rnaseq_reads) == 0 else MergedReads(rnaseq_reads), 
                 None if len(polya_reads) == 0 else MergedReads(polya_reads) )
@@ -399,59 +395,35 @@ def parse_arguments():
             False == args.only_build_candidate_transcripts:
         raise ValueError, "--control or --rnaseq-reads must be set"
 
-    global VERBOSE
-    VERBOSE = args.verbose
-    grit.find_elements.VERBOSE = VERBOSE
-    grit.files.junctions.VERBOSE = VERBOSE
-    grit.build_transcripts.VERBOSE = VERBOSE
-    grit.frequency_estimation.VERBOSE = VERBOSE
+    config.VERBOSE = args.verbose
     
-    global DEBUG_VERBOSE
-    DEBUG_VERBOSE = args.debug_verbose
-    grit.find_elements.DEBUG_VERBOSE = args.debug_verbose
-    grit.build_transcripts.DEBUG_VERBOSE = DEBUG_VERBOSE
-    grit.frequency_estimation.DEBUG_VERBOSE = DEBUG_VERBOSE
-
-    global WRITE_DEBUG_DATA
-    WRITE_DEBUG_DATA = args.write_debug_data
-    grit.find_elements.WRITE_DEBUG_DATA = args.write_debug_data
+    config.DEBUG_VERBOSE = args.debug_verbose
     
-    global NTHREADS
-    NTHREADS = args.threads
-    grit.find_elements.NTHREADS = NTHREADS
-    grit.build_transcripts.NTHREADS = NTHREADS
+    config.WRITE_DEBUG_DATA = args.write_debug_data
     
-    global TOTAL_MAPPED_READS
-    TOTAL_MAPPED_READS = 1e6
-    grit.find_elements.TOTAL_MAPPED_READS = 1e6
-    grit.build_transcripts.TOTAL_MAPPED_READS = 1e6    
+    config.NTHREADS = args.threads
     
-    global ONLY_BUILD_CANDIDATE_TRANSCRIPTS
-    ONLY_BUILD_CANDIDATE_TRANSCRIPTS = args.only_build_candidate_transcripts
-    grit.build_transcripts.ONLY_BUILD_CANDIDATE_TRANSCRIPTS = \
-        ONLY_BUILD_CANDIDATE_TRANSCRIPTS
-    assert not (ONLY_BUILD_CANDIDATE_TRANSCRIPTS and args.only_build_elements)
+    config.TOTAL_MAPPED_READS = 1e6
+    
+    config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS = \
+        args.only_build_candidate_transcripts
+    assert not (config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS 
+                and args.only_build_elements)
     
     args.estimate_confidence_bounds = (
         not args.dont_estimate_confidence_bounds)
-    if ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+    if config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
         args.estimate_confidence_bounds = False
     
-    global FIX_CHRM_NAMES_FOR_UCSC
-    FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
-    grit.find_elements.FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
-    grit.build_transcripts.FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
+    config.FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
     
-    global log_statement
     log_ofstream = open( args.ofprefix + ".log", "w" )
     log_statement = Logger(
-        nthreads=NTHREADS+1, 
+        nthreads=config.NTHREADS+1, 
         use_ncurses=(not args.batch_mode), 
         log_ofstream=log_ofstream)
-    grit.find_elements.log_statement = log_statement
-    grit.build_transcripts.log_statement = log_statement
-    grit.frequency_estimation.log_statement = log_statement
-
+    config.log_statement = log_statement
+    
     if args.region != None:
         args.region = clean_chr_name(args.region)
 
@@ -480,59 +452,63 @@ def discover_elements(sample_data, args):
 
 def main():
     args = parse_arguments()
-    # load the samples into database, and the reference genes if necessary
-    sample_data = Samples(args)
-    
-    # if the reference genes weren't loaded while parsing the data, and we
-    # need the reference elements, then load the reference genes now
-    if any(args.ref_elements_to_include) and sample_data.ref_genes == None:
-        if VERBOSE: log_statement("Loading annotation file.")
-        sample_data.ref_genes = load_gtf(args.reference)
+    try:    
+        # load the samples into database, and the reference genes if necessary
+        sample_data = Samples(args)
 
-    # find elements if necessary, load the gtf if we are running in 
-    # quantification mode
-    if args.GTF != None:
-        assert not ONLY_BUILD_CANDIDATE_TRANSCRIPTS
-        assert not args.only_build_elements
-        assert args.elements == None, "It doesn't make sense to set --GTF and --elements - did you mean to set --reference instead of --GTF?"
-        sample_types = sample_data.get_sample_types()
-        if len(sample_types) != 1: 
-            raise ValueError, "Can not provide --elements and data from multiple sample types."
-        elements = {sample_types[0]: (None, args.GTF)}
-    elif args.elements !=  None:
-        assert not args.only_build_elements
-        sample_types = sample_data.get_sample_types()
-        if len(sample_types) > 1: 
-            raise ValueError, "Can not provide --elements and data from multiple sample types."
-        elif len(sample_types) == 1:
-            sample_type = sample_types[0]
-        elif len(sample_types) == 0:
-            sample_type = os.path.basename(args.elements.name)
-        elements = {sample_type: (args.elements, None)}
-    else:
-        elements = discover_elements(sample_data, args)
-    
-    # if we are only building elements, then we are done
-    if not args.only_build_elements:
-        for sample_type, (elements_fp, gtf_fp) in elements.iteritems():
-            rep_ids = sample_data.get_rep_ids(sample_type)
-            if len(rep_ids) == 0: rep_ids = [None,]
-            for rep_id in rep_ids:
-                if not ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
-                    promoter_reads, rnaseq_reads, polya_reads = \
-                        sample_data.get_reads(sample_type, rep_id)
-                else:
-                    promoter_reads, rnaseq_reads, polya_reads = [
-                        None, None, None]
-                ofprefix = "%s.%s" % (args.ofprefix, sample_type)
-                if rep_id != None: ofprefix += "." + rep_id
-                
-                grit.build_transcripts.build_and_quantify_transcripts(
-                    promoter_reads, rnaseq_reads, polya_reads,
-                    elements_fp, gtf_fp, 
-                    ofprefix,
-                    fasta=args.fasta, 
-                    estimate_confidence_bounds=args.estimate_confidence_bounds )
+        # if the reference genes weren't loaded while parsing the data, and we
+        # need the reference elements, then load the reference genes now
+        if any(args.ref_elements_to_include) and sample_data.ref_genes == None:
+            if config.VERBOSE: config.log_statement("Loading annotation file.")
+            sample_data.ref_genes = load_gtf(args.reference)
 
+        # find elements if necessary, load the gtf if we are running in 
+        # quantification mode
+        if args.GTF != None:
+            assert not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS
+            assert not args.only_build_elements
+            assert args.elements == None, "It doesn't make sense to set --GTF and --elements - did you mean to set --reference instead of --GTF?"
+            sample_types = sample_data.get_sample_types()
+            if len(sample_types) != 1: 
+                raise ValueError, "Can not provide --elements and data from multiple sample types."
+            elements = {sample_types[0]: (None, args.GTF)}
+        elif args.elements !=  None:
+            assert not args.only_build_elements
+            sample_types = sample_data.get_sample_types()
+            if len(sample_types) > 1: 
+                raise ValueError, "Can not provide --elements and data from multiple sample types."
+            elif len(sample_types) == 1:
+                sample_type = sample_types[0]
+            elif len(sample_types) == 0:
+                sample_type = os.path.basename(args.elements.name)
+            elements = {sample_type: (args.elements, None)}
+        else:
+            elements = discover_elements(sample_data, args)
+
+        # if we are only building elements, then we are done
+        if not args.only_build_elements:
+            for sample_type, (elements_fp, gtf_fp) in elements.iteritems():
+                rep_ids = sample_data.get_rep_ids(sample_type)
+                if len(rep_ids) == 0: rep_ids = [None,]
+                for rep_id in rep_ids:
+                    if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+                        promoter_reads, rnaseq_reads, polya_reads = \
+                            sample_data.get_reads(sample_type, rep_id, verify_args=False)
+                    else:
+                        promoter_reads, rnaseq_reads, polya_reads = [
+                            None, None, None]
+                    # find what to prefix the output files with
+                    ofprefix = "%s.%s" % (args.ofprefix, sample_type)
+                    if rep_id != None: ofprefix += "." + rep_id
+                    
+                    grit.build_transcripts.build_and_quantify_transcripts(
+                        promoter_reads, rnaseq_reads, polya_reads,
+                        elements_fp, gtf_fp, 
+                        ofprefix,
+                        fasta=args.fasta, 
+                        estimate_confidence_bounds=args.estimate_confidence_bounds )
+    finally:
+        config.log_statement.close()
+    
 if __name__ == '__main__':
     main()
