@@ -93,8 +93,8 @@ def cluster_segments( segments, jns ):
     try:
         genes_graph.add_edges( list( edges ) )
     except:
-        print config.log_statement( str(boundaries) )
-        print config.log_statement( str(edges) )
+        print config.log_statement( str(boundaries), log=True )
+        print config.log_statement( str(edges), log=True )
         raise
 
     segments = []
@@ -544,7 +544,7 @@ def find_initial_segmentation_worker(
         if not no_signal( start, stop ):
             locs.append( (start, stop) )
     
-    config.log_statement( "Putting Segments in Queue (%s, %s)" % (chrm, strand) )
+    config.log_statement("Putting Segments in Queue (%s, %s)" % (chrm, strand))
     with accepted_boundaries_lock:
         accepted_boundaries.append( locs )
     config.log_statement( "" )
@@ -586,8 +586,7 @@ def find_gene_boundaries((chrm, strand, contig_len),
         while True:
             config.log_statement(
                 "Waiting on segmentation children in %s:%s (%i/%i remain)" 
-                % (chrm, strand, len(candidate_segments), n_bndries),
-                do_log=False )
+                % (chrm, strand, len(candidate_segments), n_bndries) )
             
             if all( not p.is_alive() for p in ps ):
                 break
@@ -617,7 +616,7 @@ def find_gene_boundaries((chrm, strand, contig_len),
         return new_locs
             
 
-    config.log_statement( "Finding gene boundaries in contig '%s' on '%s' strand" 
+    config.log_statement("Finding gene boundaries in contig '%s' on '%s' strand"
                    % ( chrm, strand ) )
         
     if junctions == None:
@@ -640,7 +639,8 @@ def find_gene_boundaries((chrm, strand, contig_len),
     # because the segments are disjoint, they are implicitly merged
     merged_segments = segments
     
-    if config.VERBOSE: config.log_statement( "Clustering segments for %s %s" % (chrm, strand))
+    if config.VERBOSE: 
+        config.log_statement( "Clustering segments for %s %s" % (chrm, strand))
     clustered_segments = cluster_segments( merged_segments, junctions )
     
     # if we didn't find any genes, then return nothing
@@ -1321,7 +1321,7 @@ def find_exons_in_gene( gene, contig_len,
     jn_bins = Bins(gene.chrm, gene.strand, [])
     for start, stop, cnt in jns:
         if stop - start <= 0:
-            config.log_statement( "BAD JUNCTION: %s %s %s" % (start, stop, cnt) )
+            config.log_statement("BAD JUNCTION: %s %s %s" % (start, stop, cnt))
             continue
         bin = Bin(start, stop, 'R_JN', 'D_JN', 'INTRON', cnt)
         jn_bins.append( bin )
@@ -1381,7 +1381,8 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
                 break
             else:
                 genes_queue_lock.release()
-                config.log_statement( "Waiting for gene to process (%i)" % n_threads_running.value )
+                config.log_statement( 
+                   "Waiting for gene to process (%i)" % n_threads_running.value)
                 time.sleep(0.1)
                 continue
         else:
@@ -1663,8 +1664,8 @@ def find_elements( promoter_reads, rnaseq_reads, polya_reads,
                     ref_genes, ref_elements_to_include, 
                     junctions=None, nthreads=config.NTHREADS )            
     except Exception, inst:
-        config.log_statement( "FATAL ERROR" )
-        config.log_statement( traceback.format_exc() )
+        config.log_statement( "FATAL ERROR", log=True )
+        config.log_statement( traceback.format_exc(), log=True, display=False )
         ofp.close()
         raise
     else:
