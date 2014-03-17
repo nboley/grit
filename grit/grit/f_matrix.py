@@ -10,7 +10,7 @@ PROMOTER_SIZE = 50
 
 DEBUG=False
 
-from igraph import Graph
+import networkx as nx
 
 import frag_len
 
@@ -591,14 +591,15 @@ def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
             edges.append(( i, j))
         norm_rows.append( norm_row  )
     
-    graph = Graph( expected_rnaseq_array.shape[0] )
-    graph.add_edges(edges)
-    clusters = graph.clusters()
+    graph = nx.Graph()
+    graph.add_nodes_from(xrange(expected_rnaseq_array.shape[0]))
+    graph.add_edges_from(edges)
+    clusters = nx.connected_components(graph)
 
     new_expected_array = numpy.zeros( 
         (len(clusters), expected_rnaseq_array.shape[1]) )
     new_observed_array = numpy.zeros( len(clusters), dtype=int )
-    for i, node in enumerate(graph.clusters()):
+    for i, node in enumerate(clusters):
         new_expected_array[i,:] = expected_rnaseq_array[node,].sum(0)
         new_observed_array[i] = observed_rnaseq_array[node].sum()
 
