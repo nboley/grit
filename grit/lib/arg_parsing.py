@@ -2,8 +2,8 @@ import argparse
 
 VEBOSE = False
 log_statement = None
-from files.gtf import parse_gtf_line, load_gtf
-from files.reads import MergedReads, RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads
+from ..files.gtf import parse_gtf_line, load_gtf
+from ..files.reads import MergedReads, RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads
 
 def load_polya_reads( polya_bams, polya_strands_need_to_be_reversed, 
                       ref_genes=None ):

@@ -53,9 +53,8 @@ DO_PROFILE = False
 SERIALIZE = False
 
 # add parent(slide) directory to sys.path and import SLIDE mods
-sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), ".." ) )
-from files.gtf import Transcript
-from files.fasta import iter_x_char_lines
+from ..files.gtf import Transcript
+from ..files.fasta import iter_x_char_lines
 
 ################################################################################
 #

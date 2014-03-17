@@ -11,10 +11,8 @@ from itertools import izip
 from sklearn.ensemble import RandomForestClassifier
 from bx.intervals.intersection import Intersecter, Interval
 
-sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), "..") )
-
-from files.gtf import load_gtf, iter_gff_lines
-from files.reads import RNAseqReads, clean_chr_name
+from ..files.gtf import load_gtf, iter_gff_lines
+from ..files.reads import RNAseqReads, clean_chr_name
 GenomicInterval = namedtuple('GenomicInterval', ['chr','strand','start','stop'])
 
 VERBOSE = False

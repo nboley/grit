@@ -6,12 +6,8 @@ from tempfile import NamedTemporaryFile
 
 from pysam import Fastafile
 
-sys.path.append( os.path.join( os.path.dirname(__file__), ".." ) )
-from files.gtf import load_gtf, Transcript
-
 from proteomics import find_coding_sequence, format_into_80_char_lines
-sys.path.append( os.path.join( os.path.dirname(__file__), ".." ) )
-from files.gtf import load_gtf, Transcript, partition_coding_and_utr_segments, \
+from ..files.gtf import load_gtf, Transcript, partition_coding_and_utr_segments, \
     create_gff_line, GenomicInterval
 
 CDDB="/home/nboley/conserved_domain_analysis/Cdd_ALL/Smart"
