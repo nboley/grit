@@ -13,7 +13,7 @@ import multiprocessing
 
 from reads import get_strand, get_contigs_and_lens
 
-import config
+from grit import config
 
 CONSENSUS_PLUS = 'GTAG'
 CONSENSUS_MINUS = 'CTAC'

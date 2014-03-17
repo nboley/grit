@@ -4,8 +4,7 @@ import os, sys
 from collections import namedtuple, defaultdict
 import itertools
 
-sys.path.append( os.path.join( os.path.dirname(__file__), ".." ) )
-from transcript import Gene, Transcript, GenomicInterval
+from ..transcript import Gene, Transcript, GenomicInterval
 from reads import clean_chr_name
 
 GffLine = namedtuple( "GffLine", ["region", "feature", "score", 

@@ -5,8 +5,7 @@ import sys, os
 from collections import defaultdict
 from itertools import izip
 
-sys.path.append( os.path.join( os.path.dirname(__file__), ".." ) )
-from files.gtf import load_gtf
+from ..files.gtf import load_gtf
 
 VERBOSE = True
 

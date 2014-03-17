@@ -402,7 +402,7 @@ def estimate_confidence_bound( observed_array,
             x, expected_array, observed_array )
         lhd_gradient /= ( numpy.absolute(lhd_gradient).sum() + 1e-12 )
         
-        # find teh projected gradient to minimize x[fixed_index]
+        # find the projected gradient to minimize x[fixed_index]
         coord_gradient = numpy.zeros(n)
         coord_gradient[fixed_index] = -1 if bound_type == 'LOWER' else 1
         coord_gradient = project_onto_simplex( x + 0.1*coord_gradient ) - x
@@ -440,28 +440,6 @@ def estimate_confidence_bound( observed_array,
             print "MAX LHD ", x, x[fixed_index], x.sum(), \
                 calc_lhd(x, observed_array, expected_array), max_lhd, min_lhd, \
                 "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
-
-        """ OLD CODE
-        #gradient_l1_size = numpy.absolute(gradient).sum()
-        if True or gradient_l1_size > 0:
-            #gradient /= gradient_l1_size
-            #assert not numpy.isnan(gradient).all()
-            #gradient[fixed_index] = max(0, gradient[fixed_index])
-            #assert gradient[fixed_index] >= 0
-        
-            max_feasible_step_size, max_index = \
-                calc_max_feasible_step_size_and_limiting_index(x, gradient)
-            alpha, is_full_step = line_search(
-                x, lambda x: calc_lhd(x, observed_array, expected_array),
-                gradient, max_feasible_step_size)
-            assert alpha >= 0
-            x += alpha*gradient    
-            if DEBUG_OPTIMIZATION:
-                print "MAX LHD ", x, x[fixed_index], x.sum(), \
-                    calc_lhd(x, observed_array, expected_array), max_lhd, min_lhd, \
-                    "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
-            #assert x.sum() < 1+ABS_TOL
-        """
         
         assert calc_lhd(x, observed_array, expected_array) >= min_lhd
         return x

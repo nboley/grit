@@ -3,7 +3,7 @@ import time
 import curses
 import multiprocessing
 
-import config
+from grit import config
 
 MAX_REFRESH_TIME = 1e-2
 MAX_NCOL = 120
