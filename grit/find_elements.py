@@ -14,7 +14,7 @@ from copy import copy
 import multiprocessing
 import Queue
 
-from igraph import Graph
+import networkx as nx
 
 from files.reads import MergedReads, RNAseqReads, CAGEReads, RAMPAGEReads, \
     PolyAReads, \
@@ -89,16 +89,17 @@ def cluster_segments( segments, jns ):
             edges.add((int(min(start_bin, stop_bin)), 
                        int(max(start_bin, stop_bin))))
 
-    genes_graph = Graph( len(boundaries)-1 )
+    genes_graph = nx.Graph()
+    genes_graph.add_nodes_from(xrange(len(boundaries)))
     try:
-        genes_graph.add_edges( list( edges ) )
+        genes_graph.add_edges_from(edges)
     except:
         print config.log_statement( str(boundaries), log=True )
         print config.log_statement( str(edges), log=True )
         raise
 
     segments = []
-    for g in genes_graph.clusters():
+    for g in nx.connected_components(genes_graph):
         segments.append( (boundaries[min(g)]+1, boundaries[max(g)+1]-1) )
 
     return flatten( segments )
@@ -120,11 +121,11 @@ def cluster_segments_2( boundaries, jns ):
             edges.add((int(min(start_bin, stop_bin)), 
                        int(max(start_bin, stop_bin))))
     
-    genes_graph = Graph( len( boundaries )-1 )
-    genes_graph.add_edges( list( edges ) )
+    genes_graph = nx.Graph( xrange(len(boundaries)) ) # XXX shouyld this be len -1?
+    genes_graph.add_edges_from( list( edges ) )
 
     segments = []
-    for g in genes_graph.clusters():
+    for g in nx.connected_components(genes_graph):
         segment = []
         prev_i = g[0]
         segment.append( [boundaries[prev_i]+1, ])
@@ -1594,10 +1595,11 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
     
     # buld the graph, find the connected components, and build 
     # the set of merged intervals
-    genes_graph = Graph(len(gene_starts))
-    genes_graph.add_edges(overlapping_genes)
+    genes_graph = nx.Graph()
+    genes_graph.add_nodes_from(xrange(len(gene_starts)))
+    genes_graph.add_edges_from(overlapping_genes)
     merged_gene_intervals = []
-    for genes in genes_graph.clusters():
+    for genes in nx.connected_components(genes_graph):
         start = min( gene_intervals[i][0] for i in genes )
         stop = max( gene_intervals[i][1] for i in genes )
         merged_gene_intervals.append( [start, stop] )

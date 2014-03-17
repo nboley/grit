@@ -2,14 +2,13 @@ import sys
 
 from itertools import chain, izip
 from collections import namedtuple, defaultdict
+import networkx as nx
 
 GenomicInterval = namedtuple('GenomicInterval', 
                              ['chr', 'strand', 'start', 'stop'])
 
 CategorizedExons = namedtuple( "CategorizedExons", ["TSS", "TES", "internal", 
                                                     "full_transcript"] )
-
-import igraph
 
 VERBOSE = False
 
@@ -369,12 +368,18 @@ def find_jn_connected_exons(exons, jns, strand, use_names=False):
 
 def iter_nonoverlapping_exons(exons):
     if len(exons) == 0: return
+    G = nx.Graph()
+    G.add_nodes_from(xrange(len(exons)))
+    overlapping_exons = find_overlapping_exons(exons)
+    G.add_edges_from( overlapping_exons )
+
+    """
     genes_graph = igraph.Graph()
     genes_graph.add_vertices(len(exons))
-    overlapping_exons = find_overlapping_exons(exons)
     genes_graph.add_edges( overlapping_exons )
     genes = genes_graph.components()
-    for gene in genes:
+    """
+    for gene in nx.connected_components(G):
         clustered_exons = [ exons[exon_i] for exon_i in gene ]
         if len( clustered_exons ) == 1:
             yield clustered_exons[0]
@@ -394,14 +399,20 @@ def cluster_exons( tss_exons, internal_exons, tes_exons, se_transcripts,
                               tes_exons, se_transcripts,
                               promoters, polyas) )
     if len(all_exons) == 0: return
-    
+
+    G = nx.Graph()
+    G.add_nodes_from(xrange(len(all_exons)))
+    overlapping_exons = find_overlapping_exons(all_exons)
+    G.add_edges_from( overlapping_exons )
+    G.add_edges_from( find_jn_connected_exons(all_exons, jns, strand) )
+    """
     genes_graph = igraph.Graph()
     genes_graph.add_vertices( len(all_exons) )
     genes_graph.add_edges( find_overlapping_exons(all_exons) )
     genes_graph.add_edges( find_jn_connected_exons(all_exons, jns, strand ) )
-    
     genes = genes_graph.components()
-    for gene in genes:
+    """
+    for gene in nx.connected_components(G):
         exons = [ all_exons[exon_i] for exon_i in gene ]
         yield ( tss_exons.intersection( exons ),
                 tes_exons.intersection( exons ),
@@ -415,7 +426,6 @@ def cluster_exons( tss_exons, internal_exons, tes_exons, se_transcripts,
 
 def build_transcripts( tss_exons, internal_exons, tes_exons, se_transcripts, 
                        jns, strand, max_num_transcripts=None ):
-    import networkx as nx
     # build a directed graph, with edges leading from exon to exon via junctions
     all_exons = sorted(chain(tss_exons, internal_exons, tes_exons))
     graph = nx.DiGraph()
