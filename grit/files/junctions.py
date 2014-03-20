@@ -263,13 +263,13 @@ def load_junctions_in_bam( reads, regions=None, nthreads=1):
             config.log_statement( "Waiting on jn finding children" )
         while len(segments_queue) > 0:
             if config.VERBOSE:
-                config.log_statement( "Waiting on jn finding children (%i in queue)" 
-                               % len(segments_queue), do_log=False )
+                config.log_statement( 
+                    "Waiting on jn finding children (%i in queue)" 
+                    % len(segments_queue) )
             time.sleep( 0.5 )
 
         if config.VERBOSE:
-            config.log_statement("Waiting on jn finding children (0 in queue)", 
-                          do_log=False)
+            config.log_statement("Waiting on jn finding children (0 in queue)")
         for p in ps: p.join()
         #while any( not p.is_alive() for p in ps ):
 

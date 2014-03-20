@@ -718,26 +718,68 @@ class DesignMatrix(object):
         """
         # it doesn't matter which design matric we use, because they 
         # al have the same number of transcripts
-        num_transcripts = self.expected_freq_arrays[0].shape[1]
+        num_transcripts = self.expected_freq_arrays[1].shape[1]
         indices = set(xrange(num_transcripts)) - self.filtered_transcripts
         return sorted(indices)
     
-    def expected_and_observed(self):
-        if self._expected_and_observed != None:
-            return self._expected_and_observed
+    def expected_and_observed(self, bam_cnts=None):
+        """Build expected and observed arrays. 
+        
+        If bam cnts is provided, then add the out-of-gene bins
+        """
+        #bam_cnts = None
+        #if self._expected_and_observed != None and \
+        #        self._cached_bam_cnts == bam_cnts:
+        #    return self._expected_and_observed
         
         # find the transcripts that we want to build the array for
-        indices = numpy.array(self.transcript_indices())
+        indices = self.transcript_indices()
+        if bam_cnts == None:
+            indices = numpy.array(indices)
+        else:
+            indices = numpy.array([-1,]+indices)+1
+            
         # stack all of the arrays, and filter out transcripts to skip
-        expected = numpy.vstack(self.expected_freq_arrays)[:,indices]
-        observed = numpy.hstack(self.obs_cnt_arrays)
+        exp_arrays_to_stack = []
+        obs_arrays_to_stack = []
+        for i, (expected, observed) in enumerate(izip(
+                self.expected_freq_arrays, self.obs_cnt_arrays)):
+            if expected == None:
+                assert observed == None
+                continue
+            if bam_cnts != None: 
+                #obs_arrays_to_stack.append( bam_cnts[i]-sum(observed) )
+                observed = numpy.hstack((bam_cnts[i]-sum(observed), observed))
+                expected = numpy.vstack(
+                    (numpy.zeros(expected.shape[1]), expected))
+                #print "zeros", numpy.zeros((expected.shape[0], 1)).shape, expected.shape,
+                expected = numpy.hstack(
+                    (numpy.zeros((expected.shape[0], 1)), expected))
+                #print expected.shape,
+                expected[0,0] = 1
+            
+            exp_arrays_to_stack.append(expected)
+            obs_arrays_to_stack.append(observed)
+
+        # stack all of the data type arrays
+        expected = numpy.vstack(exp_arrays_to_stack)[:,indices]
+        observed = numpy.hstack(obs_arrays_to_stack)
+        """
+        if bam_cnts != None: 
+            print expected.sum(1)
+            print expected.sum(0)
+            print observed
+            assert False
+        """
+        
         # find which bins have 0 expected reads
         bins_to_keep = (expected.sum(1) > 1e-6)
         self._expected_and_observed = cluster_rows(
             expected[bins_to_keep,], observed[bins_to_keep])
+        self._cached_bam_cnts = bam_cnts
         return self._expected_and_observed
 
-    def find_transcripts_to_filter(self, expected, observed, max_num_transcripts):
+    def find_transcripts_to_filter(self,expected,observed,max_num_transcripts):
         num_transcripts = expected.shape[1]
         low_expression_ts = set(self.unobservable_transcripts)
         if num_transcripts <= max_num_transcripts: 
@@ -763,9 +805,13 @@ class DesignMatrix(object):
                  rnaseq_reads, five_p_reads, three_p_reads,
                  max_num_transcripts=None):
         self.array_types = []
+
         self.obs_cnt_arrays = []
         self.expected_freq_arrays = []
         self.unobservable_transcripts = set()
+
+        self._cached_bam_cnts = None
+        
         self.filtered_transcripts = None
         self.max_num_transcripts = max_num_transcripts
         
@@ -776,15 +822,25 @@ class DesignMatrix(object):
         
         if len( gene.transcripts ) == 0:
             raise ValueError, "No transcripts"
-        
-        self._build_rnaseq_arrays(gene, rnaseq_reads, fl_dists)
-        self.num_rnaseq_reads = sum(self.obs_cnt_arrays[-1])
+
         if five_p_reads != None:
             self._build_gene_bnd_arrays(gene, five_p_reads, 'five_p_reads')
             self.num_fp_reads = sum(self.obs_cnt_arrays[-1])
+        else:
+            self.expected_freq_arrays.append(None)
+            self.obs_cnt_arrays.append(None)
+            self.num_fp_reads = None
+        
+        self._build_rnaseq_arrays(gene, rnaseq_reads, fl_dists)
+        self.num_rnaseq_reads = sum(self.obs_cnt_arrays[-1])
+            
         if three_p_reads != None:
             self._build_gene_bnd_arrays(gene, three_p_reads, 'three_p_reads')
             self.num_tp_reads = sum(self.obs_cnt_arrays[-1])
+        else:
+            self.expected_freq_arrays.append(None)
+            self.obs_cnt_arrays.append(None)
+            self.num_tp_reads = None
         
         # initialize the filtered_transcripts to the unobservable transcripts
         self.filtered_transcripts = set(list(self.unobservable_transcripts))
@@ -792,8 +848,8 @@ class DesignMatrix(object):
         # update the set to satisfy the max_num_transcripts restriction
         if max_num_transcripts != None:
             self.filtered_transcripts =  self.find_transcripts_to_filter(
-                self.expected_freq_arrays[0], 
-                self.obs_cnt_arrays[0], 
+                self.expected_freq_arrays[1], 
+                self.obs_cnt_arrays[1], 
                 self.max_num_transcripts)
         
         return
