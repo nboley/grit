@@ -1,14 +1,60 @@
 GRIT - A tool for the integrative analysis of RNA-seq type assays. 
 
+################################################################################
 Install: 
+################################################################################
 
-see the included INSTALL file.
+Build Dependencies:
+  c compiler
+  python headers
+  cython
 
+Runtime Dependencies:
+  scipy 
+  networkx 
+  pysam
+
+In a debian based system, running 
+
+(sudo) apt-get install gcc python-dev cython python-scipy python-networkx
+and then 
+(sudo) easy_install pysam
+
+should install all of the dependencies. 
+
+INSTALLATION:
+
+-Method 1: easy_install
+
+Run: (sudo) easy_install GRIT-1.1.0.tar.gz
+
+This should install the dependencies, the grit python module, and the grit 
+script (run_grit.py). However, installing them through your distributions 
+package manager is preferred whenever possible.
+
+-Method 2: setup.py
+
+1) unzip the package (tar -zxvf GRIT-VERSION.tar.gz)
+2) move into the unzipped directory (cd GRIT-VERSION/)
+3) run the setup script ((sudo) python setup.py install)
+
+-Method 3: packages
+
+Making debian, ubuntu, and redhat packages is on my TODO, but I haven't. 
+If these would be useful, please feel free to send me an email and I'll
+move it up the priority list.
+
+
+
+################################################################################
 Tutorial: 
+################################################################################
 
 There is a tutorial, with data, available on grit-bio.org.
 
+################################################################################
 Introduction:
+################################################################################
 
 GRIT is designed to use RNA-seq, TES (e.g. poly(A) seq), and TSS (
 e.g. CAGE, RAMPAGE) data to build and quantify full length transcript
@@ -23,7 +69,9 @@ Although it could be modified to work with either, we feel that these
 data sources are becoming obsolute.
 
 
+################################################################################
 Simple Example:
+################################################################################
 
 (to try this, download and unzip 
     http://grit-bio.org/GRIT_example.tar.gz ) 
@@ -82,7 +130,9 @@ data in a matching tissue or cell line seems to perform better (in human, FANTOM
 and Merck poly(A) data are good resources. In fly, modENCODE has all the data 
 types).
 
+################################################################################
 Control File Example:
+################################################################################
 
 Instead of the above commands, we could also run:
 
@@ -118,11 +168,15 @@ run_grit.py --control AdMatedF_Ecl_20days_Heads.control.txt --verbose --ucsc \
             -t 16 --reference flybase-r5.45.chr4.gtf --use-refernce-junctions \
             --fasta dm_rel_5.fa
 
+################################################################################
 Command Line Options:
+################################################################################
 
 Run 'run_grit.py --help' for a complete list. They should be well described.
 
+################################################################################
 Questions/bug reports:
+################################################################################
 
 Please direct questions and bug reports to the mailing list (
 http://groups.google.com/group/grit-bio ). I'll try to respond promptly to 
