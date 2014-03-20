@@ -1385,7 +1385,7 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
     elements, pseudo_exons, new_gene_boundaries = find_exons_in_gene(
         gene, contig_lens[gene.chrm],
         rnaseq_reads, cage_reads, polya_reads, 
-        gene_ref_elements['promoters'], 
+        gene_ref_elements['promoter'], 
         gene_ref_elements['intron'],
         gene_ref_elements['polya'],
         resplit_genes=(False == ref_elements_to_include.genes))
@@ -1564,7 +1564,6 @@ def find_exons( contig_lens, gene_bndry_bins, ofp,
     
     ref_elements = extract_reference_elements( 
         ref_genes, ref_elements_to_include )
-    
     genes_queue_lock = multiprocessing.Lock()
     threads_are_running = multiprocessing.Value('i', 0)
     if config.NTHREADS > 1:
