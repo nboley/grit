@@ -1394,11 +1394,11 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
         return new_gene_boundaries
     
     # merge in the reference elements
-    for tss_exon in gene_ref_elements['tss_exons']:
+    for tss_exon in gene_ref_elements['tss_exon']:
         elements.append( Bin(tss_exon[0], tss_exon[1], 
                              "REF_TSS_EXON_START", "REF_TSS_EXON_STOP",
                              "TSS_EXON") )
-    for tes_exon in gene_ref_elements['tes_exons']:
+    for tes_exon in gene_ref_elements['tes_exon']:
         elements.append( Bin(tes_exon[0], tes_exon[1], 
                              "REF_TES_EXON_START", "REF_TES_EXON_STOP",
                              "TES_EXON") )
