@@ -6,7 +6,11 @@ from setuptools import setup, Extension
 try: import Cython
 except ImportError: USE_CYTHON = False
 else: USE_CYTHON = True
-ext = '.pyx' if USE_CYTHON else '.c'
+
+# cython seems to be broken on some architecture, so just use
+# the c file until I can resolve this
+USE_CYTHON = False
+ext = 'pyx' if USE_CYTHON else 'c'
 
 extensions = [
     Extension("sparsify_support_fns", ["grit/sparsify_support_fns." + ext, ])
@@ -33,10 +37,9 @@ config = {
                  
     'setup_requires': [ 'scipy', 'numpy', 'Cython', 'networkx', 'pysam' ],
     'install_requires': [ 'scipy', 'numpy', 'Cython', 'networkx', 'pysam' ],
-    'scripts': ['./bin/bam2wig.py', './bin/run_grit.py', './bin/find_orfs.py'],
+    'scripts': ['./bin/run_grit.py',],
     'name': 'GRIT'
 }
 
 if __name__== '__main__':
-    #verify_dependencies()
     setup(**config)
