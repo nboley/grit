@@ -37,21 +37,13 @@ class ThreadSafeFile( file ):
             file.write( self, string )
             self.flush()
 
-def calc_fpkm( gene, fl_dists, freqs, 
-               num_reads_in_bam, num_reads_in_gene, 
-               bound_alpha=0.5 ):
+def calc_fpkm( gene, fl_dists, freqs, num_reads_in_bam):
+    assert len(gene.transcripts) == len(freqs)
+
     num_reads_in_bam = num_reads_in_bam[1]
-    num_reads_in_gene = num_reads_in_gene[1]
     
     fl_dist = fl_dists['mean']
-    # account for paired end reads
-    #### Fix this in the optimization stage by using real read counts and then
-    #### a pseudo bin XXX BUG
-    corrected_num_reads_in_gene = int(num_reads_in_bam*scipy.stats.beta.ppf(
-            bound_alpha, 
-            num_reads_in_gene+1e-6, 
-            num_reads_in_bam-num_reads_in_gene+1e-6))
-
+    
     def calc_effective_length_and_scale_factor(t):
         length = sum( e[1] - e[0] + 1 for e in t.exons ) 
         # subtract for mappability problems at junctions
@@ -68,14 +60,13 @@ def calc_fpkm( gene, fl_dists, freqs,
     
     fpkms = []
     for t, freq in izip( gene.transcripts, freqs ):
-        num_reads_in_t = corrected_num_reads_in_gene*freq
         effective_t_len, t_scale = calc_effective_length_and_scale_factor(t)
         if effective_t_len <= 0: 
             fpkms.append( 0 )
             continue
         assert effective_t_len > 0
         assert num_reads_in_bam > 0
-        fpk = num_reads_in_t/(effective_t_len/1000.)
+        fpk = freq*num_reads_in_bam/(effective_t_len/1000.)
         fpkm = fpk/(num_reads_in_bam/1000000.)
         fpkms.append( fpkm )
     return fpkms
@@ -86,6 +77,7 @@ class MaxIterError( ValueError ):
 def write_gene_to_gtf( ofp, gene, mles=None, lbs=None, ubs=None, fpkms=None,
                        unobservable_transcripts=set()):
     if mles != None:
+        # we add one to accoutn for the out-of-gene transcript
         assert len(gene.transcripts) == len(mles)+len(unobservable_transcripts)
     n_skipped_ts = 0
     
@@ -126,19 +118,19 @@ def write_gene_to_fpkm_tracking( ofp, gene, lbs=None, ubs=None, fpkms=None,
         if index in unobservable_transcripts:
             n_skipped_ts += 1
             continue
-        line = ['-']*12
-        line[0] = str(gene.id)
-        line[5] = str(transcript.id)
+        line = ['-']*13
+        line[0] = str(transcript.id)
+        line[3] = str(gene.id)
         line[6] = '%s:%i-%i' % ( gene.chrm, transcript.start, transcript.stop)
         line[7] = str( transcript.calc_length() )
-        line[11] = 'OK'
+        line[12] = 'OK'
         
         if fpkms != None:
-            line[8] =  "%.2e" % fpkms[index-n_skipped_ts]
+            line[9] =  "%.2e" % fpkms[index-n_skipped_ts]
         if lbs != None:
-            line[9] = "%.2e" % lbs[index-n_skipped_ts]
+            line[10] = "%.2e" % lbs[index-n_skipped_ts]
         if ubs != None:
-            line[10] = "%.2e" % ubs[index-n_skipped_ts]
+            line[11] = "%.2e" % ubs[index-n_skipped_ts]
         
         lines.append( "\t".join(line) )
     
@@ -283,13 +275,10 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
                        gene.start, gene.stop, len(gene.transcripts) ) )
             
             try:
-                expected_array, observed_array = f_mat.expected_and_observed()
+                expected_array, observed_array = f_mat.expected_and_observed(
+                    num_reads_in_bams)
                 mle = frequency_estimation.estimate_transcript_frequencies( 
                     observed_array, expected_array)
-                fpkms = calc_fpkm( 
-                    gene, fl_dists, mle, 
-                    num_reads_in_bams, num_reads_in_gene )
-                    
             except ValueError, inst:
                 error_msg = "Skipping %s: %s" % ( gene_id, inst )
                 config.log_statement( error_msg, log=True )
@@ -306,7 +295,6 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
             
             with op_lock:
                 output[(gene_id, 'mle')] = mle
-                output[(gene_id, 'fpkm')] = fpkms
             
             if estimate_confidence_bounds:
                 with op_lock:
@@ -331,8 +319,7 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
         elif work_type in ('lb', 'ub'):
             with op_lock:
                 mle_estimate = output[(gene_id, 'mle')]
-            expected_array, observed_array = f_mat.expected_and_observed()
-
+            
             bnd_type = 'LOWER' if work_type == 'lb' else 'UPPER'
 
             if type(trans_index) == int:
@@ -351,7 +338,7 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
                     "Estimating %s confidence bound for gene %s transcript %i/%i" % ( 
                     bnd_type,gene_id,trans_index+1,mle_estimate.shape[0]))
                 p_value, bnd = frequency_estimation.estimate_confidence_bound( 
-                    observed_array, expected_array, 
+                    f_mat, num_reads_in_bams,
                     trans_index, mle_estimate, bnd_type, cb_alpha )
                 if config.DEBUG_VERBOSE: config.log_statement( 
                     "FINISHED %s BOUND %s\t%s\t%i/%i\t%.2e\t%.2e" % (
@@ -372,19 +359,12 @@ def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
                 ubs = output[(gene_id, 'ubs')]
                 lbs = output[(gene_id, 'lbs')]
                 mle = output[(gene_id, 'mle')]
+                
                 if len(ubs) == len(lbs) == len(mle):
-                    gene = output[(gene_id, 'gene')]
-                    fl_dists = output[(gene_id, 'fl_dists')]
-                    ub_fpkms = calc_fpkm( gene, fl_dists, 
-                                          [ ubs[i] for i in xrange(len(mle)) ], 
-                                          num_reads_in_bams, num_reads_in_gene,
-                                          1.0 - cb_alpha)
-                    output[(gene_id, 'ubs')] = ub_fpkms
-                    lb_fpkms = calc_fpkm( gene, fl_dists, 
-                                          [ lbs[i] for i in xrange(len(mle)) ], 
-                                          num_reads_in_bams, num_reads_in_gene,
-                                          cb_alpha )
-                    output[(gene_id, 'lbs')] = lb_fpkms
+                    ubs = [x[1] for x in sorted(ubs.iteritems())]
+                    lbs = [x[1] for x in sorted(lbs.iteritems())]
+                    output[(gene_id, 'ubs')] = ubs
+                    output[(gene_id, 'lbs')] = lbs
                     with input_queue_lock:
                         input_queue.append(('FINISHED', (gene_id, None, None)))
             
@@ -441,21 +421,33 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
 
                 with output_dict_lock:
                     gene = output_dict[(key, 'gene')]
-                    unobservable_transcripts = []
+                    unobservable_transcripts, lbs, mles, ubs = (
+                        [], None, None, None)
                     if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
                         f_mat = output_dict[(key, 'design_matrices')]
                         unobservable_transcripts = sorted(
                             f_mat.filtered_transcripts)
-                                            
-                    mles = output_dict[(key, 'mle')] \
-                        if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
-                    fpkms = output_dict[(key, 'fpkm')] \
-                        if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS else None
-                    lbs = output_dict[(key, 'lbs')] \
-                        if compute_confidence_bounds else None
-                    ubs = output_dict[(key, 'ubs')] \
-                        if compute_confidence_bounds else None
-
+                    
+                        fl_dists = output_dict[(key, 'fl_dists')]
+                        mles = output_dict[(key, 'mle')][1:]
+                        lbs, ubs = None, None
+                        if compute_confidence_bounds:
+                            lbs = output_dict[(key, 'lbs')][1:]
+                            ubs = output_dict[(key, 'ubs')][1:]
+                        
+                        num_rnaseq_reads = output_dict['num_rnaseq_reads']
+                        num_cage_reads = output_dict['num_cage_reads']
+                        num_polya_reads = output_dict['num_polya_reads']
+                        num_reads_in_bams = (
+                            num_cage_reads, num_rnaseq_reads, num_polya_reads)
+                
+                if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+                    ubs = calc_fpkm( gene, fl_dists, ubs,
+                                     num_reads_in_bams)
+                    lbs = calc_fpkm( gene, fl_dists, lbs,
+                                     num_reads_in_bams)
+                    fpkms = calc_fpkm( 
+                        gene, fl_dists, mles, num_reads_in_bams)
                 write_gene_to_gtf(gtf_ofp, gene, mles, lbs, ubs, fpkms, 
                                   unobservable_transcripts=unobservable_transcripts)
 
@@ -468,7 +460,6 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                     del output_dict[(key, 'gene')]
                     if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
                         del output_dict[(key, 'mle')]
-                        del output_dict[(key, 'fpkm')]
                         del output_dict[(key, 'design_matrices')]
                     if compute_confidence_bounds:
                         del output_dict[(key, 'lbs')]

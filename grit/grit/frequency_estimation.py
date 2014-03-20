@@ -344,15 +344,18 @@ def estimate_transcript_frequencies(
     
     return x
 
-def estimate_confidence_bound( observed_array, 
-                               expected_array, 
+def estimate_confidence_bound( f_mat, 
+                               num_reads_in_bams,
                                fixed_index,
                                mle_estimate,
                                bound_type,
                                alpha):
+    expected_array, observed_array = f_mat.expected_and_observed(
+        bam_cnts=num_reads_in_bams)
+    
     if 1 == expected_array.shape[1]:
         return 1.0, 1.0
-        
+    
     def min_line_search( x, gradient, max_feasible_step_size ):
         def brentq_fmin(alpha):
             return calc_lhd(x + alpha*gradient, observed_array, expected_array) - min_lhd
@@ -422,7 +425,8 @@ def estimate_confidence_bound( observed_array,
             #     =>  lhd[i] = theta*lhd[i] - theta*cg[i]
             #     =>  lhd[i]/(lhd[i] - theta*cg[i]) = theta*
             assert lhd_gradient[fixed_index] != 0
-            theta = lhd_gradient[fixed_index]/(lhd_gradient[fixed_index] - coord_gradient[fixed_index])
+            theta = lhd_gradient[fixed_index]/(
+                lhd_gradient[fixed_index] - coord_gradient[fixed_index])
 
         gradient = (1-theta)*lhd_gradient + theta*coord_gradient
         projection = project_onto_simplex( x + 0.1*gradient )
@@ -473,8 +477,7 @@ def estimate_confidence_bound( observed_array,
         else: 
             prev_x = x[fixed_index]
             n_successes = 0
-        
-
+    
     value = x[fixed_index] 
     if value < ABS_TOL: value = 0.
     if 1-value < ABS_TOL: value = 1.
@@ -506,7 +509,6 @@ def estimate_confidence_bound_with_cvxopt(
     
     p.options['maxiters']  = 1500
     value = p.solve(quiet=not DEBUG_OPTIMIZATION)
-    
     thetas_values = numpy.array(thetas.value.T.tolist()[0])
     log_lhd = calc_lhd( thetas_values, observed_array, expected_array )
     
