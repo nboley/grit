@@ -71,19 +71,19 @@ class Samples(object):
         """
         lines = []
         lines.append( ControlFileEntry( 
-                None, None, "rnaseq", True, True, 
+                None, None, "rnaseq", 'true', 'true', 
                 args.rnaseq_read_type, args.rnaseq_reads.name ) )
         if args.cage_reads != None:
             lines.append( ControlFileEntry( 
-                    None, None, "cage", False, True, 
+                    None, None, "cage", 'false', 'true', 
                     args.cage_read_type, args.cage_reads.name ) )
         if args.rampage_reads != None:
             lines.append( ControlFileEntry( 
-                    None, None, "rampage", True, True, 
+                    None, None, "rampage", 'true', 'true', 
                     args.rampage_read_type, args.rampage_reads.name ) )
         if args.polya_reads != None:
             lines.append( ControlFileEntry( 
-                    None, None, "polya", False, True,
+                    None, None, "polya", 'false', 'true',
                     args.polya_read_type, args.polya_reads.name ) )
         return lines
     

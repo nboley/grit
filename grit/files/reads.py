@@ -6,6 +6,8 @@ from copy import copy
 import pysam
 import numpy
 
+import grit.config as config
+
 DEBUG = False
 
 def clean_chr_name( chrm ):
@@ -333,17 +335,18 @@ class Reads( pysam.Samfile ):
             # make sure that we have at least MIN_NUM_READS_PER_GENE 
             # reads in this gene
             if sum(reads_match.values()) < MIN_NUM_READS_PER_GENE: continue
-            if reads_match[True] > MIN_NUM_READS_PER_GENE*reads_match[False]:
+            
+            if reads_match[True] > 10*reads_match[False]:
                 cnt_same_strand += 1
-            if reads_match[False] > MIN_NUM_READS_PER_GENE*reads_match[True]:
+            if reads_match[False] > 10*reads_match[True]:
                 cnt_diff_strand += 1
             
             # if we've succesfully explored enough genes, then return
             if cnt_same_strand > 10 and cnt_same_strand > 5*cnt_diff_strand: return False
             if cnt_diff_strand > 10 and cnt_diff_strand > 5*cnt_same_strand: return True
         
-        assert False, "Could not determine 'reverse_read_strand' parameter for '%s'" \
-            % self.filename
+        assert False, "Could not auto determine 'reverse_read_strand' parameter for '%s' - the read strand parameter should be set in the control file" % self.filename
+            
     
     def init(self, reads_are_paired, pairs_are_opp_strand, 
                    reads_are_stranded, reverse_read_strand ):
