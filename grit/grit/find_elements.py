@@ -43,6 +43,7 @@ class ThreadSafeFile( file ):
             self.flush()
 
 def flatten( regions ):
+    regions = sorted(regions)
     new_regions = []
     curr_start = regions[0][0]
     curr_end = regions[0][1]
@@ -88,21 +89,23 @@ def cluster_segments( segments, jns ):
         if start_bin != stop_bin:
             edges.add((int(min(start_bin, stop_bin)), 
                        int(max(start_bin, stop_bin))))
-
+    
     genes_graph = nx.Graph()
-    genes_graph.add_nodes_from(xrange(len(boundaries)))
+    genes_graph.add_nodes_from(xrange(len(boundaries)-1))
     try:
         genes_graph.add_edges_from(edges)
     except:
         print config.log_statement( str(boundaries), log=True )
         print config.log_statement( str(edges), log=True )
         raise
-
+    
     segments = []
     for g in nx.connected_components(genes_graph):
+        g = sorted(g)
         segments.append( (boundaries[min(g)]+1, boundaries[max(g)+1]-1) )
-
-    return flatten( segments )
+    segments.sort()
+    
+    return flatten(segments)
 
 def cluster_segments_2( boundaries, jns ):
     if len(boundaries) < 2:
@@ -121,19 +124,25 @@ def cluster_segments_2( boundaries, jns ):
             edges.add((int(min(start_bin, stop_bin)), 
                        int(max(start_bin, stop_bin))))
     
-    genes_graph = nx.Graph( xrange(len(boundaries)) ) # XXX shouyld this be len -1?
+    genes_graph = nx.Graph()
+    genes_graph.add_nodes_from(xrange(len(boundaries)-1) ) # XXX shouyld this be len -1?
     genes_graph.add_edges_from( list( edges ) )
 
     segments = []
     for g in nx.connected_components(genes_graph):
+        g = sorted(g)
         segment = []
         prev_i = g[0]
         segment.append( [boundaries[prev_i]+1, ])
         for i in g[1:]:
+            # if we've skipped at least one node, then add
+            # a new region onto this segment
             if i > prev_i + 1:
                 segment[-1].append( boundaries[prev_i+1]-1 )
                 segment.append( [boundaries[i]+1, ])
                 prev_i = i
+            # otherwise, we've progressed to an adjacent sergments
+            # so just merge the adjacent intervals
             else:
                 assert i == prev_i + 1
                 prev_i += 1
@@ -572,26 +581,31 @@ def find_gene_boundaries((chrm, strand, contig_len),
         
         accepted_segments = manager.list()
         accepted_segments_lock = manager.Lock()
+
+        args = (candidate_segments, candidate_segments_lock,
+                accepted_segments, accepted_segments_lock,
+                chrm, strand, rnaseq_reads, cage_reads, polya_reads )
         
-        ps = []
-        for i in xrange(nthreads):
-            args = (candidate_segments, candidate_segments_lock,
-                    accepted_segments, accepted_segments_lock,
-                    chrm, strand, rnaseq_reads, cage_reads, polya_reads )
-            p = multiprocessing.Process( 
-                target=find_initial_segmentation_worker, args=args)
-            p.start()
-            ps.append( p )
-        
-        n_bndries = len(candidate_segments)
-        while True:
-            config.log_statement(
-                "Waiting on segmentation children in %s:%s (%i/%i remain)" 
-                % (chrm, strand, len(candidate_segments), n_bndries) )
-            
-            if all( not p.is_alive() for p in ps ):
-                break
-            time.sleep( 0.5 )
+        if config.NTHREADS == 1:
+            find_initial_segmentation_worker(*args)
+        else:
+            ps = []
+            for i in xrange(nthreads):
+                p = multiprocessing.Process( 
+                    target=find_initial_segmentation_worker, args=args)
+                p.start()
+                ps.append( p )
+
+            # store the initial number of segments for logging
+            n_bndries = len(candidate_segments)
+            while True:
+                config.log_statement(
+                    "Waiting on segmentation children in %s:%s (%i/%i remain)" 
+                    % (chrm, strand, len(candidate_segments), n_bndries) )
+
+                if all( not p.is_alive() for p in ps ):
+                    break
+                time.sleep( 0.5 )
 
         config.log_statement( "Merging segments queue in %s:%s" 
                        % ( chrm, strand ) )        
@@ -651,7 +665,7 @@ def find_gene_boundaries((chrm, strand, contig_len),
     # build the gene bins
     genes = []
     for start, stop in clustered_segments:
-        if stop - start < config.MIN_GENE_LENGTH: continue
+        #if stop - start < config.MIN_GENE_LENGTH: continue
         gene = Bins( chrm, strand, [] )
         gene.append( Bin(max(1,start-10), min(stop+10,contig_len), 
                           "ESTART", "ESTOP", "GENE" ) )
@@ -1356,78 +1370,99 @@ def find_exons_in_gene( gene, contig_len,
     return elements, gene_bins, None
         
 
+def find_exons_and_process_data(gene, contig_lens, ofp,
+                                ref_elements, ref_elements_to_include,
+                                rnaseq_reads, cage_reads, polya_reads):
+    # extract the reference elements that we want to add in
+    gene_ref_elements = defaultdict(list)
+    for key, vals in ref_elements[(gene.chrm, gene.strand)].iteritems():
+        if len( vals ) == 0: continue
+        for start, stop in sorted(vals):
+            if stop < gene.start: continue
+            if start > gene.stop: break
+            gene_ref_elements[key].append((start, stop))
+    
+    elements, pseudo_exons, new_gene_boundaries = find_exons_in_gene(
+        gene, contig_lens[gene.chrm],
+        rnaseq_reads, cage_reads, polya_reads, 
+        gene_ref_elements['promoters'], 
+        gene_ref_elements['intron'],
+        gene_ref_elements['polya'],
+        resplit_genes=(False == ref_elements_to_include.genes))
+
+    if new_gene_boundaries != None:
+        return new_gene_boundaries
+    
+    # merge in the reference elements
+    for tss_exon in gene_ref_elements['tss_exons']:
+        elements.append( Bin(tss_exon[0], tss_exon[1], 
+                             "REF_TSS_EXON_START", "REF_TSS_EXON_STOP",
+                             "TSS_EXON") )
+    for tes_exon in gene_ref_elements['tes_exons']:
+        elements.append( Bin(tes_exon[0], tes_exon[1], 
+                             "REF_TES_EXON_START", "REF_TES_EXON_STOP",
+                             "TES_EXON") )
+    write_unified_bed( elements, ofp)
+
+    if config.WRITE_DEBUG_DATA:
+        pseudo_exons.writeBed( ofp )
+    
+    config.log_statement( "FINISHED Finding Exons in Chrm %s Strand %s Pos %i-%i" %
+                   (gene.chrm, gene.strand, gene.start, gene.stop) )
+    return None
+
 def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running), 
                        ofp, contig_lens, ref_elements, ref_elements_to_include,
                        rnaseq_reads, cage_reads, polya_reads ):
-    def extract_elements_for_gene( gene ):
-        gene_ref_elements = defaultdict(list)
-        for key, vals in ref_elements[(gene.chrm, gene.strand)].iteritems():
-            if len( vals ) == 0: continue
-            for start, stop in sorted(vals):
-                if stop < gene.start: continue
-                if start > gene.stop: break
-                gene_ref_elements[key].append((start, stop))
         
-        return gene_ref_elements
-    
     rnaseq_reads = rnaseq_reads.reload()
     cage_reads = cage_reads.reload() if cage_reads != None else None
     polya_reads = polya_reads.reload() if polya_reads != None else None
     
     while True:
-        genes_queue_lock.acquire()
-        if len(genes_queue) == 0:
-            if n_threads_running.value == 0:
-                genes_queue_lock.release()
-                break
-            else:
-                genes_queue_lock.release()
-                config.log_statement( 
-                   "Waiting for gene to process (%i)" % n_threads_running.value)
-                time.sleep(0.1)
-                continue
-        else:
-            gene = genes_queue.pop()
-            n_threads_running.value += 1
-        genes_queue_lock.release()
+        # try to get a gene
+        with genes_queue_lock:
+            try: gene = genes_queue.pop()
+            except IndexError: gene = None
         
-        gene_ref_elements = extract_elements_for_gene( gene )
-        elements, pseudo_exons, new_gene_boundaries = find_exons_in_gene(
-            gene, contig_lens[gene.chrm],
-            rnaseq_reads, cage_reads, polya_reads, 
-            gene_ref_elements['promoters'], 
-            gene_ref_elements['intron'],
-            gene_ref_elements['polya'],
-            resplit_genes=(False == ref_elements_to_include.genes))
-        
-        if new_gene_boundaries != None:
+        # if there is no gene it process, but threads are still running, then 
+        # wait for the queue to fill or the process to finish
+        if gene == None and n_threads_running.value > 0:
+            config.log_statement( 
+                "Waiting for gene to process (%i)" % n_threads_running.value)
+            time.sleep(0.1)
+            continue
+        # otherwise, take a lock to make sure that the queue is empty and no 
+        # threads are running. If so, then return
+        elif gene == None:
             with genes_queue_lock:
-                for gene in new_gene_boundaries:
+                if len(genes_queue) == 0 and n_threads_running.value == 0:
+                    config.log_statement( "" )
+                    return
+                else: continue
+
+        # otherwise, we have a gene to process, so process it
+        assert gene != None
+        with genes_queue_lock: n_threads_running.value += 1
+
+        # find the exons and genes
+        rv = find_exons_and_process_data(gene, contig_lens, ofp,
+                                         ref_elements, ref_elements_to_include,
+                                         rnaseq_reads, cage_reads, polya_reads)
+        
+        # if the return value is new genes, then add these to the queue
+        if rv != None:
+            with genes_queue_lock:
+                for gene in rv:
                     genes_queue.append( gene )
                 n_threads_running.value -= 1
-            continue
-        
-        # merge in the reference elements
-        for tss_exon in gene_ref_elements['tss_exons']:
-            elements.append( Bin(tss_exon[0], tss_exon[1], 
-                                 "REF_TSS_EXON_START", "REF_TSS_EXON_STOP",
-                                 "TSS_EXON") )
-        for tes_exon in gene_ref_elements['tes_exons']:
-            elements.append( Bin(tes_exon[0], tes_exon[1], 
-                                 "REF_TES_EXON_START", "REF_TES_EXON_STOP",
-                                 "TES_EXON") )
-        write_unified_bed( elements, ofp)
-        
-        if config.WRITE_DEBUG_DATA:
-            pseudo_exons.writeBed( ofp )
-
-        with genes_queue_lock:
-            n_threads_running.value -= 1
-        
-        config.log_statement( "FINISHED Finding Exons in Chrm %s Strand %s Pos %i-%i" %
-                       (gene.chrm, gene.strand, gene.start, gene.stop) )
+        # otherwise, we found the exons and wrote out the element data,
+        # so just decrease the number of running threads
+        else:
+            with genes_queue_lock:
+                n_threads_running.value -= 1
     
-    config.log_statement( "" )
+    assert False
     return
 
 def extract_reference_elements(genes, ref_elements_to_include):
@@ -1500,10 +1535,10 @@ def find_all_gene_segments( contig_lens,
             rnaseq_reads, promoter_reads, polya_reads, regions, config.NTHREADS)
         for (chrm, strand), contig_jns in discovered_junctions.iteritems():
             for jn, cnt in contig_jns.iteritems():
-                junctions[(chrm, strand)][jn] += cnt
+                junctions[(chrm, strand)][jn] += cnt                
         del discovered_junctions
         
-    
+
     for contig, contig_len in contig_lens.iteritems():
         if region_to_use != None and contig != region_to_use: continue
         for strand in '+-':
