@@ -8,12 +8,17 @@ import time
 from itertools import izip
 
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), ".." ) )
-from grit.files.reads import clean_chr_name, \
+from grit.files.reads import clean_chr_name, fix_chrm_name_for_ucsc, \
     CAGEReads, RAMPAGEReads, RNAseqReads, PolyAReads
 from grit.lib.multiprocessing_utils import ProcessSafeOPStream
 
 import multiprocessing
 import threading
+
+# if we choose the --ucsc option, then replace thsi function
+# with fix_chrm_name_for_ucsc
+def fix_chrm_name(name):
+    return name
 
 BUFFER_SIZE = 50000000
 
@@ -48,7 +53,7 @@ def write_array_to_opstream(ofp, buffer, buff_start, chrm, chrm_length ):
     """write buffer to disk, buff_start determines the start of buffer in 
        genomic coordinates.
     """
-    chrm = clean_chr_name( chrm )
+    chrm = fix_chrm_name( clean_chr_name( chrm ) )
     
     prev_pos = 0
     prev_val = buffer[0]
@@ -60,7 +65,7 @@ def write_array_to_opstream(ofp, buffer, buff_start, chrm, chrm_length ):
             break
         if val != prev_val:
             if prev_val > 1e-12:
-                line = "chr%s\t%i\t%i\t%.2f" % (
+                line = "%s\t%i\t%i\t%.2f" % (
                     chrm, buff_start+prev_pos, buff_start+pos+1, prev_val )
                 ofp.write(line+"\n")
             prev_pos, prev_val = pos+1, val
@@ -79,7 +84,7 @@ def build_chrm_sizes_file(reads):
     chrm_lengths = zip(reads.references, reads.lengths)
     #write out the chromosomes and its corrosponding size to disk
     for chrm, chrm_length in chrm_lengths:
-        chrm_sizes_file.write(chrm + "   " + str(chrm_length) +"\n")
+        chrm_sizes_file.write(fix_chrm_name(chrm) + "   " + str(chrm_length) +"\n")
     chrm_sizes_file.flush()
     
     return chrm_sizes_file
@@ -124,12 +129,14 @@ def parse_arguments():
         description='Get coverage bedgraphs from aligned reads.')
     parser.add_argument( '--mapped-reads-fname', required=True,
                          help='BAM or SAM file(s) containing the mapped reads.')
-    parser.add_argument( '--out-fname-prefix', '-o', required=True, 
+    parser.add_argument( '--out-fname-prefix', '-o', 
                          help='Output file(s) will be bigWig')
     parser.add_argument( '--assay', '-a', required=True, 
                          choices=allowed_assays, help='The assay type')
     parser.add_argument( '--bigwig', '-b', default=False, action='store_true', 
                          help='Build a bigwig instead of bedgraph.')
+    parser.add_argument( '--ucsc', default=False, action='store_true', 
+                         help='Format the contig names to work with the UCSC genome browser.')
     
     parser.add_argument( '--verbose', '-v', default=False, action='store_true', 
                          help='Whether or not to print status information.')
@@ -148,6 +155,9 @@ def parse_arguments():
     global VERBOSE
     VERBOSE = args.verbose
     
+    global fix_chrm_name
+    if args.ucsc: fix_chrm_name = fix_chrm_name_for_ucsc
+    
     assert args.read_filter in ( '1', '2', None )
     read_filter = int(args.read_filter) if args.read_filter != None else None
     
@@ -158,6 +168,14 @@ def parse_arguments():
     if region != None:
         if ':' in region or '-' in region:
             assert False, "Invalid contig name: %s" % region
+    
+    # if an output prefix isn't provided, then use the bam filename prefix
+    if args.out_fname_prefix == None:
+        fname_data = args.mapped_reads_fname.split(".")
+        # remove bam and sorted suffixes
+        while fname_data[-1] in ('bam', 'sorted'):
+            del fname_data[-1]
+        args.out_fname_prefix = ".".join(fname_data)
     
     return ( args.assay, args.mapped_reads_fname, args.out_fname_prefix, 
              args.bigwig, args.reverse_read_strand, read_filter, 
