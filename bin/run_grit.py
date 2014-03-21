@@ -89,14 +89,14 @@ class Samples(object):
     
     def verify_args_are_sufficient(self, rnaseq_reads, promoter_reads, polya_reads):
         if ( len(promoter_reads) == 0
-             and not self.args.use_reference_tss
+             and not self.args.use_reference_tss_exons
              and not self.args.use_reference_promoters):
-            raise ValueError, "Either (cage reads or rampage reads) must be provided for each sample or (--use-reference-tss or --use-reference-promoters) must be set"
+            raise ValueError, "Either (cage reads or rampage reads) must be provided for each sample or (--use-reference-tss-exons or --use-reference-promoters) must be set"
         
         if ( len(polya_reads) == 0
-             and not self.args.use_reference_tes
+             and not self.args.use_reference_tes_exons
              and not self.args.use_reference_polyas ):
-            raise ValueError, "Either polya-reads must be provided or (--use-reference-tes or --use-reference-polyas) must be set"
+            raise ValueError, "Either polya-reads must be provided or (--use-reference-tes-exons or --use-reference-polyas) must be set"
         
         return
     
@@ -270,9 +270,9 @@ def load_ref_elements_to_include(args):
         raise ValueError, "--reference must be set if --use-reference-genes is set"
     if None == args.reference and args.use_reference_junctions:
         raise ValueError, "--reference must be set if --use-reference-junctions is set"
-    if None == args.reference and args.use_reference_tss:
+    if None == args.reference and args.use_reference_tss_exons:
         raise ValueError, "--reference must be set if --use-reference-tss is set"
-    if None == args.reference and args.use_reference_tes:
+    if None == args.reference and args.use_reference_tes_exons:
         raise ValueError, "--reference must be set if --use-reference-tes is set"
     if None == args.reference and args.use_reference_promoters:
         raise ValueError, "--reference must be set if --use-reference-promoters is set"
@@ -283,8 +283,8 @@ def load_ref_elements_to_include(args):
         ['genes', 'junctions', 'TSS', 'TES', 'promoters', 'polya_sites'])
     return RefElementsToInclude( args.use_reference_genes, 
                                  args.use_reference_junctions,
-                                 args.use_reference_tss, 
-                                 args.use_reference_tes,
+                                 args.use_reference_tss_exons, 
+                                 args.use_reference_tes_exons,
                                  args.use_reference_promoters,
                                  args.use_reference_polyas )
 
@@ -334,17 +334,19 @@ def parse_arguments():
     parser.add_argument( '--fasta', type=file,
         help='Fasta file containing the genome sequence - if provided the ORF finder is automatically run.')
     
-    parser.add_argument( '--reference', help='Reference GTF', type=file)
+    parser.add_argument( '--reference', 
+                         help='Reference GTF - this option alone only uses the reference for read type inference and gene renaming. No reference elements are used unless explicitly specified (e.g. --use-reference-junctions)',
+                         type=file)
     parser.add_argument( '--use-reference-genes', 
                          default=False, action='store_true',
         help='Use genes boundaries from the reference annotation.')
     parser.add_argument( '--use-reference-junctions', 
                          default=False, action='store_true',
         help='Include junctions from the reference annotation.')
-    parser.add_argument( '--use-reference-tss', 
+    parser.add_argument( '--use-reference-tss-exons', 
                          default=False, action='store_true',
         help='Use TSS\'s taken from the reference annotation.')
-    parser.add_argument( '--use-reference-tes', 
+    parser.add_argument( '--use-reference-tes-exons', 
                          default=False, action='store_true',
         help='Use TES\'s taken from the reference annotation.')
     parser.add_argument( '--use-reference-promoters', 
