@@ -1,9 +1,4 @@
-Add in cython pyx file
-Rename stuff to tutorial
-Expand the README
 Make a walk through video
-Make sure the packaging is working correctly
-(add the env option for python location)
 Make ubuntu packages
 say when warnings are not critical
 integrate in compare annotations
