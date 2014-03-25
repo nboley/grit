@@ -720,12 +720,13 @@ def worker( data,
             with data.input_queue_lock:
                 work_type, work_data = data.input_queue.pop()
         except IndexError, inst:
-            if len(data.input_queue) == 0: break
+            if len(data.input_queue) == 0: return
             else: continue
         
         if work_type == 'ERROR':
             ( gene_id, trans_index ), msg = work_data
             config.log_statement( str(gene_id) + "\tERROR\t" + msg, log=True ) 
+            config.log_statement("")
             continue
 
         # unpack the work data
@@ -737,7 +738,9 @@ def worker( data,
             # build the gene with transcripts, and optionally call orfs
             gene = build_genes_worker(
                 gene_id, data.output_dict_lock, data.output_dict)
-            if gene == None: continue
+            if gene == None: 
+                config.log_statement("")
+                continue
             if len(gene.transcripts) < config.MAX_NUM_CANDIDATE_TRANSCRIPTS:
                 data.set_gene(gene)
         elif work_type == 'design_matrices':
@@ -751,7 +754,9 @@ def worker( data,
                 (rnaseq_reads, promoter_reads, polya_reads) )
             # if we didn't get an f-matrix in return, then the error
             # should already have been logged so continue
-            if f_mat == None: continue
+            if f_mat == None: 
+                config.log_statement("")
+                continue
             data.set_design_matrix(gene.id, f_mat)
         elif work_type == 'mle':
             gene = data.get_gene(gene_id)
@@ -760,7 +765,9 @@ def worker( data,
             num_reads_in_bams = data.get_num_reads_in_bams(gene.id)
             
             mle = estimate_mle_worker(gene, fl_dists, f_mat, num_reads_in_bams)
-            if mle == None: continue
+            if mle == None: 
+                config.log_statement("")
+                continue
             data.set_mle(gene.id, mle)
             if estimate_confidence_bounds:
                 new_work = data.add_estimate_cbs_to_work_queue(
@@ -819,25 +826,37 @@ def spawn_and_manage_children( data,
              write_design_matrices, 
              estimate_confidence_bounds)
     
-    config.log_statement( "Waiting on children" )
-    while True:        
+    while True:
         # sleep until we have a free process index
         while all( p != None and p.is_alive() for p in ps ):
+            config.log_statement( "Waiting for free children" )
             time.sleep(1.0)
         
         # check to see if the queue is empty and all processes
         # are finished. If so, then we are done
         if len(data.input_queue) == 0:
+            if config.DEBUG_VERBOSE: config.log_statement( 
+                "Input queue is empty - acquiring input queue lock" )
             with data.input_queue_lock:
+                if config.DEBUG_VERBOSE: config.log_statement( 
+                    "Acquired input queue lock" )
                 if len(data.input_queue) == 0 and \
                         all( p == None or not p.is_alive() for p in ps ):
                     # populate the input queue from the expression queue
                     if len(data.expression_queue) > 0:
+                        if config.DEBUG_VERBOSE: config.log_statement( 
+                            "Populating input queue from expression queue" )
                         data.input_queue.extend(data.expression_queue)
                         del data.expression_queue[:]
+                        continue
                     else:
                         return
-                
+            if config.DEBUG_VERBOSE: config.log_statement( 
+                "Waiting for children to finish" )
+            time.sleep(1.)
+            continue
+        
+        config.log_statement( "Spawning new worker child" )
         # find an empty process slot
         proc_i = min( i for i, p in enumerate(ps) 
                       if p == None or not p.is_alive() )
