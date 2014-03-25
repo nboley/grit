@@ -4,6 +4,8 @@ from itertools import chain, izip
 from collections import namedtuple, defaultdict
 import networkx as nx
 
+import config
+
 GenomicInterval = namedtuple('GenomicInterval', 
                              ['chr', 'strand', 'start', 'stop'])
 
@@ -425,7 +427,7 @@ def cluster_exons( tss_exons, internal_exons, tes_exons, se_transcripts,
     return
 
 def build_transcripts( tss_exons, internal_exons, tes_exons, se_transcripts, 
-                       jns, strand, max_num_transcripts=None ):
+                       jns, strand ):
     # build a directed graph, with edges leading from exon to exon via junctions
     all_exons = sorted(chain(tss_exons, internal_exons, tes_exons))
     graph = nx.DiGraph()
@@ -440,13 +442,9 @@ def build_transcripts( tss_exons, internal_exons, tes_exons, se_transcripts,
     num_transcripts = 0
     for tss in tss_exons:
         for tes in tes_exons:
+            if len(transcripts) > config.MAX_NUM_CANDIDATE_TRANSCRIPTS:
+                raise ValueError, "Too many candidate transcripts"
             for transcript in nx.all_simple_paths(graph, tss, tes):
-                num_transcripts += 1
-                if max_num_transcripts != None and \
-                        num_transcripts > max_num_transcripts: 
-                    if VERBOSE: print >> sys.stderr, "TOO COMPLEX"
-                    return []
-
                 transcripts.append( sorted(transcript) )
     
     return transcripts + [ [x,] for x in se_transcripts ]

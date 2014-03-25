@@ -28,7 +28,6 @@ import config
 import cPickle as pickle
 import tempfile
 
-
 class ThreadSafeFile( file ):
     def __init__( *args ):
         file.__init__( *args )
@@ -43,21 +42,13 @@ class SharedData(object):
     """Share data across processes.
 
     """
-    def add_universal_processing_data(self,
-                                      (contig, strand), 
-                                      gene_id, 
-                                      fl_dists, 
-                                      fasta):
+    def add_universal_processing_data(self, (contig, strand), gene_id ):
         """Add stuff we need to provide whether we havea  list of 
            already built genes or not.
         """
         self.output_dict[ (gene_id, 'contig') ] = contig
         self.output_dict[ (gene_id, 'strand') ] = strand
-
-        self.output_dict[ (gene_id, 'fasta_fn') ] = ( 
-            None if fasta == None else fasta.name )
         
-        self.output_dict[ (gene_id, 'fl_dists') ] = fl_dists
         self.output_dict[ (gene_id, 'lbs') ] = None
         self.output_dict[ (gene_id, 'ubs') ] = None
         self.output_dict[ (gene_id, 'mle') ] = None
@@ -67,8 +58,7 @@ class SharedData(object):
     def add_elements_for_contig_and_strand(
             self,
             (contig, strand), grpd_exons, 
-            rnaseq_reads, promoter_reads, polya_reads,
-            fl_dists, fasta ):
+            rnaseq_reads, promoter_reads, polya_reads ):
         gene_id_num = 1
         config.log_statement( 
             "Clustering elements into genes for %s:%s" % ( contig, strand ) )
@@ -108,18 +98,13 @@ class SharedData(object):
                 self.output_dict[ (gene_id, 'gene') ] = None
 
                 self.add_universal_processing_data(
-                    (contig, strand), gene_id,
-                    fl_dists, fasta )
-
+                    (contig, strand), gene_id )
+        
         config.log_statement("")
         return    
 
-    def init_processing_data( self,
-                              elements, 
-                              genes, 
-                              fl_dists,
-                              rnaseq_reads, promoter_reads, polya_reads,
-                              fasta ):
+    def init_processing_data( self, elements, genes, fasta, fl_dists,
+                              rnaseq_reads, promoter_reads, polya_reads ):
         if genes != None:
             for gene in genes:
                 self.set_gene(gene)
@@ -131,8 +116,7 @@ class SharedData(object):
                     self.input_queue.append(
                         ('design_matrices', (gene.id, None, None)))
         else:
-            args_template = [rnaseq_reads, promoter_reads, polya_reads,
-                             fl_dists, fasta]
+            args_template = [rnaseq_reads, promoter_reads, polya_reads ]
             all_args = []
             for (contig, strand), grpd_exons in elements.iteritems():
                 all_args.append( [(contig, strand), grpd_exons] + args_template)
@@ -142,6 +126,11 @@ class SharedData(object):
 
             #p = Pool(config.NTHREADS)
             #p.apply( add_elements_for_contig_and_strand, all_args )
+
+        self.output_dict['fasta_fn'] = ( 
+            None if fasta == None else fasta.name )
+        
+        self.output_dict[ 'fl_dists' ] = fl_dists
 
         self.output_dict['num_rnaseq_reads'] = 0
         self.output_dict['num_cage_reads'] = 0
@@ -174,9 +163,9 @@ class SharedData(object):
                 self.input_queue.append( 
                     ('design_matrices', (gene.id, None, None)) )
 
-    def get_fl_dists(self, gene_id):
+    def get_fl_dists(self):
         with self.output_dict_lock:
-            return self.output_dict[(gene_id, 'fl_dists')]
+            return self.output_dict['fl_dists']
     
     def get_design_matrix(self, gene_id):
         with self.output_dict_lock: 
@@ -433,32 +422,41 @@ def build_genes_worker(gene_id, op_lock, output):
         introns = output[ (gene_id, 'introns') ]
         promoters = output[ (gene_id, 'promoters') ]
         polyas = output[ (gene_id, 'polyas') ]
-        fasta_fn = output[ (gene_id, 'fasta_fn') ]
-
-    transcripts = []
-    for i, exons in enumerate( build_transcripts( 
-            tss_exons, internal_exons, tes_exons,
-            se_transcripts, introns, strand ) ):
-        transcript = Transcript(
-            "%s_%i" % ( gene_id, i ), contig, strand, 
-            exons, cds_region=None, gene_id=gene_id)
-        transcript.promoter = find_matching_promoter_for_transcript(
-            transcript, promoters)
-        transcript.polya_region = \
-           find_matching_polya_region_for_transcript(transcript, polyas)
-        transcripts.append( transcript )
+        fasta_fn = output['fasta_fn']
 
     gene_min = min( min(e) for e in chain(
             tss_exons, tes_exons, se_transcripts))
     gene_max = max( max(e) for e in chain(
             tss_exons, tes_exons, se_transcripts))
-    gene = Gene(gene_id, contig,strand, gene_min, gene_max, transcripts)
+    
+    try:
+        transcripts = []
+        for i, exons in enumerate( build_transcripts( 
+                tss_exons, internal_exons, tes_exons,
+                se_transcripts, introns, strand ) ):
+            transcript = Transcript(
+                "%s_%i" % ( gene_id, i ), contig, strand, 
+                exons, cds_region=None, gene_id=gene_id)
+            transcript.promoter = find_matching_promoter_for_transcript(
+                transcript, promoters)
+            transcript.polya_region = \
+               find_matching_polya_region_for_transcript(transcript, polyas)
+            transcripts.append( transcript )
 
-    if fasta_fn != None:
-        fasta = Fastafile( fasta_fn )
-        gene.transcripts = find_cds_for_gene( 
-            gene, fasta, only_longest_orf=True )
+        gene = Gene(gene_id, contig,strand, gene_min, gene_max, transcripts)
 
+        if fasta_fn != None:
+            fasta = Fastafile( fasta_fn )
+            gene.transcripts = find_cds_for_gene( 
+                gene, fasta, only_longest_orf=True )
+
+        config.log_statement("FINISHED Building transcript and ORFs for Gene %s" % gene_id)
+    except Exception, inst:
+        config.log_statement(
+            "ERROR building transcript in %s(%s:%s:%i-%i): %s" % (
+                gene_id, contig, strand, gene_min, gene_max, inst), log=True)
+        return None
+    
     return gene
 
 def build_design_matrices_worker(gene, fl_dists,
@@ -595,7 +593,7 @@ def write_finished_data_to_disk( data,
                     unobservable_transcripts = sorted(
                         f_mat.filtered_transcripts)
 
-                    fl_dists = data.get_fl_dists(key)
+                    fl_dists = data.get_fl_dists()
                     mles = data.get_mle(key)[1:]
                     lbs, ubs = None, None
                     if compute_confidence_bounds:
@@ -739,11 +737,13 @@ def worker( data,
             # build the gene with transcripts, and optionally call orfs
             gene = build_genes_worker(
                 gene_id, data.output_dict_lock, data.output_dict)
-            data.set_gene(gene)         
+            if gene == None: continue
+            if len(gene.transcripts) < config.MAX_NUM_CANDIDATE_TRANSCRIPTS:
+                data.set_gene(gene)
         elif work_type == 'design_matrices':
             config.log_statement("Finding design matrix for Gene %s" % gene_id)
             gene = data.get_gene(gene_id)         
-            fl_dists = data.get_fl_dists(gene_id)         
+            fl_dists = data.get_fl_dists()         
             
             # otherwise, we build the design matrices
             f_mat = build_design_matrices_worker(
@@ -755,7 +755,7 @@ def worker( data,
             data.set_design_matrix(gene.id, f_mat)
         elif work_type == 'mle':
             gene = data.get_gene(gene_id)
-            fl_dists = data.get_fl_dists(gene.id)
+            fl_dists = data.get_fl_dists()
             f_mat = data.get_design_matrix(gene.id)
             num_reads_in_bams = data.get_num_reads_in_bams(gene.id)
             
@@ -791,7 +791,7 @@ def worker( data,
             assert work_type in ('ub', 'lb')
             
             gene = data.get_gene(gene_id)
-            fl_dists = data.get_fl_dists(gene.id)
+            fl_dists = data.get_fl_dists()
             f_mat = data.get_design_matrix(gene.id)
             num_reads_in_bams = data.get_num_reads_in_bams(gene.id)
             mle = data.get_mle(gene.id)
@@ -898,18 +898,18 @@ def build_and_quantify_transcripts(
         
         if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
             # estimate the fragment length distribution
-            config.log_statement( "Estimating the fragment length distribution" )
+            config.log_statement("Estimating the fragment length distribution")
             fl_dists = build_fl_dists( elements, rnaseq_reads )
-            config.log_statement( "Finished estimating the fragment length distribution" )
+            config.log_statement("Finished estimating the fragment length distribution" )
         else:
             fl_dists, rnaseq_reads, promoter_reads, polya_reads \
                 = None, None, None, None
                 
         config.log_statement( "Initializing processing data" )    
         data.init_processing_data(             
-            elements, genes, fl_dists,
-            rnaseq_reads, promoter_reads,
-            polya_reads, fasta )
+            elements, genes, 
+            fasta, fl_dists,
+            rnaseq_reads, promoter_reads, polya_reads )
         config.log_statement( "Finished initializing processing data" )
         
         write_p = multiprocessing.Process(
