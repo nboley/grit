@@ -23,9 +23,11 @@ from f_matrix import DesignMatrix
 import frequency_estimation
 from frag_len import load_fl_dists, FlDist, build_normal_density
 
-import cPickle as pickle
-
 import config
+
+import cPickle as pickle
+import tempfile
+
 
 class ThreadSafeFile( file ):
     def __init__( *args ):
@@ -172,11 +174,17 @@ class SharedData(object):
     
     def get_design_matrix(self, gene_id):
         with self.output_dict_lock: 
-            return self.output_dict[(gene_id, 'design_matrices')]
+            fname = self.output_dict[(gene_id, 'design_matrices')]
+        with open(fname) as fp:
+            return pickle.load(fp)
     
     def set_design_matrix(self, gene_id, f_mat):
+        ofname = os.path.join(tempfile.mkdtemp(), gene_id + ".fmat")
+        with open(ofname, "w") as ofp:
+            pickle.dump(f_mat, ofp)
+            
         with self.output_dict_lock: 
-            self.output_dict[(gene_id, 'design_matrices')] = f_mat
+            self.output_dict[(gene_id, 'design_matrices')] = ofname
             self.output_dict['num_rnaseq_reads'] += f_mat.num_rnaseq_reads
             if f_mat.num_fp_reads != None:
                 self.output_dict['num_cage_reads'] += f_mat.num_fp_reads
@@ -271,6 +279,9 @@ class SharedData(object):
         # store data that all children need to be able to access        
         self.output_dict = self._manager.dict()
         self.output_dict_lock = multiprocessing.Lock()    
+        
+        # create a scratch directory to store design matrices
+        self.scratch_dir = tempfile.mkdtemp()
         
     def get_queue_item(self):
         pass
@@ -549,15 +560,15 @@ def find_confidence_bounds_worker( gene, fl_dists, num_reads_in_bams,
     
     return res
 
-def write_finished_data_to_disk( output_dict, output_dict_lock, 
-                                 finished_genes_queue, 
+# output_dict, output_dict_lock, finished_genes_queue, 
+def write_finished_data_to_disk( data, 
                                  gtf_ofp, expression_ofp,
                                  compute_confidence_bounds, 
                                  write_design_matrices ):
     config.log_statement("Initializing background writer")
     while True:
         try:
-            write_type, key = finished_genes_queue.get(timeout=0.1)
+            write_type, key = data.finished_queue.get(timeout=0.1)
             if write_type == 'FINISHED':
                 break
         except Queue.Empty:
@@ -567,50 +578,24 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
         
         # write out the design matrix
         try:            
-            if write_type == 'design_matrices' and write_design_matrices:
-                raise NotImplemented, "This was for debugging, and hasn't been maintained. Althouhg it would be relatively easy to fix if necessary"
-                # to fix this, I would add a 'write' method to the DesignMatrix class and then
-                # call it from here
-                if config.DEBUG_VERBOSE: 
-                    config.log_statement("Writing design matrix mat to '%s'" % ofname)
-                f_mat = output_dict[(key,'design_matrices')]
-                ofname = "./%s_%s.mat" % ( key[0], os.path.basename(key[1]) )
-                if config.DEBUG_VERBOSE: config.log_statement("Writing mat to '%s'" % ofname)
-                savemat( ofname, {'observed': observed, 'expected': expected}, 
-                         oned_as='column' )
-                ofname = "./%s_%s.observed.txt" % ( 
-                    key[0], os.path.basename(key[1]) )
-                with open( ofname, "w" ) as ofp:
-                    ofp.write("\n".join( "%e" % x for x in  observed ))
-                ofname = "./%s_%s.expected.txt" % ( 
-                    key[0], os.path.basename(key[1]) )
-                with open( ofname, "w" ) as ofp:
-                    ofp.write("\n".join( "\t".join( "%e" % y for y in x ) 
-                                         for x in expected ))
-                config.log_statement("" % ofname)
             if write_type == 'gtf':
                 config.log_statement( "Writing GENE %s to gtf" % key )
 
-                with output_dict_lock:
-                    gene = output_dict[(key, 'gene')]
-                    unobservable_transcripts, lbs, mles, ubs = (
-                        [], None, None, None)
-                    if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
-                        f_mat = output_dict[(key, 'design_matrices')]
-                        unobservable_transcripts = sorted(
-                            f_mat.filtered_transcripts)
-                    
-                        fl_dists = output_dict[(key, 'fl_dists')]
-                        mles = output_dict[(key, 'mle')][1:]
-                        lbs, ubs = None, None
-                        if compute_confidence_bounds:
-                            lbs = output_dict[(key, 'lb')][1:]
-                            ubs = output_dict[(key, 'ub')][1:]
-                        num_rnaseq_reads = output_dict['num_rnaseq_reads']
-                        num_cage_reads = output_dict['num_cage_reads']
-                        num_polya_reads = output_dict['num_polya_reads']
-                        num_reads_in_bams = (
-                            num_cage_reads, num_rnaseq_reads, num_polya_reads)
+                gene = data.get_gene(key)
+                unobservable_transcripts, lbs, mles, ubs = (
+                    [], None, None, None)
+                if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+                    f_mat = data.get_design_matrix(key)
+                    unobservable_transcripts = sorted(
+                        f_mat.filtered_transcripts)
+
+                    fl_dists = data.get_fl_dists(key)
+                    mles = data.get_mle(key)[1:]
+                    lbs, ubs = None, None
+                    if compute_confidence_bounds:
+                        lbs = data.output_dict[(key, 'lb')][1:]
+                        ubs = data.output_dict[(key, 'ub')][1:]
+                    num_reads_in_bams = data.get_num_reads_in_bams(key)
                 
                 if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
                     if ubs != None:
@@ -629,14 +614,14 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                         expression_ofp, gene, lbs, ubs, fpkms, 
                         unobservable_transcripts=unobservable_transcripts)
 
-                with output_dict_lock:
-                    del output_dict[(key, 'gene')]
+                with data.output_dict_lock:
+                    del data.output_dict[(key, 'gene')]
                     if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
-                        del output_dict[(key, 'mle')]
-                        del output_dict[(key, 'design_matrices')]
+                        del data.output_dict[(key, 'mle')]
+                        del data.output_dict[(key, 'design_matrices')]
                     if compute_confidence_bounds:
-                        del output_dict[(key, 'lbs')]
-                        del output_dict[(key, 'ubs')]
+                        del data.output_dict[(key, 'lbs')]
+                        del data.output_dict[(key, 'ubs')]
                 
                 config.log_statement( "" )
         except Exception, inst:
@@ -921,8 +906,7 @@ def build_and_quantify_transcripts(
         
         write_p = multiprocessing.Process(
             target=write_finished_data_to_disk, args=(
-                data.output_dict, data.output_dict_lock, 
-                data.finished_queue, gtf_ofp, expression_ofp,
+                data, gtf_ofp, expression_ofp,
                 estimate_confidence_bounds, write_design_matrices ) )
         
         write_p.start()    
