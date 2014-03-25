@@ -195,19 +195,17 @@ class SharedData(object):
         return (num_cage_reads, num_rnaseq_reads, num_polya_reads)
 
     def get_mle(self, gene_id):
-        # put the gene into the manager
         with self.output_dict_lock: 
             return self.output_dict[(gene_id, 'mle')]
     
     def set_mle(self, gene_id, mle):
-        # put the gene into the manager
         with self.output_dict_lock: 
             self.output_dict[(gene_id, 'mle')] = mle
         
         if True or estimate_confidence_bounds:
             with self.output_dict_lock:
-                self.output_dict[(gene_id, 'ubs')] = [None]*len(mle)
-                self.output_dict[(gene_id, 'lbs')] = [None]*len(mle)
+                self.output_dict[(gene_id, 'ub')] = [None]*len(mle)
+                self.output_dict[(gene_id, 'lb')] = [None]*len(mle)
 
             grouped_indices = []
             for i in xrange(len(mle)):
@@ -222,6 +220,32 @@ class SharedData(object):
         else:
             with self.input_queue_lock:
                 self.input_queue.append(('FINISHED', (gene_id, None, None)))
+
+    def get_cbs(self, gene_id, cb_type):
+        assert cb_type in ('ub', 'lb')
+        with self.output_dict_lock: 
+            return self.output_dict[(gene_id, cb_type)]
+
+    def set_cbs(self, gene_id, cb_type, indices_and_values):
+        assert cb_type in ('ub', 'lb')
+        # put the gene into the manager
+        with self.output_dict_lock: 
+            data = self.output_dict[(gene_id, cb_type)]
+        for i, v in indices_and_values:
+            data[i] = v
+        with self.output_dict_lock: 
+            self.output_dict[(gene_id, cb_type)] = data
+            
+        # check to see if we're finished - clean this up
+        with self.output_dict_lock: 
+            ubs = self.output_dict[(gene_id, 'ub')]
+            lbs = self.output_dict[(gene_id, 'lb')]
+
+        if all(x != None for x in ubs) and all(x != None for x in lbs):
+            with self.input_queue_lock:
+                self.input_queue.append(('FINISHED', (gene_id, None, None)))
+
+        return
     
     def __init__(self):
         self._manager = multiprocessing.Manager()
@@ -265,7 +289,6 @@ def calc_fpkm( gene, fl_dists, freqs, num_reads_in_bam):
         return length - mean_fl_len, sc_factor
     
     fpkms = []
-    print freqs
     for t, freq in izip( gene.transcripts, freqs ):
         effective_t_len, t_scale = calc_effective_length_and_scale_factor(t)
         if effective_t_len <= 0: 
@@ -456,7 +479,13 @@ def estimate_mle_worker( gene, fl_dists, f_mat, num_reads_in_bams ):
         error_msg = "Skipping %s: %s" % ( gene.id, inst )
         config.log_statement( error_msg, log=True )
         return None
-    
+    except Exception, inst:
+        error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
+            os.getpid(), gene.id, 
+            gene.chrm, gene.strand, gene.start, gene.stop, inst)
+        config.log_statement( error_msg, log=True )
+        return None
+
     log_lhd = frequency_estimation.calc_lhd( 
         mle, observed_array, expected_array)
     config.log_statement( "FINISHED MLE %s\t%.2f - updating queues" % ( 
@@ -487,9 +516,18 @@ def find_confidence_bounds_worker( gene, fl_dists, num_reads_in_bams,
         if config.DEBUG_VERBOSE: config.log_statement( 
             "Estimating %s confidence bound for gene %s transcript %i/%i" % ( 
             bnd_type,gene.id,trans_index+1,mle_estimate.shape[0]))
-        p_value, bnd = frequency_estimation.estimate_confidence_bound( 
-            f_mat, num_reads_in_bams,
-            trans_index, mle_estimate, bnd_type, cb_alpha )
+        try:
+            p_value, bnd = frequency_estimation.estimate_confidence_bound( 
+                f_mat, num_reads_in_bams,
+                trans_index, mle_estimate, bnd_type, cb_alpha )
+        except Exception, inst:
+            p_value = 1.
+            bnd = 0.0 if bound_type == 'lb' else 1.0
+            error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
+                os.getpid(), gene.id, 
+                gene.chrm, gene.strand, gene.start, gene.stop, inst)
+            config.log_statement( error_msg, log=True )
+        
         if config.DEBUG_VERBOSE: config.log_statement( 
             "FINISHED %s BOUND %s\t%s\t%i/%i\t%.2e\t%.2e" % (
             bnd_type, gene.id, None, 
@@ -503,133 +541,6 @@ def find_confidence_bounds_worker( gene, fl_dists, num_reads_in_bams,
             mle_estimate.shape[0]))
     
     return res
-
-def estimate_expression_worker( work_type, (gene_id,sample_id,trans_index),
-                                     input_queue, input_queue_lock,
-                                     op_lock, output, 
-                                     estimate_confidence_bounds,
-                                     cb_alpha=config.CB_SIG_LEVEL):
-    try:
-        config.log_statement( "Loading estimation data for Gene %s" % gene_id  )
-        with op_lock:
-            gene = output[(gene_id, 'gene')]
-            f_mat = output[(gene_id, 'design_matrices')]
-            fl_dists = output[(gene_id, 'fl_dists')]
-            num_rnaseq_reads = output['num_rnaseq_reads']
-            num_cage_reads = output['num_cage_reads']
-            num_polya_reads = output['num_polya_reads']
-        num_reads_in_bams = (num_cage_reads, num_rnaseq_reads, num_polya_reads)
-        num_reads_in_gene = (
-            f_mat.num_fp_reads, f_mat.num_rnaseq_reads, f_mat.num_tp_reads)
-        
-        if work_type == 'mle':
-            config.log_statement(
-                "Finding MLE for Gene %s(%s:%s:%i-%i) - %i transcripts" \
-                    % (gene_id, gene.chrm, gene.strand, 
-                       gene.start, gene.stop, len(gene.transcripts) ) )
-            
-            try:
-                expected_array, observed_array = f_mat.expected_and_observed(
-                    num_reads_in_bams)
-                mle = frequency_estimation.estimate_transcript_frequencies( 
-                    observed_array, expected_array)
-            except ValueError, inst:
-                error_msg = "Skipping %s: %s" % ( gene_id, inst )
-                config.log_statement( error_msg, log=True )
-                with input_queue_lock:
-                    input_queue.append(('ERROR', (
-                                (gene_id, trans_index), 
-                                error_msg)))
-                return
-            
-            log_lhd = frequency_estimation.calc_lhd( 
-                mle, observed_array, expected_array)
-            config.log_statement( "FINISHED MLE %s\t%.2f - updating queues" % ( 
-                    gene_id, log_lhd ) )
-            
-            with op_lock:
-                output[(gene_id, 'mle')] = mle
-            
-            if estimate_confidence_bounds:
-                with op_lock:
-                    output[(gene_id, 'ub')] = [None]*len(mle)
-                    output[(gene_id, 'lb')] = [None]*len(mle)
-                
-                grouped_indices = []
-                for i in xrange(expected_array.shape[1]):
-                    if i%config.NUM_TRANS_IN_GRP == 0:
-                        grouped_indices.append( [] )
-                    grouped_indices[-1].append( i )
-
-                with input_queue_lock:
-                    for indices in grouped_indices:
-                        input_queue.append( ('lb', (gene_id, None, indices)) )
-                        input_queue.append( ('ub', (gene_id, None, indices)) )
-            else:
-                with input_queue_lock:
-                    input_queue.append(('FINISHED', (gene_id, None, None)))
-            config.log_statement("")
-
-        elif work_type in ('lb', 'ub'):
-            with op_lock:
-                mle_estimate = output[(gene_id, 'mle')]
-            
-            bnd_type = 'LOWER' if work_type == 'lb' else 'UPPER'
-
-            if type(trans_index) == int:
-                trans_indices = [trans_index,]
-            else:
-                assert isinstance( trans_index, list )
-                trans_indices = trans_index
-
-            res = []
-            config.log_statement( 
-                "Estimating %s confidence bound for gene %s transcript %i-%i/%i" % ( 
-                    bnd_type,gene_id,trans_indices[0]+1, trans_indices[-1]+1, 
-                    mle_estimate.shape[0]))
-            for trans_index in trans_indices:
-                if config.DEBUG_VERBOSE: config.log_statement( 
-                    "Estimating %s confidence bound for gene %s transcript %i/%i" % ( 
-                    bnd_type,gene_id,trans_index+1,mle_estimate.shape[0]))
-                p_value, bnd = frequency_estimation.estimate_confidence_bound( 
-                    f_mat, num_reads_in_bams,
-                    trans_index, mle_estimate, bnd_type, cb_alpha )
-                if config.DEBUG_VERBOSE: config.log_statement( 
-                    "FINISHED %s BOUND %s\t%s\t%i/%i\t%.2e\t%.2e" % (
-                    bnd_type, gene_id, None, 
-                    trans_index+1, mle_estimate.shape[0], 
-                    bnd, p_value ) )
-                res.append((trans_index, bnd))
-            config.log_statement( 
-                "FINISHED Estimating %s confidence bound for gene %s transcript %i-%i/%i" % ( 
-                    bnd_type,gene_id,trans_indices[0]+1, trans_indices[-1]+1, 
-                    mle_estimate.shape[0]))
-            
-            with op_lock:
-                bnds = output[(gene_id, work_type+'s')]
-                for trans_index, bnd in res:
-                    bnds[trans_index] = bnd
-                output[(gene_id, work_type+'s')] = bnds
-                ubs = output[(gene_id, 'ubs')]
-                lbs = output[(gene_id, 'lbs')]
-                mle = output[(gene_id, 'mle')]
-                
-                if len(ubs) == len(lbs) == len(mle):
-                    ubs = [x[1] for x in sorted(ubs.iteritems())]
-                    lbs = [x[1] for x in sorted(lbs.iteritems())]
-                    output[(gene_id, 'ubs')] = ubs
-                    output[(gene_id, 'lbs')] = lbs
-                    with input_queue_lock:
-                        input_queue.append(('FINISHED', (gene_id, None, None)))
-            
-            config.log_statement("")
-    
-    except Exception, inst:
-        with input_queue_lock:
-            input_queue.append(
-                ('ERROR', ((gene_id, trans_index), traceback.format_exc())))
-    
-    return
 
 def write_finished_data_to_disk( output_dict, output_dict_lock, 
                                  finished_genes_queue, 
@@ -686,9 +597,8 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                         mles = output_dict[(key, 'mle')][1:]
                         lbs, ubs = None, None
                         if compute_confidence_bounds:
-                            lbs = output_dict[(key, 'lbs')][1:]
-                            ubs = output_dict[(key, 'ubs')][1:]
-                        
+                            lbs = output_dict[(key, 'lb')][1:]
+                            ubs = output_dict[(key, 'ub')][1:]
                         num_rnaseq_reads = output_dict['num_rnaseq_reads']
                         num_cage_reads = output_dict['num_cage_reads']
                         num_polya_reads = output_dict['num_polya_reads']
@@ -863,21 +773,9 @@ def worker( data,
                 gene, fl_dists, num_reads_in_bams,
                 f_mat, mle, 
                 trans_indices, work_type, cb_alpha=config.CB_SIG_LEVEL)
-            
-            with data.output_dict_lock:
-                bnds = data.output_dict[(gene.id, work_type+'s')]
-                for trans_index, bnd in zip(trans_indices, cb_estimates):
-                    bnds[trans_index] = bnd
-                data.output_dict[(gene_id, work_type+'s')] = bnds
-                
-                ubs = data.output_dict[(gene.id, 'ubs')]
-                lbs = data.output_dict[(gene.id, 'lbs')]
-                mle = data.output_dict[(gene.id, 'mle')]
-                
-                if len(ubs) == len(lbs) == len(mle):
-                    with data.input_queue_lock:
-                        data.input_queue.append(('FINISHED', (gene_id, None, None)))
 
+            data.set_cbs(gene_id, work_type, cb_estimates)
+        
         config.log_statement("")
     
     return
