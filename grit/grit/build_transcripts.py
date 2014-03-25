@@ -201,25 +201,32 @@ class SharedData(object):
     def set_mle(self, gene_id, mle):
         with self.output_dict_lock: 
             self.output_dict[(gene_id, 'mle')] = mle
-        
-        if True or estimate_confidence_bounds:
-            with self.output_dict_lock:
-                self.output_dict[(gene_id, 'ub')] = [None]*len(mle)
-                self.output_dict[(gene_id, 'lb')] = [None]*len(mle)
 
-            grouped_indices = []
-            for i in xrange(len(mle)):
-                if i%config.NUM_TRANS_IN_GRP == 0:
-                    grouped_indices.append( [] )
-                grouped_indices[-1].append( i )
-            
+    def add_estimate_cbs_to_work_queue(self, gene_id, add_to_input_queue=True):
+        mle = self.get_mle(gene_id)
+        with self.output_dict_lock:
+            self.output_dict[(gene_id, 'ub')] = [None]*len(mle)
+            self.output_dict[(gene_id, 'lb')] = [None]*len(mle)
+
+        grouped_indices = []
+        for i in xrange(len(mle)):
+            if i%config.NUM_TRANS_IN_GRP == 0:
+                grouped_indices.append( [] )
+            grouped_indices[-1].append( i )
+
+        work = []
+        for indices in grouped_indices:
+            work.append( ('lb', (gene_id, None, indices)) )
+            work.append( ('ub', (gene_id, None, indices)) )
+
+        if add_to_input_queue == True:
             with self.input_queue_lock:
-                for indices in grouped_indices:
-                    self.input_queue.append( ('lb', (gene_id, None, indices)) )
-                    self.input_queue.append( ('ub', (gene_id, None, indices)) )
-        else:
-            with self.input_queue_lock:
-                self.input_queue.append(('FINISHED', (gene_id, None, None)))
+                for x in work: self.input_queue.append(x)
+        return work
+    
+    def set_gene_to_finished(self, gene_id):
+        with self.input_queue_lock:
+            self.input_queue.append(('FINISHED', (gene_id, None, None)))
 
     def get_cbs(self, gene_id, cb_type):
         assert cb_type in ('ub', 'lb')
@@ -606,14 +613,16 @@ def write_finished_data_to_disk( output_dict, output_dict_lock,
                             num_cage_reads, num_rnaseq_reads, num_polya_reads)
                 
                 if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
-                    ubs = calc_fpkm( gene, fl_dists, ubs,
-                                     num_reads_in_bams)
-                    lbs = calc_fpkm( gene, fl_dists, lbs,
-                                     num_reads_in_bams)
+                    if ubs != None:
+                        ubs = calc_fpkm( gene, fl_dists, ubs,
+                                         num_reads_in_bams)
+                    if lbs != None:
+                        lbs = calc_fpkm( gene, fl_dists, lbs,
+                                         num_reads_in_bams)
                     fpkms = calc_fpkm( 
                         gene, fl_dists, mles, num_reads_in_bams)
                 write_gene_to_gtf(gtf_ofp, gene, mles, lbs, ubs, fpkms, 
-                                  unobservable_transcripts=unobservable_transcripts)
+                                  unobservable_transcripts)
 
                 if expression_ofp != None:
                     write_gene_to_fpkm_tracking( 
@@ -760,6 +769,31 @@ def worker( data,
             mle = estimate_mle_worker(gene, fl_dists, f_mat, num_reads_in_bams)
             if mle == None: continue
             data.set_mle(gene.id, mle)
+            if estimate_confidence_bounds:
+                new_work = data.add_estimate_cbs_to_work_queue(
+                    gene.id, add_to_input_queue=False)
+                # if the input queue is empty, add everything to it
+                # otherwise, process it in this threads
+                if len(data.input_queue) == 0:
+                    with data.input_queue_lock:
+                        data.input_queue.extend(new_work)
+                else:
+                    while len(new_work) > 0:
+                        if len(data.input_queue) == 0: break
+                        work = new_work.pop()
+                        work_type, (gene_id, bam_fn, trans_indices) = work
+                        cb_estimates = find_confidence_bounds_worker( 
+                            gene, fl_dists, num_reads_in_bams,
+                            f_mat, mle, 
+                            trans_indices, work_type, 
+                            cb_alpha=config.CB_SIG_LEVEL)
+                        
+                        data.set_cbs(gene_id, work_type, cb_estimates)
+                    if len(new_work) > 0:
+                        with data.input_queue_lock:
+                            data.input_queue.extend(new_work)
+            else:
+                data.set_gene_to_finished(gene.id)
         else:
             assert work_type in ('ub', 'lb')
             
