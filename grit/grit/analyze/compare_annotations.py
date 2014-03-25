@@ -5,7 +5,7 @@ import sys, os
 from collections import defaultdict
 from itertools import izip
 
-from ..files.gtf import load_gtf
+from grit.files.gtf import load_gtf
 
 VERBOSE = True
 
