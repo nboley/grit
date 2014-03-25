@@ -1,8 +1,11 @@
+#!/usr/bin/python
 import os, sys
 import subprocess
 from collections import defaultdict, namedtuple
 from itertools import chain
 import sqlite3
+
+sys.path.insert(0, "/home/nboley/grit/grit/")
 
 from grit.files.gtf import load_gtf
 from grit.files.reads import (
@@ -439,7 +442,6 @@ def discover_elements(sample_data, args):
     for sample_type in sample_data.get_sample_types():
         promoter_reads, rnaseq_reads, polya_reads = \
             sample_data.get_reads(sample_type)
-
         elements_fname = "%s.%s.elements.bed" % (
             args.ofprefix, sample_type)
         grit.find_elements.find_elements(
