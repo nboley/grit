@@ -122,8 +122,8 @@ class SharedData(object):
                               fasta ):
         if genes != None:
             for gene in genes:
+                self.set_gene(gene)
                 with self.output_dict_lock:
-                    self.output_dict[(gene.id, 'gene')] = gene
                     self.add_universal_processing_data(
                         (gene.chrm, gene.strand), gene.id,  
                         fl_dists, fasta )
@@ -151,18 +151,24 @@ class SharedData(object):
 
 
     def get_gene(self, gene_id):
-        with self.output_dict_lock:
-            return self.output_dict[(gene_id, 'gene')]
+        with self.output_dict_lock: 
+            fname = self.output_dict[(gene_id, 'gene')]
+        with open(fname) as fp:
+            return pickle.load(fp)
     
-    def set_gene(self, gene_id, gene):
+    def set_gene(self, gene):
+        ofname = os.path.join(tempfile.mkdtemp(), gene.id + ".gene")
+        with open(ofname, "w") as ofp:
+            pickle.dump(gene, ofp)
+        
         # put the gene into the manager
         with self.output_dict_lock: 
-            self.output_dict[(gene_id, 'gene')] = gene
+            self.output_dict[(gene.id, 'gene')] = ofname
         
         # update the work queue. 
         # if we are only building candidate transcripts, then we are done
         if config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
-            self.input_queue.append(('FINISHED', (gene_id, None, None)))
+            self.input_queue.append(('FINISHED', (gene.id, None, None)))
         else:
             with self.input_queue_lock:
                 self.input_queue.append( 
@@ -614,15 +620,17 @@ def write_finished_data_to_disk( data,
                         expression_ofp, gene, lbs, ubs, fpkms, 
                         unobservable_transcripts=unobservable_transcripts)
 
+                # FIX THIS TO DELETE UNUSED DATA
+                """
                 with data.output_dict_lock:
-                    del data.output_dict[(key, 'gene')]
+                    #del data.output_dict[(key, 'gene')]
                     if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
                         del data.output_dict[(key, 'mle')]
                         del data.output_dict[(key, 'design_matrices')]
                     if compute_confidence_bounds:
                         del data.output_dict[(key, 'lbs')]
                         del data.output_dict[(key, 'ubs')]
-                
+                """
                 config.log_statement( "" )
         except Exception, inst:
             config.log_statement( "FATAL ERROR" )
@@ -731,7 +739,7 @@ def worker( data,
             # build the gene with transcripts, and optionally call orfs
             gene = build_genes_worker(
                 gene_id, data.output_dict_lock, data.output_dict)
-            data.set_gene(gene_id, gene)         
+            data.set_gene(gene)         
         elif work_type == 'design_matrices':
             config.log_statement("Finding design matrix for Gene %s" % gene_id)
             gene = data.get_gene(gene_id)         
