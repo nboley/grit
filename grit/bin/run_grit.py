@@ -5,6 +5,8 @@ from collections import defaultdict, namedtuple
 from itertools import chain
 import sqlite3
 
+sys.path.insert(0, "/home/nboley/grit/grit/")
+
 from grit.files.gtf import load_gtf
 from grit.files.reads import (
     MergedReads, clean_chr_name,

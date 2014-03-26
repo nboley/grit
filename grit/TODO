@@ -5,3 +5,4 @@ integrate in compare annotations
 make a merged GTF and csv file with the merged samples
 change so that quantification is not done on * samples
 add in --use-merged-for-quantification option to make *'s quantify on merges
+remove temporary files
