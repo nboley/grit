@@ -107,14 +107,10 @@ class SharedData(object):
                               rnaseq_reads, promoter_reads, polya_reads ):
         if genes != None:
             for gene in genes:
-                self.set_gene(gene)
                 with self.output_dict_lock:
                     self.add_universal_processing_data(
-                        (gene.chrm, gene.strand), gene.id,  
-                        fl_dists, fasta )
-                with self.input_queue_lock:
-                    self.input_queue.append(
-                        ('design_matrices', (gene.id, None, None)))
+                        (gene.chrm, gene.strand), gene.id )
+                self.set_gene(gene)
         else:
             args_template = [rnaseq_reads, promoter_reads, polya_reads ]
             all_args = []
@@ -177,9 +173,14 @@ class SharedData(object):
         ofname = os.path.join(tempfile.mkdtemp(), gene_id + ".fmat")
         with open(ofname, "w") as ofp:
             pickle.dump(f_mat, ofp)
-            
+
         with self.output_dict_lock: 
             self.output_dict[(gene_id, 'design_matrices')] = ofname
+        
+        return
+
+    def add_estimate_mle_to_work_queue(self, gene_id, f_mat):
+        with self.output_dict_lock: 
             self.output_dict['num_rnaseq_reads'] += f_mat.num_rnaseq_reads
             if f_mat.num_fp_reads != None:
                 self.output_dict['num_cage_reads'] += f_mat.num_fp_reads
@@ -190,6 +191,7 @@ class SharedData(object):
             self.expression_queue.append( ('mle', (gene_id, None, None)) )
         
         return
+
 
     def get_num_reads_in_bams(self, gene_id):
         num_rnaseq_reads = self.output_dict['num_rnaseq_reads']
@@ -278,8 +280,6 @@ class SharedData(object):
         # create a scratch directory to store design matrices
         self.scratch_dir = tempfile.mkdtemp()
         
-    def get_queue_item(self):
-        pass
 
 def calc_fpkm( gene, fl_dists, freqs, num_reads_in_bam):
     assert len(gene.transcripts) == len(freqs)
@@ -482,6 +482,12 @@ def build_design_matrices_worker(gene, fl_dists,
             gene.chrm, gene.strand, gene.start, gene.stop, inst)
         config.log_statement( error_msg, log=True )
         return None
+    except Exception, inst:
+        error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
+            os.getpid(), gene.id, 
+            gene.chrm, gene.strand, gene.start, gene.stop, inst)
+        config.log_statement( error_msg, log=True )
+        return None
 
     config.log_statement( "FINISHED DESIGN MATRICES %s" % gene.id )
     return f_mat
@@ -586,8 +592,8 @@ def write_finished_data_to_disk( data,
                 config.log_statement( "Writing GENE %s to gtf" % key )
 
                 gene = data.get_gene(key)
-                unobservable_transcripts, lbs, mles, ubs = (
-                    [], None, None, None)
+                unobservable_transcripts, lbs, mles, ubs, fpkms = (
+                    [], None, None, None, None)
                 if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
                     f_mat = data.get_design_matrix(key)
                     unobservable_transcripts = sorted(
@@ -601,7 +607,6 @@ def write_finished_data_to_disk( data,
                         ubs = data.output_dict[(key, 'ub')][1:]
                     num_reads_in_bams = data.get_num_reads_in_bams(key)
                 
-                if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
                     if ubs != None:
                         ubs = calc_fpkm( gene, fl_dists, ubs,
                                          num_reads_in_bams)
@@ -610,6 +615,7 @@ def write_finished_data_to_disk( data,
                                          num_reads_in_bams)
                     fpkms = calc_fpkm( 
                         gene, fl_dists, mles, num_reads_in_bams)
+                
                 write_gene_to_gtf(gtf_ofp, gene, mles, lbs, ubs, fpkms, 
                                   unobservable_transcripts)
 
@@ -631,8 +637,8 @@ def write_finished_data_to_disk( data,
                 """
                 config.log_statement( "" )
         except Exception, inst:
-            config.log_statement( "FATAL ERROR" )
-            config.log_statement( traceback.format_exc() )
+            config.log_statement( "FATAL ERROR", log=True )
+            config.log_statement( traceback.format_exc(), log=True )
         
     return
 
@@ -758,6 +764,7 @@ def worker( data,
                 config.log_statement("")
                 continue
             data.set_design_matrix(gene.id, f_mat)
+            data.add_estimate_mle_to_work_queue(gene.id, f_mat)
         elif work_type == 'mle':
             gene = data.get_gene(gene_id)
             fl_dists = data.get_fl_dists()
@@ -769,7 +776,11 @@ def worker( data,
                 config.log_statement("")
                 continue
             data.set_mle(gene.id, mle)
+            
             if estimate_confidence_bounds:
+                # update the design matrix with the cached matrices
+                data.set_design_matrix(gene.id, f_mat)
+                
                 new_work = data.add_estimate_cbs_to_work_queue(
                     gene.id, add_to_input_queue=False)
                 # if the input queue is empty, add everything to it

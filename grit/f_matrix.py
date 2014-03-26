@@ -3,12 +3,16 @@
 import sys
 
 import numpy
+from scipy.spatial import KDTree
+
 MAX_NUM_UNMAPPABLE_BASES = 0
 RUN_INLINE_TESTS = False
 LET_READS_OVERLAP = True
 PROMOTER_SIZE = 50
 
 DEBUG=False
+
+import config
 
 import networkx as nx
 
@@ -581,9 +585,55 @@ def build_expected_and_observed_transcript_bndry_counts(
     return expected_cnts, observed_cnts
 
 def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
+    if config.DEBUG_VERBOSE:
+        config.log_statement( "Normalizing bin frequencies" )
+    norm_rows = []
+    for i, row in enumerate(expected_rnaseq_array):
+        norm_rows.append(row/row.sum())
+    test = numpy.vstack(norm_rows)
+
+    if config.DEBUG_VERBOSE:
+        config.log_statement( "Building KDTree to cluster bins" )
+    tree = KDTree(test)
+    
+    edges = set()
+    points = set(xrange(len(norm_rows)))
+    while len(points) > 0:
+        i = points.pop()
+        neighbors = tree.query_ball_point(norm_rows[i], 1e-6, 1)
+        for j in neighbors:
+            edges.add((i, j))
+            points.discard(j)
+        if config.DEBUG_VERBOSE:
+            config.log_statement("%i rows remain to be clustered" % len(points))
+
+    graph = nx.Graph()
+    graph.add_nodes_from(xrange(expected_rnaseq_array.shape[0]))
+    graph.add_edges_from(edges)
+    clusters = nx.connected_components(graph)
+
+    """
+    Use the tree to find pairs. We dont use this because we only care about distance.
+    #for i, row in enumerate(norm_rows):
+    #    config.log_statement("%i/%i-%s" % (i, len(norm_rows), tree.query_ball_point(row, 1e-6, 1)))
+    pairs = tree.query_pairs(1e-6, 1)
+
+    if config.DEBUG_VERBOSE:
+        config.log_statement( "Finding clusters")    
+    graph = nx.Graph()
+    graph.add_nodes_from(xrange(expected_rnaseq_array.shape[0]))
+    graph.add_edges_from(pairs)
+    clusters = nx.connected_components(graph)
+    """
+    
+    """
+    Brute force code for finding the matching points. This works, but is slow.
     norm_rows = []
     edges = []
     for i, row in enumerate(expected_rnaseq_array):
+        if config.DEBUG_VERBOSE and i%10 == 0:
+            config.log_statement( "Clustering bin %i/%s in RNAseq array" % (
+                    i, expected_rnaseq_array.shape) )
         norm_row = row/row.sum()
         matching_indices = [ j for j, x in enumerate(norm_rows)
                              if float(numpy.abs(x-norm_row).sum()) < 1e-6  ]
@@ -595,7 +645,10 @@ def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
     graph.add_nodes_from(xrange(expected_rnaseq_array.shape[0]))
     graph.add_edges_from(edges)
     clusters = nx.connected_components(graph)
-
+    print clusters
+    assert False
+    """
+    
     new_expected_array = numpy.zeros( 
         (len(clusters), expected_rnaseq_array.shape[1]) )
     new_observed_array = numpy.zeros( len(clusters), dtype=int )
@@ -689,6 +742,8 @@ class DesignMatrix(object):
               build_expected_and_observed_arrays( 
                 expected_rnaseq_cnts, observed_rnaseq_cnts, normalize=True ) 
         del expected_rnaseq_cnts, observed_rnaseq_cnts
+        if config.DEBUG_VERBOSE:
+            config.log_statement( "Clustering bins in RNAseq array" )
         expected_rnaseq_array, observed_rnaseq_array = cluster_rows(
             expected_rnaseq_array, observed_rnaseq_array)
         
@@ -727,18 +782,18 @@ class DesignMatrix(object):
         
         If bam cnts is provided, then add the out-of-gene bins
         """
-        #bam_cnts = None
-        #if self._expected_and_observed != None and \
-        #        self._cached_bam_cnts == bam_cnts:
-        #    return self._expected_and_observed
-        
         # find the transcripts that we want to build the array for
         indices = self.transcript_indices()
         if bam_cnts == None:
             indices = numpy.array(indices)
         else:
             indices = numpy.array([-1,]+indices)+1
-            
+        
+        if self._expected_and_observed != None and \
+                self._cached_bam_cnts == bam_cnts and \
+                sorted(self._cached_indices) == sorted(indices):
+            return self._expected_and_observed
+        
         # stack all of the arrays, and filter out transcripts to skip
         exp_arrays_to_stack = []
         obs_arrays_to_stack = []
@@ -764,19 +819,13 @@ class DesignMatrix(object):
         # stack all of the data type arrays
         expected = numpy.vstack(exp_arrays_to_stack)[:,indices]
         observed = numpy.hstack(obs_arrays_to_stack)
-        """
-        if bam_cnts != None: 
-            print expected.sum(1)
-            print expected.sum(0)
-            print observed
-            assert False
-        """
         
         # find which bins have 0 expected reads
         bins_to_keep = (expected.sum(1) > 1e-6)
         self._expected_and_observed = cluster_rows(
             expected[bins_to_keep,], observed[bins_to_keep])
         self._cached_bam_cnts = bam_cnts
+        self._cached_indices = indices
         return self._expected_and_observed
 
     def find_transcripts_to_filter(self,expected,observed,max_num_transcripts):
@@ -811,6 +860,7 @@ class DesignMatrix(object):
         self.unobservable_transcripts = set()
 
         self._cached_bam_cnts = None
+        self._cached_indices = None
         
         self.filtered_transcripts = None
         self.max_num_transcripts = max_num_transcripts
@@ -823,7 +873,10 @@ class DesignMatrix(object):
         if len( gene.transcripts ) == 0:
             raise ValueError, "No transcripts"
 
+        
         if five_p_reads != None:
+            if config.DEBUG_VERBOSE:
+                config.log_statement( "Building TSS arrays" )
             self._build_gene_bnd_arrays(gene, five_p_reads, 'five_p_reads')
             self.num_fp_reads = sum(self.obs_cnt_arrays[-1])
         else:
@@ -831,10 +884,14 @@ class DesignMatrix(object):
             self.obs_cnt_arrays.append(None)
             self.num_fp_reads = None
         
+        if config.DEBUG_VERBOSE:
+            config.log_statement( "Building RNAseq arrays" )
         self._build_rnaseq_arrays(gene, rnaseq_reads, fl_dists)
         self.num_rnaseq_reads = sum(self.obs_cnt_arrays[-1])
             
         if three_p_reads != None:
+            if config.DEBUG_VERBOSE:
+                config.log_statement( "Building TES arrays" )
             self._build_gene_bnd_arrays(gene, three_p_reads, 'three_p_reads')
             self.num_tp_reads = sum(self.obs_cnt_arrays[-1])
         else:
@@ -847,6 +904,9 @@ class DesignMatrix(object):
         
         # update the set to satisfy the max_num_transcripts restriction
         if max_num_transcripts != None:
+            if config.DEBUG_VERBOSE:
+                config.log_statement( "Filtering design matrix" )
+
             self.filtered_transcripts =  self.find_transcripts_to_filter(
                 self.expected_freq_arrays[1], 
                 self.obs_cnt_arrays[1], 
