@@ -111,7 +111,6 @@ class Gene( object ):
         
         return elements
 
-
 class Transcript( object ):
     def __init__(self, trans_id, chrm, strand, exons, cds_region,
                  gene_id=None, score=None, fpkm=None, fpk=None, 

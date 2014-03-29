@@ -53,8 +53,7 @@ class SharedData(object):
         self.output_dict[ (gene_id, 'ubs') ] = None
         self.output_dict[ (gene_id, 'mle') ] = None
         self.output_dict[ (gene_id, 'fpkm') ] = None
-        self.output_dict[ (gene_id, 'design_matrices') ] = None
-
+    
     def add_elements_for_contig_and_strand(
             self,
             (contig, strand), grpd_exons, 
@@ -82,9 +81,8 @@ class SharedData(object):
             gene_id = "%s_%s_%i" % ( 
                 contig, 'm' if strand == '-' else 'p', gene_id_num )
 
-            with self.input_queue_lock:
-                self.input_queue.append(('gene', (gene_id, None, None)))
-
+            self.add_to_input_queue('gene', gene_id)
+            
             with self.output_dict_lock:
                 self.output_dict[ (gene_id, 'tss_exons') ] = tss_es
                 self.output_dict[ (gene_id, 'internal_exons') ] = internal_es
@@ -94,9 +92,7 @@ class SharedData(object):
                 self.output_dict[ (gene_id, 'polyas') ] = polyas
                 # XXX - BUG - FIXME
                 self.output_dict[ (gene_id, 'introns') ] = grpd_exons['intron']
-
-                self.output_dict[ (gene_id, 'gene') ] = None
-
+                
                 self.add_universal_processing_data(
                     (contig, strand), gene_id )
         
@@ -111,6 +107,9 @@ class SharedData(object):
                     self.add_universal_processing_data(
                         (gene.chrm, gene.strand), gene.id )
                 self.set_gene(gene)
+                assert not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS
+                self.add_build_design_matrices_to_queue(gene.id)
+
         else:
             args_template = [rnaseq_reads, promoter_reads, polya_reads ]
             all_args = []
@@ -136,44 +135,63 @@ class SharedData(object):
 
 
     def get_gene(self, gene_id):
-        with self.output_dict_lock: 
-            fname = self.output_dict[(gene_id, 'gene')]
+        if self._cached_gene_id == gene_id and self._cached_gene != None:
+            return self._cached_gene
+        
+        # we don't need to lock this because genes can only be
+        # set one time
+        fname = self.output_dict[(gene_id, 'gene')]
         with open(fname) as fp:
-            return pickle.load(fp)
+            gene = pickle.load(fp)
+
+        self._cached_gene_id = gene_id
+        self._cached_gene = gene
+        
+        return gene
     
     def set_gene(self, gene):
         ofname = os.path.join(tempfile.mkdtemp(), gene.id + ".gene")
+        # because there's no cache invalidation mechanism, we're only
+        # allowed to set the gene object once. This also allows us to
+        # move the load outside of the lock
+        assert (gene.id, 'gene') not in self.output_dict
         with open(ofname, "w") as ofp:
             pickle.dump(gene, ofp)
         
         # put the gene into the manager
         with self.output_dict_lock: 
             self.output_dict[(gene.id, 'gene')] = ofname
-        
-        # update the work queue. 
-        # if we are only building candidate transcripts, then we are done
-        if config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
-            self.input_queue.append(('FINISHED', (gene.id, None, None)))
-        else:
-            with self.input_queue_lock:
-                self.input_queue.append( 
-                    ('design_matrices', (gene.id, None, None)) )
 
+    def add_build_design_matrices_to_queue(self, gene_id):
+        self.add_to_input_queue('design_matrices', gene_id)
+    
     def get_fl_dists(self):
         with self.output_dict_lock:
             return self.output_dict['fl_dists']
     
     def get_design_matrix(self, gene_id):
+        if self._cached_fmat_gene_id == gene_id:
+            return self._cached_fmat
+
         with self.output_dict_lock: 
             fname = self.output_dict[(gene_id, 'design_matrices')]
         with open(fname) as fp:
-            return pickle.load(fp)
+            f_mat = pickle.load(fp)
+
+        self._cached_fmat_gene_id = gene_id
+        self._cached_fmat = f_mat
+        return f_mat
     
     def set_design_matrix(self, gene_id, f_mat):
         ofname = os.path.join(tempfile.mkdtemp(), gene_id + ".fmat")
+        # because there's no cache invalidation mechanism, we're only
+        # allowed to set the f_mat object once. This also allows us to
+        # move the load outside of the lock
+        assert (gene_id, 'design_matrices') not in self.output_dict
+
         with open(ofname, "w") as ofp:
             pickle.dump(f_mat, ofp)
-
+        
         with self.output_dict_lock: 
             self.output_dict[(gene_id, 'design_matrices')] = ofname
         
@@ -187,12 +205,10 @@ class SharedData(object):
             if f_mat.num_tp_reads != None:
                 self.output_dict['num_polya_reads'] += f_mat.num_tp_reads
         
-        with self.input_queue_lock:
-            self.expression_queue.append( ('mle', (gene_id, None, None)) )
+        self.add_to_expression_queue('mle', gene_id, None)
         
         return
-
-
+    
     def get_num_reads_in_bams(self, gene_id):
         num_rnaseq_reads = self.output_dict['num_rnaseq_reads']
         num_cage_reads = self.output_dict['num_cage_reads']
@@ -203,36 +219,34 @@ class SharedData(object):
         with self.output_dict_lock: 
             return self.output_dict[(gene_id, 'mle')]
     
-    def set_mle(self, gene_id, mle):
+    def set_mle(self, gene, mle):
+        assert len(mle) == len(gene.transcripts) + 1
         with self.output_dict_lock: 
-            self.output_dict[(gene_id, 'mle')] = mle
-
-    def add_estimate_cbs_to_work_queue(self, gene_id, add_to_input_queue=True):
-        mle = self.get_mle(gene_id)
+            self.output_dict[(gene.id, 'mle')] = mle
+    
+    def add_estimate_cbs_to_work_queue(self, gene_id):
+        gene = self.get_gene(gene_id)
         with self.output_dict_lock:
-            self.output_dict[(gene_id, 'ub')] = [None]*len(mle)
-            self.output_dict[(gene_id, 'lb')] = [None]*len(mle)
+            self.output_dict[(gene_id, 'ub')] = [None]*len(gene.transcripts)
+            self.output_dict[(gene_id, 'lb')] = [None]*len(gene.transcripts)
 
         grouped_indices = []
-        for i in xrange(len(mle)):
+        for i in xrange(len(gene.transcripts)):
             if i%config.NUM_TRANS_IN_GRP == 0:
                 grouped_indices.append( [] )
             grouped_indices[-1].append( i )
 
         work = []
         for indices in grouped_indices:
-            work.append( ('lb', (gene_id, None, indices)) )
-            work.append( ('ub', (gene_id, None, indices)) )
-
-        if add_to_input_queue == True:
-            with self.input_queue_lock:
-                for x in work: self.input_queue.append(x)
-        return work
+            self.add_to_input_queue('lb', gene_id, indices)
+            self.add_to_input_queue('ub', gene_id, indices)
+        
+        return
     
     def set_gene_to_finished(self, gene_id):
         with self.input_queue_lock:
-            self.input_queue.append(('FINISHED', (gene_id, None, None)))
-
+            self.finished_queue.put( ('gtf', gene_id) )
+    
     def get_cbs(self, gene_id, cb_type):
         assert cb_type in ('ub', 'lb')
         with self.output_dict_lock: 
@@ -243,20 +257,21 @@ class SharedData(object):
         # put the gene into the manager
         with self.output_dict_lock: 
             data = self.output_dict[(gene_id, cb_type)]
-        for i, v in indices_and_values:
-            data[i] = v
-        with self.output_dict_lock: 
+            for i, v in indices_and_values:
+                data[i] = v
             self.output_dict[(gene_id, cb_type)] = data
-            
-        # check to see if we're finished - clean this up
-        with self.output_dict_lock: 
+        
+            # check to see if we're finished - clean this up
             ubs = self.output_dict[(gene_id, 'ub')]
             lbs = self.output_dict[(gene_id, 'lb')]
 
-        if all(x != None for x in ubs) and all(x != None for x in lbs):
-            with self.input_queue_lock:
-                self.input_queue.append(('FINISHED', (gene_id, None, None)))
-
+            # XXX
+            #config.log_statement("CNTS: %i/%i %i/%i" % (
+            #        sum(int(x != None) for x in ubs), len(ubs), 
+            #        sum(int(x != None) for x in lbs), len(lbs)), log=True)
+            if all(x != None for x in ubs) and all(x != None for x in lbs):
+                self.set_gene_to_finished(gene_id)
+        
         return
     
     def __init__(self):
@@ -280,6 +295,50 @@ class SharedData(object):
         # create a scratch directory to store design matrices
         self.scratch_dir = tempfile.mkdtemp()
         
+        # create objects to cache gene objects, so that we dont have to do a 
+        # fresh load from the shared manager
+        self._cached_gene_id = None
+        self._cached_gene = None
+        self._cached_fmat_gene_id = None
+        self._cached_fmat = None
+
+    def add_to_input_queue(self, work_type, gene_id, work_data=None):
+        with self.input_queue_lock:
+            self.input_queue.append((work_type, gene_id, work_data))
+
+    def add_to_expression_queue(self, work_type, gene_id, work_data=None):
+        with self.input_queue_lock:
+            self.expression_queue.append((work_type, gene_id, work_data))
+    
+    def migrate_expression_to_input_queue(self):
+        if config.DEBUG_VERBOSE: config.log_statement( 
+            "Populating input queue from expression queue" )
+        self.input_queue.extend(self.expression_queue)
+        del self.expression_queue[:]
+    
+    def get_queue_item(self, gene_id=None):
+        """Get an item from th work queue.
+        
+        If gene id is set, then try to get work from this gene to avoid
+        having to reload the genes.
+        """
+        try:
+            with self.input_queue_lock:
+                work_type, gene_id, work_data = self.input_queue.pop()
+            assert work_type != 'ERROR'
+            assert work_type != 'FINISHED'
+            return work_type, gene_id, work_data
+        except IndexError, inst:
+            raise Queue.Empty, "Work queue is empty"
+
+        """ Maybe dead code
+        if work_type == 'ERROR':
+            ( gene_id, trans_index ), msg = work_data
+            config.log_statement( str(gene_id) + "\tERROR\t" + msg, log=True ) 
+            config.log_statement("")
+            continue
+        """
+        pass
 
 def calc_fpkm( gene, fl_dists, freqs, num_reads_in_bam):
     assert len(gene.transcripts) == len(freqs)
@@ -303,14 +362,17 @@ def calc_fpkm( gene, fl_dists, freqs, num_reads_in_bam):
     
     fpkms = []
     for t, freq in izip( gene.transcripts, freqs ):
-        effective_t_len, t_scale = calc_effective_length_and_scale_factor(t)
-        if effective_t_len <= 0: 
-            fpkms.append( 0 )
-            continue
-        assert effective_t_len > 0
-        assert num_reads_in_bam > 0
-        fpk = freq*num_reads_in_bam/(effective_t_len/1000.)
-        fpkm = fpk/(num_reads_in_bam/1000000.)
+        if freq < 0:
+            fpkm = 0
+        else:
+            effective_t_len, t_scale = calc_effective_length_and_scale_factor(t)
+            if effective_t_len <= 0: 
+                fpkms.append( 0 )
+                continue
+            assert effective_t_len > 0
+            assert num_reads_in_bam > 0
+            fpk = freq*num_reads_in_bam/(effective_t_len/1000.)
+            fpkm = fpk/(num_reads_in_bam/1000000.)
         fpkms.append( fpkm )
     return fpkms
 
@@ -319,9 +381,9 @@ class MaxIterError( ValueError ):
 
 def write_gene_to_gtf( ofp, gene, mles=None, lbs=None, ubs=None, fpkms=None,
                        unobservable_transcripts=set()):
-    if mles != None:
+    #if mles != None:
         # we add one to accoutn for the out-of-gene transcript
-        assert len(gene.transcripts) == len(mles)+len(unobservable_transcripts)
+    #    assert len(gene.transcripts) == len(mles)+len(unobservable_transcripts)
     n_skipped_ts = 0
     
     for index, transcript in enumerate(gene.transcripts):
@@ -519,7 +581,10 @@ def estimate_mle_worker( gene, fl_dists, f_mat, num_reads_in_bams ):
     config.log_statement( "FINISHED MLE %s\t%.2f - updating queues" % ( 
             gene.id, log_lhd ) )
     
-    return mle
+    # add back in the missing trasncripts
+    full_mle = -1*numpy.ones(len(gene.transcripts)+1, dtype=float)
+    full_mle[numpy.array([-1,]+f_mat.transcript_indices().tolist())+1] = mle
+    return full_mle
 
 
 def find_confidence_bounds_worker( gene, fl_dists, num_reads_in_bams,
@@ -533,21 +598,52 @@ def find_confidence_bounds_worker( gene, fl_dists, num_reads_in_bams,
     else:
         assert isinstance( trans_index, list )
         trans_indices = trans_index
-
+    
+    # update the mle_estimate array to only store observable transcripts
+    # add 1 to skip the out of gene bin
+    try:
+        observable_trans_indices = numpy.array([-1,] + f_mat.transcript_indices().tolist())+1
+        mle_estimate = mle_estimate[observable_trans_indices]
+    except Exception, inst:
+        config.log_statement( gene.id + "\n" +
+                              str(observable_trans_indices) + "\n" +
+                              str(f_mat.filtered_transcripts) + "\n" + 
+                              str(mle_estimate) + "\n" + 
+                              traceback.format_exc(), log=True )
+        return []
+        
     res = []
     config.log_statement( 
         "Estimating %s confidence bound for gene %s transcript %i-%i/%i" % ( 
             bnd_type,gene.id,trans_indices[0]+1, trans_indices[-1]+1, 
             mle_estimate.shape[0]))
     
+    n_skipped = sum( 1 for x in sorted(f_mat.filtered_transcripts)
+                     if x < trans_indices[0])
+    # XXX Make sure that this is beign counted correctly
+    #n_skipped_tmp = len(set(xrange(trans_indices[0])) - \
+    #    set(x-1 for x in observable_trans_indices[1:] if x-1 < trans_indices[0]))
+    #config.log_statement( str([n_skipped_tmp, n_skipped, f_mat.filtered_transcripts, \
+    #    observable_trans_indices, trans_indices]), log=True)
+    #assert n_skipped == n_skipped_tmp
+    
     for trans_index in trans_indices:
+        # make sure that this isn't a filtered transcript. if it is, return
+        # the broadest transcript bounds possible.
+        if trans_index+1 not in observable_trans_indices:
+            if bound_type == 'lb': res.append((trans_index, 0.0))
+            elif bound_type == 'ub': res.append((trans_index, 1.0))
+            else: assert False
+            n_skipped += 1
+            continue
+
         if config.DEBUG_VERBOSE: config.log_statement( 
             "Estimating %s confidence bound for gene %s transcript %i/%i" % ( 
-            bnd_type,gene.id,trans_index+1,mle_estimate.shape[0]))
+            bnd_type,gene.id,trans_index+1,len(gene.transcripts)))
         try:
             p_value, bnd = frequency_estimation.estimate_confidence_bound( 
                 f_mat, num_reads_in_bams,
-                trans_index, mle_estimate, bnd_type, cb_alpha )
+                trans_index-n_skipped+1, mle_estimate, bnd_type, cb_alpha )
         except Exception, inst:
             p_value = 1.
             bnd = 0.0 if bound_type == 'lb' else 1.0
@@ -555,18 +651,20 @@ def find_confidence_bounds_worker( gene, fl_dists, num_reads_in_bams,
                 os.getpid(), gene.id, 
                 gene.chrm, gene.strand, gene.start, gene.stop, inst)
             config.log_statement( error_msg, log=True )
+            if config.DEBUG_VERBOSE:
+                config.log_statement( traceback.format_exc(), log=True )
         
         if config.DEBUG_VERBOSE: config.log_statement( 
             "FINISHED %s BOUND %s\t%s\t%i/%i\t%.2e\t%.2e" % (
             bnd_type, gene.id, None, 
-            trans_index+1, mle_estimate.shape[0], 
+            trans_index, len(gene.transcripts), 
             bnd, p_value ) )
         res.append((trans_index, bnd))
     
     config.log_statement( 
         "FINISHED Estimating %s confidence bound for gene %s transcript %i-%i/%i" % ( 
             bnd_type,gene.id,trans_indices[0]+1, trans_indices[-1]+1, 
-            mle_estimate.shape[0]))
+            len(gene.transcripts)))
     
     return res
 
@@ -603,9 +701,15 @@ def write_finished_data_to_disk( data,
                     mles = data.get_mle(key)[1:]
                     lbs, ubs = None, None
                     if compute_confidence_bounds:
-                        lbs = data.output_dict[(key, 'lb')][1:]
-                        ubs = data.output_dict[(key, 'ub')][1:]
+                        lbs = data.output_dict[(key, 'lb')]
+                        ubs = data.output_dict[(key, 'ub')]
                     num_reads_in_bams = data.get_num_reads_in_bams(key)
+
+                    # XXX
+                    #config.log_statement(str(unobservable_transcripts),log=True)
+                    #config.log_statement(str(lbs), log=True)
+                    #config.log_statement(str(ubs), log=True)
+                    #config.log_statement(str(mles), log=True)
                 
                     if ubs != None:
                         ubs = calc_fpkm( gene, fl_dists, ubs,
@@ -637,7 +741,8 @@ def write_finished_data_to_disk( data,
                 """
                 config.log_statement( "" )
         except Exception, inst:
-            config.log_statement( "FATAL ERROR", log=True )
+            config.log_statement( "Failed to write %s to GTF" % key, 
+                                  log=True )
             config.log_statement( traceback.format_exc(), log=True )
         
     return
@@ -706,6 +811,7 @@ def worker( data,
             promoter_reads,
             rnaseq_reads,
             polya_reads,
+            fl_dists,
             write_design_matrices, 
             estimate_confidence_bounds):
     # reload all the reads, to make sure that this process has its
@@ -722,37 +828,30 @@ def worker( data,
         # so quit and re-spawn to free any unused memory
         if time.time() - start_time > 60: return
         # get the data to process
-        try:
-            with data.input_queue_lock:
-                work_type, work_data = data.input_queue.pop()
-        except IndexError, inst:
-            if len(data.input_queue) == 0: return
-            else: continue
+        try: work_type, gene_id, trans_indices = data.get_queue_item()
+        except Queue.Empty: return        
         
-        if work_type == 'ERROR':
-            ( gene_id, trans_index ), msg = work_data
-            config.log_statement( str(gene_id) + "\tERROR\t" + msg, log=True ) 
-            config.log_statement("")
-            continue
-
-        # unpack the work data
-        gene_id, bam_fn, trans_indices = work_data
-        
-        if work_type == 'FINISHED':
-            data.finished_queue.put( ('gtf', gene_id) )
-        elif work_type == 'gene':
+        if work_type == 'gene':
             # build the gene with transcripts, and optionally call orfs
             gene = build_genes_worker(
                 gene_id, data.output_dict_lock, data.output_dict)
             if gene == None: 
                 config.log_statement("")
                 continue
-            if len(gene.transcripts) < config.MAX_NUM_CANDIDATE_TRANSCRIPTS:
-                data.set_gene(gene)
+            # if there too many transcripts, then we are done
+            if len(gene.transcripts) > config.MAX_NUM_CANDIDATE_TRANSCRIPTS:
+                config.log_statement("")
+                continue
+            
+            data.set_gene(gene)
+            # if we are only building candidate transcripts, then we are done
+            if config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
+                data.set_gene_to_finished(gene.id)
+            else:
+                data.add_build_design_matrices_to_queue(gene.id)
         elif work_type == 'design_matrices':
             config.log_statement("Finding design matrix for Gene %s" % gene_id)
             gene = data.get_gene(gene_id)         
-            fl_dists = data.get_fl_dists()         
             
             # otherwise, we build the design matrices
             f_mat = build_design_matrices_worker(
@@ -767,7 +866,6 @@ def worker( data,
             data.add_estimate_mle_to_work_queue(gene.id, f_mat)
         elif work_type == 'mle':
             gene = data.get_gene(gene_id)
-            fl_dists = data.get_fl_dists()
             f_mat = data.get_design_matrix(gene.id)
             num_reads_in_bams = data.get_num_reads_in_bams(gene.id)
             
@@ -775,41 +873,15 @@ def worker( data,
             if mle == None: 
                 config.log_statement("")
                 continue
-            data.set_mle(gene.id, mle)
-            
+            data.set_mle(gene, mle)
             if estimate_confidence_bounds:
-                # update the design matrix with the cached matrices
-                data.set_design_matrix(gene.id, f_mat)
-                
-                new_work = data.add_estimate_cbs_to_work_queue(
-                    gene.id, add_to_input_queue=False)
-                # if the input queue is empty, add everything to it
-                # otherwise, process it in this threads
-                if len(data.input_queue) == 0:
-                    with data.input_queue_lock:
-                        data.input_queue.extend(new_work)
-                else:
-                    while len(new_work) > 0:
-                        if len(data.input_queue) == 0: break
-                        work = new_work.pop()
-                        work_type, (gene_id, bam_fn, trans_indices) = work
-                        cb_estimates = find_confidence_bounds_worker( 
-                            gene, fl_dists, num_reads_in_bams,
-                            f_mat, mle, 
-                            trans_indices, work_type, 
-                            cb_alpha=config.CB_SIG_LEVEL)
-                        
-                        data.set_cbs(gene_id, work_type, cb_estimates)
-                    if len(new_work) > 0:
-                        with data.input_queue_lock:
-                            data.input_queue.extend(new_work)
+                data.add_estimate_cbs_to_work_queue(gene.id)
             else:
                 data.set_gene_to_finished(gene.id)
         else:
             assert work_type in ('ub', 'lb')
-            
+
             gene = data.get_gene(gene_id)
-            fl_dists = data.get_fl_dists()
             f_mat = data.get_design_matrix(gene.id)
             num_reads_in_bams = data.get_num_reads_in_bams(gene.id)
             mle = data.get_mle(gene.id)
@@ -834,6 +906,7 @@ def spawn_and_manage_children( data,
     ps = [None]*config.NTHREADS
     args = ( data,
              promoter_reads, rnaseq_reads, polya_reads,
+             data.get_fl_dists(),
              write_design_matrices, 
              estimate_confidence_bounds)
     
@@ -855,10 +928,7 @@ def spawn_and_manage_children( data,
                         all( p == None or not p.is_alive() for p in ps ):
                     # populate the input queue from the expression queue
                     if len(data.expression_queue) > 0:
-                        if config.DEBUG_VERBOSE: config.log_statement( 
-                            "Populating input queue from expression queue" )
-                        data.input_queue.extend(data.expression_queue)
-                        del data.expression_queue[:]
+                        data.migrate_expression_to_input_queue()
                         continue
                     else:
                         return
