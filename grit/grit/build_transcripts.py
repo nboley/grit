@@ -281,7 +281,7 @@ class SharedData(object):
         # know the total number of reads until the design matrices have been
         # built, we do that first and then start every commands that's been 
         # stored into expression queue        
-        self.input_queue = self._manager.list()
+        self.input_queue = self._manager.dict()
         self.input_queue_lock = multiprocessing.Lock()
 
         # store data to be written out by the writer process
@@ -301,11 +301,16 @@ class SharedData(object):
         self._cached_gene = None
         self._cached_fmat_gene_id = None
         self._cached_fmat = None
-
+    
     def add_to_input_queue(self, work_type, gene_id, work_data=None):
         with self.input_queue_lock:
-            self.input_queue.append((work_type, gene_id, work_data))
-
+            try:
+                gene_work = self.input_queue.pop(gene_id)
+                gene_work.append((work_type, work_data))
+                self.input_queue[gene_id] = gene_work
+            except KeyError:
+                self.input_queue[gene_id] = [(work_type, work_data),]
+    
     def add_to_expression_queue(self, work_type, gene_id, work_data=None):
         with self.input_queue_lock:
             self.expression_queue.append((work_type, gene_id, work_data))
@@ -313,7 +318,13 @@ class SharedData(object):
     def migrate_expression_to_input_queue(self):
         if config.DEBUG_VERBOSE: config.log_statement( 
             "Populating input queue from expression queue" )
-        self.input_queue.extend(self.expression_queue)
+        for work_type, gene_id, work_data in self.expression_queue:
+            try:
+                gene_work = self.input_queue.pop(gene_id)
+                gene_work.append((work_type, work_data))
+                self.input_queue[gene_id] = gene_work
+            except KeyError:
+                self.input_queue[gene_id] = [(work_type, work_data),]
         del self.expression_queue[:]
     
     def get_queue_item(self, gene_id=None):
@@ -322,14 +333,21 @@ class SharedData(object):
         If gene id is set, then try to get work from this gene to avoid
         having to reload the genes.
         """
-        try:
-            with self.input_queue_lock:
-                work_type, gene_id, work_data = self.input_queue.pop()
-            assert work_type != 'ERROR'
-            assert work_type != 'FINISHED'
-            return work_type, gene_id, work_data
-        except IndexError, inst:
-            raise Queue.Empty, "Work queue is empty"
+        with self.input_queue_lock:
+            if len(self.input_queue) == 0:
+                raise Queue.Empty, "Work queue is empty"
+            try:
+                gene_work = self.input_queue.pop(gene_id)
+            except KeyError:
+                gene_id, gene_work = self.input_queue.popitem()
+                
+            work_type, work_data = gene_work.pop()
+            if len(gene_work) > 0:
+                self.input_queue[gene_id] = gene_work
+
+        assert work_type != 'ERROR'
+        assert work_type != 'FINISHED'
+        return work_type, gene_id, work_data
 
         """ Maybe dead code
         if work_type == 'ERROR':
@@ -822,13 +840,14 @@ def worker( data,
     # perform a maximum of 50 operations before restarting the process. This
     # is to stop python from leaking memory. We also respawn any process that
     # has been running for longer than a minute
+    gene_id = None
     start_time = time.time()
     for i in xrange(50):
         # if we've been in this worker longer than a minute, then 
         # so quit and re-spawn to free any unused memory
         if time.time() - start_time > 60: return
         # get the data to process
-        try: work_type, gene_id, trans_indices = data.get_queue_item()
+        try: work_type, gene_id, trans_indices = data.get_queue_item(gene_id)
         except Queue.Empty: return        
         
         if work_type == 'gene':
