@@ -9,7 +9,7 @@ MAX_NUM_CANDIDATE_TRANSCRIPTS = 10000
 
 CB_SIG_LEVEL = 0.025
 
-NUM_TRANS_IN_GRP = 30
+NUM_TRANS_IN_GRP = 3
 
 # log statement is set in the main init, and is a global
 # function which facilitates smart, ncurses based logging
