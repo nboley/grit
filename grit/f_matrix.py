@@ -7,9 +7,7 @@ import numpy
 from scipy.spatial import KDTree
 
 MAX_NUM_UNMAPPABLE_BASES = 0
-RUN_INLINE_TESTS = False
 LET_READS_OVERLAP = True
-PROMOTER_SIZE = 50
 
 DEBUG=False
 
@@ -406,7 +404,8 @@ def calc_expected_cnts( exon_boundaries, transcripts, fl_dists_and_read_lens, \
     for fl_dist, read_len in fl_dists_and_read_lens:
         for transcript_index, nonoverlapping_indices in enumerate(transcripts):
             if (n_bins*len(transcripts)*8.)/(1024**3) > max_memory_usage:
-                raise MemoryError, "Building the design matrix has exceeded the maximum allowed memory "
+                raise MemoryError, \
+                    "Building the design matrix has exceeded the maximum allowed memory "
             
             # find all of the possible read bins for transcript given this 
             # fl_dist and read length
