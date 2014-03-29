@@ -1,6 +1,7 @@
 # Copyright (c) 2011-2012 Nathan Boley
 
 import sys
+sys.setrecursionlimit(10000)
 
 import numpy
 from scipy.spatial import KDTree
@@ -590,11 +591,10 @@ def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
     norm_rows = []
     for i, row in enumerate(expected_rnaseq_array):
         norm_rows.append(row/row.sum())
-    test = numpy.vstack(norm_rows)
-
+    
     if config.DEBUG_VERBOSE:
         config.log_statement( "Building KDTree to cluster bins" )
-    tree = KDTree(test)
+    tree = KDTree(numpy.vstack(norm_rows), leafsize=30)
     
     edges = set()
     points = set(xrange(len(norm_rows)))
@@ -604,7 +604,7 @@ def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
         for j in neighbors:
             edges.add((i, j))
             points.discard(j)
-        if config.DEBUG_VERBOSE:
+        if config.DEBUG_VERBOSE and len(points)%10 == 0:
             config.log_statement("%i rows remain to be clustered" % len(points))
 
     graph = nx.Graph()
@@ -741,6 +741,7 @@ class DesignMatrix(object):
         ( expected_rnaseq_array, observed_rnaseq_array, unobservable_rnaseq_trans ) = \
               build_expected_and_observed_arrays( 
                 expected_rnaseq_cnts, observed_rnaseq_cnts, normalize=True ) 
+              
         del expected_rnaseq_cnts, observed_rnaseq_cnts
         if config.DEBUG_VERBOSE:
             config.log_statement( "Clustering bins in RNAseq array" )
@@ -775,7 +776,7 @@ class DesignMatrix(object):
         # al have the same number of transcripts
         num_transcripts = self.expected_freq_arrays[1].shape[1]
         indices = set(xrange(num_transcripts)) - self.filtered_transcripts
-        return sorted(indices)
+        return numpy.array(sorted(indices))
     
     def expected_and_observed(self, bam_cnts=None):
         """Build expected and observed arrays. 
@@ -784,10 +785,10 @@ class DesignMatrix(object):
         """
         # find the transcripts that we want to build the array for
         indices = self.transcript_indices()
-        if bam_cnts == None:
-            indices = numpy.array(indices)
-        else:
-            indices = numpy.array([-1,]+indices)+1
+        # add in the out of gene counts
+        if bam_cnts != None:
+            indices = [-1,] + indices.tolist()
+            indices = numpy.array(indices)+1
         
         if self._expected_and_observed != None and \
                 self._cached_bam_cnts == bam_cnts and \
