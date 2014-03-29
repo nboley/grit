@@ -5,6 +5,8 @@ import pickle
 import pysam
 import math
 from random import random
+from collections import defaultdict
+import tempfile
 
 DEFAULT_QUALITY_SCORE = 'r'
 DEFAULT_BASE = 'A'
@@ -15,51 +17,56 @@ NUM_NORM_SDS = 4
 FREQ_GTF_STRINGS = [ 'freq', 'frac' ]
 
 # add slide dir to sys.path and import frag_len mod
-sys.path.append(os.path.join(os.path.dirname(sys.argv[0]), ".." ))
-import frag_len
+#sys.path.append(os.path.join(os.path.dirname(sys.argv[0]), ".." ))
+import grit.frag_len as frag_len
+from grit.files.gtf import load_gtf
+from grit.files.reads import clean_chr_name
 
-def calc_genomic_offset( transcript, offset ):
-    """offset is a number of base pairs into the transcript
-    
-    loop through ordered exons until offset within transcript seq is reached
-    """
-    genomic_offset = 0
-
-    prev_pos = 0
-    for pos, exon_size in transcript.exons:
-        # if offset does not extend through exon
-        if offset < pos:
-            genomic_offset += offset - prev_pos
-            break
-        
-        # add exon and intron sizes to genomic_offset
-        genomic_offset += exon_size
-        # if pos is not in intron then this is the end of the transcript
-        try:
-            genomic_offset += transcript.introns[ pos ]
-        except KeyError:
-            break
-        prev_pos = pos
-
-    return genomic_offset
+def fix_chr_name(x):
+    return "chr" + clean_chr_name(x)
 
 def get_cigar( transcript, start, stop ):
     """loop through introns within the read and add #N to the cigar for each intron
     add #M for portions of read which map to exons
     """
-    cigar = ''
-    prev_pos = start
-    # loop though intron positions contined within this read 
-    # adding skipped genomic position cigars
-    for pos in sorted( set( range(start + 1, stop) ) & \
-                           set( zip( *transcript.exons)[0] ) ):
-        cigar += str( pos - prev_pos ) + "M" + \
-            str( transcript.introns[ pos ] ) + "N"
+    def calc_len(interval):
+        return interval[1]-interval[0]+1
+    cigar = []
+    
+    # find the exon index of the start
+    genome_start = transcript.genome_pos(start)
+    start_exon = next(i for i, (e_start, e_stop) in enumerate(transcript.exons)
+                      if genome_start >= e_start and genome_start <= e_stop)
+    genome_stop = transcript.genome_pos(stop)
+    stop_exon = next(i for i, (e_start, e_stop) in enumerate(transcript.exons)
+                     if genome_stop >= e_start and genome_stop <= e_stop)
 
-        prev_pos = pos
-    cigar += str( stop - prev_pos ) + "M"
+    if start_exon == stop_exon:
+        return "%iM" % (stop-start)
 
-    return cigar
+    tl = 0
+    # add the first overlap match
+    skipped_bases = sum(e[1]-e[0]+1 for e in transcript.exons[:start_exon+1])
+    cigar.append("%iM" % (skipped_bases-start+1))
+    tl += skipped_bases - start
+    
+    # add the first overlap intron 
+    cigar.append("%iN" % calc_len(transcript.introns[start_exon]))
+    
+    # add the internal exon and intron matches
+    for i in xrange(start_exon+1, stop_exon):
+        cigar.append("%iM" % calc_len(transcript.exons[i]))
+        cigar.append("%iN" % calc_len(transcript.introns[i-1]))
+        tl += calc_len(transcript.exons[i])
+
+    # add the last overlap match
+    skipped_bases = sum(e[1]-e[0]+1 for e in transcript.exons[:stop_exon])
+    cigar.append("%iM" % (stop - skipped_bases-1))
+    tl += stop - skipped_bases 
+    
+    assert tl == read_len
+    
+    return "".join(cigar)
 
 def build_sam_line( transcript, read_len, offset, read_identifier, quality_string ):
     """build a single ended SAM formatted line with given inforamtion
@@ -71,21 +78,17 @@ def build_sam_line( transcript, read_len, offset, read_identifier, quality_strin
         flag += 16
 
     # adjust start position to correct genomic position
-    start = transcript.start + calc_genomic_offset( transcript, offset )
-
+    start = transcript.genome_pos(offset)
     # set cigar string corresponding to transcript and read offset
     cigar = get_cigar( transcript, offset, (offset + read_len) )
-
     # calculate insert size by difference of genomic offset and genomic offset+read_len
-    insert_size = calc_genomic_offset( transcript, (offset + read_len) ) - \
-        calc_genomic_offset( transcript, offset )
-
+    insert_size = transcript.genome_pos(offset+read_len) - transcript.genome_pos(offset)
     # get slice of seq from transcript
     seq = transcript.seq[ offset : (offset + read_len) ]
-
     # initialize sam lines with read identifiers and then add appropriate fields
     sam_line = '\t'.join( ( 
-            read_identifier, str( flag ), 'chr' + transcript.chrm, str( start ),
+            read_identifier, str( flag ), fix_chr_name(transcript.chrm), 
+            str( start ),
             '255', cigar, "*", '0', str( insert_size ), seq, quality_string, 
             "NM:i:0", "NH:i:1" )  ) + "\n"
 
@@ -112,34 +115,36 @@ def build_sam_lines( transcript, read_len, frag_len, offset,
 
     # adjust five and three prime read start positions to correct genomic positions
     start = [ transcript.start, transcript.start ]
-    start[ up_strm_read ] += calc_genomic_offset( transcript, offset )
-    start[ dn_strm_read ] += calc_genomic_offset( 
-        transcript, (offset + frag_len - read_len) )
+    start[ up_strm_read ] = transcript.genome_pos(offset)
+    start[ dn_strm_read ] = transcript.genome_pos(offset + frag_len - read_len)
     
     # set cigar string for five and three prime reads
     cigar = [ None, None ]
     cigar[ up_strm_read ] = get_cigar( transcript, offset, (offset+read_len) )
-    cigar[ dn_strm_read ] = get_cigar( transcript, (offset+frag_len-read_len),
-                                      (offset + frag_len) )
-
-    # calculate insert size by difference of genomic offset and genomic offset+frag_len
-    insert_size = ( calc_genomic_offset( transcript, (offset + frag_len) ) - 
-                    calc_genomic_offset( transcript, offset ) )
+    cigar[ dn_strm_read ] = get_cigar( 
+        transcript, (offset+frag_len-read_len), (offset + frag_len))
+    
+    # calculate insert size by difference of the mapped start and end
+    insert_size = (
+        transcript.genome_pos(offset+read_len) - transcript.genome_pos(offset))
     insert_size = [ insert_size, insert_size ]
     insert_size[ dn_strm_read ] *= -1
 
     # get slice of seq from transcript
+    # XXX
     seq = [ None, None ]
-    seq[ up_strm_read ] = transcript.seq[ offset : (offset + read_len) ]
-    seq[ dn_strm_read ] = transcript.seq[ (offset + frag_len - read_len) : \
-                                         (offset + frag_len) ]
-
+    seq[ up_strm_read ] = 'A'*read_len
+    #transcript.seq[offset:(offset + read_len)]
+    seq[ dn_strm_read ] = 'A'*read_len
+    #transcript.seq[(offset + frag_len - read_len):(offset + frag_len)]
+    
     # initialize sam lines with read identifiers and then add appropriate fields
     sam_lines = [ read_identifier + '\t', read_identifier + '\t' ]    
     for i in (0,1):
         other_i = 0 if i else 1
         sam_lines[i] += '\t'.join( (
-                str( flag[i] ), 'chr' + transcript.chrm, str( start[i] ),"255",
+                str( flag[i] ), fix_chr_name(transcript.chrm), 
+                str( start[i] ),"255",
                 cigar[i], "=", str( start[other_i] ), str( insert_size[i] ), 
                 seq[i], ordered_quals[i], "NM:i:0", "NH:i:1" ) ) + "\n"
 
@@ -168,7 +173,7 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
         """
         # if the fl_dist is constant
         if isinstance( fl_dist, int ):
-            assert fl_dist <= transcript.length, 'Transcript which ' + \
+            assert fl_dist <= transcript.calc_length(), 'Transcript which ' + \
                 'cannot contain a valid fragment was included in transcripts.'
             return fl_dist
         
@@ -178,13 +183,13 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
             fl = fl_index + fl_dist.fl_min
             
             # if fragment_length is valid return it
-            if fl <= transcript.length:
+            if fl <= transcript.calc_length():
                 return fl
         assert False
         
     def sample_read_offset( transcript, fl ):
         # calculate maximum offset
-        max_offset = transcript.length - fl + 1
+        max_offset = transcript.calc_length() - fl
         return int( random() * max_offset )
     
     def get_random_qual_score( read_len ):
@@ -210,7 +215,7 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
         
         # get a unique string for this fragment
         global curr_read_index
-        read_identifier = 'SIM:%015d:%s' % (curr_read_index, transcript.name)
+        read_identifier = 'SIM:%015d:%s' % (curr_read_index, transcript.id)
         curr_read_index += 1
         
         return fl, offset, read_identifier
@@ -255,9 +260,10 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
         else:
             return fl_dist.fl_min
     
-    def calc_effective_length_and_scale_factor(t):
-        length = t.length
+    def calc_scale_factor(t):
+        length = t.calc_length()
         if length < fl_dist.fl_min: return 0
+        return length - fl_dist.fl_min
         fl_min, fl_max = fl_dist.fl_min, min(length, fl_dist.fl_max)
         allowed_fl_lens = numpy.arange(fl_min, fl_max+1)
         weights = fl_dist.fl_density[
@@ -270,68 +276,44 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
     # initialize the transcript objects, and calculate their relative weights
     transcript_weights = []
     transcripts = []
-    # count to assert there are basepairs across which to simulate
-    total_bps = 0
-    longest_trans = 0
-    # sample a single transcript to get initial guess at shortest transcript
-    shortest_trans = genes.values()[0].values()[0].get_length()
+    
+    contig_lens = defaultdict(int)
     
     min_transcript_length = get_fl_min()
-    for gene in genes.values():
-        for transcript in gene.values():
-            # add the sequence information and intron/exon
-            # structure to the transcript object
-            transcript.process_transcript( fasta )
-
-            # add the transcript and associated weight if there are valid fragments
-            if transcript.length >= min_transcript_length:
-                transcripts.append( transcript )
-                # TODO:::for multiple genes this should be weighted across genes as well
-                length, sc_factor = calc_effective_length_and_scale_factor(
-                    transcript)
-                transcript_weights.append( transcript.freq*length )
-            
-            # update summary statistics
-            if transcript.length > longest_trans:
-                longest_trans = transcript.length
-            if transcript.length < shortest_trans:
-                shortest_trans = transcript.length
-            total_bps += transcript.length
-            
-    assert total_bps > 0, "There are no bases across which to simulate reads!!!"
+    for gene in genes:
+        contig_lens[fix_chr_name(gene.chrm)] = gene.stop
+        for transcript in gene.transcripts:
+            if transcript.fpkm != None:
+                weight = transcript.fpkm*calc_scale_factor(transcript)
+            elif transcript.frac != None:
+                assert len(genes) == 1
+                weight = transcript.frac
+            else: assert False, "Transcript has neither an FPKM nor a frac"
+            transcripts.append( transcript )
+            transcript_weights.append( weight )
+    
+    #assert False
     assert len( transcripts ) > 0, "No valid trancripts."
 
     # normalize the transcript weights to be on 0,1
-    tot_num_fragments = sum( transcript_weights )
-    transcript_weights = [ num_fragments/tot_num_fragments \
-                           for num_fragments in transcript_weights ]
-    transcript_weights_cumsum = numpy.array( transcript_weights ).cumsum()
+    transcript_weights = numpy.array(transcript_weights, dtype=float)
+    transcript_weights = transcript_weights/transcript_weights.sum()
+    transcript_weights_cumsum = transcript_weights.cumsum()
 
-    if VERBOSE:
-        avg_fl = fl_dist if isinstance( fl_dist, int ) else \
-            (fl_dist.fl_min + fl_dist.fl_density_cumsum.searchsorted( 0.5 ) )
-        fl_string = 'constant fragment length ' + str(avg_fl) + ' bps' if \
-            isinstance( fl_dist, int ) else 'variable fragment length with median ' + \
-            str(avg_fl)
+    print transcript_weights
 
-        # determine approriate values for strings to be printed in summary
-        ended_string = ' single-end ' if single_end else ' paired-end '
-
-        read_string = 'full fragment ' if full_fragment else str(read_len) + ' bp '
-        coverage = avg_fl * num_frags / float(total_bps) if full_fragment else \
-            (2 * read_len * num_frags) / float(total_bps)
-
-        # print summary inforamtion
-        print '-' * 90
-        print 'Simulating ' + str(num_frags) + ended_string + read_string + \
-            'reads of ' + fl_string + ', producing approximately ' + \
-            '{0:.3f}'.format( coverage ) + 'x coverage across all transcripts.'
-        print '\tShortest transcript is ' + str(shortest_trans) + ' bps long.\n\t' + \
-            'Longest transcript is ' + str(longest_trans) + ' bps long.'
-        print '-' * 90
-
-    sam_basename = out_prefix
-    with open( sam_basename + ".sam", 'w' ) as sam_fp:
+    # create the output directory
+    os.mkdir(out_prefix)
+    os.chdir(out_prefix)
+    bam_prefix = out_prefix + ".sorted"
+    
+    with tempfile.NamedTemporaryFile( mode='w+' ) as sam_fp:
+        # write out the header
+        for contig, contig_len in contig_lens.iteritems():
+            contig_len = 22422827
+            data = ["@SQ", "SN:%s" % contig, "LN%i" % contig_len]
+            sam_fp.write("\t".join(data) + "\n")
+        
         while curr_read_index <= num_frags:
             # pick a transcript to randomly take a read from. Note that they 
             # should be chosen in proportion to the *expected number of reads*,
@@ -345,23 +327,17 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
             else:
                 sam_line_s = build_random_sam_lines( transcript, read_len )
             sam_fp.writelines( sam_line_s )
-            
-    # free the sequence information from the transcript objects
-    # does not need to be done since all transcripts are processed together
-    for transcript in transcripts:
-        transcript.release()
-
-    # create sorted bam file and index it
-    sam_header_path = os.path.join( 
-        os.path.dirname(sys.argv[0]), 'sam_header.txt' )
-    call = 'cat {0} {1}.sam | samtools view -bS - | samtools sort - {1}.sorted'
-    os.system( call.format( sam_header_path, sam_basename ) )
-    os.system( 'samtools index {0}.sorted.bam'.format( sam_basename ) )
-
-    # make output directory and move sam and bam files into it
-    os.mkdir( out_prefix )
-    os.system( 'mv {0}.* {0}'.format( sam_basename ) )
     
+        # create sorted bam file and index it
+        sam_fp.flush()
+        #sam_fp.seek(0)
+        #print sam_fp.read()
+        
+        bam_prefix = out_prefix + ".sorted"
+        call = 'samtools view -bS {} | samtools sort - {}'
+        os.system( call.format( sam_fp.name, bam_prefix ) )
+        os.system( 'samtools index {}.bam'.format( bam_prefix ) )
+        
     return
 
 class Transcript( object ):
@@ -536,81 +512,11 @@ class Genes( dict ):
                   
         gtf_fp.close()
 
-def parse_custom_trans_string( custom_trans_string ):
-    """Parse user input custom transcripts string
-    
-    user input must be of format:
-        "exon_index,exon_index,...,exon_index:frequency|freq;exon_index..."
-    user input is validated
-    """
-    transcripts = []
-    for trans in custom_trans_string.split(";"):
-        exons, freq = trans.split(":")
-
-        try:
-            freq = float( freq )
-            exons = [ int(e) for e in exons.split(",") ]
-            exons.sort()
-        except ValueError:
-            raise ValueError, "Custom gene transcript string is invalid!!!"
-        transcripts.append( ( exons, freq ) )
-    
-    return transcripts
-
-class CustomGene( dict ):
-    """
-    
-    """
-    def __init__( self, gtf_fp, custom_transcripts ):
-        self.filename = gtf_fp.name
-        exons = []
-
-        for line in gtf_fp:
-            gene_name, trans_name, gtf_type, data = parse_gtf_line( line )
-            if gtf_type == 'exon':
-                # set gene values from first exon found
-                if not len( exons ):
-                    self.chrm = data[0]
-                    self.strand = data[1]
-                    self.gene_name = gene_name
-                # custom gene accepts a single gene so 
-                # only get exons from the first gene in the gtf file
-                if data[0] != self.chrm or \
-                        data[1] != self.strand or \
-                        gene_name != self.gene_name:
-                    break
-                # add exon start and stop to exons list
-                exons.append( ( data[2], data[3] ) )
-        
-        gtf_fp.close()
-        exons.sort()
-        assert len( exons ), "No exons in first gene in " + self.filename
-
-        # create data structure same as in Genes constructor
-        self[ self.gene_name ] = {}
-        for trans_num, (exon_indices, freq) in enumerate( custom_transcripts ):
-            trans_name = "custom_trans_" + str( trans_num )
-            self[ self.gene_name ][ trans_name ] = \
-                Transcript( trans_name, (self.chrm, self.strand, 0, 0, freq) )
-            
-            # add exons to the transcript
-            prev_stop = -1
-            for start, stop in [ exons[i] for i in exon_indices ]:
-                if prev_stop >= start:
-                    raise ValueError, "A custom transcript contains overlapping exons!!!"
-                prev_stop = stop
-                
-                data = (self.chrm, self.strand, start, stop, freq )
-                self[ self.gene_name ][ trans_name ].add_exon( data )
-
-def build_objs( gtf_fp, fl_dist_const, fl_dist_obj_fn, 
+def build_objs( gtf_fp, fl_dist_const, 
                 fl_dist_norm, full_fragment,
-                read_len, fasta_fn, qual_fn, custom_trans ):
-    if custom_trans:
-        custom_trans = parse_custom_trans_string( custom_trans_string )
-        genes = CustomGene( gtf_fp, custom_trans )
-    else:
-        genes = Genes( gtf_fp )
+                read_len, fasta_fn, qual_fn ):
+
+    genes = load_gtf( gtf_fp )
     gtf_fp.close()
 
     def build_normal_fl_dist( fl_mean, fl_sd ):
@@ -619,15 +525,7 @@ def build_objs( gtf_fp, fl_dist_const, fl_dist_obj_fn,
         fl_dist = frag_len.build_normal_density( fl_min, fl_max, fl_mean, fl_sd )
         return fl_dist
 
-    if fl_dist_obj_fn:
-        # if provided load fl_dist obj from file
-        with open( fl_dist_fn ) as fl_dist_fp:
-            fl_dist = pickle.load( fl_dist_fp )
-        assert isinstance( fl_dist, frag_len.FlDist ), 'fl_dist_obj option must ' + \
-            'be a pickeled FlDist object!!!'
-        assert fl_dist.fl_max > read_len or full_fragment, \
-            'Invalid fragment length distribution and read length!!!'
-    elif fl_dist_norm:
+    if fl_dist_norm:
         fl_dist = build_normal_fl_dist( fl_dist_norm[0], fl_dist_norm[1] )
         assert fl_dist.fl_max > read_len or full_fragment, \
             'Invalid fragment length distribution and read length!!!'
@@ -666,13 +564,10 @@ def parse_arguments():
                              'be simulated)' )
 
     # fragment length distribution options
-    parser.add_argument( '--fl_dist_const', type=int, default=DEFAULT_FRAG_LENGTH, \
+    parser.add_argument( '--fl-dist-const', type=int, default=DEFAULT_FRAG_LENGTH, \
                              help='Constant length fragments. (default: ' + \
                              '%(default)s)' )
-    parser.add_argument( '--fl_dist_obj', \
-                             help='Cached fragment length distribution object ' + \
-                             'filename, created with get_frag_dist.py.' )
-    parser.add_argument( '--fl_dist_norm', \
+    parser.add_argument( '--fl-dist-norm', \
                              help='Mean and standard deviation (format "mn:sd") ' + \
                              'used to create normally distributed fragment lengths.' )
 
@@ -688,19 +583,20 @@ def parse_arguments():
                              '" * length of sequence.)' )
 
     # type and number of fragments requested
-    parser.add_argument( '--num_frags', '-n', type=int, default=DEFAULT_NUM_FRAGS, \
+    parser.add_argument( '--num-frags', '-n', type=int, default=DEFAULT_NUM_FRAGS, \
                              help='Total number of fragments to create across all ' + \
                              'transcripts (default: %(default)s)' )
-    parser.add_argument( '--single_end', action='store_true', default=False, \
+    parser.add_argument( '--single-end', action='store_true', default=False, \
                              help='Produce single-end reads.' )    
-    parser.add_argument( '--paired_end', dest='single_end', action='store_false', \
+    parser.add_argument( '--paired-end', dest='single_end', action='store_false', \
                              help='Produce paired-end reads. (default)' )    
-    parser.add_argument( '--full_fragment', action='store_true', default=False, \
+    parser.add_argument( '--full-fragment', action='store_true', default=False, \
                              help='Produce reads spanning the entire fragment. (If ' + \
                              'used in conjunction with paired_end option reads will ' + \
                              'cover approx. half the fragment each) Note: read_len ' + \
+
                              'option will be ignored if this option is set.' )
-    parser.add_argument( '--read_len', '-r', type=int, default=DEFAULT_READ_LENGTH, \
+    parser.add_argument( '--read-len', '-r', type=int, default=DEFAULT_READ_LENGTH, \
                              help='Length of reads to produce in base pairs ' + \
                              '(default: %(default)s)' )
 
@@ -710,22 +606,9 @@ def parse_arguments():
                              '(default: %(default)s)' )
     parser.add_argument( '--verbose', '-v', default=False, action='store_true', \
                              help='Print status information.' )
-    parser.add_argument( '--run_slide', action='store_true', default=False, \
-                             help='Run slide on the simulated gtf file and the ' + \
-                             'simulated bam file. (default: False) Note: Not ' + \
-                             'compatible with fl_dist_obj option.' )
-
-    # custom transcripts option
-    parser.add_argument( '--custom_trans', \
-                             help='User defined transcripts created from only the ' + \
-                             'first gene in the gtf file in the format: ' + \
-                             'exon_index,...,exon_index:frequency;exon_index,...')
-
-    try:
-        args = parser.parse_args()
-    except IOError:
-        raise IOError, 'Invalid GTF file provided!!!'
-
+    
+    args = parser.parse_args()
+    
     global VERBOSE
     VERBOSE = args.verbose
 
@@ -739,29 +622,27 @@ def parse_arguments():
             print "WARNING: User input mean and sd are not formatted correctly.\n" + \
                 "\tUsing default values.\n"
 
-    return args.gtf, args.fl_dist_const, args.fl_dist_obj, args.fl_dist_norm, \
+    return args.gtf, args.fl_dist_const, args.fl_dist_norm, \
         args.fasta, args.quality, args.num_frags, args.single_end, args.full_fragment, \
-        args.read_len, args.out_prefix, args.custom_trans, args.run_slide
+        args.read_len, args.out_prefix
 
 if __name__ == "__main__":
-    gtf_fp, fl_dist_const, fl_dist_obj_fn, fl_dist_norm, fasta_fn, qual_fn, \
-        num_frags, single_end, full_fragment, read_len, out_prefix, custom_trans, \
-        run_slide = parse_arguments()
+    gtf_fp, fl_dist_const, fl_dist_norm, fasta_fn, qual_fn, \
+        num_frags, single_end, full_fragment, read_len, out_prefix \
+        = parse_arguments()
     
     genes, fl_dist, fasta, quals = build_objs( 
         gtf_fp, fl_dist_const, 
-        fl_dist_obj_fn, fl_dist_norm, full_fragment, read_len, 
-        fasta_fn, qual_fn, custom_trans ) 
+        fl_dist_norm, full_fragment, read_len, 
+        fasta_fn, qual_fn ) 
 
-    """Test a single read for debugging
-    transcript = genes.values()[0].values()[0]
-    transcript.process_transcript( None )
-    lines = build_sam_lines( transcript, 100, 700, 31, 'read1', ['r','r'] )
-    for line in lines:
-        print line,
-    sys.exit()
     """
-
+    for gene in genes:
+        for t in gene.transcripts:
+            t.chrm = "chr" + t.chrm
+            print t.build_gtf_lines(gene.id, {})
+    assert False
+    """
     simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end, 
                     full_fragment, read_len, out_prefix )
-    
+
