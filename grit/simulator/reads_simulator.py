@@ -1,5 +1,6 @@
 import sys
 import os
+import os.path
 import numpy
 import pickle
 import pysam
@@ -76,7 +77,7 @@ def get_cigar( transcript, start, stop ):
     cigar.append("%iM" % (stop-skipped_bases))
     tl += stop - skipped_bases 
     
-    assert tl == read_len
+    assert tl == (stop-start)
     
     return "".join(cigar)
 
@@ -170,10 +171,10 @@ def write_fastq_lines( fp1, fp2, transcript, read_len, frag_len, offset,
     pass
 
 def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end, 
-                    full_fragment, read_len, out_prefix):
+                    full_fragment, read_len, assay='RNAseq'):
     """write a SAM format file with the specified options
 
-    """
+    """    
     # global variable that stores the current read number, we use this to 
     # generate a unique id for each read.
     global curr_read_index
@@ -202,7 +203,14 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
     def sample_read_offset( transcript, fl ):
         # calculate maximum offset
         max_offset = transcript.calc_length() - fl
-        return int( random() * max_offset )
+        if assay == 'RNAseq':
+            return int( random() * max_offset )
+        elif assay == 'RAMPAGE':
+            return 0
+        elif assay == 'CAGE':
+            return 0
+        elif assay == 'PASseq':
+            return max_offset
     
     def get_random_qual_score( read_len ):
         # if no quality score were provided
@@ -215,7 +223,7 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
             while len( qual_string ) < read_len:
                 qual_string += str( quals[ int(random() * len(quals) ) ] )
             return qual_string[0:read_len]
-        
+    
     def get_random_read_pos( transcript ):
         while True:
             # find a valid fragment length
@@ -280,17 +288,17 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
             return fl_dist.fl_min
     
     def calc_scale_factor(t):
-        length = t.calc_length()
-        if length < fl_dist.fl_min: return 0
-        return length - fl_dist.fl_min
-        fl_min, fl_max = fl_dist.fl_min, min(length, fl_dist.fl_max)
-        allowed_fl_lens = numpy.arange(fl_min, fl_max+1)
-        weights = fl_dist.fl_density[
-            fl_min-fl_dist.fl_min:fl_max-fl_dist.fl_min+1]
-        sc_factor = min(20, 1./(weights.sum()))
-        mean_fl_len = float((allowed_fl_lens*weights).sum())
-        return length - mean_fl_len, sc_factor
-
+        if assay in ('RNAseq',):
+            length = t.calc_length()
+            if length < fl_dist.fl_min: return 0
+            fl_min, fl_max = fl_dist.fl_min, min(length, fl_dist.fl_max)
+            allowed_fl_lens = numpy.arange(fl_min, fl_max+1)
+            weights = fl_dist.fl_density[
+                fl_min-fl_dist.fl_min:fl_max-fl_dist.fl_min+1]
+            mean_fl_len = float((allowed_fl_lens*weights).sum())
+            return length - mean_fl_len
+        elif assay in ('CAGE', 'RAMPAGE', 'PASseq'):
+            return 1.0
     
     # initialize the transcript objects, and calculate their relative weights
     transcript_weights = []
@@ -331,9 +339,7 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
                 length, contig_lens[name])
 
     # create the output directory
-    os.mkdir(out_prefix)
-    os.chdir(out_prefix)
-    bam_prefix = out_prefix + ".sorted"
+    bam_prefix = assay + ".sorted"
     
     with tempfile.NamedTemporaryFile( mode='w+' ) as sam_fp:
         # write out the header
@@ -361,7 +367,6 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
         #sam_fp.seek(0)
         #print sam_fp.read()
         
-        bam_prefix = out_prefix + ".sorted"
         call = 'samtools view -bS {} | samtools sort - {}'
         os.system( call.format( sam_fp.name, bam_prefix ) )
         os.system( 'samtools index {}.bam'.format( bam_prefix ) )
@@ -419,6 +424,10 @@ def parse_arguments():
                              '(Note: Only the first trascript from this file will ' + \
                              'be simulated)' )
 
+    parser.add_argument( 
+        '--assay', choices=['RNAseq', 'RAMPAGE', 'CAGE', 'PASseq'],
+        default='RNAseq', help='Which assay type to simulate from' )
+    
     # fragment length distribution options
     parser.add_argument( '--fl-dist-const', type=int, default=DEFAULT_FRAG_LENGTH, \
                              help='Constant length fragments. (default: ' + \
@@ -439,19 +448,18 @@ def parse_arguments():
                              '" * length of sequence.)' )
 
     # type and number of fragments requested
-    parser.add_argument( '--num-frags', '-n', type=int, default=DEFAULT_NUM_FRAGS, \
-                             help='Total number of fragments to create across all ' + \
-                             'transcripts (default: %(default)s)' )
-    parser.add_argument( '--single-end', action='store_true', default=False, \
-                             help='Produce single-end reads.' )    
-    parser.add_argument( '--paired-end', dest='single_end', action='store_false', \
-                             help='Produce paired-end reads. (default)' )    
-    parser.add_argument( '--full-fragment', action='store_true', default=False, \
-                             help='Produce reads spanning the entire fragment. (If ' + \
-                             'used in conjunction with paired_end option reads will ' + \
-                             'cover approx. half the fragment each) Note: read_len ' + \
-
-                             'option will be ignored if this option is set.' )
+    parser.add_argument( 
+        '--num-frags', '-n', type=int, default=1000,
+        help='Total number of fragments to create across all trascripts')
+    parser.add_argument('--single-end', action='store_true', default=False, 
+                        help='Produce single-end reads.' )    
+    parser.add_argument('--paired-end', dest='single_end', action='store_false',
+                        help='Produce paired-end reads. (default)' )    
+    # XXX not sure if this works
+    #parser.add_argument( 
+    #    '--full-fragment', action='store_true', default=False, 
+    #    help='Produce reads spanning the entire fragment.')
+    
     parser.add_argument( '--read-len', '-r', type=int, default=DEFAULT_READ_LENGTH, \
                              help='Length of reads to produce in base pairs ' + \
                              '(default: %(default)s)' )
@@ -464,10 +472,16 @@ def parse_arguments():
                              help='Print status information.' )
     
     args = parser.parse_args()
+    # set to false, but we may want to bring this option back
+    args.full_fragment = False
     
     global VERBOSE
     VERBOSE = args.verbose
 
+    if args.assay == 'CAGE':
+        args.read_len = 28
+        args.single_end = True
+        
     # parse normal distribution argument
     if args.fl_dist_norm:
         try:
@@ -475,23 +489,32 @@ def parse_arguments():
             args.fl_dist_norm = [ int( mean ), int( sd ) ]
         except ValueError:
             args.fl_dist_norm = None
-            print "WARNING: User input mean and sd are not formatted correctly.\n" + \
-                "\tUsing default values.\n"
+            print >> sys.stderr, \
+              "WARNING: User input mean and sd are not formatted correctly.\n"+\
+              "\tUsing default values.\n"
 
-    return args.gtf, args.fl_dist_const, args.fl_dist_norm, \
-        args.fasta, args.quality, args.num_frags, args.single_end, args.full_fragment, \
-        args.read_len, args.out_prefix
+    return ( args.gtf, args.fl_dist_const, args.fl_dist_norm, 
+             args.fasta, args.quality, args.num_frags, 
+             args.single_end, args.full_fragment, 
+             args.read_len, args.out_prefix, args.assay )
 
-if __name__ == "__main__":
-    gtf_fp, fl_dist_const, fl_dist_norm, fasta_fn, qual_fn, \
-        num_frags, single_end, full_fragment, read_len, out_prefix \
+def main():
+    ( gtf_fp, fl_dist_const, fl_dist_norm, fasta_fn, qual_fn, 
+      num_frags, single_end, full_fragment, read_len, out_prefix, assay )\
         = parse_arguments()
+    
+    try: os.mkdir(out_prefix)
+    except OSError: 
+        ofname = os.path.join(out_prefix, assay + '.sorted.bam')
+        if os.path.isfile(ofname):
+            raise OSError, "File '%s' already exists" % ofname
+    os.chdir(out_prefix)
     
     genes, fl_dist, fasta, quals = build_objs( 
         gtf_fp, fl_dist_const, 
         fl_dist_norm, full_fragment, read_len, 
         fasta_fn, qual_fn ) 
-
+    
     """
     for gene in genes:
         for t in gene.transcripts:
@@ -500,5 +523,7 @@ if __name__ == "__main__":
     assert False
     """
     simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end, 
-                    full_fragment, read_len, out_prefix )
+                    full_fragment, read_len, assay=assay )
 
+if __name__ == "__main__":
+    main()
