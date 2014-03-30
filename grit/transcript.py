@@ -154,7 +154,9 @@ class Transcript( object ):
         
         self.promoter = promoter
         self.polya_region = polya_region
-
+        
+        self._seq = None
+        
         if cds_region != None:
             self.add_cds_region( cds_region )
     

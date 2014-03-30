@@ -25,6 +25,18 @@ from grit.files.reads import clean_chr_name
 def fix_chr_name(x):
     return "chr" + clean_chr_name(x)
 
+def get_transcript_sequence(transcript, fasta):
+    """ get the mRNA sequence of the transcript from the gene seq
+    """
+    trans_seq = []
+    for start, stop in transcript.exons:
+        trans_seq.append( fasta.fetch('chr'+transcript.chrm, start, stop+1).upper() )
+
+    trans_seq = "".join(trans_seq)
+    
+    return trans_seq
+
+
 def get_cigar( transcript, start, stop ):
     """loop through introns within the read and add #N to the cigar for each intron
     add #M for portions of read which map to exons
@@ -74,8 +86,7 @@ def build_sam_line( transcript, read_len, offset, read_identifier, quality_strin
     """
     # set flag to indcate strandedness of read matching that of the transcript
     flag = 0
-    if transcript.strand == '-':
-        flag += 16
+    if transcript.strand == '-': flag += 16
     
     # adjust start position to correct genomic position
     start = transcript.genome_pos(offset)
@@ -84,8 +95,8 @@ def build_sam_line( transcript, read_len, offset, read_identifier, quality_strin
     # calculate insert size by difference of genomic offset and genomic offset+read_len
     insert_size = transcript.genome_pos(offset+read_len) - transcript.genome_pos(offset)
     # get slice of seq from transcript
-    seq = 'A'*read_len
-    #seq = transcript.seq[ offset : (offset + read_len) ]
+    seq = ( transcript.seq[ offset : (offset + read_len) ] 
+            if transcript.seq != None else '*' )
     # initialize sam lines with read identifiers and then add appropriate fields
     sam_line = '\t'.join( ( 
             read_identifier, str( flag ), fix_chr_name(transcript.chrm), 
@@ -102,6 +113,7 @@ def build_sam_lines( transcript, read_len, frag_len, offset,
     """
     # set ordered quals and reverse the qualities for the read on the negative strand
     ordered_quals = read_quals
+    
     # determine whether read1 should be the 5' read or visa verses
     # and initialize attributes that are specific to a read number 
     # instead of 5' or 3' attribute
@@ -114,6 +126,13 @@ def build_sam_lines( transcript, read_len, frag_len, offset,
         flag = [ 83, 163 ]
         ordered_quals[0] = ordered_quals[0][::-1]
 
+    # get slice of seq from transcript
+    seq = ['*', '*']
+    if transcript.seq != None:
+        seq[ up_strm_read ] = transcript.seq[offset:(offset + read_len)]
+        seq[ dn_strm_read ] = transcript.seq[
+            (offset + frag_len - read_len):(offset + frag_len)]
+    
     # adjust five and three prime read start positions to correct genomic positions
     start = [ transcript.start, transcript.start ]
     start[ up_strm_read ] = transcript.genome_pos(offset)
@@ -130,14 +149,6 @@ def build_sam_lines( transcript, read_len, frag_len, offset,
         transcript.genome_pos(offset+read_len) - transcript.genome_pos(offset))
     insert_size = [ insert_size, insert_size ]
     insert_size[ dn_strm_read ] *= -1
-
-    # get slice of seq from transcript
-    # XXX
-    seq = [ None, None ]
-    seq[ up_strm_read ] = 'A'*read_len
-    #transcript.seq[offset:(offset + read_len)]
-    seq[ dn_strm_read ] = 'A'*read_len
-    #transcript.seq[(offset + frag_len - read_len):(offset + frag_len)]
     
     # initialize sam lines with read identifiers and then add appropriate fields
     sam_lines = [ read_identifier + '\t', read_identifier + '\t' ]    
@@ -231,7 +242,10 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
             read_len = fl
             
         # get a random quality scores
-        read_qual = get_random_qual_score( read_len )
+        if transcript.seq == None:
+            read_qual = '*'
+        else:
+            read_qual = get_random_qual_score( read_len )
 
         # build the sam lines
         return build_sam_line( 
@@ -248,8 +262,11 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
             read_len = int( math.ceil( fl / float(2) ) )
 
         # get two random quality scores
-        read_quals = [ get_random_qual_score( read_len ), 
-                       get_random_qual_score( read_len ) ]
+        if transcript.seq == None:
+            read_quals = ['*', '*']
+        else:
+            read_quals = [ get_random_qual_score( read_len ), 
+                           get_random_qual_score( read_len ) ]
 
         sam_lines = build_sam_lines( 
             transcript, read_len, fl, offset, read_identifier, read_quals )
@@ -283,8 +300,13 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
     
     min_transcript_length = get_fl_min()
     for gene in genes:
-        contig_lens[fix_chr_name(gene.chrm)] = gene.stop
+        contig_lens[fix_chr_name(gene.chrm)] = max(
+            gene.stop, contig_lens[fix_chr_name(gene.chrm)])
         for transcript in gene.transcripts:
+            if fasta != None:
+                transcript.seq = get_transcript_sequence(transcript, fasta)
+            else:
+                transcript.seq = None
             if transcript.fpkm != None:
                 weight = transcript.fpkm*calc_scale_factor(transcript)
             elif transcript.frac != None:
@@ -302,7 +324,11 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
     transcript_weights = transcript_weights/transcript_weights.sum()
     transcript_weights_cumsum = transcript_weights.cumsum()
 
-    print transcript_weights
+    # update the contig lens from the fasta file, if available 
+    if fasta != None:
+        for name, length in zip(fasta.references, fasta.lengths):
+            contig_lens[fix_chr_name(name)] = max(
+                length, contig_lens[name])
 
     # create the output directory
     os.mkdir(out_prefix)
