@@ -40,7 +40,8 @@ GENCODE = {
     'TAC':'Y', 'TAT':'Y', 'TAA':'_', 'TAG':'_',
     'TGC':'C', 'TGT':'C', 'TGA':'_', 'TGG':'W'}
 
-COMP_BASES = { 'A':'T', 'T':'A', 'C':'G', 'G':'C' }
+COMP_BASES = { 'A':'T', 'T':'A', 'C':'G', 'G':'C',
+               'a':'t', 't':'a', 'c':'g', 'g':'c' }
 
 # Variables effecting .annotation.gtf output
 ONLY_USE_LONGEST_ORF = False
