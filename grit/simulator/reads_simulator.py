@@ -30,16 +30,16 @@ def get_transcript_sequence(transcript, fasta):
     """
     trans_seq = []
     for start, stop in transcript.exons:
-        trans_seq.append( fasta.fetch('chr'+transcript.chrm, start, stop+1).upper() )
-
-    trans_seq = "".join(trans_seq)
+        seq = fasta.fetch(fix_chr_name(transcript.chrm), start, stop+1)
+        trans_seq.append( seq.upper() )
     
+    trans_seq = "".join(trans_seq)
     return trans_seq
 
 
 def get_cigar( transcript, start, stop ):
-    """loop through introns within the read and add #N to the cigar for each intron
-    add #M for portions of read which map to exons
+    """loop through introns within the read and add #N to the cigar for each 
+    intron add #M for portions of read which map to exons
     """
     def calc_len(interval):
         return interval[1]-interval[0]+1
