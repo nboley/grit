@@ -37,7 +37,7 @@ def get_cigar( transcript, start, stop ):
     genome_start = transcript.genome_pos(start)
     start_exon = next(i for i, (e_start, e_stop) in enumerate(transcript.exons)
                       if genome_start >= e_start and genome_start <= e_stop)
-    genome_stop = transcript.genome_pos(stop)
+    genome_stop = transcript.genome_pos(stop-1)
     stop_exon = next(i for i, (e_start, e_stop) in enumerate(transcript.exons)
                      if genome_stop >= e_start and genome_stop <= e_stop)
 
@@ -46,9 +46,9 @@ def get_cigar( transcript, start, stop ):
 
     tl = 0
     # add the first overlap match
-    skipped_bases = sum(e[1]-e[0]+1 for e in transcript.exons[:start_exon+1])
-    cigar.append("%iM" % (skipped_bases-start+1))
-    tl += skipped_bases - start
+    skipped_bases = sum(calc_len(e) for e in transcript.exons[:start_exon+1])
+    cigar.append("%iM" % (skipped_bases-start))
+    tl += skipped_bases-start
     
     # add the first overlap intron 
     cigar.append("%iN" % calc_len(transcript.introns[start_exon]))
@@ -56,12 +56,12 @@ def get_cigar( transcript, start, stop ):
     # add the internal exon and intron matches
     for i in xrange(start_exon+1, stop_exon):
         cigar.append("%iM" % calc_len(transcript.exons[i]))
-        cigar.append("%iN" % calc_len(transcript.introns[i-1]))
+        cigar.append("%iN" % calc_len(transcript.introns[i]))
         tl += calc_len(transcript.exons[i])
 
     # add the last overlap match
     skipped_bases = sum(e[1]-e[0]+1 for e in transcript.exons[:stop_exon])
-    cigar.append("%iM" % (stop - skipped_bases-1))
+    cigar.append("%iM" % (stop-skipped_bases))
     tl += stop - skipped_bases 
     
     assert tl == read_len
@@ -76,7 +76,7 @@ def build_sam_line( transcript, read_len, offset, read_identifier, quality_strin
     flag = 0
     if transcript.strand == '-':
         flag += 16
-
+    
     # adjust start position to correct genomic position
     start = transcript.genome_pos(offset)
     # set cigar string corresponding to transcript and read offset
@@ -84,11 +84,12 @@ def build_sam_line( transcript, read_len, offset, read_identifier, quality_strin
     # calculate insert size by difference of genomic offset and genomic offset+read_len
     insert_size = transcript.genome_pos(offset+read_len) - transcript.genome_pos(offset)
     # get slice of seq from transcript
-    seq = transcript.seq[ offset : (offset + read_len) ]
+    seq = 'A'*read_len
+    #seq = transcript.seq[ offset : (offset + read_len) ]
     # initialize sam lines with read identifiers and then add appropriate fields
     sam_line = '\t'.join( ( 
             read_identifier, str( flag ), fix_chr_name(transcript.chrm), 
-            str( start ),
+            str(start+1),
             '255', cigar, "*", '0', str( insert_size ), seq, quality_string, 
             "NM:i:0", "NH:i:1" )  ) + "\n"
 
@@ -144,7 +145,7 @@ def build_sam_lines( transcript, read_len, frag_len, offset,
         other_i = 0 if i else 1
         sam_lines[i] += '\t'.join( (
                 str( flag[i] ), fix_chr_name(transcript.chrm), 
-                str( start[i] ),"255",
+                str( start[i]+1 ),"255",
                 cigar[i], "=", str( start[other_i] ), str( insert_size[i] ), 
                 seq[i], ordered_quals[i], "NM:i:0", "NH:i:1" ) ) + "\n"
 
@@ -233,7 +234,8 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
         read_qual = get_random_qual_score( read_len )
 
         # build the sam lines
-        return build_sam_line( transcript, read_len, offset, read_identifier, read_qual )
+        return build_sam_line( 
+            transcript, read_len, offset, read_identifier, read_qual )
 
     def build_random_sam_lines( transcript, read_len ):
         """build random paired end sam lines
@@ -339,179 +341,7 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
         os.system( 'samtools index {}.bam'.format( bam_prefix ) )
         
     return
-
-class Transcript( object ):
-    def __init__( self, trans_name, data ):
-        """Data contains chrm, strand, start, stop and freq (frac of major isoform)
         
-        After process_transcript is run exons and introns are dicts 
-        with key pos relative to the transcript seq (not genomic coordinates) and 
-        value size of intron or exon
-        """
-        self.chrm = data[0]
-        self.strand = data[1]
-        self.freq = data[4]
-        # if freq is 0 set it to 1/1000 to avoid division by 0
-        if self.freq == 0:
-            self.freq = 0.000001
-        
-        # a list of (start, stop) tuples
-        self.exons = []
-        # a list of intron positions relative to the transcript seq (key)
-        # and corresonding length of intron (value)
-        self.introns = {}
-        # the sequence of the transcript from the reference
-        self.seq = ''
-        self.name = trans_name
-        
-    def add_exon( self, data ):
-        assert data[0] == self.chrm
-        assert data[1] == self.strand
-        
-        self.exons.append( ( data[2], data[3] ) )
-
-    def get_length( self ):
-        """Get transcript length before process_transcript has been run
-        
-        """
-        length = 0
-        for start, stop in self.exons:
-            length += stop - start + 1
-        return length
-
-    def count_num_fragments( self, fl_dist ):
-        # if a constant fragment length return the number of possible fragments
-        # from this transcript
-        if isinstance( fl_dist, int ):
-            return self.get_length() - fl_dist + 1
-
-        # else calculate the relative number of transcripts accounting for fl_density
-        trans_len = self.get_length()
-        num_fragments = 0.0
-        for fl in xrange( fl_dist.fl_min, fl_dist.fl_max+1 ):
-            num_fragments +=  (trans_len - fl + 1) * \
-                fl_dist.fl_density[ fl - fl_dist.fl_min ]
-        
-        return num_fragments
-    
-    def process_transcript( self, fasta ):
-        """produces transcript information from input exon values
-
-        fasta is a pysam fasta file handle object accessed by fetch
-        """
-        self.start = min( zip( *self.exons )[0] )
-        
-        # used to assert no overlapping exons and calculate intron length
-        prev_stop = -1
-        # stores an exon end position relative to the seq and its length
-        # key values to exons and introns are the same except for last exon key
-        new_exons = []
-        for start, stop in sorted( self.exons, key=lambda x:x[0] ):
-            if start < prev_stop:
-                raise ValueError, "Transcript " + self.name + \
-                    " contains overlapping exons!!"
-
-            # input intron position with respect to transcript seq and 
-            # intron length into  intron_positions
-            pos = len( self.seq )
-            if pos:
-                # if not first exon calculate intron size
-                self.introns[ pos ] = start - prev_stop  - 1
-            prev_stop = stop
-            
-            if fasta:
-                # pysam uses 0-based indexing while gtf uses 1-based
-                self.seq += fasta.fetch( 'chr' + self.chrm, start - 1, stop )
-            else:
-                # add appropriate number of DEFAULT_BASEs if fasta is not provided
-                self.seq += DEFAULT_BASE * (stop - start + 1)
-            new_exons.append( ( len( self.seq ), (stop - start + 1) ) )
-
-        self.exons = new_exons
-        # set exon length to the position of the last exon
-        # corresponding to the lenght of the transcript
-        self.length = self.exons[-1][0]
-        
-    def release( self ):
-        self.seq = None
-        self.exons = None
-        self.introns = None
-        
-def parse_gtf_line( line  ):
-    """Parse gtf line for either standard or custom gene object creation
-    
-    """
-    data = line.split()
-    # the type of element - ie exon, transcript, etc.
-    gtf_type = data[2]
-    
-    # parse the meta data, and grab the gene name
-    meta_data = dict( zip( data[8::2], data[9::2] ) )
-    # remove ';' from value fields if ends in a ';'
-    for key, val in meta_data.iteritems():
-        if val.endswith( ';' ):
-            meta_data[ key ] = val[:-1]
-    gene_name = meta_data[ 'gene_id' ]
-    trans_name = meta_data[ 'transcript_id' ]
-
-    # set freq value from meta_data if available or default of 1/10,000
-    freq=None
-    for freq_string in FREQ_GTF_STRINGS:
-        if freq_string in meta_data:
-            freq = meta_data[ freq_string ]
-            break
-    if not freq:
-        freq = 0.0001
-        
-    # fix meta_data to remove quotations
-    if gene_name.startswith('"'):
-        gene_name = gene_name[1:-1]
-    if trans_name.startswith('"'):
-        trans_name = trans_name[1:-1]
-    if (not isinstance( freq, float )) and freq.startswith( '"' ):
-        freq = float( freq[1:-1] )
-    else:
-        freq = float( freq )
-    
-    # fix the chromosome if necessary
-    chrm = data[0]
-    if chrm.startswith( 'chr' ):
-        chrm = chrm[3:]
-
-    # return names, type and data( chrm, strand, start, stop, freq )
-    return gene_name, trans_name, gtf_type, \
-        ( chrm, data[6], int(data[3]), int(data[4]), freq )
-
-class Genes( dict ):
-    """
-
-    """
-    def __init__( self, gtf_fp ):
-        """Parse the gtf file at gtf_fp and return the genes and their unique exons.
-        
-        """
-        self.filename = gtf_fp.name
-        # TODO:::Add gene FPKM like value to determine 
-        #        proportionof reads expected per gene
-        
-        # iterate through each line in the gtf, and organize exons
-        # based upon the genes that they came from
-        for line in gtf_fp:
-            gene_name, trans_name, gtf_type, data = parse_gtf_line( line )
-
-            if gtf_type == 'exon':
-                try:
-                    self[ gene_name ][ trans_name ].add_exon( data )
-                except KeyError:
-                    try:
-                        self[ gene_name ][ trans_name ] = Transcript( trans_name, data )
-                    except KeyError:
-                        self[ gene_name ] = {}
-                        self[ gene_name ][ trans_name ] = Transcript( trans_name, data )
-                    self[ gene_name ][ trans_name ].add_exon( data )
-                  
-        gtf_fp.close()
-
 def build_objs( gtf_fp, fl_dist_const, 
                 fl_dist_norm, full_fragment,
                 read_len, fasta_fn, qual_fn ):
