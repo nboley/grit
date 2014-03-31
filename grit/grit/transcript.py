@@ -443,9 +443,10 @@ def build_transcripts( tss_exons, internal_exons, tes_exons, se_transcripts,
     num_transcripts = 0
     for tss in tss_exons:
         for tes in tes_exons:
-            if len(transcripts) > config.MAX_NUM_CANDIDATE_TRANSCRIPTS:
-                raise ValueError, "Too many candidate transcripts"
-            for transcript in nx.all_simple_paths(graph, tss, tes):
+            cutoff = config.MAX_NUM_CANDIDATE_TRANSCRIPTS-num_transcripts+1
+            for transcript in nx.all_simple_paths(graph, tss, tes, cutoff):
                 transcripts.append( sorted(transcript) )
+                if len(transcripts) > config.MAX_NUM_CANDIDATE_TRANSCRIPTS:
+                    raise ValueError, "Too many candidate transcripts"
     
     return transcripts + [ [x,] for x in se_transcripts ]
