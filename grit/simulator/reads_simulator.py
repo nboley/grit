@@ -312,7 +312,7 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
     min_transcript_length = get_fl_min()
     for gene in genes:
         contig_lens[fix_chr_name(gene.chrm)] = max(
-            gene.stop, contig_lens[fix_chr_name(gene.chrm)])
+            gene.stop+1000, contig_lens[fix_chr_name(gene.chrm)])
         for transcript in gene.transcripts:
             if fasta != None:
                 transcript.seq = get_transcript_sequence(transcript, fasta)
