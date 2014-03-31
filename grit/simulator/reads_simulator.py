@@ -158,7 +158,7 @@ def build_sam_lines( transcript, read_len, frag_len, offset,
         sam_lines[i] += '\t'.join( (
                 str( flag[i] ), fix_chr_name(transcript.chrm), 
                 str( start[i]+1 ),"255",
-                cigar[i], "=", str( start[other_i] ), str( insert_size[i] ), 
+                cigar[i], "=", str( start[other_i]+1 ), str( insert_size[i] ), 
                 seq[i], ordered_quals[i], "NM:i:0", "NH:i:1" ) ) + "\n"
 
     return sam_lines
