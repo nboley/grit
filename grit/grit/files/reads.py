@@ -441,11 +441,13 @@ class Reads( pysam.Samfile ):
                     print "No mate: ", read1.pos, read1.aend
                 continue
 
-            assert ( read1.qlen == read1.aend - read1.pos ) \
+            assert read1.query == None or \
+                   ( read1.qlen == read1.aend - read1.pos ) \
                    or ( len( read1.cigar ) > 1 )
-            assert ( read2.qlen == read2.aend - read2.pos ) \
+            assert read2.query == None or \
+                   ( read2.qlen == read2.aend - read2.pos ) \
                    or ( len( read2.cigar ) > 1 )
-
+            
             #if read1.qlen != read2.qlen:
             #    print( "ERROR: unequal read lengths %i and %i\n", \
             #           read1.qlen, read2.qlen )
@@ -487,8 +489,7 @@ class RNAseqReads(Reads):
         assert reads_are_stranded == True, "GRIT can only use stranded RNAseq"
         
         if pairs_are_opp_strand == None:
-            pairs_are_opp_strand = not read_pairs_are_on_same_strand( self )
-
+            pairs_are_opp_strand = (not read_pairs_are_on_same_strand( self ))
         if reverse_read_strand == None:
             reverse_read_strand = Reads.determine_reverse_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'internal_exon',

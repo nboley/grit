@@ -348,7 +348,7 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
     with tempfile.NamedTemporaryFile( mode='w+' ) as sam_fp:
         # write out the header
         for contig, contig_len in contig_lens.iteritems():
-            data = ["@SQ", "SN:%s" % contig, "LN%i" % contig_len]
+            data = ["@SQ", "SN:%s" % contig, "LN:%i" % contig_len]
             sam_fp.write("\t".join(data) + "\n")
         
         while curr_read_index <= num_frags:
