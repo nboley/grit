@@ -442,10 +442,10 @@ class Reads( pysam.Samfile ):
                 continue
 
             assert read1.query == None or \
-                   ( read1.qlen == read1.aend - read1.pos ) \
+                   ( read1.alen == read1.aend - read1.pos ) \
                    or ( len( read1.cigar ) > 1 )
             assert read2.query == None or \
-                   ( read2.qlen == read2.aend - read2.pos ) \
+                   ( read2.alen == read2.aend - read2.pos ) \
                    or ( len( read2.cigar ) > 1 )
             
             #if read1.qlen != read2.qlen:
