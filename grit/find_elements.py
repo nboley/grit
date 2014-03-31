@@ -883,7 +883,7 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
         max_score = peak_scores.max()
         good_indices = (peak_scores >= max_score*config.MAX_CAGE_FRAC).nonzero()[0]
         new_peak = [
-                peak[0] + int(good_indices.min() + 1), 
+                peak[0] + int(good_indices.min()), 
                 peak[0] + int(good_indices.max() + 2)  ]
         new_score = float(
             cumsum_cvg_array[new_peak[1]+1] - cumsum_cvg_array[new_peak[0]])
