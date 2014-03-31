@@ -574,7 +574,7 @@ class RAMPAGEReads(Reads):
         
         # reads strandedness
         if pairs_are_opp_strand == None:
-            pairs_are_opp_strand = read_pairs_are_on_same_strand( self )
+            pairs_are_opp_strand = (not read_pairs_are_on_same_strand( self ))
 
         if reverse_read_strand in ('auto', None):
             if ref_genes in([], None): 
@@ -626,7 +626,7 @@ class PolyAReads(Reads):
         
         # reads strandedness
         if pairs_are_opp_strand == None:
-            pairs_are_opp_strand = read_pairs_are_on_same_strand( self )
+            pairs_are_opp_strand = (not read_pairs_are_on_same_strand( self ))
 
         if reverse_read_strand in ('auto', None):
             if ref_genes in([], None): 
