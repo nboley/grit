@@ -587,10 +587,18 @@ def build_expected_and_observed_transcript_bndry_counts(
 def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
     if config.DEBUG_VERBOSE:
         config.log_statement( "Normalizing bin frequencies" )
+    
+    clustered_rows = defaultdict(list)
+    for i, row in enumerate(expected_rnaseq_array):
+        key = tuple((100000*row/row.sum()).round().tolist())
+        clustered_rows[key].append(i)
+    clusters = clustered_rows.values()
+    
+    """ This worked quickly, but could use way too much memory
     norm_rows = []
     for i, row in enumerate(expected_rnaseq_array):
         norm_rows.append(row/row.sum())
-    
+        
     if config.DEBUG_VERBOSE:
         config.log_statement( "Building KDTree to cluster bins" )
     tree = KDTree(numpy.vstack(norm_rows), leafsize=30)
@@ -610,7 +618,10 @@ def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
     graph.add_nodes_from(xrange(expected_rnaseq_array.shape[0]))
     graph.add_edges_from(edges)
     clusters = nx.connected_components(graph)
-
+    print len(clusters)
+    print sorted(clusters)
+    """
+    
     """
     Use the tree to find pairs. We dont use this because we only care about distance.
     #for i, row in enumerate(norm_rows):
