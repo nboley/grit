@@ -457,9 +457,9 @@ class discover_elements(dict):
         except IOError:
             grit.find_elements.find_elements(
                 promoter_reads, rnaseq_reads, polya_reads,
-                elements_fname, sample_data.ref_genes, 
-                args.ref_elements_to_include, 
-                region_to_use=args.region)
+                elements_fname, self.sample_data.ref_genes, 
+                self.args.ref_elements_to_include, 
+                region_to_use=self.args.region)
             ofp = open(elements_fname)
         else:
             msg = "WARNING: '%s' already exists - using existing file."
