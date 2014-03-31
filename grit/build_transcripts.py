@@ -596,12 +596,14 @@ def estimate_mle_worker( gene, fl_dists, f_mat, num_reads_in_bams ):
 
     log_lhd = frequency_estimation.calc_lhd( 
         mle, observed_array, expected_array)
-    config.log_statement( "FINISHED MLE %s\t%.2f - updating queues" % ( 
-            gene.id, log_lhd ) )
     
     # add back in the missing trasncripts
     full_mle = -1*numpy.ones(len(gene.transcripts)+1, dtype=float)
     full_mle[numpy.array([-1,]+f_mat.transcript_indices().tolist())+1] = mle
+
+    config.log_statement( "FINISHED MLE %s\t%.2f - updating queues" % ( 
+            gene.id, log_lhd ) )
+    
     return full_mle
 
 
@@ -848,7 +850,9 @@ def worker( data,
         if time.time() - start_time > 60: return
         # get the data to process
         try: work_type, gene_id, trans_indices = data.get_queue_item(gene_id)
-        except Queue.Empty: return        
+        except Queue.Empty: 
+            config.log_statement("")
+            return        
         
         if work_type == 'gene':
             # build the gene with transcripts, and optionally call orfs
