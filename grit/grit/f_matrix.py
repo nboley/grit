@@ -770,7 +770,7 @@ class DesignMatrix(object):
             gene, reads )
         expected_array, observed_array, unobservable_trans = \
             build_expected_and_observed_arrays( 
-            expected_cnts, observed_cnts, normalize=False )
+            expected_cnts, observed_cnts, normalize=True )
         del expected_cnts, observed_cnts
 
         self.array_types.append('reads_type')
@@ -833,7 +833,7 @@ class DesignMatrix(object):
         
         # find which bins have 0 expected reads
         bins_to_keep = (expected.sum(1) > 1e-6)
-        self._expected_and_observed = cluster_rows(
+        self._expected_and_observed = (
             expected[bins_to_keep,], observed[bins_to_keep])
         self._cached_bam_cnts = bam_cnts
         self._cached_indices = indices
