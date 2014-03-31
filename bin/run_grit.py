@@ -181,6 +181,8 @@ class Samples(object):
                      self.conn.execute( query  ).fetchall() ]
 
     def _load_rnaseq_reads(self, sample_type, rep_id):
+        if config.VERBOSE: config.log_statement(
+            "Initializing RNAseq reads for sample '%s'." % sample_type)
         all_reads = []
         for data in self.get_elements( 'rnaseq', sample_type, rep_id ):
             if data.filename in self.mapped_reads_cache:
@@ -199,6 +201,8 @@ class Samples(object):
         return all_reads
 
     def _load_promoter_reads(self, sample_type, rep_id):
+        if config.VERBOSE: config.log_statement(
+            "Initializing promoter reads for sample '%s'." % sample_type)
         cage_elements = self.get_elements( 'cage', sample_type, rep_id )
         rampage_elements = self.get_elements( 'rampage', sample_type, rep_id )
 
@@ -229,6 +233,8 @@ class Samples(object):
         return promoter_reads
 
     def _load_polya_reads(self, sample_type, rep_id):
+        if config.VERBOSE: config.log_statement(
+            "Initializing poly(A) reads for sample '%s'." % sample_type)
         all_reads = []
         for data in self.get_elements( 'polya', sample_type, rep_id ):
             if data.filename in self.mapped_reads_cache:
@@ -434,24 +440,48 @@ def parse_arguments():
     args.ref_elements_to_include = load_ref_elements_to_include(args)
     return args
 
-def discover_elements(sample_data, args):
-    """Discover elements for all samples
+class discover_elements(dict):
+    """A lazy elements dictionary. 
     
+    It initializes with nones and then builds elements as they're requested.
+    This allows elements and transcript building to proceed in sync.
     """
-    elements = {}
-    for sample_type in sample_data.get_sample_types():
+    def _build_elements(self, sample_type):
+        if config.VERBOSE: config.log_statement("Initializing read objects.")
         promoter_reads, rnaseq_reads, polya_reads = \
-            sample_data.get_reads(sample_type)
+            self.sample_data.get_reads(sample_type)
         elements_fname = "%s.%s.elements.bed" % (
-            args.ofprefix, sample_type)
-        grit.find_elements.find_elements(
-            promoter_reads, rnaseq_reads, polya_reads,
-            elements_fname, sample_data.ref_genes, 
-            args.ref_elements_to_include, 
-            region_to_use=args.region)
-        elements[sample_type] = (open(elements_fname), None)
+            self.args.ofprefix, sample_type)
+        try: 
+            ofp = open(elements_fname)
+        except IOError:
+            grit.find_elements.find_elements(
+                promoter_reads, rnaseq_reads, polya_reads,
+                elements_fname, sample_data.ref_genes, 
+                args.ref_elements_to_include, 
+                region_to_use=args.region)
+            ofp = open(elements_fname)
+        else:
+            msg = "WARNING: '%s' already exists - using existing file."
+            config.log_statement(msg % elements_fname, log=True)
+        return  (ofp, None)
+
+    def __init__(self, sample_data, args):
+        """Discover elements for all samples
+
+        """
+        self.sample_data = sample_data
+        self.args = args
+        for sample_type in sample_data.get_sample_types():
+            self[sample_type] = None
+        return
     
-    return elements
+    def iteritems(self):
+        for sample_type in self.keys():
+            if self[sample_type] == None:
+                self[sample_type] = self._build_elements(sample_type)
+            yield sample_type, self[sample_type]
+        return
 
 def main():
     args = parse_arguments()
