@@ -87,7 +87,7 @@ def build_sam_line( transcript, read_len, offset, read_identifier, quality_strin
     """
     # set flag to indcate strandedness of read matching that of the transcript
     flag = 0
-    if transcript.strand == '-': flag += 16
+    if transcript.strand == '+': flag += 16
     
     # adjust start position to correct genomic position
     start = transcript.genome_pos(offset)
@@ -184,6 +184,9 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
         """Choose a random fragment length from fl_dist
 
         """
+        if assay == 'CAGE':
+            return read_len
+        
         # if the fl_dist is constant
         if isinstance( fl_dist, int ):
             assert fl_dist <= transcript.calc_length(), 'Transcript which ' + \
@@ -203,14 +206,14 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
     def sample_read_offset( transcript, fl ):
         # calculate maximum offset
         max_offset = transcript.calc_length() - fl
-        if assay == 'RNAseq':
+        if assay in ('CAGE', 'RAMPAGE'):
+            if transcript.strand == '+': return 0
+            else: return max_offset
+        elif assay == 'RNAseq':
             return int( random() * max_offset )
-        elif assay == 'RAMPAGE':
-            return 0
-        elif assay == 'CAGE':
-            return 0
         elif assay == 'PASseq':
-            return max_offset
+            if transcript.strand == '-': return 0
+            else: return max_offset
     
     def get_random_qual_score( read_len ):
         # if no quality score were provided
@@ -335,8 +338,9 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
     # update the contig lens from the fasta file, if available 
     if fasta != None:
         for name, length in zip(fasta.references, fasta.lengths):
-            contig_lens[fix_chr_name(name)] = max(
-                length, contig_lens[name])
+            if fix_chr_name(name) in contig_lens:
+                contig_lens[fix_chr_name(name)] = max(
+                    length, contig_lens[name])
 
     # create the output directory
     bam_prefix = assay + ".sorted"
@@ -344,7 +348,6 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
     with tempfile.NamedTemporaryFile( mode='w+' ) as sam_fp:
         # write out the header
         for contig, contig_len in contig_lens.iteritems():
-            contig_len = 22422827
             data = ["@SQ", "SN:%s" % contig, "LN%i" % contig_len]
             sam_fp.write("\t".join(data) + "\n")
         
