@@ -847,7 +847,9 @@ def worker( data,
     for i in xrange(50):
         # if we've been in this worker longer than a minute, then 
         # so quit and re-spawn to free any unused memory
-        if time.time() - start_time > 60: return
+        if time.time() - start_time > 60: 
+            config.log_statement("")
+            return
         # get the data to process
         try: work_type, gene_id, trans_indices = data.get_queue_item(gene_id)
         except Queue.Empty: 
@@ -960,17 +962,19 @@ def spawn_and_manage_children( data,
             time.sleep(1.)
             continue
         
-        config.log_statement( "Spawning new worker child" )
-        # find an empty process slot
-        proc_i = min( i for i, p in enumerate(ps) 
-                      if p == None or not p.is_alive() )
-        
         # start a worker in this slot
         if config.NTHREADS > 1:
-            p = multiprocessing.Process(target=worker, args=args)
-            p.start()
-            if ps[proc_i] != None: ps[proc_i].join()
-            ps[proc_i] = p
+            config.log_statement( "Spawning new worker child" )
+            
+            # find the empty process slots
+            proc_is = [ i for i, p in enumerate(ps) 
+                        if p == None or not p.is_alive() ]
+            
+            for proc_i in proc_is:
+                p = multiprocessing.Process(target=worker, args=args)
+                p.start()
+                if ps[proc_i] != None: ps[proc_i].join()
+                ps[proc_i] = p
         # if we're running in single thread mode, there is no need
         # to spawn a process
         else:

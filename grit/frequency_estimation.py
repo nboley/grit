@@ -26,7 +26,8 @@ FD_SS = 1e-10
 NUM_ITER_FOR_CONV = 5
 DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
-ABS_TOL = 1e-5
+LHD_ABS_TOL = 1e-5
+PARAM_ABS_TOL = 1e-9
 
 MAX_NUM_ITERATIONS = 1000
 
@@ -322,16 +323,16 @@ def estimate_transcript_frequencies(
         start_time = time.time()
         
         if float(lhd - prev_lhd)/len(lhds) < eps:
-            if eps == ABS_TOL: break
+            if eps == LHD_ABS_TOL: break
             eps /= 5
-            eps = max( eps, ABS_TOL )
+            eps = max( eps, LHD_ABS_TOL )
         
     
     for i in xrange( 10 ):
         prev_x = x.copy()
         x, lhds = estimate_transcript_frequencies_line_search(  
             observed_array, full_expected_array, x, 
-            dont_zero=True, abs_tol=ABS_TOL )
+            dont_zero=True, abs_tol=LHD_ABS_TOL )
         lhd = calc_lhd( x, observed_array, full_expected_array )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
         if config.DEBUG_VERBOSE:
@@ -413,8 +414,10 @@ def estimate_confidence_bound( f_mat,
 
         # if the lhd step is already moving the paramater of itnerest in the 
         # proper direction, we just take a normal lhd step
-        if ( bound_type == 'LOWER' and lhd_gradient[fixed_index] <= ABS_TOL ) \
-                or ( bound_type == 'UPPER' and lhd_gradient[fixed_index] >= -ABS_TOL ):
+        if ( bound_type == 'LOWER' 
+             and lhd_gradient[fixed_index] <= PARAM_ABS_TOL ) \
+                or ( bound_type == 'UPPER' 
+                     and lhd_gradient[fixed_index] >= -PARAM_ABS_TOL ):
             theta = 0
         # otherwise, find out how miuch we need to step off of the maximum step
         # to make our parameter not move in the wrong direction
@@ -470,7 +473,7 @@ def estimate_confidence_bound( f_mat,
         
         x = take_lhd_decreasing_step(x)
         
-        if abs( prev_x - x[fixed_index] ) < ABS_TOL: 
+        if abs( prev_x - x[fixed_index] ) < PARAM_ABS_TOL: 
             n_successes += 1
             if n_successes > 3:
                 break
@@ -479,8 +482,8 @@ def estimate_confidence_bound( f_mat,
             n_successes = 0
     
     value = x[fixed_index] 
-    if value < ABS_TOL: value = 0.
-    if 1-value < ABS_TOL: value = 1.
+    if value < PARAM_ABS_TOL: value = 0.
+    if 1-value < PARAM_ABS_TOL: value = 1.
     lhd = calc_lhd( x, observed_array, expected_array )
     rv = chi2.sf( 2*(max_lhd-lhd), 1), value
     return rv    
