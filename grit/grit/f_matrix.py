@@ -514,7 +514,7 @@ def build_expected_and_observed_rnaseq_counts( gene, reads, fl_dists ):
     
     binned_reads = bin_rnaseq_reads( 
         reads, gene.chrm, gene.strand, exon_boundaries)
-        
+    
     observed_cnts = build_observed_cnts( binned_reads, fl_dists )    
     read_groups_and_read_lens =  { (RG, read_len) for RG, read_len, bin 
                                    in binned_reads.iterkeys() }
@@ -722,11 +722,13 @@ def bin_rnaseq_reads( reads, chrm, strand, exon_boundaries ):
     # finally, aggregate the bins
     binned_reads = defaultdict( int )
     for r1, r2 in paired_reads:
-        if r1.rlen != r2.rlen:
-            print >> sys.stderr, "WARNING: read lengths are then same"
-            continue
+        if r1.rlen == 0: rlen = sum( x[1] for x in r1.cigar if x[0] == 0 )
+        else: 
+            rlen = r1.rlen
+            if rlen != r2.rlen:
+                print >> sys.stderr, "WARNING: read lengths are not the same"
+                continue
         
-        rlen = r1.rlen
         rg = get_read_group( r1, r2 )
         bin1 = build_bin_for_read( r1 )
         bin2 = build_bin_for_read( r2 )

@@ -824,7 +824,6 @@ def build_fl_dists( elements, reads ):
         fl_dists, fragments = estimate_normal_fl_dist_from_reads( reads )
     #if False and None != fragments and  None != analyze_pdf_fname:
     #    analyze_fl_dists( fragments, analyze_pdf_fname )
-    
     return fl_dists
 
 def worker( data, 
