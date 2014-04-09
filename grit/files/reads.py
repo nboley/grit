@@ -567,10 +567,11 @@ class CAGEReads(Reads):
         return cvg
 
 class RAMPAGEReads(Reads):
-    def init(self, reverse_read_strand, pairs_are_opp_strand=None ):       
+    def init(self, reverse_read_strand, pairs_are_opp_strand=None,
+             reads_are_paired=True, ref_genes=None ):
         assert self.is_indexed()
 
-        reads_are_paired = True
+        assert reads_are_paired, "GRIT can not use unpaired RAMPAGE reads."
         reads_are_stranded = True
         
         # reads strandedness
@@ -589,7 +590,8 @@ class RAMPAGEReads(Reads):
         
         self._init_kwargs = {
             'reverse_read_strand': reverse_read_strand, 
-            'pairs_are_opp_strand': pairs_are_opp_strand 
+            'pairs_are_opp_strand': pairs_are_opp_strand,
+            'reads_are_paired': reads_are_paired
         }
         
         return self
