@@ -327,20 +327,28 @@ class SharedData(object):
                 self.input_queue[gene_id] = [(work_type, work_data),]
         del self.expression_queue[:]
     
-    def get_queue_item(self, gene_id=None):
+    def get_queue_item(self, gene_id=None, 
+                       raise_error_if_no_matching_gene=False):
         """Get an item from th work queue.
         
         If gene id is set, then try to get work from this gene to avoid
-        having to reload the genes.
+        having to reload the genes. 
         """
         with self.input_queue_lock:
             if len(self.input_queue) == 0:
                 raise Queue.Empty, "Work queue is empty"
-            try:
-                gene_work = self.input_queue.pop(gene_id)
-            except KeyError:
+            
+            if gene_id == None:
                 gene_id, gene_work = self.input_queue.popitem()
-                
+            else:
+                try:
+                    gene_work = self.input_queue.pop(gene_id)
+                except KeyError:
+                    if raise_error_if_no_matching_gene:
+                        raise Queue.Empty, "Work queue is empty for gene_id "
+                    else:
+                        gene_id, gene_work = self.input_queue.popitem()
+            
             work_type, work_data = gene_work.pop()
             if len(gene_work) > 0:
                 self.input_queue[gene_id] = gene_work
@@ -348,15 +356,6 @@ class SharedData(object):
         assert work_type != 'ERROR'
         assert work_type != 'FINISHED'
         return work_type, gene_id, work_data
-
-        """ Maybe dead code
-        if work_type == 'ERROR':
-            ( gene_id, trans_index ), msg = work_data
-            config.log_statement( str(gene_id) + "\tERROR\t" + msg, log=True ) 
-            config.log_statement("")
-            continue
-        """
-        pass
 
 def calc_fpkm( gene, fl_dists, freqs, num_reads_in_bam):
     assert len(gene.transcripts) == len(freqs)
@@ -844,16 +843,17 @@ def worker( data,
     gene_id = None
     start_time = time.time()
     for i in xrange(50):
-        # if we've been in this worker longer than a minute, then 
-        # so quit and re-spawn to free any unused memory
-        if time.time() - start_time > 60: 
+        # if we've been in this worker longer than an hour, then 
+        # quit and re-spawn to free any un-reclaimed memory
+        if time.time() - start_time > 3600:
             config.log_statement("")
             return
         # get the data to process
-        try: work_type, gene_id, trans_indices = data.get_queue_item(gene_id)
+        try: work_type, gene_id, trans_indices = data.get_queue_item(
+            gene_id, raise_error_if_no_matching_gene=True)
         except Queue.Empty: 
             config.log_statement("")
-            return        
+            return
         
         if work_type == 'gene':
             # build the gene with transcripts, and optionally call orfs
