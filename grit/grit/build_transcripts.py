@@ -852,8 +852,15 @@ def worker( data,
         try: work_type, gene_id, trans_indices = data.get_queue_item(
             gene_id, raise_error_if_no_matching_gene=True)
         except Queue.Empty: 
-            config.log_statement("")
-            return
+            # if less than 5 minutes has passed, get a new gene
+            if time.time() - start_time < 300:
+                try: work_type, gene_id, trans_indices = data.get_queue_item()
+                except Queue.Empty:
+                    config.log_statement("")
+                    return
+            else:
+                config.log_statement("")
+                return
         
         if work_type == 'gene':
             # build the gene with transcripts, and optionally call orfs
@@ -964,16 +971,20 @@ def spawn_and_manage_children( data,
         # start a worker in this slot
         if config.NTHREADS > 1:
             config.log_statement( "Spawning new worker child" )
-            
-            # find the empty process slots
-            proc_is = [ i for i, p in enumerate(ps) 
-                        if p == None or not p.is_alive() ]
-            
-            for proc_i in proc_is:
-                p = multiprocessing.Process(target=worker, args=args)
-                p.start()
-                if ps[proc_i] != None: ps[proc_i].join()
-                ps[proc_i] = p
+            while True:
+                # find the empty process slots
+                proc_is = [ i for i, p in enumerate(ps) 
+                            if p == None or not p.is_alive() ]
+                # if we can't find new empty processes or the input queue is 
+                # empty, then continue
+                if len(proc_is) == 0 or len(data.input_queue) == 0: break
+                
+                for proc_i in proc_is:
+                    p = multiprocessing.Process(target=worker, args=args)
+                    p.start()
+                    if ps[proc_i] != None: ps[proc_i].join()
+                    ps[proc_i] = p
+        
         # if we're running in single thread mode, there is no need
         # to spawn a process
         else:
