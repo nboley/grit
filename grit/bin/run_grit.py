@@ -161,7 +161,8 @@ class Samples(object):
                     'paired', 'stranded', 'read_type', 'filename']))
         return header + "\n".join("\t".join(x) for x in self.control_entries)
 
-    def get_elements( self, assay, sample_type=None, rep_id=None ):
+    def get_elements( self, assay, sample_type=None, rep_id=None, 
+                      include_merged=False ):
         """Get values of the specified column name, optionally filtered by
            sample_type and rep_id
         """
@@ -172,19 +173,25 @@ class Samples(object):
             assert sample_type != None, \
                 "rep_id can't be filtered without a sample type filter"
         if sample_type != None:
-            query += " AND (sample_type = '{}' OR sample_type = '*') ".format(
-                sample_type)
+            query += " AND (sample_type = '{}'".format(sample_type)
+            if include_merged: query += "OR sample_type = '*') "
+            else: query += ") "
         if rep_id != None:
-            query += " AND (rep_id = '{}' OR rep_id = '*') ".format(rep_id)
+            query += " AND (rep_id = '{}' ".format(rep_id)
+            if include_merged: query += "OR rep_id = '*') "
+            else: query += ") "
+        
         with self.conn:
             return [ ControlFileEntry(*x) for x in 
                      self.conn.execute( query  ).fetchall() ]
 
-    def _load_rnaseq_reads(self, sample_type, rep_id):
+    def _load_rnaseq_reads(self, sample_type, rep_id, include_merged):
         if config.VERBOSE: config.log_statement(
             "Initializing RNAseq reads for sample '%s'." % sample_type)
         all_reads = []
-        for data in self.get_elements( 'rnaseq', sample_type, rep_id ):
+        for data in self.get_elements( 
+                'rnaseq', sample_type, rep_id, include_merged=include_merged):
+            
             if data.filename in self.mapped_reads_cache:
                 reads = self.mapped_reads_cache[data.filename]
                 reads.reload()
@@ -200,11 +207,13 @@ class Samples(object):
         
         return all_reads
 
-    def _load_promoter_reads(self, sample_type, rep_id):
+    def _load_promoter_reads(self, sample_type, rep_id, include_merged):
         if config.VERBOSE: config.log_statement(
             "Initializing promoter reads for sample '%s'." % sample_type)
-        cage_elements = self.get_elements( 'cage', sample_type, rep_id )
-        rampage_elements = self.get_elements( 'rampage', sample_type, rep_id )
+        cage_elements = self.get_elements( 
+            'cage', sample_type, rep_id, include_merged=include_merged )
+        rampage_elements = self.get_elements( 
+            'rampage', sample_type, rep_id, include_merged=include_merged )
 
         assert len(cage_elements) == 0 or len(rampage_elements) == 0, \
             "Can not use both RAMPAGE and CAGE reads in a single sample"
@@ -232,11 +241,12 @@ class Samples(object):
         
         return promoter_reads
 
-    def _load_polya_reads(self, sample_type, rep_id):
+    def _load_polya_reads(self, sample_type, rep_id, include_merged):
         if config.VERBOSE: config.log_statement(
             "Initializing poly(A) reads for sample '%s'." % sample_type)
         all_reads = []
-        for data in self.get_elements( 'polya', sample_type, rep_id ):
+        for data in self.get_elements( 
+                'polya', sample_type, rep_id, include_merged=include_merged ):
             if data.filename in self.mapped_reads_cache:
                 reads = self.mapped_reads_cache[data.filename]
                 reads.reload()
@@ -251,14 +261,18 @@ class Samples(object):
         
         return all_reads
     
-    def get_reads(self, sample_type=None, rep_id=None, verify_args=True):
-        rnaseq_reads = self._load_rnaseq_reads(sample_type, rep_id)
-        promoter_reads = self._load_promoter_reads(sample_type, rep_id)
-        polya_reads = self._load_polya_reads(sample_type, rep_id)
+    def get_reads(self, sample_type=None, rep_id=None, 
+                  verify_args=True, include_merged=False):
+        rnaseq_reads = self._load_rnaseq_reads(
+            sample_type, rep_id, include_merged)
+        promoter_reads = self._load_promoter_reads(
+            sample_type, rep_id, include_merged)
+        polya_reads = self._load_polya_reads(
+            sample_type, rep_id, include_merged)
         if verify_args:
             self.verify_args_are_sufficient( 
                 rnaseq_reads, promoter_reads, polya_reads )
-        return (None if len(promoter_reads)==0 else MergedReads(promoter_reads), 
+        return (None if len(promoter_reads)==0 else MergedReads(promoter_reads),
                 None if len(rnaseq_reads) == 0 else MergedReads(rnaseq_reads), 
                 None if len(polya_reads) == 0 else MergedReads(polya_reads) )
     
@@ -449,7 +463,7 @@ class discover_elements(dict):
     def _build_elements(self, sample_type):
         if config.VERBOSE: config.log_statement("Initializing read objects.")
         promoter_reads, rnaseq_reads, polya_reads = \
-            self.sample_data.get_reads(sample_type)
+            self.sample_data.get_reads(sample_type, include_merged=True)
         elements_fname = "%s.%s.elements.bed" % (
             self.args.ofprefix, sample_type)
         try: 
@@ -526,10 +540,13 @@ def main():
                 for rep_id in rep_ids:
                     if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
                         promoter_reads, rnaseq_reads, polya_reads = \
-                            sample_data.get_reads(sample_type, rep_id, verify_args=False)
+                            sample_data.get_reads(
+                                sample_type, rep_id, 
+                                verify_args=False, include_merged=False)
                     else:
                         promoter_reads, rnaseq_reads, polya_reads = [
                             None, None, None]
+                    
                     # find what to prefix the output files with
                     ofprefix = "%s.%s" % (args.ofprefix, sample_type)
                     if rep_id != None: ofprefix += "." + rep_id
