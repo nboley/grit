@@ -932,7 +932,9 @@ def spawn_and_manage_children( data,
     while True:
         # sleep until we have a free process index
         while all( p != None and p.is_alive() for p in ps ):
-            config.log_statement( "Waiting for free children" )
+            config.log_statement(
+                "Waiting for free children (%i genes in queue)" 
+                % len(data.input_queue) )
             time.sleep(1.0)
         
         # check to see if the queue is empty and all processes
