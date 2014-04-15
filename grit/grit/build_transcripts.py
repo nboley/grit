@@ -114,13 +114,15 @@ class SharedData(object):
             args_template = [rnaseq_reads, promoter_reads, polya_reads ]
             all_args = []
             for (contig, strand), grpd_exons in elements.iteritems():
-                all_args.append( [(contig, strand), grpd_exons] + args_template)
+                all_args.append( [
+                        self, (contig, strand), grpd_exons] + args_template)
 
-            for args in all_args:
-                self.add_elements_for_contig_and_strand(*args)
-
-            #p = Pool(config.NTHREADS)
-            #p.apply( add_elements_for_contig_and_strand, all_args )
+            if config.NTHREADS == 1:
+                for args in all_args:
+                    SharedData.add_elements_for_contig_and_strand(*args)
+            else:
+                p = Pool(config.NTHREADS)
+                p.apply(SharedData.add_elements_for_contig_and_strand, all_args)
 
         self.output_dict['fasta_fn'] = ( 
             None if fasta == None else fasta.name )
