@@ -747,7 +747,10 @@ class DesignMatrix(object):
                 gene, rnaseq_reads, fl_dists )
         # if no transcripts are observable given the fl dist, then return nothing
         if len( expected_rnaseq_cnts ) == 0:
-            raise ValueError, "No observable bins"
+            self.array_types.append('RNASeq')
+            self.obs_cnt_arrays.append(None)
+            self.expected_freq_arrays.append(None)
+            return 
         
         # build the expected and observed counts, and convert them to frequencies
         ( expected_rnaseq_array, observed_rnaseq_array, unobservable_rnaseq_trans ) = \
@@ -775,7 +778,7 @@ class DesignMatrix(object):
             expected_cnts, observed_cnts, normalize=True )
         del expected_cnts, observed_cnts
 
-        self.array_types.append('reads_type')
+        self.array_types.append(reads_type)
         self.obs_cnt_arrays.append(observed_array)
         self.expected_freq_arrays.append(expected_array)
         self.unobservable_transcripts.update(unobservable_trans)
@@ -786,7 +789,11 @@ class DesignMatrix(object):
         """
         # it doesn't matter which design matric we use, because they 
         # al have the same number of transcripts
-        num_transcripts = self.expected_freq_arrays[1].shape[1]
+        for array in self.expected_freq_arrays:
+            if array == None: continue
+            num_transcripts = array.shape[1]
+            break
+        
         indices = set(xrange(num_transcripts)) - self.filtered_transcripts
         return numpy.array(sorted(indices))
     
@@ -842,13 +849,14 @@ class DesignMatrix(object):
         return self._expected_and_observed
 
     def find_transcripts_to_filter(self,expected,observed,max_num_transcripts):
+        # cluster bins
+        expected, observed = cluster_rows(expected, observed)
+        
         num_transcripts = expected.shape[1]
         low_expression_ts = set(self.unobservable_transcripts)
         if num_transcripts <= max_num_transcripts: 
             return low_expression_ts
-
-        # cluster bins
-        expected, observed = cluster_rows(expected, observed)
+        
 
         # transcripts to remove
         test = (observed+1)/expected.max(1)
@@ -885,7 +893,6 @@ class DesignMatrix(object):
         
         if len( gene.transcripts ) == 0:
             raise ValueError, "No transcripts"
-
         
         if five_p_reads != None:
             if config.DEBUG_VERBOSE:
@@ -900,8 +907,9 @@ class DesignMatrix(object):
         if config.DEBUG_VERBOSE:
             config.log_statement( "Building RNAseq arrays" )
         self._build_rnaseq_arrays(gene, rnaseq_reads, fl_dists)
-        self.num_rnaseq_reads = sum(self.obs_cnt_arrays[-1])
-            
+        if self.obs_cnt_arrays[-1] != None:
+            self.num_rnaseq_reads = sum(self.obs_cnt_arrays[-1])
+        
         if three_p_reads != None:
             if config.DEBUG_VERBOSE:
                 config.log_statement( "Building TES arrays" )
@@ -911,6 +919,9 @@ class DesignMatrix(object):
             self.expected_freq_arrays.append(None)
             self.obs_cnt_arrays.append(None)
             self.num_tp_reads = None
+
+        if all( mat == None for mat in self.obs_cnt_arrays ):
+            raise ValueError, "No observable transcripts"
         
         # initialize the filtered_transcripts to the unobservable transcripts
         self.filtered_transcripts = set(list(self.unobservable_transcripts))
@@ -920,10 +931,10 @@ class DesignMatrix(object):
             if config.DEBUG_VERBOSE:
                 config.log_statement( "Filtering design matrix" )
 
+            expected, observed = self.expected_and_observed()
+            
             self.filtered_transcripts =  self.find_transcripts_to_filter(
-                self.expected_freq_arrays[1], 
-                self.obs_cnt_arrays[1], 
-                self.max_num_transcripts)
+                expected, observed, max_num_transcripts)
         
         return
 
