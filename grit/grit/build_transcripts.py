@@ -199,7 +199,8 @@ class SharedData(object):
 
     def add_estimate_mle_to_work_queue(self, gene_id, f_mat):
         with self.output_dict_lock: 
-            self.output_dict['num_rnaseq_reads'] += f_mat.num_rnaseq_reads
+            if f_mat.num_rnaseq_reads != None:
+                self.output_dict['num_rnaseq_reads'] += f_mat.num_rnaseq_reads
             if f_mat.num_fp_reads != None:
                 self.output_dict['num_cage_reads'] += f_mat.num_fp_reads
             if f_mat.num_tp_reads != None:
@@ -549,25 +550,14 @@ def build_design_matrices_worker(gene, fl_dists,
         f_mat = DesignMatrix(gene, fl_dists, 
                              rnaseq_reads, promoter_reads, polya_reads,
                              config.MAX_NUM_TRANSCRIPTS)
-    except ValueError, inst:
-        error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
-            os.getpid(), gene.id, 
-            gene.chrm, gene.strand, gene.start, gene.stop, inst)
-        config.log_statement( error_msg, log=True )
-        return None
-    except MemoryError, inst:
-        error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
-            os.getpid(), gene.id, 
-            gene.chrm, gene.strand, gene.start, gene.stop, inst)
-        config.log_statement( error_msg, log=True )
-        return None
     except Exception, inst:
         error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
             os.getpid(), gene.id, 
             gene.chrm, gene.strand, gene.start, gene.stop, inst)
-        config.log_statement( error_msg, log=True )
+        config.log_statement( 
+            error_msg + "\n" + traceback.format_exc(), log=True )
         return None
-
+    
     config.log_statement( "FINISHED DESIGN MATRICES %s" % gene.id )
     return f_mat
 
@@ -582,10 +572,6 @@ def estimate_mle_worker( gene, fl_dists, f_mat, num_reads_in_bams ):
             num_reads_in_bams)
         mle = frequency_estimation.estimate_transcript_frequencies( 
             observed_array, expected_array)
-    except ValueError, inst:
-        error_msg = "Skipping %s: %s" % ( gene.id, inst )
-        config.log_statement( error_msg, log=True )
-        return None
     except Exception, inst:
         error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
             os.getpid(), gene.id, 
