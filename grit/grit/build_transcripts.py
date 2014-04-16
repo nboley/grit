@@ -238,11 +238,9 @@ class SharedData(object):
             if i%config.NUM_TRANS_IN_GRP == 0:
                 grouped_indices.append( [] )
             grouped_indices[-1].append( i )
-
-        work = []
-        for indices in grouped_indices:
-            self.add_to_input_queue('lb', gene_id, indices)
-            self.add_to_input_queue('ub', gene_id, indices)
+        
+        self.add_many_to_input_queue('lb', gene_id, grouped_indices)
+        self.add_many_to_input_queue('ub', gene_id, grouped_indices)
         
         return
     
@@ -304,6 +302,16 @@ class SharedData(object):
         self._cached_gene = None
         self._cached_fmat_gene_id = None
         self._cached_fmat = None
+
+    def add_many_to_input_queue(self, work_type, gene_id, work_data_iter=None):
+        with self.input_queue_lock:
+            try:
+                gene_work = self.input_queue.pop(gene_id)
+            except KeyError:
+                gene_work = []
+            for work_data in work_data_iter:
+                gene_work.append((work_type, work_data))
+            self.input_queue[gene_id] = gene_work
     
     def add_to_input_queue(self, work_type, gene_id, work_data=None):
         with self.input_queue_lock:
@@ -953,15 +961,20 @@ def spawn_and_manage_children( data,
                         continue
                     else:
                         return
-            if config.DEBUG_VERBOSE: config.log_statement( 
-                "Waiting for children to finish" )
-            time.sleep(1.)
+            
+            config.log_statement(
+                "Waiting for input queue to fill (%i genes in queue)" 
+                % len(data.input_queue) )
+            time.sleep(1.0)
             continue
         
         # start a worker in this slot
         if config.NTHREADS > 1:
-            config.log_statement( "Spawning new worker child" )
             while True:
+                config.log_statement( 
+                    "Spawning new worker children (%i genes in queue)"
+                    % len(data.input_queue) )
+                
                 # find the empty process slots
                 proc_is = [ i for i, p in enumerate(ps) 
                             if p == None or not p.is_alive() ]
