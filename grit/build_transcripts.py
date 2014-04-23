@@ -12,6 +12,7 @@ from collections import defaultdict
 import Queue
 
 import multiprocessing
+from multiprocessing.sharedctypes import RawArray, RawValue
 from lib.multiprocessing_utils import Pool
 
 from files.gtf import load_gtf, Transcript, Gene
@@ -208,7 +209,7 @@ class SharedData(object):
             if f_mat.num_tp_reads != None:
                 self.output_dict['num_polya_reads'] += f_mat.num_tp_reads
         
-        self.add_to_expression_queue('mle', gene_id, None)
+        self.add_to_expression_queue(gene_id)
         
         return
     
@@ -220,19 +221,16 @@ class SharedData(object):
 
     def get_mle(self, gene_id):
         with self.output_dict_lock: 
-            return self.output_dict[(gene_id, 'mle')]
+            return numpy.frombuffer(self.mle_estimates[gene_id])
     
     def set_mle(self, gene, mle):
         assert len(mle) == len(gene.transcripts) + 1
         with self.output_dict_lock: 
-            self.output_dict[(gene.id, 'mle')] = mle
+            self.mle_estimates[gene.id][:] = mle
     
     def add_estimate_cbs_to_work_queue(self, gene_id):
         gene = self.get_gene(gene_id)
-        with self.output_dict_lock:
-            self.output_dict[(gene_id, 'ub')] = [None]*len(gene.transcripts)
-            self.output_dict[(gene_id, 'lb')] = [None]*len(gene.transcripts)
-
+        
         grouped_indices = []
         for i in xrange(len(gene.transcripts)):
             if i%config.NUM_TRANS_IN_GRP == 0:
@@ -249,28 +247,26 @@ class SharedData(object):
             self.finished_queue.put( ('gtf', gene_id) )
     
     def get_cbs(self, gene_id, cb_type):
-        assert cb_type in ('ub', 'lb')
-        with self.output_dict_lock: 
-            return self.output_dict[(gene_id, cb_type)]
-
+        if cb_type == 'ub':
+            return numpy.frombuffer(self.ubs[gene_id])
+        elif cb_type == 'lb':
+            return numpy.frombuffer(self.lbs[gene_id])
+        else: 
+            assert False, "Unrecognized confidence bound type '%s'" % cb_type
+    
     def set_cbs(self, gene_id, cb_type, indices_and_values):
-        assert cb_type in ('ub', 'lb')
-        # put the gene into the manager
+        if cb_type == 'ub':
+            data = self.ubs[gene_id]
+        elif cb_type == 'lb':
+            data = self.lbs[gene_id]
+        else: 
+            assert False, "Unrecognized confidence bound type '%s'" % cb_type
+        
         with self.output_dict_lock: 
-            data = self.output_dict[(gene_id, cb_type)]
             for i, v in indices_and_values:
                 data[i] = v
-            self.output_dict[(gene_id, cb_type)] = data
-        
-            # check to see if we're finished - clean this up
-            ubs = self.output_dict[(gene_id, 'ub')]
-            lbs = self.output_dict[(gene_id, 'lb')]
-
-            # XXX
-            #config.log_statement("CNTS: %i/%i %i/%i" % (
-            #        sum(int(x != None) for x in ubs), len(ubs), 
-            #        sum(int(x != None) for x in lbs), len(lbs)), log=True)
-            if all(x != None for x in ubs) and all(x != None for x in lbs):
+            self.num_cbs_left[gene_id].value -= len(indices_and_values)
+            if self.num_cbs_left[gene_id].value == 0:
                 self.set_gene_to_finished(gene_id)
         
         return
@@ -288,7 +284,13 @@ class SharedData(object):
         # store data to be written out by the writer process
         self.expression_queue = self._manager.list()
         self.finished_queue = self._manager.Queue()
-
+        
+        # store the expression estimates
+        self.mle_estimates = {}
+        self.lbs = {}
+        self.ubs = {}
+        self.num_cbs_left = {}
+        
         # store data that all children need to be able to access        
         self.output_dict = self._manager.dict()
         self.output_dict_lock = multiprocessing.Lock()    
@@ -322,20 +324,27 @@ class SharedData(object):
             except KeyError:
                 self.input_queue[gene_id] = [(work_type, work_data),]
     
-    def add_to_expression_queue(self, work_type, gene_id, work_data=None):
+    def add_to_expression_queue(self, gene_id):
         with self.input_queue_lock:
-            self.expression_queue.append((work_type, gene_id, work_data))
+            self.expression_queue.append(gene_id)
     
     def migrate_expression_to_input_queue(self):
         if config.DEBUG_VERBOSE: config.log_statement( 
             "Populating input queue from expression queue" )
-        for work_type, gene_id, work_data in self.expression_queue:
-            try:
-                gene_work = self.input_queue.pop(gene_id)
-                gene_work.append((work_type, work_data))
-                self.input_queue[gene_id] = gene_work
-            except KeyError:
-                self.input_queue[gene_id] = [(work_type, work_data),]
+        for gene_id in self.expression_queue:
+            assert gene_id not in self.input_queue
+            gene = self.get_gene(gene_id)
+            self.mle_estimates[gene_id] = RawArray(
+                'd', [-1]*(len(gene.transcripts)+1))
+            self.ubs[gene_id] = RawArray(
+                'd', [-1]*len(gene.transcripts))
+            self.lbs[gene_id] = RawArray(
+                'd', [-1]*len(gene.transcripts))
+            self.num_cbs_left[gene_id] = RawValue(
+                'i', 2*len(gene.transcripts))
+            
+            self.input_queue[gene_id] = [('mle', None),]
+        
         del self.expression_queue[:]
     
     def get_queue_item(self, gene_id=None, 
@@ -716,8 +725,8 @@ def write_finished_data_to_disk( data,
                     mles = data.get_mle(key)[1:]
                     lbs, ubs = None, None
                     if compute_confidence_bounds:
-                        lbs = data.output_dict[(key, 'lb')]
-                        ubs = data.output_dict[(key, 'ub')]
+                        lbs = data.get_cbs(gene.id, 'lb')
+                        ubs = data.get_cbs(gene.id, 'ub')
                     num_reads_in_bams = data.get_num_reads_in_bams(key)
 
                     # XXX
@@ -955,12 +964,7 @@ def spawn_and_manage_children( data,
                     "Acquired input queue lock" )
                 if len(data.input_queue) == 0 and \
                         all( p == None or not p.is_alive() for p in ps ):
-                    # populate the input queue from the expression queue
-                    if len(data.expression_queue) > 0:
-                        data.migrate_expression_to_input_queue()
-                        continue
-                    else:
-                        return
+                    return
             
             config.log_statement(
                 "Waiting for input queue to fill (%i genes in queue)" 
@@ -1045,20 +1049,16 @@ def build_and_quantify_transcripts(
             fl_dists, rnaseq_reads, promoter_reads, polya_reads \
                 = None, None, None, None
                 
-        config.log_statement( "Initializing processing data" )    
+        config.log_statement( 
+            "Initializing gene and design matrix processing data" )
         data.init_processing_data(             
             elements, genes, 
             fasta, fl_dists,
             rnaseq_reads, promoter_reads, polya_reads )
-        config.log_statement( "Finished initializing processing data" )
+        config.log_statement( 
+            "Finished initializing gene and design matrix processing data")
         
-        write_p = multiprocessing.Process(
-            target=write_finished_data_to_disk, args=(
-                data, gtf_ofp, expression_ofp,
-                estimate_confidence_bounds, write_design_matrices ) )
-        
-        write_p.start()    
-        
+        # build transcripts and the corresponding design matrices, if necessary
         spawn_and_manage_children( data,
                                    
                                    promoter_reads,
@@ -1068,7 +1068,27 @@ def build_and_quantify_transcripts(
                                    write_design_matrices, 
                                    estimate_confidence_bounds)
         
-                                                              
+        # populate the input queue from the expression queue
+        data.migrate_expression_to_input_queue()
+
+        config.log_statement( "Spawning background writer" )    
+        write_p = multiprocessing.Process(
+            target=write_finished_data_to_disk, args=(
+                data, gtf_ofp, expression_ofp,
+                estimate_confidence_bounds, write_design_matrices ) )
+        write_p.start()    
+        
+        # estimate expression
+        spawn_and_manage_children( data,
+                                   
+                                   promoter_reads,
+                                   rnaseq_reads,
+                                   polya_reads,
+                                   
+                                   write_design_matrices, 
+                                   estimate_confidence_bounds)
+        
+                                                      
         data.finished_queue.put( ('FINISHED', None) )
         write_p.join()
     except Exception, inst:
