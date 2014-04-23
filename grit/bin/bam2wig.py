@@ -204,7 +204,7 @@ def main():
     # initialize the assay specific options
     if assay == 'cage':
         reads = CAGEReads( reads_fname, "rb" )
-        reads.init(reverse_read_strand=True)
+        reads.init(reverse_read_strand=False)
         stranded = True
         assert not reverse_read_strand
     elif assay == 'rampage':
