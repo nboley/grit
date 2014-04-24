@@ -231,7 +231,8 @@ def find_cds_for_gene( gene, fasta, only_longest_orf ):
                 if len( filtered_orfs ) > 1 else trans.id            
             new_trans = Transcript( 
                 trans_id, trans.chrm, trans.strand, trans.exons, (start, stop), 
-                coding_sequence=AA_seq )
+                coding_sequence=AA_seq, 
+                promoter=trans.promoter, polya_region=trans.polya_region )
             annotated_transcripts.append( new_trans )
     
     return annotated_transcripts
