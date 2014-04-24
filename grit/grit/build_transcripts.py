@@ -952,7 +952,7 @@ def spawn_and_manage_children( data,
             config.log_statement(
                 "Waiting for free children (%i genes in queue)" 
                 % len(data.input_queue) )
-            time.sleep(1.0)
+            time.sleep(0.1)
         
         # check to see if the queue is empty and all processes
         # are finished. If so, then we are done
@@ -969,7 +969,7 @@ def spawn_and_manage_children( data,
             config.log_statement(
                 "Waiting for input queue to fill (%i genes in queue)" 
                 % len(data.input_queue) )
-            time.sleep(1.0)
+            time.sleep(0.1)
             continue
         
         # start a worker in this slot
