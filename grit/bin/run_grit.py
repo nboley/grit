@@ -16,6 +16,7 @@ from grit.lib.logging import Logger
 
 import grit.find_elements
 import grit.build_transcripts
+import grit.build_transcripts
 
 import grit.config as config
 
@@ -536,7 +537,23 @@ def main():
     if args.only_build_elements:
         return 
 
+    # build transcripts for each sample
     for sample_type, (elements_fp, gtf_fp) in elements.iteritems():
+        ofprefix = "%s.%s" % (args.ofprefix, sample_type)
+        assert elements_fp == None or gtf_fp == None
+        if gtf_fp != None:
+            genes_fnames = []
+            genes = load_gtf(gtf_fp)
+            for gene in genes:
+                genes_fnames.append(
+                    (gene.id, len(gene.transcripts), gene.write_to_temp_file()))
+        else:
+            genes_fnames = grit.build_transcripts.build_transcripts(
+                elements_fp, ofprefix, args.fasta)
+        print genes_fnames
+    
+    return
+    if True:
         rep_ids = sample_data.get_rep_ids(sample_type)
         if len(rep_ids) == 0: rep_ids = [None,]
         for rep_id in rep_ids:
@@ -552,7 +569,8 @@ def main():
             # find what to prefix the output files with
             ofprefix = "%s.%s" % (args.ofprefix, sample_type)
             if rep_id != None: ofprefix += "." + rep_id
-
+            print args.fasta.filename
+            assert False
             grit.build_transcripts.build_and_quantify_transcripts(
                 promoter_reads, rnaseq_reads, polya_reads,
                 elements_fp, gtf_fp, 
@@ -562,4 +580,7 @@ def main():
     
 if __name__ == '__main__':
     try: main()
-    finally: config.log_statement.close()
+    finally: 
+        try:config.log_statement.close()
+        except: pass
+            
