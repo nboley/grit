@@ -1,5 +1,4 @@
 import sys, os
-sys.path.insert(0, "/home/nboley/grit/grit/")
 
 import time
 import traceback
@@ -259,9 +258,9 @@ def build_gene(elements, fasta=None):
 
 def worker( elements, elements_lock, 
             output, output_lock, 
-            gtf_ofp, fasta_fn ):
+            gtf_ofp, fasta_fp ):
     # if appropriate, open the fasta file
-    if fasta_fn != None: fasta = Fastafile(fasta_fn)
+    if fasta_fp != None: fasta = Fastafile(fasta_fp.name)
     else: fasta = None
     
     while True:
@@ -282,11 +281,9 @@ def worker( elements, elements_lock,
 
             # dump a pickel of the gene to a temp file, and set that in the 
             # output manager
-            ofname = os.path.join(tempfile.mkdtemp(), gene_elements.id + ".gene")
-            with open(ofname, "w") as ofp:
-                pickle.dump(gene, ofp)
+            ofname = gene.write_to_temp_file()
             with output_lock: 
-                output.append((gene.id, ofname))
+                output.append((gene.id, len(gene.transcripts), ofname))
             
             write_gene_to_gtf(gtf_ofp, gene)
         except Exception, inst:
@@ -332,7 +329,7 @@ def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
     config.log_statement("")
     return    
 
-def build_transcripts(exons_bed_fp, ofprefix, fasta_fn=None):
+def build_transcripts(exons_bed_fp, ofprefix, fasta_fp=None):
     """Build transcripts
     """
     
@@ -365,8 +362,8 @@ def build_transcripts(exons_bed_fp, ofprefix, fasta_fn=None):
     output = manager.list()
     output_lock = manager.Lock()    
 
-    with open("tmp.gtf", "w") as ofp:
-        args = [elements, elements_lock, output, output_lock, ofp, fasta_fn]
+    with open("%s.gtf" % ofprefix, "w") as ofp:
+        args = [elements, elements_lock, output, output_lock, ofp, fasta_fp]
         if config.NTHREADS in (None, 1):
             worker(*args)
         else:
@@ -375,6 +372,7 @@ def build_transcripts(exons_bed_fp, ofprefix, fasta_fn=None):
                 p = multiprocessing.Process(target=worker, args=args)
                 p.daemon = True
                 p.start()
+                ps.append(p)
             for p in ps:
                 p.join()
     
@@ -385,6 +383,7 @@ def build_transcripts(exons_bed_fp, ofprefix, fasta_fn=None):
     return genes
 
 def main():
+    assert False
     with open(sys.argv[1]) as fp:
         build_transcripts(fp, "tmp", sys.argv[2])
 

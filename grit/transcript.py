@@ -1,4 +1,7 @@
-import sys
+import os, sys
+
+import tempfile
+import cPickle as pickle
 
 from itertools import chain, izip
 from collections import namedtuple, defaultdict
@@ -63,6 +66,12 @@ class Gene( object ):
         self.transcripts = transcripts
         self.meta_data = meta_data
         return    
+    
+    def write_to_temp_file(self):
+        ofname = os.path.join(tempfile.mkdtemp(), self.id + ".gene")
+        with open(ofname, "w") as ofp:
+            pickle.dump(self, ofp)
+        return ofname
     
     def find_transcribed_regions( self ):
         exons = set()
