@@ -44,3 +44,6 @@ NUM_TSS_BASES_TO_SKIP = 200
 
 MIN_NUM_POLYA_TAGS = 2
 NUM_TES_BASES_TO_SKIP = 300
+
+def log_statement(*args):
+    print args[0]

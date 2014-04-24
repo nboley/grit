@@ -494,7 +494,11 @@ class RNAseqReads(Reads):
             reverse_read_strand = Reads.determine_reverse_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'internal_exon',
                 100, 10 )
-        
+            if config.VERBOSE:
+                config.log_statement(
+                    "Set reverse_read_strand to '%s' for '%s'" % (
+                        reverse_read_strand, self.filename), log=True )
+
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
         
@@ -526,6 +530,11 @@ class CAGEReads(Reads):
             reverse_read_strand = Reads.determine_reverse_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'tss_exon',
                 100, 10 )
+            if config.VERBOSE:
+                config.log_statement(
+                    "Set reverse_read_strand to '%s' for '%s'" % (
+                        reverse_read_strand, self.filename), log=True )
+
         
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
@@ -584,6 +593,11 @@ class RAMPAGEReads(Reads):
             reverse_read_strand = Reads.determine_reverse_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'tss_exon',
                 100, 10 )
+            if config.VERBOSE:
+                config.log_statement(
+                    "Set reverse_read_strand to '%s' for '%s'" % (
+                        reverse_read_strand, self.filename), log=True )
+
         
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
@@ -637,6 +651,11 @@ class PolyAReads(Reads):
             reverse_read_strand = Reads.determine_reverse_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'tes_exon',
                 100, 10 )
+            if config.VERBOSE:
+                config.log_statement(
+                    "Set reverse_read_strand to '%s' for '%s'" % (
+                        reverse_read_strand, self.filename), log=True )
+        
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
         

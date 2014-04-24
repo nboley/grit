@@ -5,6 +5,7 @@ from collections import namedtuple, defaultdict
 import itertools
 
 from ..transcript import Gene, Transcript, GenomicInterval
+    
 from reads import clean_chr_name
 
 GffLine = namedtuple( "GffLine", ["region", "feature", "score", 
