@@ -7,8 +7,8 @@ import numpy
 
 from pysam import Fastafile
 
-from itertools import izip, chain
-from collections import defaultdict, namedtuple
+from itertools import chain
+from collections import namedtuple
 
 import multiprocessing
 from multiprocessing.sharedctypes import RawArray, RawValue
@@ -19,6 +19,8 @@ import networkx as nx
 from grit.transcript import Transcript, Gene
 from grit.files.reads import fix_chrm_name_for_ucsc
 from grit.proteomics.ORF import find_cds_for_gene
+from grit.elements import \
+    load_elements, cluster_elements, find_jn_connected_exons
 
 import config
 
@@ -32,89 +34,6 @@ GeneElements = namedtuple('GeneElements',
                            'se_transcripts', 'promoter', 'polyas', 
                            'introns'])
 
-def find_overlapping_exons(exons):
-    overlapping_exons_mapping = set()
-    for o_i, (o_start, o_stop) in enumerate(exons):
-        for i_i, (i_start, i_stop) in enumerate(exons):
-            if i_i > o_i: break
-            if not (i_stop < o_start or i_start > o_stop):
-                overlapping_exons_mapping.add( (min(i_i, o_i), max(i_i, o_i)) )
-    
-    return list(overlapping_exons_mapping)
-
-
-def find_jn_connected_exons(exons, jns, strand):
-    edges = set()
-    
-    # build mappings from exon starts to indices
-    exon_starts_map = defaultdict(list)
-    exon_stops_map = defaultdict(list)
-    for start, stop in exons:
-        exon_starts_map[start].append( (start, stop) )
-        exon_stops_map[stop].append( (start, stop ) )
-    
-    for jn in jns:
-        for start in exon_stops_map[jn[0]-1]:
-            for stop in exon_starts_map[jn[1]+1]:
-                if strand == '+':
-                    edges.add((tuple(jn), start, stop))
-                else:
-                    edges.add((tuple(jn), stop, start))
-    
-    return edges
-
-def iter_nonoverlapping_exons(exons):
-    if len(exons) == 0: return
-    G = nx.Graph()
-    G.add_nodes_from(xrange(len(exons)))
-    overlapping_exons = find_overlapping_exons(exons)
-    G.add_edges_from( overlapping_exons )
-    
-    for gene in nx.connected_components(G):
-        clustered_exons = [ exons[exon_i] for exon_i in gene ]
-        if len( clustered_exons ) == 1:
-            yield clustered_exons[0]
-    
-    return
-
-def cluster_elements( tss_exons, internal_exons, tes_exons, se_transcripts, 
-                   promoters, polyas, jns, strand ):
-    assert isinstance( tss_exons, set )
-    assert isinstance( internal_exons, set )
-    assert isinstance( tes_exons, set )
-    assert isinstance( se_transcripts, set )
-    assert isinstance( promoters, set )
-    assert isinstance( polyas, set )
-    
-    all_exons = sorted( chain(tss_exons, internal_exons, 
-                              tes_exons, se_transcripts,
-                              promoters, polyas) )
-    if len(all_exons) == 0: return
-
-    G = nx.Graph()
-    G.add_nodes_from(xrange(len(all_exons)))
-    overlapping_exons = find_overlapping_exons(all_exons)
-    G.add_edges_from( overlapping_exons )
-    jns_and_connected_exons = find_jn_connected_exons(all_exons, jns, strand)
-    G.add_edges_from(
-        (start, stop) for jn, start, stop in jns_and_connected_exons)
-    edge_jn_map = dict( ((start, stop), jn)
-                        for jn, start, stop in jns_and_connected_exons )
-    for gene in nx.connected_component_subgraphs(G):
-        exons = gene.nodes()
-        jns = set(edge_jn_map[edge] for edge in gene.edges() 
-                  if edge in edge_jn_map)
-        
-        yield ( tss_exons.intersection( exons ),
-                tes_exons.intersection( exons ),
-                internal_exons.intersection( exons ),
-                se_transcripts.intersection( exons ),
-                promoters.intersection( promoters ),
-                polyas.intersection( polyas ),
-                sorted(jns) 
-              )
-    
-    return
 
 def build_transcripts_from_elements( 
         tss_exons, internal_exons, tes_exons, se_transcripts, jns, strand ):
@@ -142,15 +61,6 @@ def build_transcripts_from_elements(
 class MaxIterError( ValueError ):
     pass
 
-def extract_elements_from_genes( genes ):
-    all_elements = defaultdict( lambda: defaultdict(set) )
-    for gene in genes:
-        for key, val in gene.extract_elements().iteritems():
-            all_elements[(gene.chrm, gene.strand)][key].update(val)
-
-    
-    return convert_elements_to_arrays( all_elements )
-
 class ThreadSafeFile( file ):
     def __init__( *args ):
         file.__init__( *args )
@@ -175,29 +85,6 @@ def write_gene_to_gtf( ofp, gene ):
     ofp.flush()
     
     return
-
-def convert_elements_to_arrays(all_elements):
-    # convert into array
-    all_array_elements = defaultdict( 
-        lambda: defaultdict(lambda: numpy.zeros(0)) )
-    for key, elements in all_elements.iteritems():
-        for element_type, contig_elements in elements.iteritems():
-            all_array_elements[key][element_type] \
-                = numpy.array( sorted( contig_elements ) )
-
-    return all_array_elements
-
-def load_elements( fp ):
-    all_elements = defaultdict( lambda: defaultdict(set) )
-    for line in fp:
-        if line.startswith( 'track' ): continue
-        chrm, start, stop, element_type, score, strand = line.split()[:6]
-        # subtract 1 from stop becausee beds are closed open, and we 
-        # wnat everything in 0-based closed-closed
-        all_elements[(chrm, strand)][element_type].add( 
-            (int(start), int(stop)-1) )
-    
-    return convert_elements_to_arrays(all_elements)
 
 def find_matching_promoter_for_transcript(transcript, promoters):
     # find the promoter that starts at the same basepair
@@ -268,6 +155,7 @@ def worker( elements, elements_lock,
             with elements_lock:
                 gene_elements = elements.pop()
         except IndexError:
+            config.log_statement("")
             return
 
         config.log_statement(
