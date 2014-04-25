@@ -12,6 +12,9 @@ import pickle
 import random
 from itertools import chain
 
+import config
+from elements import iter_nonoverlapping_exons
+
 import os
 
 VERBOSE = False
@@ -585,6 +588,29 @@ def parse_arguments():
     args = parser.parse_args()
     
     return args.gff, args.bam, args.outfname, args.analyze
+
+def build_fl_dists( elements, reads ):
+    from files.gtf import GenomicInterval
+    
+    def iter_good_exons():
+        num = 0
+        for (chrm, strand), exons in sorted( elements.iteritems()):
+            for start,stop in iter_nonoverlapping_exons(exons['internal_exon']):
+                num += 1
+                yield GenomicInterval(chrm, strand, start, stop)
+            if config.DEBUG_VERBOSE: 
+                config.log_statement("FL ESTIMATION: %s %s" % ((chrm, strand), num ))
+        return
+    
+    good_exons = list(iter_good_exons())
+    fl_dists, fragments = estimate_fl_dists( reads, good_exons )
+    # if we can't estiamte it from the good exons, then use all reads to 
+    # estiamte the fragment length distribution
+    if len( fragments ) == 0:
+        fl_dists, fragments = estimate_normal_fl_dist_from_reads( reads )
+    #if False and None != fragments and  None != analyze_pdf_fname:
+    #    analyze_fl_dists( fragments, analyze_pdf_fname )
+    return fl_dists
 
 def main():
     gff_fp, bam_fn, ofname, analyze = parse_arguments()

@@ -16,7 +16,8 @@ from grit.lib.logging import Logger
 
 import grit.find_elements
 import grit.build_transcripts
-import grit.build_transcripts
+import grit.estimate_transcript_expression
+import grit.frag_len
 
 import grit.config as config
 
@@ -24,6 +25,40 @@ ControlFileEntry = namedtuple('ControlFileEntry', [
         'sample_type', 'rep_id', 
         'assay', 'paired', 'stranded', 'read_type', 
         'filename'])
+
+import numpy
+
+def convert_elements_to_arrays(all_elements):
+    # convert into array
+    all_array_elements = defaultdict( 
+        lambda: defaultdict(lambda: numpy.zeros(0)) )
+    for key, elements in all_elements.iteritems():
+        for element_type, contig_elements in elements.iteritems():
+            all_array_elements[key][element_type] \
+                = numpy.array( sorted( contig_elements ) )
+
+    return all_array_elements
+
+def load_elements( fp ):
+    all_elements = defaultdict( lambda: defaultdict(set) )
+    for line in fp:
+        if line.startswith( 'track' ): continue
+        chrm, start, stop, element_type, score, strand = line.split()[:6]
+        # subtract 1 from stop becausee beds are closed open, and we 
+        # wnat everything in 0-based closed-closed
+        all_elements[(chrm, strand)][element_type].add( 
+            (int(start), int(stop)-1) )
+    
+    return convert_elements_to_arrays(all_elements)
+
+def extract_elements_from_genes( genes ):
+    all_elements = defaultdict( lambda: defaultdict(set) )
+    for gene in genes:
+        for key, val in gene.extract_elements().iteritems():
+            all_elements[(gene.chrm, gene.strand)][key].update(val)
+
+    
+    return convert_elements_to_arrays( all_elements )
 
 def run_bam2wig(fname, op_prefix, assay, region,
                 nthreads, reverse_read_strand, verbose):
@@ -542,40 +577,38 @@ def main():
         ofprefix = "%s.%s" % (args.ofprefix, sample_type)
         assert elements_fp == None or gtf_fp == None
         if gtf_fp != None:
+            config.log_statement( "Loading %s" % gtf_fp.name )
             genes_fnames = []
             genes = load_gtf(gtf_fp)
+            elements = extract_elements_from_genes(genes)
             for gene in genes:
                 genes_fnames.append(
                     (gene.id, len(gene.transcripts), gene.write_to_temp_file()))
+            config.log_statement("Finished Loading %s" % gtf_fp.name)
         else:
+            elements = load_elements(elements_fp)
             genes_fnames = grit.build_transcripts.build_transcripts(
                 elements_fp, ofprefix, args.fasta)
-        print genes_fnames
-    
-    return
-    if True:
+        if config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS: continue
         rep_ids = sample_data.get_rep_ids(sample_type)
+        
         if len(rep_ids) == 0: rep_ids = [None,]
         for rep_id in rep_ids:
-            if not config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
-                promoter_reads, rnaseq_reads, polya_reads = \
-                    sample_data.get_reads(
-                        sample_type, rep_id, 
-                        verify_args=False, include_merged=False)
-            else:
-                promoter_reads, rnaseq_reads, polya_reads = [
-                    None, None, None]
-
+            (promoter_reads, rnaseq_reads, polya_reads) = sample_data.get_reads(
+                sample_type, rep_id, 
+                verify_args=False, include_merged=False)
+            
             # find what to prefix the output files with
             ofprefix = "%s.%s" % (args.ofprefix, sample_type)
-            if rep_id != None: ofprefix += "." + rep_id
-            print args.fasta.filename
-            assert False
-            grit.build_transcripts.build_and_quantify_transcripts(
+            if rep_id != None: 
+                ofprefix = ".".join((args.ofprefix, sample_type, rep_id))
+            
+            fl_dists = grit.frag_len.build_fl_dists( elements, rnaseq_reads )
+            
+            grit.estimate_transcript_expression.quantify_transcript_expression(
                 promoter_reads, rnaseq_reads, polya_reads,
-                elements_fp, gtf_fp, 
+                genes_fnames, fl_dists,
                 ofprefix,
-                fasta=args.fasta, 
                 estimate_confidence_bounds=args.estimate_confidence_bounds )
     
 if __name__ == '__main__':
@@ -583,4 +616,3 @@ if __name__ == '__main__':
     finally: 
         try:config.log_statement.close()
         except: pass
-            
