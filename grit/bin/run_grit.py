@@ -594,6 +594,8 @@ def main():
         
         if len(rep_ids) == 0: rep_ids = [None,]
         for rep_id in rep_ids:
+            config.log_statement("Loading reads for %s-%s" % (
+                    sample_type, rep_id))
             (promoter_reads, rnaseq_reads, polya_reads) = sample_data.get_reads(
                 sample_type, rep_id, 
                 verify_args=False, include_merged=False)
@@ -603,13 +605,14 @@ def main():
             if rep_id != None: 
                 ofprefix = ".".join((args.ofprefix, sample_type, rep_id))
             
+            config.log_statement("Estimating fragment length distribution")
             fl_dists = grit.frag_len.build_fl_dists( elements, rnaseq_reads )
             
             grit.estimate_transcript_expression.quantify_transcript_expression(
                 promoter_reads, rnaseq_reads, polya_reads,
                 genes_fnames, fl_dists,
                 ofprefix,
-                estimate_confidence_bounds=args.estimate_confidence_bounds )
+                do_estimate_confidence_bounds=args.estimate_confidence_bounds )
     
 if __name__ == '__main__':
     try: main()

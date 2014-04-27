@@ -107,6 +107,8 @@ class Logger( object ):
         return
     
     def __call__( self, message, display=True, log=False ):
+        message = str(message)
+        
         # if the message is empty, always display and never log
         if message == "": 
             display = True

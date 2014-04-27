@@ -896,7 +896,7 @@ class DesignMatrix(object):
         
         if five_p_reads != None:
             if config.DEBUG_VERBOSE:
-                config.log_statement( "Building TSS arrays" )
+                config.log_statement( "Building TSS arrays for %s" % gene.id )
             self._build_gene_bnd_arrays(gene, five_p_reads, 'five_p_reads')
             self.num_fp_reads = sum(self.obs_cnt_arrays[-1])
         else:
@@ -905,14 +905,14 @@ class DesignMatrix(object):
             self.num_fp_reads = None
         
         if config.DEBUG_VERBOSE:
-            config.log_statement( "Building RNAseq arrays" )
+            config.log_statement( "Building RNAseq arrays for %s" % gene.id )
         self._build_rnaseq_arrays(gene, rnaseq_reads, fl_dists)
         if self.obs_cnt_arrays[-1] != None:
             self.num_rnaseq_reads = sum(self.obs_cnt_arrays[-1])
         
         if three_p_reads != None:
             if config.DEBUG_VERBOSE:
-                config.log_statement( "Building TES arrays" )
+                config.log_statement( "Building TES arrays for %s" % gene.id )
             self._build_gene_bnd_arrays(gene, three_p_reads, 'three_p_reads')
             self.num_tp_reads = sum(self.obs_cnt_arrays[-1])
         else:
@@ -929,7 +929,7 @@ class DesignMatrix(object):
         # update the set to satisfy the max_num_transcripts restriction
         if max_num_transcripts != None:
             if config.DEBUG_VERBOSE:
-                config.log_statement( "Filtering design matrix" )
+                config.log_statement("Filtering design matrix for %s" % gene.id)
 
             expected, observed = self.expected_and_observed()
             
