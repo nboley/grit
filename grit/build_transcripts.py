@@ -177,7 +177,8 @@ def worker( elements, elements_lock,
         except Exception, inst:
             config.log_statement(
                 "ERROR building transcript in %s: %s"%(gene_elements.id, inst) )
-            raise
+            if config.DEBUG_VERBOSE:
+                config.log_statement( traceback.format_exc(), log=True )
     
     return
 

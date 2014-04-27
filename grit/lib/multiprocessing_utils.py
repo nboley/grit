@@ -1,6 +1,16 @@
 import multiprocessing
 import time
 
+class ThreadSafeFile( file ):
+    def __init__( *args ):
+        file.__init__( *args )
+        args[0].lock = multiprocessing.Lock()
+
+    def write( self, string ):
+        with self.lock:
+            file.write( self, string )
+            self.flush()
+
 class ProcessSafeOPStream( object ):
     def __init__( self, writeable_obj ):
         self.writeable_obj = writeable_obj

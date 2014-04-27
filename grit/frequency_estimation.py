@@ -351,6 +351,10 @@ def estimate_confidence_bound( f_mat,
                                mle_estimate,
                                bound_type,
                                alpha):
+    if bound_type == 'lb': bound_type = 'LOWER'
+    if bound_type == 'ub': bound_type = 'UPPER'
+    assert bound_type in ('LOWER', 'UPPER'), (
+        "Improper bound type '%s'" % bound_type )
     expected_array, observed_array = f_mat.expected_and_observed(
         bam_cnts=num_reads_in_bams)
     
@@ -422,12 +426,10 @@ def estimate_confidence_bound( f_mat,
         # otherwise, find out how miuch we need to step off of the maximum step
         # to make our parameter not move in the wrong direction
         else:
-            assert lhd_gradient[fixed_index] != 0
             # we want lhd_gradient[fixed_index]*(1-theta) + theta*coord_gradient[fixed_index] == 0
             # implies lhd[i] -theta*lhd[i] + theta*cg[i] == 0
             #     =>  lhd[i] = theta*lhd[i] - theta*cg[i]
             #     =>  lhd[i]/(lhd[i] - theta*cg[i]) = theta*
-            assert lhd_gradient[fixed_index] != 0
             theta = lhd_gradient[fixed_index]/(
                 lhd_gradient[fixed_index] - coord_gradient[fixed_index])
 
