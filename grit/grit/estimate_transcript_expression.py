@@ -27,7 +27,6 @@ from frag_len import load_fl_dists, FlDist, build_normal_density
 import config
 
 import cPickle as pickle
-import tempfile
 
 class SharedData(object):
     """Share data across processes.
@@ -81,7 +80,7 @@ class SharedData(object):
         return f_mat
     
     def set_design_matrix(self, gene_id, f_mat):
-        ofname = os.path.join(tempfile.mkdtemp(), gene_id + ".fmat")
+        ofname = os.path.join(config.tmp_dir, gene_id + ".fmat")
         # because there's no cache invalidation mechanism, we're only
         # allowed to set the f_mat object once. This also allows us to
         # move the load outside of the lock
@@ -167,36 +166,14 @@ class SharedData(object):
         # store data that all children need to be able to access        
         self.output_dict = self._manager.dict()
         self.output_dict_lock = multiprocessing.Lock()    
-        
-        # create a scratch directory to store design matrices
-        self.scratch_dir = tempfile.mkdtemp()
-        
+                
         # create objects to cache gene objects, so that we dont have to do a 
         # fresh load from the shared manager
         self._cached_gene_id = None
         self._cached_gene = None
         self._cached_fmat_gene_id = None
         self._cached_fmat = None
-
-    def add_many_to_input_queue(self, work_type, gene_id, work_data_iter=None):
-        with self.input_queue_lock:
-            try:
-                gene_work = self.input_queue.pop(gene_id)
-            except KeyError:
-                gene_work = []
-            for work_data in work_data_iter:
-                gene_work.append((work_type, work_data))
-            self.input_queue[gene_id] = gene_work
     
-    def add_to_input_queue(self, work_type, gene_id, work_data=None):
-        with self.input_queue_lock:
-            try:
-                gene_work = self.input_queue.pop(gene_id)
-                gene_work.append((work_type, work_data))
-                self.input_queue[gene_id] = gene_work
-            except KeyError:
-                self.input_queue[gene_id] = [(work_type, work_data),]
-        
     def populate_expression_queue(self):
         for gene_id in self.gene_fname_mapping:
             gene = self.get_gene(gene_id)

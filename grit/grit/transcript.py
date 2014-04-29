@@ -67,8 +67,10 @@ class Gene( object ):
         self.meta_data = meta_data
         return    
     
-    def write_to_temp_file(self):
-        ofname = os.path.join(tempfile.mkdtemp(), self.id + ".gene")
+    def write_to_temp_file(self, opdir=None):
+        if opdir == None:
+            opdir = tempfile.mkdtemp()
+        ofname = os.path.join(opdir, self.id + ".gene")
         with open(ofname, "w") as ofp:
             pickle.dump(self, ofp)
         return ofname
