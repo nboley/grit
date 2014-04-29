@@ -227,12 +227,10 @@ def find_cds_for_gene( gene, fasta, only_longest_orf ):
             stop = convert_to_genomic( stop, trans.exons )
             start, stop = sorted((start, stop))
             
-            trans_id = trans.id + "_CDS%i" % (orf_id+1) \
-                if len( filtered_orfs ) > 1 else trans.id            
-            new_trans = Transcript( 
-                trans_id, trans.chrm, trans.strand, trans.exons, (start, stop), 
-                coding_sequence=AA_seq, 
-                promoter=trans.promoter, polya_region=trans.polya_region )
+            new_trans = copy(trans)
+            if len( filtered_orfs ) > 1:
+                new_trans.id = new_trans.id + "_CDS%i" % (orf_id+1)
+            new_trans.add_cds_region((start, stop), AA_seq)
             annotated_transcripts.append( new_trans )
     
     return annotated_transcripts

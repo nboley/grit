@@ -6,6 +6,7 @@ import cPickle as pickle
 from itertools import chain, izip
 from collections import namedtuple, defaultdict
 
+import files.gtf
 import config
 
 GenomicInterval = namedtuple('GenomicInterval', 
@@ -59,6 +60,8 @@ def partition_coding_and_utr_segments( exons, cds_start, cds_stop ):
 class Gene( object ):
     def __init__(self, id,chrm, strand, start, stop, transcripts, meta_data={}):
         self.id = id
+        self.name = id
+        
         self.chrm = chrm
         self.strand = strand
         self.start = start
@@ -123,11 +126,14 @@ class Gene( object ):
 
 class Transcript( object ):
     def __init__(self, trans_id, chrm, strand, exons, cds_region,
-                 gene_id=None, score=None, fpkm=None, fpk=None, 
+                 gene_id, score=None, fpkm=None, fpk=None, 
                  promoter=None, polya_region=None, coding_sequence=None,
                  conf_lo=None, conf_hi=None, frac=None):
         self.gene_id = gene_id
         self.id = trans_id
+
+        self.gene_name = gene_id
+        self.name = trans_id
 
         self.ref_gene = None
         self.ref_trans = None
@@ -154,7 +160,7 @@ class Transcript( object ):
                                     exon_bnds[2:-1:2]) ])
         
         self.is_protein_coding = ( cds_region != None )
-        self.coding_sequence = coding_sequence
+        self.coding_sequence = None
         
         self.cds_region = cds_region
         self.start_codon = None
@@ -172,9 +178,11 @@ class Transcript( object ):
         self._seq = None
         
         if cds_region != None:
-            self.add_cds_region( cds_region )
+            self.add_cds_region( cds_region, coding_sequence )
     
-    def add_cds_region( self, cds_region ):
+    def add_cds_region( self, cds_region, coding_sequence=None ):
+        self.is_protein_coding = True
+        self.coding_sequence = coding_sequence
         self.cds_region = cds_region
         self.us_exons, self.cds_exons, self.ds_exons = \
             partition_coding_and_utr_segments( 
@@ -249,9 +257,8 @@ class Transcript( object ):
         # are into the transcript
         return trans_coord + self.start + insert_len
     
-    def build_gtf_lines( self, gene_id, meta_data, source='.'):
-        from files.gtf import create_gtf_line
-        
+    def build_gtf_lines( self, meta_data, source='.'):
+        assert self.gene_id != None
         ret_lines = []
         def build_lines_for_feature( exons, feature, is_CDS=False ):
             current_frame = 0
@@ -259,9 +266,10 @@ class Transcript( object ):
             for start, stop in exons:
                 region = GenomicInterval( self.chrm, self.strand, start, stop )
                 frame = current_frame if is_CDS else '.'
-                yield create_gtf_line( region, gene_id, self.id, meta_data,
-                                       score, feature=feature, frame=str(frame),
-                                       source=source)
+                yield files.gtf.create_gtf_line( 
+                    region, self.gene_id, self.id, meta_data,
+                    score, feature=feature, frame=str(frame),
+                    source=source)
                 current_frame = ( current_frame + stop - start + 1 )%3
             return
         
