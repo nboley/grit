@@ -610,6 +610,9 @@ def quantify_transcript_expression(
         estimate_confidence_bounds(data, expression_ofp)
 
     expression_ofp.close()
+    if config.VERBOSE: config.log_statement( 
+        "FINISHED Estimating confidence bounds" )
+
     """
     with open("tmp.csv", "w") as ofp:
         for gene_id in data.gene_ids:
