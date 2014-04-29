@@ -84,7 +84,9 @@ class SharedData(object):
         # because there's no cache invalidation mechanism, we're only
         # allowed to set the f_mat object once. This also allows us to
         # move the load outside of the lock
-        assert (gene_id, 'design_matrices') not in self.output_dict
+        try: assert (gene_id, 'design_matrices') not in self.output_dict
+        except:
+            assert False, "%s has already had its design matrix set" % gene_id
         
         with open(ofname, "w") as ofp:
             pickle.dump(f_mat, ofp)
@@ -176,16 +178,14 @@ class SharedData(object):
     
     def populate_expression_queue(self):
         for gene_id in self.gene_fname_mapping:
-            gene = self.get_gene(gene_id)
+            n_trans = self.gene_ntranscripts_mapping[gene_id]
             self.mle_estimates[gene_id] = RawArray(
-                'd', [-1]*(len(gene.transcripts)+1))
+                'd', [-1]*(n_trans+1))
             self.ubs[gene_id] = RawArray(
-                'd', [-1]*len(gene.transcripts))
+                'd', [-1]*n_trans)
             self.lbs[gene_id] = RawArray(
-                'd', [-1]*len(gene.transcripts))
-            
-            self.input_queue[gene_id] = [('mle', None),]
-    
+                'd', [-1]*n_trans)
+        
     def populate_estimate_cbs_queue(self, gene_id):
         f_mat = self.get_design_matrix(gene_id)
         with self.gene_cb_queues_locks[gene_id]:
@@ -362,7 +362,7 @@ def find_confidence_bounds_worker( data, expression_ofp ):
 
         if config.VERBOSE:
             config.log_statement(
-                "Estiamting confidence bounds for '%s'" % gene_id)
+                "Estimating confidence bounds for '%s'" % gene_id)
         
         gene = data.get_gene(gene_id)
         f_mat = data.get_design_matrix(gene_id)
@@ -386,6 +386,9 @@ def find_confidence_bounds_worker( data, expression_ofp ):
 
 def estimate_confidence_bounds( data, expression_ofp ):
     # sort so that the biggest genes are processed first
+    config.log_statement(
+        "Populating estimate confidence bounds queue.")
+
     for gene_id in sorted(data.gene_ids, 
                           key=lambda x:data.gene_ntranscripts_mapping[x]):
         try: data.populate_estimate_cbs_queue(gene_id)
@@ -416,6 +419,7 @@ def estimate_confidence_bounds( data, expression_ofp ):
 
 def estimate_mle_worker( gene_ids, gene_ids_lock, data ):
     while True:
+        config.log_statement("Retrieving gene from quue")
         try:
             with gene_ids_lock:
                 gene_id = gene_ids.pop()
@@ -424,8 +428,10 @@ def estimate_mle_worker( gene_ids, gene_ids_lock, data ):
             return        
         
         try:
+            config.log_statement(
+                "Loading gene %s" % gene_id )
             gene = data.get_gene(gene_id)
-
+              
             config.log_statement(
                 "Finding MLE for Gene %s(%s:%s:%i-%i) - %i transcripts" \
                     % (gene.id, gene.chrm, gene.strand, 
@@ -459,6 +465,8 @@ def estimate_mle_worker( gene_ids, gene_ids_lock, data ):
                 gene.id, log_lhd ) )
 
 def estimate_mles( data ):
+    config.log_statement("Initializing MLE queue")
+    
     manager = multiprocessing.Manager()
     gene_ids = manager.list()
     gene_ids_lock = manager.Lock()

@@ -69,8 +69,9 @@ def write_gene_to_gtf( ofp, gene ):
         
         if config.FIX_CHRM_NAMES_FOR_UCSC:
             transcript.chrm = fix_chrm_name_for_ucsc(transcript.chrm)
+        assert transcript.gene_id != None
         lines.append( transcript.build_gtf_lines(
-                transcript.gene_id, meta_data, source="grit") + "\n" )
+                meta_data, source="grit") + "\n" )
     
     ofp.write( "".join(lines) )
     
@@ -133,21 +134,21 @@ def rename_transcripts(gene, ref_genes):
         t.ref_gene = best_match.gene_id
         t.ref_trans = best_match.id
 
-        t.gene_id = t.ref_gene
+        t.gene_name = t.ref_gene
         if len(introns)  == len(best_match.introns) == best_match_score[0] and \
                 best_match_score[1] > -400:
-            t.id = t.ref_trans
+            t.name = t.ref_trans
         elif len(introns) == len(best_match.introns) == best_match_score[0]:
-            t.id = t.ref_trans + '-NOBNDS'
+            t.name = t.ref_trans + '-NOBNDS'
         #elif best_match_score[0] > 0:
         #    t.id = t.ref_trans + "-PARTIAL"
         else:
-            t.id = t.gene_id + "-MDV4-%i" % cntr
+            t.name = t.gene_name + "-MDV4-%i" % cntr
             cntr += 1
         #print t.id, ref_t.id, best_match_score, len(introns)
 
-    gene_ids = set(t.gene_id for t in gene.transcripts)
-    gene.id = "/".join(gene_ids)
+    gene_names = set(t.ref_gene for t in gene.transcripts)
+    gene.name = "\\".join(gene_names)
     return gene
 
 def build_gene(elements, fasta=None, ref_genes=None):
@@ -178,7 +179,7 @@ def build_gene(elements, fasta=None, ref_genes=None):
     
     if ref_genes != None:
         gene = rename_transcripts(gene, ref_genes)
-
+    
     return gene
 
 def worker( elements, elements_lock, 
@@ -221,8 +222,8 @@ def worker( elements, elements_lock,
     return
 
 def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
-                                       elements, elements_lock):
-    gene_id_num = 1
+                                       elements, elements_lock, 
+                                       gene_id_cntr):
     config.log_statement( 
         "Clustering elements into genes for %s:%s" % ( contig, strand ) )
     for ( tss_es, tes_es, internal_es, 
@@ -241,10 +242,10 @@ def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
                 or len( tss_es ) == 0 ):
             continue
 
-        gene_id_num += 1
-        gene_id = "%s_%s_%i" % ( 
-            contig, 'm' if strand == '-' else 'p', gene_id_num )
-
+        with gene_id_cntr.get_lock():
+            gene_id = "XLOC_%i" % gene_id_cntr.value
+            gene_id_cntr.value += 1
+        
         gene_data = GeneElements( gene_id, contig, strand,
                                   tss_es, internal_es, tes_es,
                                   se_ts, promoters, polyas, 
@@ -273,11 +274,14 @@ def build_transcripts(exons_bed_fp, ofname, fasta_fp=None, ref_genes=None):
     manager = multiprocessing.Manager()
     elements = manager.list()
     elements_lock = manager.Lock()    
+    gene_id_cntr = multiprocessing.Value('i', 0)
     
     all_args = []
     for (contig, strand), grpd_exons in raw_elements.iteritems():
         all_args.append([
-                (contig, strand), grpd_exons, elements, elements_lock])
+                (contig, strand), grpd_exons, 
+                elements, elements_lock,
+                gene_id_cntr])
     
     if config.NTHREADS in (None, 1):
         for args in all_args:
