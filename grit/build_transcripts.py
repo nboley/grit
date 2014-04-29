@@ -16,10 +16,11 @@ from lib.multiprocessing_utils import Pool
 
 import networkx as nx
 
-from grit.transcript import Transcript, Gene
-from grit.files.reads import fix_chrm_name_for_ucsc
-from grit.proteomics.ORF import find_cds_for_gene
-from grit.elements import \
+from lib.multiprocessing_utils import ThreadSafeFile
+from transcript import Transcript, Gene
+from files.reads import fix_chrm_name_for_ucsc
+from proteomics.ORF import find_cds_for_gene
+from elements import \
     load_elements, cluster_elements, find_jn_connected_exons
 
 import config
@@ -61,16 +62,6 @@ def build_transcripts_from_elements(
 class MaxIterError( ValueError ):
     pass
 
-class ThreadSafeFile( file ):
-    def __init__( *args ):
-        file.__init__( *args )
-        args[0].lock = multiprocessing.Lock()
-
-    def write( self, string ):
-        with self.lock:
-            file.write( self, string )
-            self.flush()
-
 def write_gene_to_gtf( ofp, gene ):
     lines = []
     for index, transcript in enumerate(gene.transcripts):
@@ -79,10 +70,9 @@ def write_gene_to_gtf( ofp, gene ):
         if config.FIX_CHRM_NAMES_FOR_UCSC:
             transcript.chrm = fix_chrm_name_for_ucsc(transcript.chrm)
         lines.append( transcript.build_gtf_lines(
-                gene.id, meta_data, source="grit") + "\n" )
+                transcript.gene_id, meta_data, source="grit") + "\n" )
     
     ofp.write( "".join(lines) )
-    ofp.flush()
     
     return
 
@@ -116,12 +106,54 @@ def find_matching_polya_region_for_transcript(transcript, polyas):
     
     return matching_polya
 
-def build_gene(elements, fasta=None):
+def rename_transcripts(gene, ref_genes):
+    # find the ref genes that overlap gene
+    ref_genes = list(ref_genes.iter_overlapping_genes(
+            gene.chrm, gene.strand, gene.start, gene.stop))
+    if len(ref_genes) == 0:
+        return gene
+
+    cntr = 1 
+    
+    for t in gene.transcripts:
+        best_match = None
+        best_match_score = (0, -1e9, 0)
+        introns = set(t.introns)
+        for ref_gene in ref_genes:
+            for ref_t in ref_gene.transcripts:
+                score = (
+                    len(introns) - len(set(introns)-set(ref_t.introns)),
+                    -(abs(ref_t.start-t.start)+abs(ref_t.stop-t.stop)),
+                    0 )
+                if score > best_match_score:
+                    best_match_score = score
+                    best_match = ref_t
+
+        if best_match == None: continue
+        t.ref_gene = best_match.gene_id
+        t.ref_trans = best_match.id
+
+        t.gene_id = t.ref_gene
+        if len(introns)  == len(best_match.introns) == best_match_score[0] and \
+                best_match_score[1] > -400:
+            t.id = t.ref_trans
+        elif len(introns) == len(best_match.introns) == best_match_score[0]:
+            t.id = t.ref_trans + '-NOBNDS'
+        #elif best_match_score[0] > 0:
+        #    t.id = t.ref_trans + "-PARTIAL"
+        else:
+            t.id = t.gene_id + "-MDV4-%i" % cntr
+            cntr += 1
+        #print t.id, ref_t.id, best_match_score, len(introns)
+    
+    return gene
+
+def build_gene(elements, fasta=None, ref_genes=None):
     gene_min = min( min(e) for e in chain(
             elements.tss_exons, elements.tes_exons, elements.se_transcripts))
     gene_max = max( max(e) for e in chain(
             elements.tss_exons, elements.tes_exons, elements.se_transcripts))
-    
+        
     transcripts = []
     for i, exons in enumerate( build_transcripts_from_elements( 
             elements.tss_exons, elements.internal_exons, elements.tes_exons,
@@ -141,11 +173,15 @@ def build_gene(elements, fasta=None):
     if fasta != None:
         gene.transcripts = find_cds_for_gene( 
             gene, fasta, only_longest_orf=True )
+    
+    if ref_genes != None:
+        gene = rename_transcripts(gene, ref_genes)
+
     return gene
 
 def worker( elements, elements_lock, 
-            output, output_lock, 
-            gtf_ofp, fasta_fp ):
+            output, output_lock, gtf_ofp,
+            fasta_fp, ref_genes ):
     # if appropriate, open the fasta file
     if fasta_fp != None: fasta = Fastafile(fasta_fp.name)
     else: fasta = None
@@ -163,7 +199,7 @@ def worker( elements, elements_lock,
         
         # build the gene with transcripts, and optionally call orfs
         try:
-            gene = build_gene(gene_elements, fasta)
+            gene = build_gene(gene_elements, fasta, ref_genes)
             config.log_statement(
                 "FINISHED Building transcript and ORFs for Gene %s" % gene.id)
 
@@ -176,7 +212,7 @@ def worker( elements, elements_lock,
             write_gene_to_gtf(gtf_ofp, gene)
         except Exception, inst:
             config.log_statement(
-                "ERROR building transcript in %s: %s"%(gene_elements.id, inst) )
+                "ERROR building transcript in %s: %s"%(gene_elements.id, inst))
             if config.DEBUG_VERBOSE:
                 config.log_statement( traceback.format_exc(), log=True )
     
@@ -218,10 +254,9 @@ def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
     config.log_statement("")
     return    
 
-def build_transcripts(exons_bed_fp, ofprefix, fasta_fp=None):
+def build_transcripts(exons_bed_fp, ofprefix, fasta_fp=None, ref_genes=None):
     """Build transcripts
-    """
-    
+    """    
     # make sure that we're starting from the start of the 
     # elements files
     config.log_statement( "Loading %s" % exons_bed_fp.name )
@@ -231,7 +266,7 @@ def build_transcripts(exons_bed_fp, ofprefix, fasta_fp=None):
     
     gtf_ofp = ThreadSafeFile("%s.gtf" % ofprefix, "w")
     gtf_ofp.write("track name=%s useScore=1\n" % ofprefix)
-
+    
     manager = multiprocessing.Manager()
     elements = manager.list()
     elements_lock = manager.Lock()    
@@ -251,23 +286,26 @@ def build_transcripts(exons_bed_fp, ofprefix, fasta_fp=None):
     output = manager.list()
     output_lock = manager.Lock()    
 
-    with open("%s.gtf" % ofprefix, "w") as ofp:
-        args = [elements, elements_lock, output, output_lock, ofp, fasta_fp]
-        if config.NTHREADS in (None, 1):
-            worker(*args)
-        else:
-            ps = []
-            for i in xrange(config.NTHREADS):
-                p = multiprocessing.Process(target=worker, args=args)
-                p.daemon = True
-                p.start()
-                ps.append(p)
-            for p in ps:
-                p.join()
+    args = [elements, elements_lock, 
+            output, output_lock, gtf_ofp, 
+            fasta_fp, ref_genes]
+    if config.NTHREADS in (None, 1):
+        worker(*args)
+    else:
+        ps = []
+        for i in xrange(config.NTHREADS):
+            p = multiprocessing.Process(target=worker, args=args)
+            p.daemon = True
+            p.start()
+            ps.append(p)
+        for p in ps:
+            p.join()
     
     genes = sorted(output)
     manager.shutdown()
     config.log_statement("Finished building transcripts")
+
+    gtf_ofp.close()
     
     return genes
 

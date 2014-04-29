@@ -541,10 +541,10 @@ def main():
 
     # if the reference genes weren't loaded while parsing the data, and we
     # need the reference elements, then load the reference genes now
-    if any(args.ref_elements_to_include) and sample_data.ref_genes == None:
+    if args.reference != None and sample_data.ref_genes == None:
         if config.VERBOSE: config.log_statement("Loading annotation file.")
         sample_data.ref_genes = load_gtf(args.reference)
-
+    
     # find elements if necessary, load the gtf if we are running in 
     # quantification mode
     if args.GTF != None:
@@ -588,7 +588,7 @@ def main():
         else:
             elements = load_elements(elements_fp)
             genes_fnames = grit.build_transcripts.build_transcripts(
-                elements_fp, ofprefix, args.fasta)
+                elements_fp, ofprefix, args.fasta, sample_data.ref_genes)
         if config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS: continue
         rep_ids = sample_data.get_rep_ids(sample_type)
         
