@@ -1,4 +1,5 @@
 import sys, os
+import shutil
 
 import time
 import traceback
@@ -26,7 +27,6 @@ from elements import \
 import config
 
 import cPickle as pickle
-import tempfile
 
 
 GeneElements = namedtuple('GeneElements', 
@@ -145,7 +145,9 @@ def rename_transcripts(gene, ref_genes):
             t.id = t.gene_id + "-MDV4-%i" % cntr
             cntr += 1
         #print t.id, ref_t.id, best_match_score, len(introns)
-    
+
+    gene_ids = set(t.gene_id for t in gene.transcripts)
+    gene.id = "/".join(gene_ids)
     return gene
 
 def build_gene(elements, fasta=None, ref_genes=None):
@@ -205,7 +207,7 @@ def worker( elements, elements_lock,
 
             # dump a pickel of the gene to a temp file, and set that in the 
             # output manager
-            ofname = gene.write_to_temp_file()
+            ofname = gene.write_to_temp_file(config.tmp_dir)
             with output_lock: 
                 output.append((gene.id, len(gene.transcripts), ofname))
             
@@ -254,7 +256,7 @@ def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
     config.log_statement("")
     return    
 
-def build_transcripts(exons_bed_fp, ofprefix, fasta_fp=None, ref_genes=None):
+def build_transcripts(exons_bed_fp, ofname, fasta_fp=None, ref_genes=None):
     """Build transcripts
     """    
     # make sure that we're starting from the start of the 
@@ -264,8 +266,9 @@ def build_transcripts(exons_bed_fp, ofprefix, fasta_fp=None, ref_genes=None):
     raw_elements = load_elements( exons_bed_fp )
     config.log_statement( "Finished Loading %s" % exons_bed_fp.name )
     
-    gtf_ofp = ThreadSafeFile("%s.gtf" % ofprefix, "w")
-    gtf_ofp.write("track name=%s useScore=1\n" % ofprefix)
+    gtf_ofp = ThreadSafeFile(ofname + ".unfinished", "w")
+    gtf_ofp.write("track name=%s useScore=1\n" 
+                  % ".".join(ofname.split(".")[:-1]))
     
     manager = multiprocessing.Manager()
     elements = manager.list()
@@ -306,6 +309,7 @@ def build_transcripts(exons_bed_fp, ofprefix, fasta_fp=None, ref_genes=None):
     config.log_statement("Finished building transcripts")
 
     gtf_ofp.close()
+    shutil.move(ofname + ".unfinished", ofname)
     
     return genes
 

@@ -429,8 +429,10 @@ def parse_arguments():
                          action="store_true",
         help='If set, do not estimate confidence bounds.')
 
-    parser.add_argument( '--ofprefix', '-o', default="discovered",
-        help='Output files prefix. (default: discovered)')
+    parser.add_argument( '--output-dir', '-o', default="discovered",
+        help='Write all output files to this directory. (default: discovered)')
+    parser.add_argument( '--continue-run', default=False, action='store_true',
+        help='Continue a previously started run in --output-dir')
     
     parser.add_argument( '--verbose', '-v', default=False, action='store_true',
         help='Whether or not to print status information.')
@@ -476,8 +478,18 @@ def parse_arguments():
         args.estimate_confidence_bounds = False
     
     config.FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
+
+    args.output_dir = os.path.abspath(args.output_dir)
+    config.tmp_dir = os.path.join(args.output_dir, "./.tmp_files/")
+    try: 
+        os.mkdir(args.output_dir)
+        os.mkdir(config.tmp_dir)
+    except OSError:
+        if not args.continue_run:
+            raise OSError, "Directory '%s' already exists: either remove it, change the --output-dir option, or use the --continue-run option" % args.output_dir
+    os.chdir(args.output_dir)
     
-    log_ofstream = open( args.ofprefix + ".log", "w" )
+    log_ofstream = open( "log.txt", "w" )
     log_statement = Logger(
         nthreads=config.NTHREADS+1, 
         use_ncurses=(not args.batch_mode), 
@@ -500,8 +512,7 @@ class discover_elements(dict):
         if config.VERBOSE: config.log_statement("Initializing read objects.")
         promoter_reads, rnaseq_reads, polya_reads = \
             self.sample_data.get_reads(sample_type, include_merged=True)
-        elements_fname = "%s.%s.elements.bed" % (
-            self.args.ofprefix, sample_type)
+        elements_fname = "%s.elements.bed" % sample_type
         try: 
             ofp = open(elements_fname)
         except IOError:
@@ -574,8 +585,15 @@ def main():
 
     # build transcripts for each sample
     for sample_type, (elements_fp, gtf_fp) in elements.iteritems():
-        ofprefix = "%s.%s" % (args.ofprefix, sample_type)
+        gtf_fname = sample_type + ".gtf"
         assert elements_fp == None or gtf_fp == None
+        # try to load an already built gtf
+        if args.continue_run and gtf_fp == None:
+            try: gtf_fp = open(gtf_fname)
+            except IOError: pass
+            else:
+                msg = "WARNING: '%s' already exists - using existing file."
+                config.log_statement(msg % gtf_fname, log=True)
         if gtf_fp != None:
             config.log_statement( "Loading %s" % gtf_fp.name )
             genes_fnames = []
@@ -588,7 +606,7 @@ def main():
         else:
             elements = load_elements(elements_fp)
             genes_fnames = grit.build_transcripts.build_transcripts(
-                elements_fp, ofprefix, args.fasta, sample_data.ref_genes)
+                elements_fp, gtf_fname, args.fasta, sample_data.ref_genes)
         if config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS: continue
         rep_ids = sample_data.get_rep_ids(sample_type)
         
@@ -601,9 +619,9 @@ def main():
                 verify_args=False, include_merged=False)
             
             # find what to prefix the output files with
-            ofprefix = "%s.%s" % (args.ofprefix, sample_type)
+            ofprefix = "%s" % sample_type
             if rep_id != None: 
-                ofprefix = ".".join((args.ofprefix, sample_type, rep_id))
+                ofprefix += ".%s" % rep_id
             
             config.log_statement("Estimating fragment length distribution")
             fl_dists = grit.frag_len.build_fl_dists( elements, rnaseq_reads )
