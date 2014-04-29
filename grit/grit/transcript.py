@@ -259,6 +259,11 @@ class Transcript( object ):
     
     def build_gtf_lines( self, meta_data, source='.'):
         assert self.gene_id != None
+        assert self.id != None
+        if self.gene_name != self.gene_id:
+            meta_data['gene_name'] = self.gene_name
+        if self.name != self.id:
+            meta_data['transcript_name'] = self.name
         ret_lines = []
         def build_lines_for_feature( exons, feature, is_CDS=False ):
             current_frame = 0
