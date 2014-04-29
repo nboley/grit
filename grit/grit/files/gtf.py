@@ -231,6 +231,43 @@ def _load_gene_from_gtf_lines( gene_id, gene_lines, transcripts_data ):
                  transcripts, gene_meta_data )
     
 
+class Annotation(object):
+    """Store a collection of genes.
+
+    Contains methods for comparing annotations.
+    """
+    def __init__(self):
+        self._genes = []
+        self._gene_map = {}
+        self._gene_locs = defaultdict(list)
+    
+    def append(self, gene):
+        # make sure this is a gene object
+        assert isinstance(gene, Gene)
+        
+        # add it to the list, needed for backwards
+        # compatability
+        self._genes.append(gene)
+        
+        # make sure that the id is unique, and add it into 
+        # the hash index
+        assert gene.id not in self._gene_map
+        self._gene_map[gene.id] = gene
+        
+        # add the gene to the location index
+        self._gene_locs[(gene.chrm, gene.strand)].append(gene)
+
+    def iter_overlapping_genes(self, chrm, strand, start, stop):
+        for gene in self._gene_locs[(clean_chr_name(chrm), strand)]:
+            if stop < gene.start: continue
+            if start > gene.stop: continue
+            yield gene
+
+        return
+
+    def __iter__(self):
+        return iter(self._genes)
+    
 def load_gtf(fname_or_fp, use_name_instead_of_id=False, 
              contig=None, strand=None):
     if isinstance( fname_or_fp, str ):
@@ -254,7 +291,7 @@ def load_gtf(fname_or_fp, use_name_instead_of_id=False,
         else:
             gene_lines[data.gene_id][0][data.trans_id].append(data)
     
-    genes = []
+    genes = Annotation()
     for gene_id, ( transcripts_data, gene_lines ) in gene_lines.iteritems():
         try:
             gene = _load_gene_from_gtf_lines(

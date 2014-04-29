@@ -126,6 +126,10 @@ class Transcript( object ):
                  conf_lo=None, conf_hi=None, frac=None):
         self.gene_id = gene_id
         self.id = trans_id
+
+        self.ref_gene = None
+        self.ref_trans = None
+        
         self.chrm = chrm
         self.strand = strand
         
