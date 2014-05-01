@@ -1,5 +1,6 @@
 import os, sys
 import time
+import math
 
 from itertools import izip
 
@@ -26,16 +27,20 @@ FD_SS = 1e-10
 NUM_ITER_FOR_CONV = 5
 DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
-LHD_ABS_TOL = 1e-5
-PARAM_ABS_TOL = 1e-9
+LHD_ABS_TOL = 1e-6
+PARAM_ABS_TOL = 1e-10
 
 MAX_NUM_ITERATIONS = 1000
 
 class TooFewReadsError( ValueError ):
     pass
 
+"""
 try:
-    from sparsify_support_fns import calc_lhd, calc_gradient, calc_hessian
+    import sparsify_support_fns
+    from sparsify_support_fns import (
+        calc_lhd, calc_gradient, calc_hessian, 
+        calc_penalized_lhd, calc_penalized_gradient )
 except ImportError:
     raise
     def calc_lhd( freqs, observed_array, expected_array ):
@@ -46,6 +51,26 @@ except ImportError:
         denom = numpy.matrix( expected_array )*numpy.matrix(freqs).T
         rv = (((expected_array.T)*observed_array))*(1.0/denom)
         return -numpy.array(rv)[:,0]
+"""
+
+import sparsify_support_fns
+
+def calc_lhd( freqs, observed_array, expected_array, 
+              sparse_penalty=None, index=None ):
+    rv = sparsify_support_fns.calc_lhd(freqs, observed_array, expected_array)
+    if sparse_penalty != None:
+        penalty = math.log(sparse_penalty) - math.log(freqs[index])
+        rv -= math.exp(penalty)
+    return rv
+
+def calc_gradient( freqs, observed_array, expected_array,
+                   sparse_penalty=None, index=None):
+    rv = sparsify_support_fns.calc_gradient(
+        freqs, observed_array, expected_array)
+    if sparse_penalty != None:
+        penalty = math.log(sparse_penalty) - 2*math.log(freqs[index])
+        rv[index] -= math.exp(penalty)
+    return rv
 
 def is_row_identifiable(X, i_to_check):
     from cvxopt import matrix, solvers
@@ -129,13 +154,17 @@ def line_search( x, f, gradient, max_feasible_step_size ):
 
     if max_feasible_step_size < FD_SS:
         return 0, True
+    if f(x) >= f(x + FD_SS*gradient):
+        return 0, True
     if f(x + max_feasible_step_size*gradient) > \
             f(x + (max_feasible_step_size-FD_SS)*gradient):
-        assert f(x + max_feasible_step_size*gradient) >= f(x)
+        assert f(x + max_feasible_step_size*gradient) >= f(x), \
+            "Convexity violations: %e %e %e" % (
+            f(x + (max_feasible_step_size-FD_SS)*gradient)-f(x), 
+            f(x + max_feasible_step_size*gradient)-f(x), 
+            f(x)-f(x+gradient*FD_SS))
         return max_feasible_step_size, False
     if 2*FD_SS > max_feasible_step_size: 
-        return 0, True
-    if f(x) > f(x + FD_SS*gradient):
         return 0, True
     
     # do a line search with brent
@@ -172,10 +201,12 @@ def project_onto_simplex( x, debug=False ):
     x_minus_theta[ x_minus_theta < 0 ] = MIN_TRANSCRIPT_FREQ
     return x_minus_theta
 
-def calc_projected_gradient( x, expected_array, observed_array  ):
-    gradient = calc_gradient( x, observed_array, expected_array )
+def calc_projected_gradient( x, expected_array, observed_array, step_size=0.1,
+                             sparse_penalty=None, sparse_index=None  ):
+    gradient = calc_gradient( 
+        x, observed_array, expected_array, sparse_penalty, sparse_index )
     gradient = gradient/gradient.sum()
-    x_next = project_onto_simplex( x + 1.*gradient )
+    x_next = project_onto_simplex( x + 10.*step_size*gradient )
     gradient = (x_next - x)
     return gradient
 
@@ -216,7 +247,8 @@ def calc_max_feasible_step_size_and_limiting_index( x0, gradient ):
         return 0, 0
     return -max_ss, max_i
 
-def build_zero_eliminated_matrices(x, full_expected_array, curr_zeros):
+def build_zero_eliminated_matrices(x, full_expected_array, 
+                                   curr_zeros, sparse_index):
     """Return x and an expected array without boundry points.
     
     """
@@ -227,30 +259,38 @@ def build_zero_eliminated_matrices(x, full_expected_array, curr_zeros):
     full_x = numpy.ones(n)*MIN_TRANSCRIPT_FREQ
     full_x[ numpy.array(sorted(set(range(n))-curr_zeros)) ] = x
 
-    zeros = set( (full_x <= 1e-12).nonzero()[0] )
+    zeros = set( (full_x <= 1e-12).nonzero()[0] ) - set((sparse_index,))
     nonzeros = sorted(set(range(n))-zeros)
     
     new_x = full_x[ nonzeros ]
     new_expected_array = full_expected_array[:, nonzeros]
-    
-    return new_x, new_expected_array, zeros
+
+    if sparse_index != None:
+        sparse_index = sparse_index - sum(1 for i in zeros if i < sparse_index)
+    return new_x, new_expected_array, zeros, sparse_index
    
 def estimate_transcript_frequencies_line_search(  
         observed_array, full_expected_array, x0, 
-        dont_zero, abs_tol ):
+        sparse_penalty, full_sparse_index,
+        dont_zero, abs_tol ):    
     x = x0.copy()
     expected_array = full_expected_array.copy()
     n = full_expected_array.shape[1]
     
-    prev_lhd = calc_lhd(x, observed_array, full_expected_array)
+    prev_lhd = calc_lhd(x, observed_array, full_expected_array, 
+                        sparse_penalty, full_sparse_index)
     lhds = [prev_lhd,]
-    
+                            
     zeros = set()
     zeros_counter = 0
-    
+
+    sparse_index = full_sparse_index
     for i in xrange( MAX_NUM_ITERATIONS ):
         # calculate the gradient and the maximum feasible step size
-        gradient = calc_projected_gradient( x, expected_array, observed_array )
+        gradient = calc_projected_gradient( 
+            x, expected_array, observed_array, 
+            abs_tol,
+            sparse_penalty, sparse_index )
         gradient_size = numpy.absolute(gradient).sum()
         # if the gradient is zero, then we have reached a maximum
         if gradient_size == 0: break
@@ -260,7 +300,8 @@ def estimate_transcript_frequencies_line_search(
         
         # perform the line search
         alpha, is_full_step = line_search(
-            x, lambda x: calc_lhd(x, observed_array, expected_array), 
+            x, lambda x: calc_lhd(x, observed_array, expected_array, 
+                                  sparse_penalty, sparse_index), 
             gradient, max_feasible_step_size )
         x += alpha*gradient
         
@@ -268,7 +309,8 @@ def estimate_transcript_frequencies_line_search(
             x = project_onto_simplex(x)
             continue
      
-        curr_lhd = calc_lhd( x, observed_array, expected_array)
+        curr_lhd = calc_lhd( x, observed_array, expected_array, 
+                             sparse_penalty, sparse_index)
         if i > 3 and (alpha == 0 or curr_lhd - prev_lhd < abs_tol):
             zeros_counter += 1
             if zeros_counter > 3:
@@ -276,8 +318,8 @@ def estimate_transcript_frequencies_line_search(
         else:
             zeros_counter = 0
             if not dont_zero:
-                x, expected_array, zeros = build_zero_eliminated_matrices(
-                    x, full_expected_array, zeros)
+                x, expected_array, zeros, sparse_index = build_zero_eliminated_matrices(
+                    x, full_expected_array, zeros, full_sparse_index)
                 if len(x) <= 2:
                     break
         
@@ -289,11 +331,36 @@ def estimate_transcript_frequencies_line_search(
     
     final_x = numpy.ones(n)*MIN_TRANSCRIPT_FREQ
     final_x[ numpy.array(sorted(set(range(n))-zeros)) ] = x
-    final_lhd = calc_lhd(final_x, observed_array, full_expected_array)
+    final_lhd = calc_lhd(final_x, observed_array, full_expected_array, 
+                         sparse_penalty, sparse_index)
     return final_x, lhds
 
-def estimate_transcript_frequencies(  
-        observed_array, full_expected_array ):
+def estimate_transcript_frequencies_with_cvxopt( 
+        observed_array, expected_array, sparse_penalty, sparse_index,
+        verbose=False):
+    from cvxpy import matrix, variable, geq, log, eq, program, maximize, minimize, sum, quad_over_lin
+    
+    Xs = matrix( observed_array )
+    ps = matrix( expected_array )
+    thetas = variable( ps.shape[1] )
+    constraints = [ eq(sum(thetas), 1), geq(thetas,0)]
+
+    if sparse_penalty == None:
+        p = program( maximize(Xs*log(ps*thetas)), constraints )
+    else:
+        p = program( maximize(Xs*log(ps*thetas) - sparse_penalty*quad_over_lin(
+                    1., thetas[sparse_index,0])), constraints )
+        
+    
+    p.options['maxiters']  = 1500
+    value = p.solve(quiet=not verbose)
+    thetas_values = numpy.array(thetas.value.T.tolist()[0])
+    return thetas_values
+    
+
+def estimate_transcript_frequencies_sparse(  
+        observed_array, full_expected_array,
+        min_sparse_penalty, sparse_index ):
     if observed_array.sum() == 0:
         raise TooFewReadsError, "Too few reads (%i)" % observed_array.sum()
     
@@ -301,9 +368,13 @@ def estimate_transcript_frequencies(
     if n == 1:
         return numpy.ones( 1, dtype=float )
     
-    x = numpy.array([1./n]*n)
-    #x = nnls(full_expected_array, observed_array)
+    x = nnls(full_expected_array, observed_array)
     eps = 10.
+    sparse_penalty = 10.
+    if min_sparse_penalty == None:
+        min_sparse_penalty = PARAM_ABS_TOL
+        sparse_index = numpy.argmax(x)
+    
     start_time = time.time()
     #config.log_statement( "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)" )
     for i in xrange( MAX_NUM_ITERATIONS ):
@@ -311,30 +382,40 @@ def estimate_transcript_frequencies(
         
         x, lhds = estimate_transcript_frequencies_line_search(  
             observed_array, full_expected_array, x, 
+            sparse_penalty, sparse_index,
             dont_zero=False, abs_tol=eps )
         
-        lhd = calc_lhd( x, observed_array, full_expected_array )
-        prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
+        lhd = calc_lhd( x, observed_array, full_expected_array, 
+                        sparse_penalty, sparse_index )
+        prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array,
+                             sparse_penalty, sparse_index)
         if config.DEBUG_VERBOSE:
-            config.log_statement( "Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
+            config.log_statement( "Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%e\t%s" % ( 
                 i, lhd, (lhd - prev_lhd)/len(lhds), len(lhds ), eps, 
+                sparse_penalty,
                 make_time_str((time.time()-start_time)/len(lhds)) ) )
             
         start_time = time.time()
         
         if float(lhd - prev_lhd)/len(lhds) < eps:
-            if eps == LHD_ABS_TOL: break
-            eps /= 5
-            eps = max( eps, LHD_ABS_TOL )
-        
+            if eps == LHD_ABS_TOL and sparse_penalty == min_sparse_penalty:
+                break
+            eps = max( eps/3, LHD_ABS_TOL )
+            if sparse_penalty != None:
+                sparse_penalty = max( sparse_penalty/2, min_sparse_penalty )
+    
+
     
     for i in xrange( 10 ):
         prev_x = x.copy()
         x, lhds = estimate_transcript_frequencies_line_search(  
             observed_array, full_expected_array, x, 
+            sparse_penalty, sparse_index,
             dont_zero=True, abs_tol=LHD_ABS_TOL )
-        lhd = calc_lhd( x, observed_array, full_expected_array )
-        prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array )
+        lhd = calc_lhd( x, observed_array, full_expected_array, 
+                        sparse_penalty, sparse_index)
+        prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array,
+                             sparse_penalty, sparse_index)
         if config.DEBUG_VERBOSE:
             config.log_statement( "Non-Zeroing %i\t%.2f\t%.2e\t%i\t%e\t%s" % ( 
                 i, lhd, (lhd - prev_lhd)/len(lhds), len(lhds), eps,
@@ -344,6 +425,35 @@ def estimate_transcript_frequencies(
         if len( lhds ) < 500: break
     
     return x
+
+def estimate_sparse_transcript_frequencies(observed_array, full_expected_array):
+    sparse_penalty = 1e-12
+
+    best_x = None
+    best_lhd = -1e100
+
+    for sparse_index in xrange(1, full_expected_array.shape[1]):
+        #cvx_sln = estimate_transcript_frequencies_with_cvxopt( 
+        #    observed_array, full_expected_array, 
+        #    sparse_penalty, sparse_index, 
+        #    False )
+
+        x = estimate_transcript_frequencies_sparse(
+            observed_array, full_expected_array, 
+            sparse_penalty, sparse_index )
+        
+        lhd = calc_lhd( x, observed_array, full_expected_array, 
+                        sparse_penalty, sparse_index)
+        if lhd > best_lhd:
+            best_x = x
+    
+    return best_x
+
+def estimate_transcript_frequencies(observed_array, full_expected_array):
+    return estimate_transcript_frequencies_sparse(
+        observed_array, full_expected_array, 
+        None, None )
+        
 
 def estimate_confidence_bound( f_mat, 
                                num_reads_in_bams,
@@ -465,17 +575,17 @@ def estimate_confidence_bound( f_mat,
         # take a downhill step
         x, curr_lhd = take_param_decreasing_step(x)
         if bound_type == 'LOWER' \
-                and abs(x[fixed_index] - MIN_TRANSCRIPT_FREQ) < 1e-13 \
+                and abs(x[fixed_index] - MIN_TRANSCRIPT_FREQ) < PARAM_ABS_TOL \
                 and curr_lhd >= min_lhd:
             break
         if bound_type == 'UPPER' \
-                and abs(x[fixed_index] - (1.0-MIN_TRANSCRIPT_FREQ)) < 1e-13 \
+                and abs(x[fixed_index] - (1.0-MIN_TRANSCRIPT_FREQ)) < PARAM_ABS_TOL \
                 and curr_lhd >= min_lhd:
             break
         
         x = take_lhd_decreasing_step(x)
         
-        if abs( prev_x - x[fixed_index] ) < PARAM_ABS_TOL: 
+        if abs( prev_x - x[fixed_index] ) < PARAM_ABS_TOL:
             n_successes += 1
             if n_successes > 3:
                 break
@@ -490,11 +600,19 @@ def estimate_confidence_bound( f_mat,
     rv = chi2.sf( 2*(max_lhd-lhd), 1), value
     return rv    
 
-def estimate_confidence_bound_with_cvxopt( 
-        observed_array, expected_array, fixed_i, 
-        mle_estimate, bound_type, alpha=0.10 ):
-        
-    assert bound_type in ( 'UPPER', 'LOWER' )
+def estimate_confidence_bound_with_cvx( f_mat, 
+                               num_reads_in_bams,
+                               fixed_i,
+                               mle_estimate,
+                               bound_type,
+                               alpha):
+    if bound_type == 'lb': bound_type = 'LOWER'
+    if bound_type == 'ub': bound_type = 'UPPER'
+    assert bound_type in ('LOWER', 'UPPER'), (
+        "Improper bound type '%s'" % bound_type )
+    expected_array, observed_array = f_mat.expected_and_observed(
+        bam_cnts=num_reads_in_bams)
+    
     from cvxpy import matrix, variable, geq, log, eq, program, maximize, minimize, sum
     
     mle_log_lhd = calc_lhd(mle_estimate, observed_array, expected_array)
@@ -507,11 +625,11 @@ def estimate_confidence_bound_with_cvxopt(
     thetas = variable( ps.shape[1] )
     constraints = [ geq(Xs*log(ps*thetas), lower_lhd_bound), 
                     eq(sum(thetas), 1), geq(thetas,0)]
+    
     if bound_type == 'UPPER':
         p = program( maximize(thetas[fixed_i,0]), constraints )    
     else:
         p = program( minimize(thetas[fixed_i,0]), constraints )
-    
     p.options['maxiters']  = 1500
     value = p.solve(quiet=not DEBUG_OPTIMIZATION)
     thetas_values = numpy.array(thetas.value.T.tolist()[0])
