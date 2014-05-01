@@ -9,7 +9,7 @@ numpy.seterr(all='ignore')
 
 from scipy.linalg import svd, inv
 from scipy.stats import chi2
-from scipy.optimize import fminbound, brentq, bisect, line_search
+from scipy.optimize import brentq, fminbound
 from scipy.io import savemat
 
 import config
@@ -28,7 +28,7 @@ NUM_ITER_FOR_CONV = 5
 DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
 LHD_ABS_TOL = 1e-6
-PARAM_ABS_TOL = 1e-10
+PARAM_ABS_TOL = 1e-6
 
 MAX_NUM_ITERATIONS = 1000
 
@@ -141,47 +141,10 @@ def line_search( x, f, gradient, max_feasible_step_size ):
     """Calculate the optimal step to maximize f in the direction of gradient.
 
     """
-    def brentq_fmin(alpha):
-        return f(x + (alpha+FD_SS)*gradient) \
-            - f(x + (alpha-FD_SS)*gradient)
-
-    def downhill_search(step_size):
-        step_size = FD_SS
-        curr_lhd = f( x )
-        while step_size > FD_SS and curr_lhd > f(x+step_size*gradient):
-            step_size /= 1.5
-        return int(step_size> FD_SS)*step_size
-
-    if max_feasible_step_size < FD_SS:
-        return 0, True
-    if f(x) >= f(x + FD_SS*gradient):
-        return 0, True
-    if f(x + max_feasible_step_size*gradient) > \
-            f(x + (max_feasible_step_size-FD_SS)*gradient):
-        assert f(x + max_feasible_step_size*gradient) >= f(x), \
-            "Convexity violations: %e %e %e" % (
-            f(x + (max_feasible_step_size-FD_SS)*gradient)-f(x), 
-            f(x + max_feasible_step_size*gradient)-f(x), 
-            f(x)-f(x+gradient*FD_SS))
-        return max_feasible_step_size, False
-    if 2*FD_SS > max_feasible_step_size: 
-        return 0, True
-    
-    # do a line search with brent
-    max_step_size = max_feasible_step_size - FD_SS
-    min_step_size = FD_SS
-    
-    if brentq_fmin(max_step_size) > 0 and brentq_fmin(min_step_size) > 0:
-        return max_feasible_step_size, True
-    if brentq_fmin(max_step_size) < 0 and brentq_fmin(min_step_size) < 0:
-        return 0, True
-    
-    step_size = brentq(brentq_fmin, min_step_size, max_step_size )
-    if f(x) > f(x+step_size*gradient):
-        step_size = downhill_search( step_size )
-        return step_size, (step_size==0)
-    
-    return step_size, True
+    alpha = fminbound(lambda a: -f(x + a*gradient), 
+                      0, max_feasible_step_size, 
+                      xtol=1e-6)
+    return alpha
 
 def project_onto_simplex( x, debug=False ):
     if ( x >= 0 ).all() and abs( 1-x.sum()  ) < 1e-6: return x
@@ -299,7 +262,7 @@ def estimate_transcript_frequencies_line_search(
             calc_max_feasible_step_size_and_limiting_index(x, gradient)
         
         # perform the line search
-        alpha, is_full_step = line_search(
+        alpha = line_search(
             x, lambda x: calc_lhd(x, observed_array, expected_array, 
                                   sparse_penalty, sparse_index), 
             gradient, max_feasible_step_size )
@@ -467,6 +430,7 @@ def estimate_confidence_bound( f_mat,
         "Improper bound type '%s'" % bound_type )
     expected_array, observed_array = f_mat.expected_and_observed(
         bam_cnts=num_reads_in_bams)
+    eps = 0.1
     
     if 1 == expected_array.shape[1]:
         return 1.0, 1.0
@@ -484,19 +448,20 @@ def estimate_confidence_bound( f_mat,
         
         # do a line search with brent
         step_size = brentq(brentq_fmin, min_step_size, max_step_size )
-        for i in xrange(100):
+        # make sure that we're above the minimum lhd
+        for i in xrange(1000):
             if brentq_fmin(step_size) >= 0 or step_size <= 0:
                 break
-            step_size -= 1e-12
-
+            step_size -= FD_SS
         rv = max(0, step_size)
+        
         assert calc_lhd(x+rv*gradient,observed_array,expected_array) >= min_lhd
         return rv, True
     
     def take_param_decreasing_step(x):
         gradient = numpy.zeros(n)
         gradient[fixed_index] = -1 if bound_type == 'LOWER' else 1
-        gradient = project_onto_simplex( x + 0.1*gradient ) - x
+        gradient = project_onto_simplex( x + 10*eps*gradient ) - x
         gradient_l1_size = numpy.absolute(gradient).sum()
         # if we can't go anywhere, then dont move
         if gradient_l1_size > 0:
@@ -507,14 +472,10 @@ def estimate_confidence_bound( f_mat,
             alpha, is_full_step = min_line_search(
                 x, gradient, max_feasible_step_size)
             x += alpha*gradient    
-        lhd = calc_lhd(x, observed_array, expected_array)
-        assert lhd >= min_lhd
-        if DEBUG_OPTIMIZATION:
-            print "DOWNHILL", x, x[fixed_index], x.sum(), lhd - min_lhd, \
-                "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
-        return x, lhd
+        
+        return x
     
-    def take_lhd_decreasing_step(x):
+    def take_lhd_increasing_step(x):
         # find the simple lhd gradient at this point
         lhd_gradient = calc_projected_gradient( 
             x, expected_array, observed_array )
@@ -523,7 +484,7 @@ def estimate_confidence_bound( f_mat,
         # find the projected gradient to minimize x[fixed_index]
         coord_gradient = numpy.zeros(n)
         coord_gradient[fixed_index] = -1 if bound_type == 'LOWER' else 1
-        coord_gradient = project_onto_simplex( x + 0.1*coord_gradient ) - x
+        coord_gradient = project_onto_simplex( x + 10*eps*coord_gradient ) - x
         coord_gradient /= ( numpy.absolute(coord_gradient).sum() + 1e-12 )
 
         # if the lhd step is already moving the paramater of itnerest in the 
@@ -544,25 +505,22 @@ def estimate_confidence_bound( f_mat,
                 lhd_gradient[fixed_index] - coord_gradient[fixed_index])
 
         gradient = (1-theta)*lhd_gradient + theta*coord_gradient
-        projection = project_onto_simplex( x + 0.1*gradient )
+        projection = project_onto_simplex( x + 10*eps*gradient )
         gradient = projection - x
         gradient /= ( numpy.absolute(gradient).sum() + 1e-12 )
 
         max_feasible_step_size, max_index = \
             calc_max_feasible_step_size_and_limiting_index(x, gradient)
-        alpha, is_full_step = line_search(
+        alpha = line_search(
             x, lambda x: calc_lhd(x, observed_array, expected_array),
             gradient, max_feasible_step_size)
-        assert alpha >= 0
-        x += alpha*gradient    
-        if DEBUG_OPTIMIZATION:
-            print "MAX LHD ", x, x[fixed_index], x.sum(), \
-                calc_lhd(x, observed_array, expected_array), max_lhd, min_lhd, \
-                "MAX STEP:", max_feasible_step_size, "REAL STEP", alpha
-        
-        assert calc_lhd(x, observed_array, expected_array) >= min_lhd
-        return x
-        
+        while alpha > 0 and \
+                calc_lhd(x + alpha*gradient, observed_array, expected_array) < min_lhd:
+            alpha = alpha/2 - FD_SS
+        alpha = max(0, alpha)
+        assert calc_lhd(x + alpha*gradient, observed_array, expected_array) >= min_lhd
+        return x + alpha*gradient
+    
     n = expected_array.shape[1]    
     max_lhd = calc_lhd(mle_estimate, observed_array, expected_array)
     max_test_stat = chi2.ppf( 1 - alpha, 1 )/2.    
@@ -573,7 +531,8 @@ def estimate_confidence_bound( f_mat,
     n_successes = 0
     for i in xrange(MAX_NUM_ITERATIONS):        
         # take a downhill step
-        x, curr_lhd = take_param_decreasing_step(x)
+        x = take_param_decreasing_step(x)
+        curr_lhd = calc_lhd(x, observed_array, expected_array)
         if bound_type == 'LOWER' \
                 and abs(x[fixed_index] - MIN_TRANSCRIPT_FREQ) < PARAM_ABS_TOL \
                 and curr_lhd >= min_lhd:
@@ -583,12 +542,15 @@ def estimate_confidence_bound( f_mat,
                 and curr_lhd >= min_lhd:
             break
         
-        x = take_lhd_decreasing_step(x)
-        
-        if abs( prev_x - x[fixed_index] ) < PARAM_ABS_TOL:
-            n_successes += 1
-            if n_successes > 3:
-                break
+        x = take_lhd_increasing_step(x)
+            
+        if abs( prev_x - x[fixed_index] ) < eps:
+            if eps > PARAM_ABS_TOL:
+                eps = max(eps/2, PARAM_ABS_TOL)
+            else:
+                n_successes += 1
+                if n_successes > 3:
+                    break
         else: 
             prev_x = x[fixed_index]
             n_successes = 0
