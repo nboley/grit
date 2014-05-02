@@ -133,15 +133,20 @@ def rename_transcripts(gene, ref_genes):
         if best_match == None: continue
         t.ref_gene = best_match.gene_id
         t.ref_trans = best_match.id
-
+        t.ref_match_code = None
+        
         t.gene_name = t.ref_gene
         if len(introns)  == len(best_match.introns) == best_match_score[0] and \
                 best_match_score[1] > -400:
-            t.name = t.ref_trans
+            t.ref_match_code = '='
         elif len(introns) == len(best_match.introns) == best_match_score[0]:
             t.name = t.ref_trans + '-NOBNDS'
-        #elif best_match_score[0] > 0:
-        #    t.id = t.ref_trans + "-PARTIAL"
+            t.ref_match_code = '='
+        elif ( len(introns) == best_match_score[0] and 
+               len(best_match.introns) >  best_match_score[0] ):
+            t.ref_match_code = 'c'
+        elif best_match_score[0] > 0:
+            t.ref_match_code = 'j'
         else:
             t.name = t.gene_name + "-MDV4-%i" % cntr
             cntr += 1
