@@ -137,6 +137,7 @@ class Transcript( object ):
 
         self.ref_gene = None
         self.ref_trans = None
+        self.class_code = None
         
         self.chrm = chrm
         self.strand = strand
@@ -325,6 +326,21 @@ class Transcript( object ):
     
     def calc_length(self):
         return sum( x[1]-x[0]+1 for x in self.exons )
+
+    def build_tracking_line(self):
+        contig_name = self.chrm
+        if config.FIX_CHRM_NAMES_FOR_UCSC:
+            contig_name = fix_chrm_name_for_ucsc(contig_name)
+        return [
+            t.id, # tracking ID
+            '-' if t.class_code == None else t.class_code,  # class code
+            '-' if t.ref_trans == None else t.ref_trans, # nearest ref id
+            t.gene_id, # gene unique id
+            '-' if t.ref_gene == None else t.ref_gene, # nearest reference gene
+            '-', # TSS ID
+            "%s:%s:%i-%i" % (contig_name, t.strand, t.start, t.stop), 
+            str(t.calc_length()) # transcript length
+            ]
     
     def find_promoter(self, inferred_promoter_length=50):
         # if there is an annotated promoter, then return it

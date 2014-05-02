@@ -8,7 +8,7 @@ import scipy
 from pysam import Fastafile, Samfile
 
 from itertools import izip, chain
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 import Queue
 
 import random
@@ -275,7 +275,7 @@ def calc_fpkm( gene, fl_dists, freqs, num_reads_in_bam):
     fpkms = []
     for t, freq in izip( gene.transcripts, freqs ):
         if freq < 0:
-            fpkm = 0
+            fpkm = None
         else:
             effective_t_len, t_scale = calc_effective_length_and_scale_factor(t)
             if effective_t_len <= 0: 
@@ -352,7 +352,7 @@ def find_confidence_bounds_in_gene( gene, num_reads_in_bams,
     
     return res
 
-def find_confidence_bounds_worker( data, expression_ofp ):
+def find_confidence_bounds_worker( data ):
     while True:
         # get a gene to process
         gene_id = data.get_cb_gene()
@@ -384,7 +384,7 @@ def find_confidence_bounds_worker( data, expression_ofp ):
     
     return
 
-def estimate_confidence_bounds( data, expression_ofp ):
+def estimate_confidence_bounds( data ):
     # sort so that the biggest genes are processed first
     config.log_statement(
         "Populating estimate confidence bounds queue.")
@@ -395,13 +395,12 @@ def estimate_confidence_bounds( data, expression_ofp ):
         except KeyError: continue
     
     if config.NTHREADS == 1:
-        find_confidence_bounds_worker(data, expression_ofp)
+        find_confidence_bounds_worker(data )
     else:
         ps = []
         for i in xrange(config.NTHREADS):
             p = multiprocessing.Process(
-                target=find_confidence_bounds_worker, args=[
-                    data, expression_ofp])
+                target=find_confidence_bounds_worker, args=[data,])
             p.daemon=True
             p.start()
             ps.append(p)
@@ -545,7 +544,7 @@ def build_design_matrices( data, fl_dists,
                           key=lambda x:data.gene_ntranscripts_mapping[x]):
         gene_ids.append(gene_id)
     if config.VERBOSE:
-        config.log_statement( "FINISHED Populating estimate cofidence bounds queue" )
+        config.log_statement( "FINISHED Populating estimate confidence bounds queue" )
     
     args = [ gene_ids, gene_ids_lock, data, fl_dists, 
              (rnaseq_reads, promoter_reads, polya_reads)]
@@ -570,6 +569,40 @@ def build_design_matrices( data, fl_dists,
     manager.shutdown()
     return
 
+def write_data_to_tracking_file(data, fl_dists, ofp):
+    num_reads_in_bams = data.get_num_reads_in_bams()
+    ofp.write("\t".join(
+            ["tracking_id", "gene_id ",
+             "coverage", "FPKM    ",
+             "FPKM_lo ", "FPKM_hi ", "status"] 
+            ) + "\n")
+    
+    for gene_id in sorted(data.gene_ids, key=lambda x: int(x.split("_")[-1])):
+        gene = data.get_gene(gene_id)
+        mles = data.get_mle(gene_id)
+        mle_fpkms = calc_fpkm( gene, fl_dists, mles[1:], num_reads_in_bams)
+        ubs = data.get_cbs(gene_id, 'ub')
+        if ubs != None:
+            ub_fpkms = calc_fpkm( gene, fl_dists, ubs, num_reads_in_bams)
+        lbs = data.get_cbs(gene_id, 'lb')
+        if lbs != None:
+            lb_fpkms = calc_fpkm( gene, fl_dists, lbs, num_reads_in_bams)
+        for i, t in enumerate(sorted(gene.transcripts, 
+                                     key=lambda x: int(x.id.split("_")[-1]))):
+            line = []
+            line.append(t.id.ljust(11))
+            line.append(t.gene_id.ljust(11))
+            line.append('-'.ljust(8))
+            if mles == None or mle_fpkms[i] == None: line.append('-       ')
+            else: line.append(('%.2e' % mle_fpkms[i]).ljust(8))
+            if lbs == None or lb_fpkms[i] == None: line.append('-       ')
+            else: line.append(('%.2e' % lb_fpkms[i]).ljust(8))
+            if ubs == None or ub_fpkms[i] == None: line.append('-       ')
+            else: line.append(('%.2e' % ub_fpkms[i]).ljust(8))
+            line.append( "OK" )
+
+            ofp.write("\t".join(line) + "\n" )
+
 def quantify_transcript_expression(
     promoter_reads, rnaseq_reads, polya_reads,
     pickled_gene_fnames, fl_dists,
@@ -578,11 +611,7 @@ def quantify_transcript_expression(
     """Build transcripts
     """
     write_design_matrices=False
-    
-    expression_ofp = ThreadSafeFile("%s.expression.csv" % ofprefix, "w")
-    expression_ofp.write("\t".join(
-            ["gene_id", "trans_id", "estimate_type", "estimate"] ))
-    
+        
     data = SharedData()
     if config.VERBOSE: config.log_statement( 
         "Initializing processing data" )
@@ -602,25 +631,20 @@ def quantify_transcript_expression(
 
     if config.VERBOSE: config.log_statement( 
         "Calculating FPKMS and Writing mle's to output mle" )
-    #write_mles_to_output()
     
     if do_estimate_confidence_bounds:
         if config.VERBOSE: config.log_statement( 
             "Estimating confidence bounds" )
-        estimate_confidence_bounds(data, expression_ofp)
+        estimate_confidence_bounds(data)
 
-    expression_ofp.close()
+        if config.VERBOSE: config.log_statement( 
+            "FINISHED Estimating confidence bounds" )
+    
     if config.VERBOSE: config.log_statement( 
-        "FINISHED Estimating confidence bounds" )
-
-    """
-    with open("tmp.csv", "w") as ofp:
-        for gene_id in data.gene_ids:
-            mle = data.get_mle(gene_id)
-            ubs = data.get_cbs(gene_id, 'ub')
-            lbs = data.get_cbs(gene_id, 'lb')
-            print >> ofp, gene_id, mle
-            print >> ofp, gene_id, ubs
-            print >> ofp, gene_id, lbs
-    """
+        "Writing output data to csv" )
+    
+    expression_ofp = ThreadSafeFile("%s.expression.csv" % ofprefix, "w")
+    write_data_to_tracking_file(data, fl_dists, expression_ofp)    
+    expression_ofp.close()
+    
     return
