@@ -576,8 +576,13 @@ def write_data_to_tracking_file(data, fl_dists, ofp):
              "coverage", "FPKM    ",
              "FPKM_lo ", "FPKM_hi ", "status"] 
             ) + "\n")
-    
-    for gene_id in sorted(data.gene_ids, key=lambda x: int(x.split("_")[-1])):
+
+    try: 
+        sorted_gene_ids = sorted(
+            data.gene_ids, key=lambda x: int(x.split("_")[-1]))
+    except:
+        sorted_gene_ids = data.gene_ids
+    for gene_id in sorted_gene_ids:
         gene = data.get_gene(gene_id)
         mles = data.get_mle(gene_id)
         mle_fpkms = calc_fpkm( gene, fl_dists, mles[1:], num_reads_in_bams)
@@ -587,8 +592,10 @@ def write_data_to_tracking_file(data, fl_dists, ofp):
         lbs = data.get_cbs(gene_id, 'lb')
         if lbs != None:
             lb_fpkms = calc_fpkm( gene, fl_dists, lbs, num_reads_in_bams)
-        for i, t in enumerate(sorted(gene.transcripts, 
-                                     key=lambda x: int(x.id.split("_")[-1]))):
+        try: sorted_transcripts = sorted(gene.transcripts,
+                                         key=lambda x: int(x.id.split("_")[-1]))
+        except: sorted_transcripts = gene.transcripts
+        for i, t in enumerate(sorted_transcripts):
             line = []
             line.append(t.id.ljust(11))
             line.append(t.gene_id.ljust(11))
