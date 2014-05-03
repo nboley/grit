@@ -137,7 +137,7 @@ class Transcript( object ):
 
         self.ref_gene = None
         self.ref_trans = None
-        self.class_code = None
+        self.ref_match_class_code = None
         
         self.chrm = chrm
         self.strand = strand

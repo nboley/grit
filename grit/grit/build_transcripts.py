@@ -77,6 +77,36 @@ def write_gene_to_gtf( ofp, gene ):
     
     return
 
+def write_gene_to_tracking_file( ofp, gene):
+    lines = []
+    contig_name = gene.chrm
+    if config.FIX_CHRM_NAMES_FOR_UCSC:
+        contig_name = fix_chrm_name_for_ucsc(contig_name)
+    
+    for t in gene.transcripts:
+        line = [
+            # tracking ID
+            (t.id).ljust(20), 
+            # class code
+            ('-' if t.ref_match_class_code == None 
+             else t.ref_match_class_code).ljust(10), 
+            # nearest ref id
+            ('-' if t.ref_trans == None else t.ref_trans).ljust(14), 
+            # gene unique id
+            (t.gene_id).ljust(19), 
+            # gene short name
+            ('-' if t.ref_gene == None else t.ref_gene).ljust(14),
+            # TSS ID
+            ('-').ljust(10), 
+            ("%s:%s:%i-%i"%(contig_name, t.strand, t.start, t.stop)).ljust(25),
+             # transcript length
+            str(t.calc_length()) ]
+            
+        lines.append("\t".join(line))
+    
+    ofp.write( "\n".join(lines) + "\n" )
+    return
+
 def find_matching_promoter_for_transcript(transcript, promoters):
     # find the promoter that starts at the same basepair
     # If it extends beyond the first exon, we truncate the
@@ -113,8 +143,6 @@ def rename_transcripts(gene, ref_genes):
             gene.chrm, gene.strand, gene.start, gene.stop))
     if len(ref_genes) == 0:
         return gene
-
-    cntr = 1 
     
     for t in gene.transcripts:
         best_match = None
@@ -133,23 +161,21 @@ def rename_transcripts(gene, ref_genes):
         if best_match == None: continue
         t.ref_gene = best_match.gene_id
         t.ref_trans = best_match.id
-        t.ref_match_code = None
+        t.ref_match_class_code = None
         
         t.gene_name = t.ref_gene
         if len(introns)  == len(best_match.introns) == best_match_score[0] and \
                 best_match_score[1] > -400:
-            t.ref_match_code = '='
+            t.ref_match_class_code = '='
         elif len(introns) == len(best_match.introns) == best_match_score[0]:
-            t.name = t.ref_trans + '-NOBNDS'
-            t.ref_match_code = '='
+            t.ref_match_class_code = '='
         elif ( len(introns) == best_match_score[0] and 
                len(best_match.introns) >  best_match_score[0] ):
-            t.ref_match_code = 'c'
+            t.ref_match_class_code = 'c'
         elif best_match_score[0] > 0:
-            t.ref_match_code = 'j'
+            t.ref_match_class_code = 'j'
         else:
-            t.name = t.gene_name + "-MDV4-%i" % cntr
-            cntr += 1
+            t.ref_match_class_code = 'o'
         #print t.id, ref_t.id, best_match_score, len(introns)
 
     gene_names = set(t.ref_gene for t in gene.transcripts)
@@ -188,7 +214,8 @@ def build_gene(elements, fasta=None, ref_genes=None):
     return gene
 
 def worker( elements, elements_lock, 
-            output, output_lock, gtf_ofp,
+            output, output_lock, 
+            gtf_ofp, tracking_ofp,
             fasta_fp, ref_genes ):
     # if appropriate, open the fasta file
     if fasta_fp != None: fasta = Fastafile(fasta_fp.name)
@@ -218,6 +245,7 @@ def worker( elements, elements_lock,
                 output.append((gene.id, len(gene.transcripts), ofname))
             
             write_gene_to_gtf(gtf_ofp, gene)
+            write_gene_to_tracking_file(tracking_ofp, gene)
         except Exception, inst:
             config.log_statement(
                 "ERROR building transcript in %s: %s"%(gene_elements.id, inst))
@@ -262,7 +290,8 @@ def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
     config.log_statement("")
     return    
 
-def build_transcripts(exons_bed_fp, ofname, fasta_fp=None, ref_genes=None):
+def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname, 
+                      fasta_fp=None, ref_genes=None):
     """Build transcripts
     """    
     # make sure that we're starting from the start of the 
@@ -272,9 +301,20 @@ def build_transcripts(exons_bed_fp, ofname, fasta_fp=None, ref_genes=None):
     raw_elements = load_elements( exons_bed_fp )
     config.log_statement( "Finished Loading %s" % exons_bed_fp.name )
     
-    gtf_ofp = ThreadSafeFile(ofname + ".unfinished", "w")
+    gtf_ofp = ThreadSafeFile(gtf_ofname + ".unfinished", "w")
     gtf_ofp.write("track name=%s useScore=1\n" 
-                  % ".".join(ofname.split(".")[:-1]))
+                  % ".".join(gtf_ofname.split(".")[:-1]))
+    
+    tracking_ofp = ThreadSafeFile(tracking_ofname + ".unfinished", "w")
+    tracking_ofp.write("\t".join(
+            ["tracking_id".ljust(20), 
+             "class_code", 
+             "nearest_ref_id".ljust(15), 
+             "gene_id".ljust(20), 
+             "gene_short_name", 
+             "tss_id".ljust(10), 
+             "locus".ljust(25), 
+             "length"]) + "\n")
     
     manager = multiprocessing.Manager()
     elements = manager.list()
@@ -299,7 +339,8 @@ def build_transcripts(exons_bed_fp, ofname, fasta_fp=None, ref_genes=None):
     output_lock = manager.Lock()    
 
     args = [elements, elements_lock, 
-            output, output_lock, gtf_ofp, 
+            output, output_lock, 
+            gtf_ofp, tracking_ofp,
             fasta_fp, ref_genes]
     if config.NTHREADS in (None, 1):
         worker(*args)
@@ -318,7 +359,11 @@ def build_transcripts(exons_bed_fp, ofname, fasta_fp=None, ref_genes=None):
     config.log_statement("Finished building transcripts")
 
     gtf_ofp.close()
-    shutil.move(ofname + ".unfinished", ofname)
+    tracking_ofp.close()
+
+    # we store to unfinished so we know if it errors out early
+    shutil.move(gtf_ofname + ".unfinished", gtf_ofname)
+    shutil.move(tracking_ofname + ".unfinished", tracking_ofname)
     
     return genes
 

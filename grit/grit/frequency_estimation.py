@@ -27,8 +27,8 @@ FD_SS = 1e-10
 NUM_ITER_FOR_CONV = 5
 DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
-LHD_ABS_TOL = 1e-6
-PARAM_ABS_TOL = 1e-10
+LHD_ABS_TOL = 1e-5
+PARAM_ABS_TOL = 1e-8
 
 MAX_NUM_ITERATIONS = 1000
 
@@ -134,7 +134,9 @@ def nnls( X, Y, fixed_indices_and_values={} ):
             config.log_statement( "%s:\t%s" % ( key.ljust(22), val ) )
         
         config.log_statement( "RSS: ".ljust(22) + str(rss) )
-    
+
+    x[x < MIN_TRANSCRIPT_FREQ] = MIN_TRANSCRIPT_FREQ
+    x = project_onto_simplex(x)
     return x
 
 def line_search( x, f, gradient, max_feasible_step_size ):
@@ -144,7 +146,10 @@ def line_search( x, f, gradient, max_feasible_step_size ):
     alpha = fminbound(lambda a: -f(x + a*gradient), 
                       0, max_feasible_step_size, 
                       xtol=1e-6)
-    return alpha
+    lhd0 = f(x)
+    while alpha > 0 and f(x+alpha*gradient) < lhd0:
+        alpha = alpha/2 - FD_SS
+    return max(0, alpha)
 
 def project_onto_simplex( x, debug=False ):
     if ( x >= 0 ).all() and abs( 1-x.sum()  ) < 1e-6: return x
@@ -243,7 +248,7 @@ def estimate_transcript_frequencies_line_search(
     prev_lhd = calc_lhd(x, observed_array, full_expected_array, 
                         sparse_penalty, full_sparse_index)
     lhds = [prev_lhd,]
-                            
+    
     zeros = set()
     zeros_counter = 0
 
@@ -267,7 +272,6 @@ def estimate_transcript_frequencies_line_search(
                                   sparse_penalty, sparse_index), 
             gradient, max_feasible_step_size )
         x += alpha*gradient
-        
         if abs( 1-x.sum() ) > 1e-6:
             x = project_onto_simplex(x)
             continue
@@ -295,7 +299,14 @@ def estimate_transcript_frequencies_line_search(
     final_x = numpy.ones(n)*MIN_TRANSCRIPT_FREQ
     final_x[ numpy.array(sorted(set(range(n))-zeros)) ] = x
     final_lhd = calc_lhd(final_x, observed_array, full_expected_array, 
-                         sparse_penalty, sparse_index)
+                         sparse_penalty, full_sparse_index)
+
+    if final_lhd < prev_lhd:
+        return x0, [prev_lhd,]
+    #assert numpy.isnan(prev_lhd) or final_lhd - prev_lhd > -abs_tol, \
+    #    "Final: %e\tPrev: %e\tDiff: %e\tTol: %e\t %s" % (
+    #    final_lhd, prev_lhd, final_lhd-prev_lhd, abs_tol, lhds)
+        
     return final_x, lhds
 
 def estimate_transcript_frequencies_with_cvxopt( 
@@ -442,7 +453,7 @@ def estimate_confidence_bound( f_mat,
         min_step_size = 0
         max_step_size = max_feasible_step_size
 
-        assert brentq_fmin(min_step_size) >= 0
+        assert brentq_fmin(min_step_size) >= 0, "brent min is %e" % brentq_fmin(min_step_size)
         if brentq_fmin(max_step_size) >= 0:
             return max_step_size, False
         
