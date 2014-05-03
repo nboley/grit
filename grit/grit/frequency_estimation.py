@@ -28,7 +28,7 @@ NUM_ITER_FOR_CONV = 5
 DEBUG_OPTIMIZATION = False
 PROMOTER_SIZE = 50
 LHD_ABS_TOL = 1e-6
-PARAM_ABS_TOL = 1e-6
+PARAM_ABS_TOL = 1e-10
 
 MAX_NUM_ITERATIONS = 1000
 
@@ -164,7 +164,7 @@ def project_onto_simplex( x, debug=False ):
     x_minus_theta[ x_minus_theta < 0 ] = MIN_TRANSCRIPT_FREQ
     return x_minus_theta
 
-def calc_projected_gradient( x, expected_array, observed_array, step_size=0.1,
+def calc_projected_gradient( x, expected_array, observed_array, step_size,
                              sparse_penalty=None, sparse_index=None  ):
     gradient = calc_gradient( 
         x, observed_array, expected_array, sparse_penalty, sparse_index )
@@ -301,7 +301,8 @@ def estimate_transcript_frequencies_line_search(
 def estimate_transcript_frequencies_with_cvxopt( 
         observed_array, expected_array, sparse_penalty, sparse_index,
         verbose=False):
-    from cvxpy import matrix, variable, geq, log, eq, program, maximize, minimize, sum, quad_over_lin
+    from cvxpy import matrix, variable, geq, log, eq, program, maximize, \
+        minimize, sum, quad_over_lin
     
     Xs = matrix( observed_array )
     ps = matrix( expected_array )
@@ -339,7 +340,8 @@ def estimate_transcript_frequencies_sparse(
         sparse_index = numpy.argmax(x)
     
     start_time = time.time()
-    #config.log_statement( "Iteration\tlog lhd\t\tchange lhd\tn iter\ttolerance\ttime (hr:min:sec)" )
+    #config.log_statement( "Iteration\tlog lhd\t\tchange lhd\tn 
+    # iter\ttolerance\ttime (hr:min:sec)" )
     for i in xrange( MAX_NUM_ITERATIONS ):
         prev_x = x.copy()
         
@@ -366,8 +368,6 @@ def estimate_transcript_frequencies_sparse(
             eps = max( eps/3, LHD_ABS_TOL )
             if sparse_penalty != None:
                 sparse_penalty = max( sparse_penalty/2, min_sparse_penalty )
-    
-
     
     for i in xrange( 10 ):
         prev_x = x.copy()
@@ -449,10 +449,8 @@ def estimate_confidence_bound( f_mat,
         # do a line search with brent
         step_size = brentq(brentq_fmin, min_step_size, max_step_size )
         # make sure that we're above the minimum lhd
-        for i in xrange(1000):
-            if brentq_fmin(step_size) >= 0 or step_size <= 0:
-                break
-            step_size -= FD_SS
+        while brentq_fmin(step_size) < 0 and step_size > 0:
+            step_size = step_size/2 - FD_SS
         rv = max(0, step_size)
         
         assert calc_lhd(x+rv*gradient,observed_array,expected_array) >= min_lhd
@@ -478,7 +476,7 @@ def estimate_confidence_bound( f_mat,
     def take_lhd_increasing_step(x):
         # find the simple lhd gradient at this point
         lhd_gradient = calc_projected_gradient( 
-            x, expected_array, observed_array )
+            x, expected_array, observed_array, eps )
         lhd_gradient /= ( numpy.absolute(lhd_gradient).sum() + 1e-12 )
         
         # find the projected gradient to minimize x[fixed_index]
@@ -497,7 +495,8 @@ def estimate_confidence_bound( f_mat,
         # otherwise, find out how miuch we need to step off of the maximum step
         # to make our parameter not move in the wrong direction
         else:
-            # we want lhd_gradient[fixed_index]*(1-theta) + theta*coord_gradient[fixed_index] == 0
+            # we want lhd_gradient[fixed_index]*(1-theta) + \
+            #   theta*coord_gradient[fixed_index] == 0
             # implies lhd[i] -theta*lhd[i] + theta*cg[i] == 0
             #     =>  lhd[i] = theta*lhd[i] - theta*cg[i]
             #     =>  lhd[i]/(lhd[i] - theta*cg[i]) = theta*
