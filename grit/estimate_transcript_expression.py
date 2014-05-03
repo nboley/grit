@@ -186,7 +186,8 @@ class SharedData(object):
             self.lbs[gene_id] = RawArray(
                 'd', [-1]*n_trans)
         
-    def populate_estimate_cbs_queue(self, gene_id):
+    def populate_estimate_cbs_queue(self, gene_id, bnd_type):
+        assert bnd_type in ('ub', 'lb')
         f_mat = self.get_design_matrix(gene_id)
         with self.gene_cb_queues_locks[gene_id]:
             queue = self.gene_cb_queues[gene_id]
@@ -195,8 +196,7 @@ class SharedData(object):
             #queue.append((None, 0, 'lb'))
             # add 1 to the row num to account for the out of gene bin
             for row_num, t_index in enumerate(f_mat.transcript_indices()):
-                queue.append((t_index, row_num+1, 'ub'))
-                queue.append((t_index, row_num+1, 'lb'))
+                queue.append((t_index, row_num+1, bnd_type))
         
         with self.cb_genes_lock:
             self.cb_genes.append(gene_id)
@@ -384,18 +384,18 @@ def find_confidence_bounds_worker( data ):
     
     return
 
-def estimate_confidence_bounds( data ):
+def estimate_confidence_bounds( data, bnd_type ):
     # sort so that the biggest genes are processed first
     config.log_statement(
         "Populating estimate confidence bounds queue.")
 
     for gene_id in sorted(data.gene_ids, 
                           key=lambda x:data.gene_ntranscripts_mapping[x]):
-        try: data.populate_estimate_cbs_queue(gene_id)
+        try: data.populate_estimate_cbs_queue(gene_id, bnd_type)
         except KeyError: continue
     
     if config.NTHREADS == 1:
-        find_confidence_bounds_worker(data )
+        find_confidence_bounds_worker( data )
     else:
         ps = []
         for i in xrange(config.NTHREADS):
@@ -613,7 +613,7 @@ def write_data_to_tracking_file(data, fl_dists, ofp):
 def quantify_transcript_expression(
     promoter_reads, rnaseq_reads, polya_reads,
     pickled_gene_fnames, fl_dists,
-    ofprefix, 
+    ofname, 
     do_estimate_confidence_bounds=True ):
     """Build transcripts
     """
@@ -641,16 +641,21 @@ def quantify_transcript_expression(
     
     if do_estimate_confidence_bounds:
         if config.VERBOSE: config.log_statement( 
-            "Estimating confidence bounds" )
-        estimate_confidence_bounds(data)
+            "Estimating lower confidence bounds" )
+        estimate_confidence_bounds(data, 'lb')
+        if config.VERBOSE: config.log_statement( 
+            "FINISHED Estimating lower confidence bounds" )
 
         if config.VERBOSE: config.log_statement( 
-            "FINISHED Estimating confidence bounds" )
+            "Estimating upper confidence bounds" )
+        estimate_confidence_bounds(data, 'ub')
+        if config.VERBOSE: config.log_statement( 
+            "FINISHED Estimating upper confidence bounds" )
     
     if config.VERBOSE: config.log_statement( 
-        "Writing output data to csv" )
+        "Writing output data to tracking file" )
     
-    expression_ofp = ThreadSafeFile("%s.expression.csv" % ofprefix, "w")
+    expression_ofp = ThreadSafeFile(ofname, "w")
     write_data_to_tracking_file(data, fl_dists, expression_ofp)    
     expression_ofp.close()
     

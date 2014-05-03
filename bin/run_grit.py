@@ -586,6 +586,7 @@ def main():
     # build transcripts for each sample
     for sample_type, (elements_fp, gtf_fp) in elements.iteritems():
         gtf_fname = sample_type + ".gtf"
+        tracking_fname = sample_type + ".transcript_tracking"
         assert elements_fp == None or gtf_fp == None
         # try to load an already built gtf
         if args.continue_run and gtf_fp == None:
@@ -606,7 +607,8 @@ def main():
         else:
             elements = load_elements(elements_fp)
             genes_fnames = grit.build_transcripts.build_transcripts(
-                elements_fp, gtf_fname, args.fasta, sample_data.ref_genes)
+                elements_fp, gtf_fname, tracking_fname, 
+                args.fasta, sample_data.ref_genes)
         if config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS: continue
         rep_ids = sample_data.get_rep_ids(sample_type)
         
@@ -619,9 +621,10 @@ def main():
                 verify_args=False, include_merged=False)
             
             # find what to prefix the output files with
-            ofprefix = "%s" % sample_type
-            if rep_id != None: 
-                ofprefix += ".%s" % rep_id
+            if rep_id == None:
+                exp_ofname = "%s.expression_tracking" % sample_type
+            else:
+                exp_ofname = "%s.%s.expression_tracking" % (sample_type, rep_id)
             
             config.log_statement("Estimating fragment length distribution")
             fl_dists = grit.frag_len.build_fl_dists( elements, rnaseq_reads )
@@ -629,7 +632,7 @@ def main():
             grit.estimate_transcript_expression.quantify_transcript_expression(
                 promoter_reads, rnaseq_reads, polya_reads,
                 genes_fnames, fl_dists,
-                ofprefix,
+                exp_ofname,
                 do_estimate_confidence_bounds=args.estimate_confidence_bounds )
     
 if __name__ == '__main__':
