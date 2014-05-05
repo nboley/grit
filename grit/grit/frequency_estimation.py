@@ -73,23 +73,13 @@ def calc_gradient( freqs, observed_array, expected_array,
     return rv
 
 def is_row_identifiable(X, i_to_check):
-    from cvxopt import matrix, solvers
-    solvers.options['show_progress'] = False
-    indices = numpy.array([i for i in xrange(X.shape[1]) if i != i_to_check]) 
-    A = matrix(X[:,indices])
-    b = matrix(numpy.matrix(X[:,i_to_check])).T
-    m, n = A.size
-    I = matrix(0.0, (n,n))
-    I[::n+1] = 1.0
-    G = matrix([-I, matrix(0.0, (1,n)), I])
-    h = matrix(n*[0.0] + [1.0] + n*[0.0])
-    dims = {'l': n, 'q': [n+1], 's': []}
-    x = solvers.coneqp(A.T*A, -A.T*b, G, h, dims)
-    error = float(((A*x['x'] - b).T*(A*x['x'] - b))[0])
-    if config.DEBUG_VERBOSE: 
-        print "SLACK for transcript %i: %e" % ( i_to_check, error )
+    import scipy.optimize
     
-    return bool(error > 1e-6)
+    indices = numpy.array([i for i in xrange(X.shape[1]) if i != i_to_check]) 
+    A = X[:,indices]
+    b = X[:,i_to_check]
+    res = scipy.optimize.nnls(A, b)
+    return res[1] > 1e-6
 
 def find_identifiable_transcripts( expected_array ):
     identifiable_transcripts = []
@@ -347,7 +337,7 @@ def estimate_transcript_frequencies_sparse(
     eps = 10.
     sparse_penalty = 10.
     if min_sparse_penalty == None:
-        min_sparse_penalty = PARAM_ABS_TOL
+        min_sparse_penalty = LHD_ABS_TOL
         sparse_index = numpy.argmax(x)
     
     start_time = time.time()
@@ -442,7 +432,9 @@ def estimate_confidence_bound( f_mat,
     expected_array, observed_array = f_mat.expected_and_observed(
         bam_cnts=num_reads_in_bams)
     eps = 0.1
-    
+    #expected_array = expected_array[:, 0:4]    
+    #mle_estimate = mle_estimate[:-1]
+    #print mle_estimate
     if 1 == expected_array.shape[1]:
         return 1.0, 1.0
     
@@ -470,7 +462,7 @@ def estimate_confidence_bound( f_mat,
     def take_param_decreasing_step(x):
         gradient = numpy.zeros(n)
         gradient[fixed_index] = -1 if bound_type == 'LOWER' else 1
-        gradient = project_onto_simplex( x + 10*eps*gradient ) - x
+        gradient = project_onto_simplex( x + 100*eps*gradient ) - x
         gradient_l1_size = numpy.absolute(gradient).sum()
         # if we can't go anywhere, then dont move
         if gradient_l1_size > 0:
@@ -493,9 +485,9 @@ def estimate_confidence_bound( f_mat,
         # find the projected gradient to minimize x[fixed_index]
         coord_gradient = numpy.zeros(n)
         coord_gradient[fixed_index] = -1 if bound_type == 'LOWER' else 1
-        coord_gradient = project_onto_simplex( x + 10*eps*coord_gradient ) - x
-        coord_gradient /= ( numpy.absolute(coord_gradient).sum() + 1e-12 )
-
+        #coord_gradient = project_onto_simplex( x + 10*eps*coord_gradient ) - x
+        #coord_gradient /= ( numpy.absolute(coord_gradient).sum() + 1e-12 )
+        
         # if the lhd step is already moving the paramater of itnerest in the 
         # proper direction, we just take a normal lhd step
         if ( bound_type == 'LOWER' 
@@ -513,22 +505,32 @@ def estimate_confidence_bound( f_mat,
             #     =>  lhd[i]/(lhd[i] - theta*cg[i]) = theta*
             theta = lhd_gradient[fixed_index]/(
                 lhd_gradient[fixed_index] - coord_gradient[fixed_index])
-
+        
         gradient = (1-theta)*lhd_gradient + theta*coord_gradient
-        projection = project_onto_simplex( x + 10*eps*gradient )
+        projection = project_onto_simplex( x + 100*eps*gradient )
         gradient = projection - x
         gradient /= ( numpy.absolute(gradient).sum() + 1e-12 )
-
+        #print theta, x
+        #print gradient
+        
         max_feasible_step_size, max_index = \
             calc_max_feasible_step_size_and_limiting_index(x, gradient)
         alpha = line_search(
             x, lambda x: calc_lhd(x, observed_array, expected_array),
             gradient, max_feasible_step_size)
+        #print alpha
         while alpha > 0 and \
                 calc_lhd(x + alpha*gradient, observed_array, expected_array) < min_lhd:
             alpha = alpha/2 - FD_SS
+        #print alpha
         alpha = max(0, alpha)
-        assert calc_lhd(x + alpha*gradient, observed_array, expected_array) >= min_lhd
+        assert calc_lhd(x + alpha*gradient, observed_array, expected_array) >= min_lhd - 1e-12,\
+            "Value is %e %s %e %e %e" % (
+            alpha,
+            x+alpha*gradient,
+            calc_lhd(x + alpha*gradient, observed_array, expected_array), 
+            min_lhd - 1e-12, 
+            calc_lhd(x + alpha*gradient, observed_array, expected_array) - min_lhd - 1e-12 )
         return x + alpha*gradient
     
     n = expected_array.shape[1]    
@@ -551,9 +553,9 @@ def estimate_confidence_bound( f_mat,
                 and abs(x[fixed_index] - (1.0-MIN_TRANSCRIPT_FREQ)) < PARAM_ABS_TOL \
                 and curr_lhd >= min_lhd:
             break
-        
+
         x = take_lhd_increasing_step(x)
-            
+        
         if abs( prev_x - x[fixed_index] ) < eps:
             if eps > PARAM_ABS_TOL:
                 eps = max(eps/2, PARAM_ABS_TOL)
@@ -564,7 +566,7 @@ def estimate_confidence_bound( f_mat,
         else: 
             prev_x = x[fixed_index]
             n_successes = 0
-    
+
     value = x[fixed_index] 
     if value < PARAM_ABS_TOL: value = 0.
     if 1-value < PARAM_ABS_TOL: value = 1.

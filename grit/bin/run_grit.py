@@ -428,6 +428,10 @@ def parse_arguments():
                          default=False,
                          action="store_true",
         help='If set, do not estimate confidence bounds.')
+    parser.add_argument( '--dont-estimate-upper-confidence-bounds',
+                         default=False,
+                         action="store_true",
+        help='If set, do not estimate upper confidence bounds.')
 
     parser.add_argument( '--output-dir', '-o', default="discovered",
         help='Write all output files to this directory. (default: discovered)')
@@ -471,11 +475,28 @@ def parse_arguments():
         args.only_build_candidate_transcripts
     assert not (config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS 
                 and args.only_build_elements)
+
+    if ( args.dont_estimate_confidence_bounds
+         and args.dont_estimate_upper_confidence_bounds ):
+        raise ValueError, "It doesn't make sense to set --dont-estimate-confidence-bounds and --dont-estimate-upper-confidence-bounds"
     
-    args.estimate_confidence_bounds = (
-        not args.dont_estimate_confidence_bounds)
-    if config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS:
-        args.estimate_confidence_bounds = False
+    if (args.only_build_candidate_transcripts and 
+            args.dont_estimate_upper_confidence_bounds):
+        raise ValueError, "--only-build-candidate-transcripts implies --dont-estimate-confidence-upper-bounds (don't set both)"        
+
+    if (args.only_build_candidate_transcripts and 
+            args.dont_estimate_confidence_bounds):
+        raise ValueError, "--only-build-candidate-transcripts implies --dont-estimate-confidence-upper-bounds (don't set both)"        
+
+    config.ESTIMATE_UPPER_CONFIDENCE_BOUNDS = True
+    config.ESTIMATE_LOWER_CONFIDENCE_BOUNDS = True
+    
+    if args.dont_estimate_confidence_bounds:
+        config.ESTIMATE_UPPER_CONFIDENCE_BOUNDS = False
+        config.ESTIMATE_LOWER_CONFIDENCE_BOUNDS = False
+
+    if args.dont_estimate_upper_confidence_bounds:
+        config.ESTIMATE_UPPER_CONFIDENCE_BOUNDS = False
     
     config.FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
 
@@ -632,8 +653,7 @@ def main():
             grit.estimate_transcript_expression.quantify_transcript_expression(
                 promoter_reads, rnaseq_reads, polya_reads,
                 genes_fnames, fl_dists,
-                exp_ofname,
-                do_estimate_confidence_bounds=args.estimate_confidence_bounds )
+                exp_ofname )
     
 if __name__ == '__main__':
     try: main()
