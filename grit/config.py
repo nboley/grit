@@ -9,8 +9,6 @@ MAX_NUM_CANDIDATE_TRANSCRIPTS = 25000
 
 CB_SIG_LEVEL = 0.025
 
-NUM_TRANS_IN_GRP = 10
-
 # log statement is set in the main init, and is a global
 # function which facilitates smart, ncurses based logging
 log_statement = None
@@ -23,6 +21,9 @@ ONLY_BUILD_CANDIDATE_TRANSCRIPTS = None
 
 NTHREADS = None
 TOTAL_MAPPED_READS = None
+
+ESTIMATE_UPPER_CONFIDENCE_BOUNDS = True
+ESTIMATE_LOWER_CONFIDENCE_BOUNDS = True
 
 MIN_INTRON_SIZE = 50
 MIN_EXON_SIZE = 50 #MIN_INTRON_SIZE

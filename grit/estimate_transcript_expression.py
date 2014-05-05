@@ -322,7 +322,7 @@ def find_confidence_bounds_in_gene( gene, num_reads_in_bams,
         
         if config.DEBUG_VERBOSE: config.log_statement( 
             "Estimating %s confidence bound for gene %s (%i/%i remain)" % ( 
-            bnd_type, gene.id, len(trans_indices), 2*len(gene.transcripts)))
+            bnd_type, gene.id, len(trans_indices), len(gene.transcripts)))
         try:
             p_value, bnd = frequency_estimation.estimate_confidence_bound( 
                 f_mat, num_reads_in_bams,
@@ -613,8 +613,7 @@ def write_data_to_tracking_file(data, fl_dists, ofp):
 def quantify_transcript_expression(
     promoter_reads, rnaseq_reads, polya_reads,
     pickled_gene_fnames, fl_dists,
-    ofname, 
-    do_estimate_confidence_bounds=True ):
+    ofname ):
     """Build transcripts
     """
     write_design_matrices=False
@@ -639,13 +638,14 @@ def quantify_transcript_expression(
     if config.VERBOSE: config.log_statement( 
         "Calculating FPKMS and Writing mle's to output mle" )
     
-    if do_estimate_confidence_bounds:
+    if config.ESTIMATE_LOWER_CONFIDENCE_BOUNDS:
         if config.VERBOSE: config.log_statement( 
             "Estimating lower confidence bounds" )
         estimate_confidence_bounds(data, 'lb')
         if config.VERBOSE: config.log_statement( 
             "FINISHED Estimating lower confidence bounds" )
-
+    
+    if config.ESTIMATE_UPPER_CONFIDENCE_BOUNDS:
         if config.VERBOSE: config.log_statement( 
             "Estimating upper confidence bounds" )
         estimate_confidence_bounds(data, 'ub')
