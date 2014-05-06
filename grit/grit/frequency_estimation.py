@@ -467,7 +467,7 @@ def estimate_confidence_bound( f_mat,
         # if we can't go anywhere, then dont move
         if gradient_l1_size > 0:
             gradient /= numpy.absolute(gradient).sum()        
-            assert not numpy.isnan(gradient).all()
+            assert not numpy.isnan(gradient).any()
             max_feasible_step_size, max_index = \
                 calc_max_feasible_step_size_and_limiting_index(x, gradient)
             alpha, is_full_step = min_line_search(
@@ -479,14 +479,14 @@ def estimate_confidence_bound( f_mat,
     def take_lhd_increasing_step(x):
         # find the simple lhd gradient at this point
         lhd_gradient = calc_projected_gradient( 
-            x, expected_array, observed_array, eps )
+            x, expected_array, observed_array, 10*eps )
         lhd_gradient /= ( numpy.absolute(lhd_gradient).sum() + 1e-12 )
         
         # find the projected gradient to minimize x[fixed_index]
         coord_gradient = numpy.zeros(n)
         coord_gradient[fixed_index] = -1 if bound_type == 'LOWER' else 1
-        #coord_gradient = project_onto_simplex( x + 10*eps*coord_gradient ) - x
-        #coord_gradient /= ( numpy.absolute(coord_gradient).sum() + 1e-12 )
+        coord_gradient = project_onto_simplex( x + 100*eps*coord_gradient ) - x
+        coord_gradient /= ( numpy.absolute(coord_gradient).sum() + 1e-12 )
         
         # if the lhd step is already moving the paramater of itnerest in the 
         # proper direction, we just take a normal lhd step

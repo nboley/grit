@@ -1577,10 +1577,12 @@ def find_exons( contig_lens, gene_bndry_bins, ofp,
              ofp, contig_lens, ref_elements, ref_elements_to_include,
              rnaseq_reads, cage_reads, polya_reads  ]
     
+    n_genes = len(genes_queue)
     if nthreads == 1:
         find_exons_worker(*args)
     else:
-        config.log_statement( "Waiting on exon finding children" )
+        config.log_statement("Waiting on exon finding children (%i/%i remain)"%(
+                len(genes_queue), n_genes))
         ps = []
         for i in xrange( nthreads ):
             p = multiprocessing.Process(target=find_exons_worker, args=args)
@@ -1588,9 +1590,11 @@ def find_exons( contig_lens, gene_bndry_bins, ofp,
             ps.append( p )
         
         while True:
+            config.log_statement("Waiting on exon finding children (%i/%i remain)"%(
+                    len(genes_queue), n_genes))
             if all( not p.is_alive() for p in ps ):
                 break
-            time.sleep( 0.1 )
+            time.sleep( 1.0 )
 
     config.log_statement( "" )    
     return

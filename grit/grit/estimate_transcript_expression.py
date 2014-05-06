@@ -499,11 +499,13 @@ def estimate_mles( data ):
 def build_design_matrices_worker( gene_ids, gene_ids_lock,
                                   data, fl_dists,
                                   (rnaseq_reads, promoter_reads, polya_reads)):
+    config.log_statement("Reloading read data in subprocess")
     if rnaseq_reads != None: rnaseq_reads.reload()
     if promoter_reads != None: promoter_reads.reload()
     if polya_reads != None: polya_reads.reload()
     
     while True:
+        config.log_statement("Acquiring gene to process")
         with gene_ids_lock:
             try: gene_id = gene_ids.pop()
             except IndexError: 
@@ -511,6 +513,7 @@ def build_design_matrices_worker( gene_ids, gene_ids_lock,
                 return
         
         try:
+            config.log_statement("Loading gene '%s'" % gene_id)
             gene = data.get_gene(gene_id)
             config.log_statement( 
                 "Finding design matrix for Gene %s(%s:%s:%i-%i) - %i transcripts"%(
@@ -524,9 +527,8 @@ def build_design_matrices_worker( gene_ids, gene_ids_lock,
             error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
                 os.getpid(), gene.id, 
                 gene.chrm, gene.strand, gene.start, gene.stop, inst)
-            if config.DEBUG_VERBOSE:
-                config.log_statement( 
-                    error_msg + "\n" + traceback.format_exc(), log=True )
+            config.log_statement( 
+                error_msg + "\n" + traceback.format_exc(), log=True )
         else:
             config.log_statement( "WRITING DESIGN MATRIX TO DISK %s" % gene.id )
             data.set_design_matrix(gene.id, f_mat)
@@ -537,14 +539,12 @@ def build_design_matrices( data, fl_dists,
     manager = multiprocessing.Manager()
     gene_ids = manager.list()
     gene_ids_lock = manager.Lock()
-    if config.VERBOSE:
-        config.log_statement( "Populating estimate cofidence bounds queue" )
+    config.log_statement( "Populating estimate cofidence bounds queue" )
     # sort so that the biggest genes are processed first
     for gene_id in sorted(data.gene_ids, 
                           key=lambda x:data.gene_ntranscripts_mapping[x]):
         gene_ids.append(gene_id)
-    if config.VERBOSE:
-        config.log_statement( "FINISHED Populating estimate confidence bounds queue" )
+    config.log_statement("FINISHED Populating estimate confidence bounds queue")
     
     args = [ gene_ids, gene_ids_lock, data, fl_dists, 
              (rnaseq_reads, promoter_reads, polya_reads)]
