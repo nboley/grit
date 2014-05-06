@@ -227,7 +227,7 @@ def build_zero_eliminated_matrices(x, full_expected_array,
         sparse_index = sparse_index - sum(1 for i in zeros if i < sparse_index)
     return new_x, new_expected_array, zeros, sparse_index
    
-def estimate_transcript_frequencies_line_search(  
+def estimate_transcript_frequencies_line_search_OLD(  
         observed_array, full_expected_array, x0, 
         sparse_penalty, full_sparse_index,
         dont_zero, abs_tol ):    
@@ -299,6 +299,87 @@ def estimate_transcript_frequencies_line_search(
         
     return final_x, lhds
 
+def estimate_transcript_frequencies_line_search(  
+        observed_array, full_expected_array, x0, 
+        sparse_penalty, full_sparse_index,
+        dont_zero, abs_tol ):    
+    x = x0.copy()
+    expected_array = full_expected_array.copy()
+    n = full_expected_array.shape[1]
+    
+    prev_lhd = calc_lhd(x, observed_array, full_expected_array, 
+                        sparse_penalty, full_sparse_index)
+    lhds = [prev_lhd,]
+    
+    zeros = set()
+    zeros_counter = 0
+    
+    sparse_index = full_sparse_index
+    for i in xrange( MAX_NUM_ITERATIONS ):
+        gradient = calc_gradient( 
+            x, observed_array, expected_array, sparse_penalty, sparse_index )
+        gradient = gradient/(gradient.sum() + 1e-12)
+
+        def line_search_f(alpha):
+            new_x = project_onto_simplex(x + alpha*gradient)
+            return calc_lhd(new_x, observed_array, expected_array, 
+                             sparse_penalty, sparse_index)
+        
+        # bisection on alpha
+        min_alpha, min_val = 0, prev_lhd
+        max_alpha, max_val = 10, line_search_f(10.)
+        while True:
+            if max_alpha - min_alpha < abs_tol and min_alpha > 1e-12:
+                break
+            alpha = (max_alpha + min_alpha)/2.
+            if alpha < 1e-12: break
+            
+            val = line_search_f(alpha)
+            if val > min_val: 
+                min_alpha = alpha
+                min_val = val
+            else: 
+                max_alpha = alpha
+                max_val = val
+        
+        new_x = project_onto_simplex(x + alpha*gradient)
+        curr_lhd = calc_lhd( new_x, observed_array, expected_array, 
+                             sparse_penalty, sparse_index)
+        if curr_lhd > prev_lhd: x = new_x
+        else: curr_lhd = prev_lhd
+        
+        assert curr_lhd >= prev_lhd, "%e %e %e" % (curr_lhd, prev_lhd, curr_lhd - prev_lhd)
+        if i > 3 and (alpha == 0 or curr_lhd - prev_lhd < abs_tol):
+            zeros_counter += 1
+            if zeros_counter > 3:
+                break
+        else:
+            zeros_counter = 0
+            if not dont_zero:
+                x, expected_array, zeros, sparse_index = build_zero_eliminated_matrices(
+                    x, full_expected_array, zeros, full_sparse_index)
+                if len(x) <= 2:
+                    break
+        
+        prev_lhd = curr_lhd
+        lhds.append( curr_lhd )
+        if DEBUG_OPTIMIZATION:
+            config.log_statement( "%i\t%.2f\t%.6e\t%i" % ( 
+                    i, curr_lhd, curr_lhd - prev_lhd, len(x) ) )
+    
+    final_x = numpy.ones(n)*MIN_TRANSCRIPT_FREQ
+    final_x[ numpy.array(sorted(set(range(n))-zeros)) ] = x
+    final_lhd = calc_lhd(final_x, observed_array, full_expected_array, 
+                         sparse_penalty, full_sparse_index)
+
+    if final_lhd < prev_lhd:
+        return x0, [prev_lhd,]
+    #assert numpy.isnan(prev_lhd) or final_lhd - prev_lhd > -abs_tol, \
+    #    "Final: %e\tPrev: %e\tDiff: %e\tTol: %e\t %s" % (
+    #    final_lhd, prev_lhd, final_lhd-prev_lhd, abs_tol, lhds)
+        
+    return final_x, lhds
+
 def estimate_transcript_frequencies_with_cvxopt( 
         observed_array, expected_array, sparse_penalty, sparse_index,
         verbose=False):
@@ -334,8 +415,8 @@ def estimate_transcript_frequencies_sparse(
         return numpy.ones( 1, dtype=float )
     
     x = nnls(full_expected_array, observed_array)
-    eps = 10.
-    sparse_penalty = 10.
+    eps = 0.1
+    sparse_penalty = 1.
     if min_sparse_penalty == None:
         min_sparse_penalty = LHD_ABS_TOL
         sparse_index = numpy.argmax(x)
@@ -350,7 +431,6 @@ def estimate_transcript_frequencies_sparse(
             observed_array, full_expected_array, x, 
             sparse_penalty, sparse_index,
             dont_zero=False, abs_tol=eps )
-        
         lhd = calc_lhd( x, observed_array, full_expected_array, 
                         sparse_penalty, sparse_index )
         prev_lhd = calc_lhd( prev_x, observed_array, full_expected_array,
@@ -366,9 +446,9 @@ def estimate_transcript_frequencies_sparse(
         if float(lhd - prev_lhd)/len(lhds) < eps:
             if eps == LHD_ABS_TOL and sparse_penalty == min_sparse_penalty:
                 break
-            eps = max( eps/3, LHD_ABS_TOL )
+            eps = max( eps/10, LHD_ABS_TOL )
             if sparse_penalty != None:
-                sparse_penalty = max( sparse_penalty/2, min_sparse_penalty )
+                sparse_penalty = max( sparse_penalty/5, min_sparse_penalty )
     
     for i in xrange( 10 ):
         prev_x = x.copy()

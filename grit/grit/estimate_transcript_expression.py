@@ -5,6 +5,8 @@ import traceback
 import numpy
 import scipy
 
+import copy
+
 from pysam import Fastafile, Samfile
 
 from itertools import izip, chain
@@ -27,6 +29,8 @@ from frag_len import load_fl_dists, FlDist, build_normal_density
 import config
 
 import cPickle as pickle
+
+import Queue
 
 class SharedData(object):
     """Share data across processes.
@@ -389,12 +393,15 @@ def estimate_confidence_bounds( data, bnd_type ):
     config.log_statement(
         "Populating estimate confidence bounds queue.")
 
-    for gene_id in sorted(data.gene_ids, 
-                          key=lambda x:data.gene_ntranscripts_mapping[x]):
+    sorted_gene_ids = sorted(data.gene_ids, 
+                             key=lambda x:data.gene_ntranscripts_mapping[x] )
+    # populate the queue
+    for gene_id in sorted_gene_ids:
         try: data.populate_estimate_cbs_queue(gene_id, bnd_type)
         except KeyError: continue
+    config.log_statement("Waiting on gene bounds children")
     
-    if config.NTHREADS == 1:
+    if False and config.NTHREADS == 1:
         find_confidence_bounds_worker( data )
     else:
         ps = []
@@ -404,27 +411,36 @@ def estimate_confidence_bounds( data, bnd_type ):
             p.daemon=True
             p.start()
             ps.append(p)
-
+        
+        """        
+        ps = []
+        for i in xrange(config.NTHREADS):
+            pid = os.fork()
+            if pid == 0:
+                find_confidence_bounds_worker(data)
+                os._exit(0)
+            ps.append(pid)
+        
+        for pid in ps:
+            os.waitpid(pid, 0) 
+        """
+       
         while True:
             config.log_statement(
-                "Waiting for estimate confidence bound children processes to finish (%i/%i genes remain)"%(
-                    len(data.cb_genes), len(data.gene_ids)))
-                    
+                "Waiting for estimate confidence bound children processes to finish (%i/%i genes remain)"%( len(data.cb_genes), len(data.gene_ids)))
             time.sleep(1)
             if all( not p.is_alive() for p in ps): break
     
     return
 
 
-def estimate_mle_worker( gene_ids, gene_ids_lock, data ):
+def estimate_mle_worker( gene_ids, data ):
     while True:
-        config.log_statement("Retrieving gene from quue")
-        try:
-            with gene_ids_lock:
-                gene_id = gene_ids.pop()
-        except IndexError:
+        config.log_statement("Retrieving gene from queue")
+        gene_id = gene_ids.get()
+        if gene_id == 'FINISHED': 
             config.log_statement("")
-            return        
+            return
         
         try:
             config.log_statement(
@@ -465,19 +481,18 @@ def estimate_mle_worker( gene_ids, gene_ids_lock, data ):
 
 def estimate_mles( data ):
     config.log_statement("Initializing MLE queue")
-    
-    manager = multiprocessing.Manager()
-    gene_ids = manager.list()
-    gene_ids_lock = manager.Lock()
+
+    gene_ids = multiprocessing.Queue()
+    sorted_gene_ids = sorted(data.gene_ids, 
+                             key=lambda x:data.gene_ntranscripts_mapping[x],
+                             reverse=True)
     # sort so that the biggest genes are processed first
-    for gene_id in sorted(data.gene_ids, 
-                          key=lambda x:data.gene_ntranscripts_mapping[x]):
-        gene_ids.append(gene_id)
     
-    args = [ gene_ids, gene_ids_lock, data ]
-    if config.NTHREADS == 1:
+    args = [ gene_ids, data ]
+    if False and config.NTHREADS == 1:
         estimate_mle_worker(*args)
     else:
+        """
         ps = []
         for i in xrange(config.NTHREADS):
             p = multiprocessing.Process(
@@ -485,18 +500,39 @@ def estimate_mles( data ):
             p.daemon=True
             p.start()
             ps.append(p)
-
+        """
+        
+        ps = []
+        for i in xrange(config.NTHREADS):
+            pid = os.fork()
+            if pid == 0:
+                estimate_mle_worker(*args)
+                os._exit(0)
+            ps.append(pid)
+        
+        # populate the queue
+        config.log_statement("Populating MLE queue")
+        for i, gene_id in enumerate(sorted_gene_ids):
+            gene_ids.put(gene_id)
+        for i in xrange(config.NTHREADS):
+            gene_ids.put("FINISHED")
+        config.log_statement("Waiting on MLE children")
+        
+        for pid in ps:
+            os.waitpid(pid, 0)
+        
+        """
         while True:
             config.log_statement(
                 "Waiting for MLE children processes to finish (%i/%i genes remain)"%(
-                    len(gene_ids), len(data.gene_ids)))
+                    gene_ids.qsize(), len(data.gene_ids)))
             time.sleep(1)
             if all( not p.is_alive() for p in ps): break
+        """
     
-    manager.shutdown()
     return
 
-def build_design_matrices_worker( gene_ids, gene_ids_lock,
+def build_design_matrices_worker( gene_ids, 
                                   data, fl_dists,
                                   (rnaseq_reads, promoter_reads, polya_reads)):
     config.log_statement("Reloading read data in subprocess")
@@ -505,13 +541,11 @@ def build_design_matrices_worker( gene_ids, gene_ids_lock,
     if polya_reads != None: polya_reads.reload()
     
     while True:
-        config.log_statement("Acquiring gene to process")
-        with gene_ids_lock:
-            try: gene_id = gene_ids.pop()
-            except IndexError: 
-                config.log_statement("")
-                return
-        
+        config.log_statement("Acquiring gene to process")        
+        gene_id = gene_ids.get()
+        if gene_id == 'FINISHED': 
+            config.log_statement("")
+            return
         try:
             config.log_statement("Loading gene '%s'" % gene_id)
             gene = data.get_gene(gene_id)
@@ -533,40 +567,50 @@ def build_design_matrices_worker( gene_ids, gene_ids_lock,
             config.log_statement( "WRITING DESIGN MATRIX TO DISK %s" % gene.id )
             data.set_design_matrix(gene.id, f_mat)
             config.log_statement( "FINISHED DESIGN MATRICES %s" % gene.id )
-    
+
 def build_design_matrices( data, fl_dists,
                            (rnaseq_reads, promoter_reads, polya_reads)):    
-    manager = multiprocessing.Manager()
-    gene_ids = manager.list()
-    gene_ids_lock = manager.Lock()
-    config.log_statement( "Populating estimate cofidence bounds queue" )
+    gene_ids = multiprocessing.Queue()
+    config.log_statement( "Populating build design matrices queue" )
+    sorted_gene_ids = sorted(data.gene_ids, 
+                             key=lambda x:data.gene_ntranscripts_mapping[x],
+                             reverse=True)
     # sort so that the biggest genes are processed first
-    for gene_id in sorted(data.gene_ids, 
-                          key=lambda x:data.gene_ntranscripts_mapping[x]):
-        gene_ids.append(gene_id)
-    config.log_statement("FINISHED Populating estimate confidence bounds queue")
+    config.log_statement("FINISHED Populating build design matrices queue")
     
-    args = [ gene_ids, gene_ids_lock, data, fl_dists, 
+    args = [ gene_ids, data, fl_dists, 
              (rnaseq_reads, promoter_reads, polya_reads)]
-    if config.NTHREADS == 1:
+    if False and config.NTHREADS == 1:
         build_design_matrices_worker(*args)
     else:
         ps = []
         for i in xrange(config.NTHREADS):
-            p = multiprocessing.Process(
-                target=build_design_matrices_worker, args=args)
-            p.daemon=True
-            p.start()
-            ps.append(p)
-
-        while True:
-            config.log_statement(
-                "Waiting for design matrix children processes to finish (%i/%i genes remain)"%(
-                    len(gene_ids), len(data.gene_ids)))
-            time.sleep(1)
-            if all( not p.is_alive() for p in ps): break
-    
-    manager.shutdown()
+            #p = multiprocessing.Process(
+            #    target=build_design_matrices_worker, args=args)
+            #p.start()
+            #ps.append(p)
+            pid = os.fork()
+            if pid == 0:
+                build_design_matrices_worker(*args)
+                os._exit(0)
+            ps.append(pid)
+        
+        # populate the queue
+        config.log_statement("Populating design matrix queue")
+        for i, gene_id in enumerate(sorted_gene_ids):
+            gene_ids.put(gene_id)
+        for i in xrange(config.NTHREADS):
+            gene_ids.put("FINISHED")
+        config.log_statement("Waiting on design matrix children")
+        
+        #while any( p != None and p.is_alive() for p in ps ):
+        #while len(ps) > 0:
+        #    config.log_statement(
+        #        "Waiting for design matrix children processes to finish (%i/%i genes remain)"%(
+        #            gene_ids.qsize(), len(data.gene_ids)))
+        #    time.sleep(1.)
+        for pid in ps:
+            os.waitpid(pid, 0)
     return
 
 def write_data_to_tracking_file(data, fl_dists, ofp):
