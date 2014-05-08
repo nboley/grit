@@ -133,11 +133,11 @@ def line_search( x, f, gradient, max_feasible_step_size ):
     """Calculate the optimal step to maximize f in the direction of gradient.
 
     """
-    alpha = fminbound(lambda a: -f(x + a*gradient), 
+    alpha = fminbound(lambda a: -f(project_onto_simplex(x + a*gradient)), 
                       0, max_feasible_step_size, 
                       xtol=1e-6)
     lhd0 = f(x)
-    while alpha > 0 and f(x+alpha*gradient) < lhd0:
+    while alpha > 0 and f(project_onto_simplex(x+alpha*gradient)) < lhd0:
         alpha = alpha/2 - FD_SS
     return max(0, alpha)
 
@@ -150,7 +150,13 @@ def project_onto_simplex( x, debug=False ):
     if debug: config.log_statement( "arange: %s" % numpy.arange(1,n+1) )
     rhos = sorted_x - (1./numpy.arange(1,n+1))*( sorted_x.cumsum() - 1 )
     if debug: config.log_statement( "rhos: %s" % rhos )
-    rho = (rhos > 0).nonzero()[0].max() + 1
+    try: 
+        rho = (rhos > 0).nonzero()[0].max() + 1
+    except: 
+        raise
+        x[x<MIN_TRANSCRIPT_FREQ] = MIN_TRANSCRIPT_FREQ
+        x = x/x.sum()
+        return x
     if debug: config.log_statement( "rho: %s" % rho )
     theta = (1./rho)*( sorted_x[:rho].sum()-1)
     if debug: config.log_statement( "theta: %s" % theta )
@@ -520,7 +526,8 @@ def estimate_confidence_bound( f_mat,
     
     def min_line_search( x, gradient, max_feasible_step_size ):
         def brentq_fmin(alpha):
-            return calc_lhd(x + alpha*gradient, observed_array, expected_array) - min_lhd
+            return calc_lhd(project_onto_simplex(x + alpha*gradient), 
+                            observed_array, expected_array) - min_lhd
         
         min_step_size = 0
         max_step_size = max_feasible_step_size
@@ -536,7 +543,8 @@ def estimate_confidence_bound( f_mat,
             step_size = step_size/2 - FD_SS
         rv = max(0, step_size)
         
-        assert calc_lhd(x+rv*gradient,observed_array,expected_array) >= min_lhd
+        assert calc_lhd(project_onto_simplex(x+rv*gradient),
+                        observed_array,expected_array) >= min_lhd
         return rv, True
     
     def take_param_decreasing_step(x):
@@ -552,7 +560,7 @@ def estimate_confidence_bound( f_mat,
                 calc_max_feasible_step_size_and_limiting_index(x, gradient)
             alpha, is_full_step = min_line_search(
                 x, gradient, max_feasible_step_size)
-            x += alpha*gradient    
+            x = project_onto_simplex(x + alpha*gradient)
         
         return x
     
@@ -589,7 +597,7 @@ def estimate_confidence_bound( f_mat,
         gradient = (1-theta)*lhd_gradient + theta*coord_gradient
         projection = project_onto_simplex( x + 100*eps*gradient )
         gradient = projection - x
-        gradient /= ( numpy.absolute(gradient).sum() + 1e-12 )
+        gradient /= ( gradient.sum() + 1e-6 )
         #print theta, x
         #print gradient
         
@@ -598,20 +606,17 @@ def estimate_confidence_bound( f_mat,
         alpha = line_search(
             x, lambda x: calc_lhd(x, observed_array, expected_array),
             gradient, max_feasible_step_size)
-        #print alpha
-        while alpha > 0 and \
-                calc_lhd(x + alpha*gradient, observed_array, expected_array) < min_lhd:
-            alpha = alpha/2 - FD_SS
-        #print alpha
-        alpha = max(0, alpha)
-        assert calc_lhd(x + alpha*gradient, observed_array, expected_array) >= min_lhd - 1e-12,\
-            "Value is %e %s %e %e %e" % (
+        new_x = project_onto_simplex(x+alpha*gradient)
+        
+        assert calc_lhd(new_x, observed_array, expected_array) >= min_lhd - 1e-12,\
+            "Value is %e %s %e %e %e %e" % (
             alpha,
-            x+alpha*gradient,
-            calc_lhd(x + alpha*gradient, observed_array, expected_array), 
+            new_x,
+            calc_lhd(new_x, observed_array, expected_array), 
+            calc_lhd(project_onto_simplex(x), observed_array, expected_array), 
             min_lhd - 1e-12, 
-            calc_lhd(x + alpha*gradient, observed_array, expected_array) - min_lhd - 1e-12 )
-        return x + alpha*gradient
+            calc_lhd(new_x, observed_array, expected_array) - min_lhd - 1e-12 )
+        return new_x
     
     n = expected_array.shape[1]    
     max_lhd = calc_lhd(mle_estimate, observed_array, expected_array)
