@@ -92,6 +92,7 @@ class SharedData(object):
         except:
             assert False, "%s has already had its design matrix set" % gene_id
         
+
         with open(ofname, "w") as ofp:
             pickle.dump(f_mat, ofp)
         
@@ -366,7 +367,7 @@ def find_confidence_bounds_worker( data ):
 
         if config.VERBOSE:
             config.log_statement(
-                "Estimating confidence bounds for '%s'" % gene_id)
+                "Loading design matrix for gene '%s'" % gene_id)
         
         gene = data.get_gene(gene_id)
         f_mat = data.get_design_matrix(gene_id)
@@ -611,6 +612,10 @@ def build_design_matrices( data, fl_dists,
         #    time.sleep(1.)
         for pid in ps:
             os.waitpid(pid, 0)
+
+    config.log_statement("Read counts: %s" % str(data.get_num_reads_in_bams()), 
+                         log=True)
+    
     return
 
 def write_data_to_tracking_file(data, fl_dists, ofp):

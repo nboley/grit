@@ -4,6 +4,7 @@ import subprocess
 from collections import defaultdict, namedtuple
 from itertools import chain
 import sqlite3
+import cPickle as pickle
 
 sys.path.insert(0, "/home/nboley/grit/grit/")
 
@@ -647,8 +648,16 @@ def main():
             else:
                 exp_ofname = "%s.%s.expression_tracking" % (sample_type, rep_id)
             
-            config.log_statement("Estimating fragment length distribution")
-            fl_dists = grit.frag_len.build_fl_dists( elements, rnaseq_reads )
+            fldist_fname = "%s.%s.fldists" % (sample_type, rep_id)
+            try: 
+                with open(fldist_fname) as fp:
+                    config.log_statement("Loading fldists")
+                    fl_dists = pickle.load(fp)
+            except IOError:
+                config.log_statement("Estimating fragment length distribution")
+                fl_dists = grit.frag_len.build_fl_dists( elements, rnaseq_reads )
+                with open(fldist_fname, "w") as ofp:
+                    pickle.dump(fl_dists, ofp)
             
             grit.estimate_transcript_expression.quantify_transcript_expression(
                 promoter_reads, rnaseq_reads, polya_reads,
