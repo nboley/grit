@@ -339,8 +339,7 @@ def find_confidence_bounds_in_gene( gene, num_reads_in_bams,
                 os.getpid(), gene.id, 
                 gene.chrm, gene.strand, gene.start, gene.stop, inst)
             config.log_statement( error_msg, log=True )
-            if config.DEBUG_VERBOSE:
-                config.log_statement( traceback.format_exc(), log=True )
+            config.log_statement( traceback.format_exc(), log=True )
         
         if config.DEBUG_VERBOSE: config.log_statement( 
             "FINISHED %s BOUND %s\t%s\t%i/%i\t%.2e\t%.2e" % (
@@ -465,8 +464,7 @@ def estimate_mle_worker( gene_ids, data ):
                 os.getpid(), gene.id, 
                 gene.chrm, gene.strand, gene.start, gene.stop, inst)
             config.log_statement( error_msg, log=True )
-            if config.DEBUG_VERBOSE:
-                config.log_statement( traceback.format_exc(), log=True )
+            config.log_statement( traceback.format_exc(), log=True )
             return None
 
         log_lhd = frequency_estimation.calc_lhd( 
@@ -618,6 +616,38 @@ def build_design_matrices( data, fl_dists,
     
     return
 
+def build_gene_lines_for_tracking_file(
+        gene_id, data, num_reads_in_bams, fl_dists):
+    gene = data.get_gene(gene_id)
+    mles = data.get_mle(gene_id)
+    mle_fpkms = calc_fpkm( gene, fl_dists, mles[1:], num_reads_in_bams)
+    ubs = data.get_cbs(gene_id, 'ub')
+    if ubs != None:
+        ub_fpkms = calc_fpkm( gene, fl_dists, ubs, num_reads_in_bams)
+    lbs = data.get_cbs(gene_id, 'lb')
+    if lbs != None:
+        lb_fpkms = calc_fpkm( gene, fl_dists, lbs, num_reads_in_bams)
+    try: sorted_transcripts = sorted(gene.transcripts,
+                                     key=lambda x: int(x.id.split("_")[-1]))
+    except: sorted_transcripts = gene.transcripts
+
+    lines = []
+    for i, t in enumerate(sorted_transcripts):
+        line = []
+        line.append(t.id.ljust(11))
+        line.append(t.gene_id.ljust(11))
+        line.append('-'.ljust(8))
+        if mles == None or mle_fpkms[i] == None: line.append('-       ')
+        else: line.append(('%.2e' % mle_fpkms[i]).ljust(8))
+        if lbs == None or lb_fpkms[i] == None: line.append('-       ')
+        else: line.append(('%.2e' % lb_fpkms[i]).ljust(8))
+        if ubs == None or ub_fpkms[i] == None: line.append('-       ')
+        else: line.append(('%.2e' % ub_fpkms[i]).ljust(8))
+        line.append( "OK" )
+        lines.append("\t".join(line))
+    
+    return lines
+
 def write_data_to_tracking_file(data, fl_dists, ofp):
     num_reads_in_bams = data.get_num_reads_in_bams()
     ofp.write("\t".join(
@@ -631,33 +661,16 @@ def write_data_to_tracking_file(data, fl_dists, ofp):
             data.gene_ids, key=lambda x: int(x.split("_")[-1]))
     except:
         sorted_gene_ids = data.gene_ids
-    for gene_id in sorted_gene_ids:
-        gene = data.get_gene(gene_id)
-        mles = data.get_mle(gene_id)
-        mle_fpkms = calc_fpkm( gene, fl_dists, mles[1:], num_reads_in_bams)
-        ubs = data.get_cbs(gene_id, 'ub')
-        if ubs != None:
-            ub_fpkms = calc_fpkm( gene, fl_dists, ubs, num_reads_in_bams)
-        lbs = data.get_cbs(gene_id, 'lb')
-        if lbs != None:
-            lb_fpkms = calc_fpkm( gene, fl_dists, lbs, num_reads_in_bams)
-        try: sorted_transcripts = sorted(gene.transcripts,
-                                         key=lambda x: int(x.id.split("_")[-1]))
-        except: sorted_transcripts = gene.transcripts
-        for i, t in enumerate(sorted_transcripts):
-            line = []
-            line.append(t.id.ljust(11))
-            line.append(t.gene_id.ljust(11))
-            line.append('-'.ljust(8))
-            if mles == None or mle_fpkms[i] == None: line.append('-       ')
-            else: line.append(('%.2e' % mle_fpkms[i]).ljust(8))
-            if lbs == None or lb_fpkms[i] == None: line.append('-       ')
-            else: line.append(('%.2e' % lb_fpkms[i]).ljust(8))
-            if ubs == None or ub_fpkms[i] == None: line.append('-       ')
-            else: line.append(('%.2e' % ub_fpkms[i]).ljust(8))
-            line.append( "OK" )
 
-            ofp.write("\t".join(line) + "\n" )
+    for gene_id in sorted_gene_ids:
+        try: 
+            lines = build_gene_lines_for_tracking_file(
+                gene_id, data, num_reads_in_bams, fl_dists)
+        except Exception, inst:
+            config.log_statement("Skipping '%s': %s" % (gene_id, str(inst)))
+            config.log_statement( traceback.format_exc(), log=True )
+        else:
+            ofp.write("\n".join(lines) + "\n" )
 
 def quantify_transcript_expression(
     promoter_reads, rnaseq_reads, polya_reads,
