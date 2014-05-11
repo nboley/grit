@@ -201,6 +201,9 @@ def build_gene(elements, fasta=None, ref_genes=None):
             transcript, elements.polyas)
         transcripts.append( transcript )
 
+    if len(transcripts) == 0:
+        return None
+    
     gene = Gene(elements.id, elements.chrm, elements.strand, 
                 gene_min, gene_max, transcripts)
 
@@ -235,6 +238,7 @@ def worker( elements, elements_lock,
         # build the gene with transcripts, and optionally call orfs
         try:
             gene = build_gene(gene_elements, fasta, ref_genes)
+            if gene == None: continue
             config.log_statement(
                 "FINISHED Building transcript and ORFs for Gene %s" % gene.id)
 
