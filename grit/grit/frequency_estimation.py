@@ -375,6 +375,7 @@ def estimate_transcript_frequencies_line_search(
     
     final_x = numpy.ones(n)*MIN_TRANSCRIPT_FREQ
     final_x[ numpy.array(sorted(set(range(n))-zeros)) ] = x
+    final_x = project_onto_simplex(final_x)
     final_lhd = calc_lhd(final_x, observed_array, full_expected_array, 
                          sparse_penalty, full_sparse_index)
 
@@ -420,7 +421,7 @@ def estimate_transcript_frequencies_sparse(
     if n == 1:
         return numpy.ones( 1, dtype=float )
     
-    x = nnls(full_expected_array, observed_array)
+    x = project_onto_simplex(nnls(full_expected_array, observed_array))
     eps = 0.1
     sparse_penalty = 1.
     if min_sparse_penalty == None:
@@ -622,8 +623,9 @@ def estimate_confidence_bound( f_mat,
     n = expected_array.shape[1]    
     max_lhd = calc_lhd(
         project_onto_simplex(mle_estimate), observed_array, expected_array)
-    assert abs(max_lhd - calc_lhd(mle_estimate, observed_array, expected_array)
-               ) < 1e-2
+    unprojected_lhd = calc_lhd(mle_estimate, observed_array, expected_array)
+    assert abs(max_lhd - unprojected_lhd) < 1e-2, "Diff: %e %e %e" % (
+        max_lhd, unprojected_lhd, max_lhd - unprojected_lhd)
     max_test_stat = chi2.ppf( 1 - alpha, 1 )/2.    
     min_lhd = max_lhd-max_test_stat
 
