@@ -425,7 +425,8 @@ def estimate_transcript_frequencies_sparse(
     sparse_penalty = 1.
     if min_sparse_penalty == None:
         min_sparse_penalty = LHD_ABS_TOL
-        sparse_index = numpy.argmax(x)
+        # always skip the out of gene transcript
+        sparse_index = numpy.argmax(x[1:]) + 1
     
     start_time = time.time()
     #config.log_statement( "Iteration\tlog lhd\t\tchange lhd\tn 
@@ -487,7 +488,7 @@ def estimate_sparse_transcript_frequencies(observed_array, full_expected_array):
         #    observed_array, full_expected_array, 
         #    sparse_penalty, sparse_index, 
         #    False )
-
+        
         x = estimate_transcript_frequencies_sparse(
             observed_array, full_expected_array, 
             sparse_penalty, sparse_index )
@@ -619,14 +620,17 @@ def estimate_confidence_bound( f_mat,
         return new_x
     
     n = expected_array.shape[1]    
-    max_lhd = calc_lhd(mle_estimate, observed_array, expected_array)
+    max_lhd = calc_lhd(
+        project_onto_simplex(mle_estimate), observed_array, expected_array)
+    assert abs(max_lhd - calc_lhd(mle_estimate, observed_array, expected_array)
+               ) < 1e-2
     max_test_stat = chi2.ppf( 1 - alpha, 1 )/2.    
     min_lhd = max_lhd-max_test_stat
-    
+
     x = mle_estimate.copy()
     prev_x = mle_estimate[fixed_index]
     n_successes = 0
-    for i in xrange(MAX_NUM_ITERATIONS):        
+    for i in xrange(MAX_NUM_ITERATIONS):
         # take a downhill step
         x = take_param_decreasing_step(x)
         curr_lhd = calc_lhd(x, observed_array, expected_array)
