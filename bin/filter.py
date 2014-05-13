@@ -1,6 +1,8 @@
 import os, sys
 import re
 
+pat = re.compile('transcript_id "(.*?)";')
+
 def parse_arguments():
     import argparse
     
@@ -40,7 +42,7 @@ def main():
             print line,
             continue
         
-        t_id = re.findall( 'transcript_id "(.*?)";', line)[0]
+        t_id = re.findall( pat, line)[0]
         data = expression_data[t_id]
         
         fpkm = data[3]
