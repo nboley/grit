@@ -35,27 +35,7 @@ import Queue
 class SharedData(object):
     """Share data across processes.
 
-    """
-    def init_processing_data( self, pickled_gene_fnames, 
-                              rnaseq_reads, promoter_reads, polya_reads ):
-        pickled_gene_fnames.sort(key=lambda x:x[1], reverse=True)
-        for gene_id, n_transcripts, fname in pickled_gene_fnames:
-            self.gene_fname_mapping[gene_id] = fname
-            self.gene_ntranscripts_mapping[gene_id] = n_transcripts
-            self.gene_ids.append(gene_id)
-            self.gene_cb_queues[gene_id] = self._manager.list()
-            self.gene_cb_queues_locks[gene_id] = self._manager.Lock()
-        
-        self.rnaseq_reads = rnaseq_reads
-        self.promoter_reads = promoter_reads
-        self.polya_reads = polya_reads
-        
-        self.num_rnaseq_reads = multiprocessing.Value('i', 0)
-        self.num_cage_reads = multiprocessing.Value('i', 0)
-        self.num_polya_reads = multiprocessing.Value('i', 0)
-        
-        return
-    
+    """    
     def get_gene(self, gene_id):
         if self._cached_gene_id == gene_id and self._cached_gene != None:
             return self._cached_gene
@@ -75,8 +55,8 @@ class SharedData(object):
         if self._cached_fmat_gene_id == gene_id:
             return self._cached_fmat
 
-        with self.output_dict_lock: 
-            fname = self.output_dict[(gene_id, 'design_matrices')]
+        with self.design_mat_lock: 
+            fname = self.design_mat_filenames[gene_id].value
         with open(fname) as fp:
             f_mat = pickle.load(fp)
         self._cached_fmat_gene_id = gene_id
@@ -88,17 +68,16 @@ class SharedData(object):
         # because there's no cache invalidation mechanism, we're only
         # allowed to set the f_mat object once. This also allows us to
         # move the load outside of the lock
-        try: assert (gene_id, 'design_matrices') not in self.output_dict
+        try: assert self.design_mat_filenames[gene_id].value == ''
         except:
             assert False, "%s has already had its design matrix set" % gene_id
         
-
         with open(ofname, "w") as ofp:
             pickle.dump(f_mat, ofp)
         
-        with self.output_dict_lock: 
-            self.output_dict[(gene_id, 'design_matrices')] = ofname
-
+        with self.design_mat_lock: 
+            self.design_mat_filenames[gene_id].value = ofname
+        
         if f_mat.num_rnaseq_reads != None:
             with self.num_rnaseq_reads.get_lock():
                 self.num_rnaseq_reads.value += f_mat.num_rnaseq_reads
@@ -117,12 +96,11 @@ class SharedData(object):
                 self.num_polya_reads.value)
     
     def get_mle(self, gene_id):
-        with self.output_dict_lock: 
-            return numpy.frombuffer(self.mle_estimates[gene_id])
+        return numpy.frombuffer(self.mle_estimates[gene_id])
     
     def set_mle(self, gene, mle):
         assert len(mle) == len(gene.transcripts) + 1
-        with self.output_dict_lock: 
+        with self.mle_lock: 
             self.mle_estimates[gene.id][:] = mle
             
     def get_cbs(self, gene_id, cb_type):
@@ -134,7 +112,7 @@ class SharedData(object):
             assert False, "Unrecognized confidence bound type '%s'" % cb_type
     
     def set_cbs(self, gene_id, bnd_type_indices_and_values):
-        with self.output_dict_lock: 
+        with self.cbs_lock: 
             for cb_type, index, value in bnd_type_indices_and_values:
                 if cb_type == 'ub':
                     data = self.ubs[gene_id][index] = value
@@ -145,24 +123,11 @@ class SharedData(object):
         
         return
     
-    def __init__(self):
-        self.gene_ids = []
-        self.gene_fname_mapping = {}
-        self.gene_ntranscripts_mapping = {}
-        self.gene_cb_queues = {}
-        self.gene_cb_queues_locks = {}
-        
+    def __init__(self, pickled_gene_fnames):        
         self._manager = multiprocessing.Manager()
-
-        # initialize queues to store the expression commands. Since we dont
-        # know the total number of reads until the design matrices have been
-        # built, we do that first and then start every commands that's been 
-        # stored into expression queue        
-        self.input_queue = self._manager.dict()
-        self.input_queue_lock = multiprocessing.Lock()
-
-        self.cb_genes = self._manager.list()
-        self.cb_genes_being_processed = self._manager.list()
+        
+        #self.cb_genes = self._manager.list()
+        #self.cb_genes_being_processed = self._manager.list()
         self.cb_genes_lock = multiprocessing.Lock()
         
         # store the expression estimates
@@ -171,8 +136,36 @@ class SharedData(object):
         self.ubs = {}
         
         # store data that all children need to be able to access        
-        self.output_dict = self._manager.dict()
-        self.output_dict_lock = multiprocessing.Lock()    
+        self.design_mat_filenames = {}
+        self.design_mat_lock = multiprocessing.Lock()    
+        
+        self.mle_lock = multiprocessing.Lock()    
+        self.cbs_lock = multiprocessing.Lock()    
+        
+        # initialize the gene data
+        self.gene_ids = []
+        self.gene_fname_mapping = {}
+        self.gene_ntranscripts_mapping = {}
+
+        self.gene_cb_queues = {}
+        self.gene_cb_queues_locks = {}
+
+        pickled_gene_fnames.sort(key=lambda x:x[1], reverse=True)
+        for gene_id, n_transcripts, fname in pickled_gene_fnames:
+            self.gene_fname_mapping[gene_id] = fname
+            self.gene_ntranscripts_mapping[gene_id] = n_transcripts
+            self.gene_ids.append(gene_id)
+            
+            self.gene_cb_queues[gene_id] = self._manager.list()
+            self.gene_cb_queues_locks[gene_id] = multiprocessing.Lock()
+            
+            self.design_mat_filenames[gene_id] = multiprocessing.Array(
+                'c', 1000)
+        
+        self.num_rnaseq_reads = multiprocessing.Value('i', 0)
+        self.num_cage_reads = multiprocessing.Value('i', 0)
+        self.num_polya_reads = multiprocessing.Value('i', 0)
+
                 
         # create objects to cache gene objects, so that we dont have to do a 
         # fresh load from the shared manager
@@ -190,72 +183,7 @@ class SharedData(object):
                 'd', [-1]*n_trans)
             self.lbs[gene_id] = RawArray(
                 'd', [-1]*n_trans)
-        
-    def populate_estimate_cbs_queue(self, gene_id, bnd_type):
-        assert bnd_type in ('ub', 'lb')
-        f_mat = self.get_design_matrix(gene_id)
-        with self.gene_cb_queues_locks[gene_id]:
-            queue = self.gene_cb_queues[gene_id]
-            # add the out of gene bin
-            #queue.append((None, 0, 'ub'))
-            #queue.append((None, 0, 'lb'))
-            # add 1 to the row num to account for the out of gene bin
-            for row_num, t_index in enumerate(f_mat.transcript_indices()):
-                queue.append((t_index, row_num+1, bnd_type))
-        
-        with self.cb_genes_lock:
-            self.cb_genes.append(gene_id)
-        
-        return
     
-    def get_cb_gene(self):
-        with self.cb_genes_lock:
-            try: 
-                gene_id = self.cb_genes.pop()
-                self.cb_genes_being_processed.append(gene_id)
-                return gene_id
-            except IndexError:
-                # if there are no untouched genes left, then 
-                # provide a gene that is being processed by something else
-                while len(self.cb_genes_being_processed) > 0:
-                    i = random.randint(0, len(self.cb_genes_being_processed)-1)
-                    gene_id = self.cb_genes_being_processed[i]
-                    with self.gene_cb_queues_locks[gene_id]:
-                        if len(self.gene_cb_queues[gene_id]) == 0:
-                            del self.cb_genes_being_processed[i]
-                        else:
-                            return gene_id
-                return None
-    
-    def get_queue_item(self, gene_id=None, 
-                       raise_error_if_no_matching_gene=False):
-        """Get an item from the work queue.
-        
-        If gene id is set, then try to get work from this gene to avoid
-        having to reload the genes. 
-        """
-        with self.input_queue_lock:
-            if len(self.input_queue) == 0:
-                raise Queue.Empty, "Work queue is empty"
-            
-            if gene_id == None:
-                gene_id, gene_work = self.input_queue.popitem()
-            else:
-                try:
-                    gene_work = self.input_queue.pop(gene_id)
-                except KeyError:
-                    if raise_error_if_no_matching_gene:
-                        raise Queue.Empty, "Work queue is empty for gene_id "
-                    else:
-                        gene_id, gene_work = self.input_queue.popitem()
-            
-            work_type, work_data = gene_work.pop()
-            if len(gene_work) > 0:
-                self.input_queue[gene_id] = gene_work
-
-        assert work_type != 'ERROR'
-        assert work_type != 'FINISHED'
-        return work_type, gene_id, work_data
 
 def calc_fpkm( gene, fl_dists, freqs, num_reads_in_bam):
     assert len(gene.transcripts) == len(freqs)
@@ -295,7 +223,7 @@ def calc_fpkm( gene, fl_dists, freqs, num_reads_in_bam):
 
 def find_confidence_bounds_in_gene( gene, num_reads_in_bams,
                                     f_mat, mle_estimate, 
-                                    trans_indices, trans_indices_lock,
+                                    trans_indices,
                                     cb_alpha):
     # update the mle_estimate array to only store observable transcripts
     # add 1 to skip the out of gene bin
@@ -318,16 +246,16 @@ def find_confidence_bounds_in_gene( gene, num_reads_in_bams,
     
     res = []
     while True:
-        try:
-            with trans_indices_lock:
-                trans_index, exp_mat_row, bnd_type = trans_indices.pop()
-        except IndexError:
-            config.log_statement("")
-            return res
+        queue_item = trans_indices.get()
+        if queue_item == 'FINISHED':
+            config.log_statement('')
+            break
+        
+        trans_index, exp_mat_row, bnd_type = queue_item
         
         if config.DEBUG_VERBOSE: config.log_statement( 
             "Estimating %s confidence bound for gene %s (%i/%i remain)" % ( 
-            bnd_type, gene.id, len(trans_indices), len(gene.transcripts)))
+            bnd_type, gene.id, trans_indices.qsize(), len(gene.transcripts)))
         try:
             p_value, bnd = frequency_estimation.estimate_confidence_bound( 
                 f_mat, num_reads_in_bams,
@@ -350,86 +278,115 @@ def find_confidence_bounds_in_gene( gene, num_reads_in_bams,
 
     if config.VERBOSE:
         config.log_statement( 
-            "FINISHED Estimating %s confidence bound for gene %s transcript %i-%i/%i" % ( 
-            bnd_type,gene.id,trans_indices[0]+1, trans_indices[-1]+1, 
-            len(gene.transcripts)))
+            "FINISHED Estimating confidence bound for gene %s" % gene.id )
     
     return res
 
-def find_confidence_bounds_worker( data ):
-    while True:
+def find_confidence_bounds_worker( 
+        data, gene_ids, trans_indices_queues, bnd_type ):
+    def get_new_gene():
         # get a gene to process
-        gene_id = data.get_cb_gene()
-        if gene_id == None:
+        gene_id = gene_ids.get()
+        if gene_id == 'FINISHED': 
             config.log_statement("")
-            return
-
+            no_new_genes = True
+            raise IndexError, "No genes left"
+        
         if config.VERBOSE:
             config.log_statement(
                 "Loading design matrix for gene '%s'" % gene_id)
-        
+                
         gene = data.get_gene(gene_id)
         f_mat = data.get_design_matrix(gene_id)
         mle_estimate = data.get_mle(gene_id)
-        trans_indices = data.gene_cb_queues[gene_id]
-        trans_indices_lock = data.gene_cb_queues_locks[gene_id]
-        num_reads_in_bams = data.get_num_reads_in_bams()
+
+        trans_indices = trans_indices_queues[gene_id]
+        for row_num, t_index in enumerate(f_mat.transcript_indices()):
+            trans_indices.put((t_index, row_num+1, bnd_type))
+        for i in xrange(config.NTHREADS):
+            trans_indices.put('FINISHED')
+        
+        return gene, f_mat, mle_estimate, trans_indices
+    
+    def get_gene_being_processed():
+        longest_gene_id = None
+        curr_queue = None
+        gene_len = config.NTHREADS
+        for gene_id, queue in trans_indices_queues.iteritems():
+            if queue.qsize() > gene_len:
+                longest_gene_id = gene_id
+                curr_queue = queue
+                gene_len = queue.qsize()
+        
+        if longest_gene_id == None: 
+            raise IndexError, "No genes with bounds to process"
+        
+        gene = data.get_gene(longest_gene_id)
+        f_mat = data.get_design_matrix(longest_gene_id)
+        mle_estimate = data.get_mle(longest_gene_id)
+        return gene, f_mat, mle_estimate, curr_queue
+
+    no_new_genes = False    
+    num_reads_in_bams = data.get_num_reads_in_bams()
+    while True:
+        if no_new_genes:
+            try: ( gene, f_mat, mle_estimate, trans_indices 
+                   ) = get_gene_being_processed()
+            except IndexError:
+                break
+        else:
+            try: 
+                gene, f_mat, mle_estimate, trans_indices = get_new_gene()
+            except IndexError: 
+                no_new_genes = True
+                continue
         
         cbs = find_confidence_bounds_in_gene( 
             gene, num_reads_in_bams,
             f_mat, mle_estimate, 
-            trans_indices, trans_indices_lock,
+            trans_indices, 
             cb_alpha=config.CB_SIG_LEVEL)
-        
         data.set_cbs(gene.id, cbs)
         
         if config.VERBOSE:
-            config.log_statement("Finished processing '%s'" % gene_id)
+            config.log_statement("Finished processing '%s'" % gene.id)
     
+    config.log_statement("")
     return
 
 def estimate_confidence_bounds( data, bnd_type ):
-    # sort so that the biggest genes are processed first
     config.log_statement(
         "Populating estimate confidence bounds queue.")
 
+    ## populate the queue
+    # sort so that the biggest genes are processed first
+    gene_ids = multiprocessing.Queue()
+    trans_indices_queues = {}
     sorted_gene_ids = sorted(data.gene_ids, 
                              key=lambda x:data.gene_ntranscripts_mapping[x] )
-    # populate the queue
-    for gene_id in sorted_gene_ids:
-        try: data.populate_estimate_cbs_queue(gene_id, bnd_type)
-        except KeyError: continue
-    config.log_statement("Waiting on gene bounds children")
+    for i, gene_id in enumerate(sorted_gene_ids):
+        gene_ids.put(gene_id)
+        trans_indices_queues[gene_id] = multiprocessing.Queue()
+    for i in xrange(config.NTHREADS):
+        gene_ids.put("FINISHED")
     
+    config.log_statement("Waiting on gene bounds children")
+
     if False and config.NTHREADS == 1:
-        find_confidence_bounds_worker( data )
+        find_confidence_bounds_worker( 
+            data, gene_ids, trans_indices_queues, bnd_type )
     else:
-        ps = []
-        for i in xrange(config.NTHREADS):
-            p = multiprocessing.Process(
-                target=find_confidence_bounds_worker, args=[data,])
-            p.daemon=True
-            p.start()
-            ps.append(p)
-        
-        """        
-        ps = []
+        pids = []
         for i in xrange(config.NTHREADS):
             pid = os.fork()
             if pid == 0:
-                find_confidence_bounds_worker(data)
+                find_confidence_bounds_worker(
+                    data, gene_ids, trans_indices_queues, bnd_type)
                 os._exit(0)
-            ps.append(pid)
+            pids.append(pid)
         
-        for pid in ps:
+        for pid in pids:
             os.waitpid(pid, 0) 
-        """
-       
-        while True:
-            config.log_statement(
-                "Waiting for estimate confidence bound children processes to finish (%i/%i genes remain)"%( len(data.cb_genes), len(data.gene_ids)))
-            time.sleep(1)
-            if all( not p.is_alive() for p in ps): break
     
     return
 
@@ -491,16 +448,6 @@ def estimate_mles( data ):
     if False and config.NTHREADS == 1:
         estimate_mle_worker(*args)
     else:
-        """
-        ps = []
-        for i in xrange(config.NTHREADS):
-            p = multiprocessing.Process(
-                target=estimate_mle_worker, args=args)
-            p.daemon=True
-            p.start()
-            ps.append(p)
-        """
-        
         ps = []
         for i in xrange(config.NTHREADS):
             pid = os.fork()
@@ -519,15 +466,6 @@ def estimate_mles( data ):
         
         for pid in ps:
             os.waitpid(pid, 0)
-        
-        """
-        while True:
-            config.log_statement(
-                "Waiting for MLE children processes to finish (%i/%i genes remain)"%(
-                    gene_ids.qsize(), len(data.gene_ids)))
-            time.sleep(1)
-            if all( not p.is_alive() for p in ps): break
-        """
     
     return
 
@@ -679,12 +617,11 @@ def quantify_transcript_expression(
     """Build transcripts
     """
     write_design_matrices=False
-        
-    data = SharedData()
+
     if config.VERBOSE: config.log_statement( 
-        "Initializing processing data" )
-    data.init_processing_data(pickled_gene_fnames, 
-                              rnaseq_reads, promoter_reads, polya_reads)
+        "Initializing processing data" )        
+    data = SharedData(pickled_gene_fnames)
+    
     if config.VERBOSE: config.log_statement( 
         "Building design matrices" )
     build_design_matrices( data, fl_dists,
