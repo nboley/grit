@@ -516,8 +516,8 @@ def build_expected_and_observed_rnaseq_counts( gene, reads, fl_dists ):
         reads, gene.chrm, gene.strand, exon_boundaries)
     
     observed_cnts = build_observed_cnts( binned_reads, fl_dists )    
-    read_groups_and_read_lens =  { (RG, read_len) for RG, read_len, bin 
-                                   in binned_reads.iterkeys() }
+    read_groups_and_read_lens =  set( (RG, read_len) for RG, read_len, bin 
+                                        in binned_reads.iterkeys() )
     
     fl_dists_and_read_lens = [ (fl_dists[RG], read_len) for read_len, RG  
                                in read_groups_and_read_lens ]
