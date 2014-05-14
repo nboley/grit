@@ -9,7 +9,7 @@ numpy.seterr(all='ignore')
 
 from scipy.linalg import svd, inv
 from scipy.stats import chi2
-from scipy.optimize import brentq, fminbound
+from scipy.optimize import brentq, fminbound, nnls
 from scipy.io import savemat
 
 import config
@@ -88,7 +88,8 @@ def find_identifiable_transcripts( expected_array ):
             identifiable_transcripts.append(i)
     return identifiable_transcripts
 
-def nnls( X, Y, fixed_indices_and_values={} ):    
+
+def nnls_cvxopt( X, Y, fixed_indices_and_values={} ):    
     from cvxopt import matrix, solvers
     X = matrix(X)
     Y = matrix(Y)
@@ -415,13 +416,16 @@ def estimate_transcript_frequencies_sparse(
         observed_array, full_expected_array,
         min_sparse_penalty, sparse_index ):
     if observed_array.sum() == 0:
-        raise TooFewReadsError, "Too few reads (%i)" % observed_array.sum()
+        raise TooFewReadsError, (
+            "Too few reads (%i)" % observed_array.sum() )
     
     n = full_expected_array.shape[1]
     if n == 1:
         return numpy.ones( 1, dtype=float )
     
-    x = project_onto_simplex(nnls(full_expected_array, observed_array))
+    #x = project_onto_simplex(nnls(
+    #        full_expected_array, observed_array)[0])
+    x = numpy.ones(n, dtype=float)/n
     eps = 0.1
     sparse_penalty = 1.
     if min_sparse_penalty == None:

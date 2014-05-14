@@ -204,17 +204,17 @@ class Samples(object):
            sample_type and rep_id
         """
         # get the data
-        query = "SELECT * FROM data WHERE assay='{}'".format(assay)
+        query = "SELECT * FROM data WHERE assay='{a}'".format(a=assay)
         
         if rep_id != None: 
             assert sample_type != None, \
                 "rep_id can't be filtered without a sample type filter"
         if sample_type != None:
-            query += " AND (sample_type = '{}'".format(sample_type)
+            query += " AND (sample_type = '{s}'".format(s=sample_type)
             if include_merged: query += "OR sample_type = '*') "
             else: query += ") "
         if rep_id != None:
-            query += " AND (rep_id = '{}' ".format(rep_id)
+            query += " AND (rep_id = '{r}' ".format(r=rep_id)
             if include_merged: query += "OR rep_id = '*') "
             else: query += ") "
         
@@ -320,10 +320,10 @@ class Samples(object):
 
     def get_rep_ids(self, sample_type):
         query = "SELECT DISTINCT rep_id FROM data \
-                 WHERE sample_type = '{}' AND rep_id != '*'"
+                 WHERE sample_type = '{sample}' AND rep_id != '*'"
         with self.conn:
             return [ x[0] for x in 
-                     self.conn.execute(query.format(sample_type)).fetchall()]
+                     self.conn.execute(query.format(sample=sample_type)).fetchall()]
 
 def load_ref_elements_to_include(args):
     if None == args.reference and args.use_reference_genes:
