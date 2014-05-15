@@ -70,7 +70,11 @@ class SharedData(object):
         # move the load outside of the lock
         try: assert self.design_mat_filenames[gene_id].value == ''
         except:
-            assert False, "%s has already had its design matrix set" % gene_id
+            config.log_statement(
+                "%s has already had its design matrix set (%s)" % (
+                    gene_id, self.design_mat_filenames[gene_id].value ), 
+                log=True)
+            return
         
         with open(ofname, "w") as ofp:
             pickle.dump(f_mat, ofp)
@@ -161,6 +165,7 @@ class SharedData(object):
             
             self.design_mat_filenames[gene_id] = multiprocessing.Array(
                 'c', 1000)
+            self.design_mat_filenames[gene_id].value = ''
         
         self.num_rnaseq_reads = multiprocessing.Value('i', 0)
         self.num_cage_reads = multiprocessing.Value('i', 0)

@@ -84,6 +84,13 @@ def write_gene_to_tracking_file( ofp, gene):
         contig_name = fix_chrm_name_for_ucsc(contig_name)
     
     for t in gene.transcripts:
+        if t.gene_name != None:
+            gene_short_name = t.gene_name
+        elif t.ref_gene != None:
+            gene_short_name = t.ref_gene
+        else:
+            gene_short_name = '-'
+        
         line = [
             # tracking ID
             (t.id).ljust(20), 
@@ -91,14 +98,14 @@ def write_gene_to_tracking_file( ofp, gene):
             ('-' if t.ref_match_class_code == None 
              else t.ref_match_class_code).ljust(10), 
             # nearest ref id
-            ('-' if t.ref_trans == None else t.ref_trans).ljust(14), 
+            ('-' if t.ref_trans == None else t.ref_trans).ljust(20),
             # gene unique id
-            (t.gene_id).ljust(19), 
+            (t.gene_id).ljust(20), 
             # gene short name
-            ('-' if t.ref_gene == None else t.ref_gene).ljust(14),
+            ('-' if t.gene_name == None else t.gene_name).ljust(20),
             # TSS ID
             ('-').ljust(10), 
-            ("%s:%s:%i-%i"%(contig_name, t.strand, t.start, t.stop)).ljust(25),
+            ("%s:%s:%i-%i"%(contig_name, t.strand, t.start, t.stop)).ljust(30),
              # transcript length
             str(t.calc_length()) ]
             
@@ -163,7 +170,8 @@ def rename_transcripts(gene, ref_genes):
         t.ref_trans = best_match.id
         t.ref_match_class_code = None
         
-        t.gene_name = t.ref_gene
+        t.gene_name = ( t.ref_gene if best_match.gene_name == None 
+                        else best_match.gene_name )
         if len(introns)  == len(best_match.introns) == best_match_score[0] and \
                 best_match_score[1] > -400:
             t.ref_match_class_code = '='
@@ -314,11 +322,11 @@ def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname,
     tracking_ofp.write("\t".join(
             ["tracking_id".ljust(20), 
              "class_code", 
-             "nearest_ref_id".ljust(15), 
+             "nearest_ref_id".ljust(20), 
              "gene_id".ljust(20), 
-             "gene_short_name", 
+             "gene_short_name".ljust(20), 
              "tss_id".ljust(10), 
-             "locus".ljust(25), 
+             "locus".ljust(30), 
              "length"]) + "\n")
     
     manager = multiprocessing.Manager()
