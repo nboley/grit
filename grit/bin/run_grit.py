@@ -513,7 +513,7 @@ def parse_arguments():
     
     log_ofstream = open( "log.txt", "w" )
     log_statement = Logger(
-        nthreads=config.NTHREADS+1,
+        nthreads=config.NTHREADS,
         use_ncurses=(not args.batch_mode), 
         log_ofstream=log_ofstream)
     config.log_statement = log_statement
