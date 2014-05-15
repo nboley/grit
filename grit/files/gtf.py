@@ -189,7 +189,8 @@ def load_transcript_from_gtf_data(transcript_lines):
                        flatten(sorted(exons)), CDS_region,
                        gene_id=line.gene_id, score=score, fpkm=fpkm, fpk=fpk, 
                        promoter=promoter, polya_region=polya_region,
-                       conf_lo=conf_lo, conf_hi=conf_hi, frac=frac)
+                       conf_lo=conf_lo, conf_hi=conf_hi, frac=frac,
+                       gene_name=gene_name, name=name)
 
 def _load_gene_from_gtf_lines( gene_id, gene_lines, transcripts_data ):
     if len( gene_lines ) > 1:
@@ -222,7 +223,7 @@ def _load_gene_from_gtf_lines( gene_id, gene_lines, transcripts_data ):
     else:
         if VERBOSE: print >> sys.stderr, "Skipping '%s': multiple gene lines." % gene_id
         return None
-        
+    
     if gene_start != min(t.start for t in transcripts ) \
             or gene_stop != max(t.stop for t in transcripts ):
         if VERBOSE: print >> sys.stderr, "Skipping '%s': gene boundaries dont match the transcript boundaries." % gene_id
