@@ -126,17 +126,19 @@ class Logger( object ):
         # if we are using ncurses, and this is a message to display, then add
         # it to the display queue
         if display and self.use_ncurses:
-            self.msgs_lock.acquire()
-            try: 
-                p_index = self.pid_to_index_mapping.index( os.getpid() )
-            except ValueError:
-                p_index = min( i for i, pid in enumerate(self.pid_to_index_mapping) 
-                               if pid == None or not os.path.exists("/proc/%i"%pid))
-                self.pid_to_index_mapping[p_index] = os.getpid()
+            with self.msgs_lock:
+                try: 
+                    p_index = self.pid_to_index_mapping.index( os.getpid() )
+                except ValueError:
+                    try: 
+                        p_index = min( i for i, pid in enumerate(self.pid_to_index_mapping) 
+                                       if pid == None or not os.path.exists("/proc/%i"%pid))
+                        self.pid_to_index_mapping[p_index] = os.getpid()
+                    except:
+                        return
 
-            # only log message from main
-            self.msgs.append( (p_index, log, message) )
-            self.msgs_lock.release()
+                # only log message from main
+                self.msgs.append( (p_index, log, message) )
         
         time.sleep(1e-2)
     
