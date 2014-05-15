@@ -204,7 +204,8 @@ def build_gene(elements, fasta=None, ref_genes=None):
     if len(transcripts) == 0:
         return None
     
-    gene = Gene(elements.id, elements.chrm, elements.strand, 
+    gene = Gene(elements.id, elements.id,
+                elements.chrm, elements.strand, 
                 gene_min, gene_max, transcripts)
 
     if fasta != None:

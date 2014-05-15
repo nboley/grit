@@ -97,7 +97,7 @@ def parse_gff_line( line, fix_chrm=True ):
     return GffLine( GenomicInterval(data[0], data[6], data[3], data[4]), \
                         data[2], data[5], data[1], data[7], data[8] )
 
-def parse_gtf_line( line, fix_chrm=True, use_name_instead_of_id=False ):
+def parse_gtf_line( line, fix_chrm=True ):
     gffl = parse_gff_line( line, fix_chrm=fix_chrm )
     if gffl == None: return None
     
@@ -123,19 +123,10 @@ def parse_gtf_line( line, fix_chrm=True, use_name_instead_of_id=False ):
     if "transcript_id" not in meta_data:
         raise ValueError, "GTF lines require a transcript_id field."
         
-    if use_name_instead_of_id and 'gene_name' in meta_data:
-        gene_name = meta_data[ 'gene_name' ]
-    else:
-        gene_name = meta_data[ 'gene_id' ]
-    gene_name = get_name_from_field( gene_name )
-
-    if use_name_instead_of_id and 'transcript_name' in meta_data:
-        trans_name = meta_data[ 'transcript_name' ]
-    else:
-        trans_name = meta_data[ 'transcript_id' ]    
-    trans_name = get_name_from_field( trans_name )
+    gene_id = get_name_from_field(meta_data[ 'gene_id' ])
+    trans_id = get_name_from_field(meta_data[ 'transcript_id' ])
     
-    return GtfLine( gffl[0], gene_name, trans_name,
+    return GtfLine( gffl[0], gene_id, trans_id,
                     gffl[1], gffl[2], gffl[3], gffl[4], meta_data )
 
 def load_transcript_from_gtf_data(transcript_lines):
@@ -146,6 +137,8 @@ def load_transcript_from_gtf_data(transcript_lines):
     conf_lo = None
     conf_hi = None
     frac = None
+    name = None
+    gene_name = None
     
     promoter = None
     polya_region = None
@@ -164,6 +157,10 @@ def load_transcript_from_gtf_data(transcript_lines):
             conf_hi = float(line.meta_data['conf_hi'])
         if frac == None and 'frac' in line.meta_data: 
             frac = float(line.meta_data['frac'])
+        if name == None and 'transcript_name' in line.meta_data: 
+            name = line.meta_data['transcript_name']
+        if gene_name == None and 'gene_name' in line.meta_data: 
+            gene_name = line.meta_data['gene_name']
         
         # subtract one to make the coordinates 0 based
         line_start, line_stop = line.region.start-1, line.region.stop-1
@@ -209,6 +206,10 @@ def _load_gene_from_gtf_lines( gene_id, gene_lines, transcripts_data ):
         gene_chrm, gene_strand = transcripts[0].chrm, transcripts[0].strand
         gene_start = min(t.start for t in transcripts )
         gene_stop = max(t.stop for t in transcripts )
+        # get gene name, making sure they are all the same for the gene id
+        gene_name = set(t.gene_name for t in transcripts)
+        assert len(gene_name) == 1
+        gene_name = gene_name.pop()
         gene_meta_data = {}
     elif len(gene_lines) == 1:
         gene_data = gene_lines[0]
@@ -216,6 +217,7 @@ def _load_gene_from_gtf_lines( gene_id, gene_lines, transcripts_data ):
         # since gff's are 1 based
         gene_start -= 1
         gene_stop -= 1
+        gene_name = gene_data.meta_data['gene_name']
         gene_meta_data = gene_data.meta_data
     else:
         if VERBOSE: print >> sys.stderr, "Skipping '%s': multiple gene lines." % gene_id
@@ -226,10 +228,9 @@ def _load_gene_from_gtf_lines( gene_id, gene_lines, transcripts_data ):
         if VERBOSE: print >> sys.stderr, "Skipping '%s': gene boundaries dont match the transcript boundaries." % gene_id
         return None
     
-    return Gene( gene_id, gene_chrm, gene_strand, 
-                 gene_start, gene_stop,
+    return Gene( gene_id, gene_name, 
+                 gene_chrm, gene_strand, gene_start, gene_stop,
                  transcripts, gene_meta_data )
-    
 
 class Annotation(object):
     """Store a collection of genes.
@@ -268,8 +269,7 @@ class Annotation(object):
     def __iter__(self):
         return iter(self._genes)
     
-def load_gtf(fname_or_fp, use_name_instead_of_id=False, 
-             contig=None, strand=None):
+def load_gtf(fname_or_fp, contig=None, strand=None):
     if isinstance( fname_or_fp, str ):
         fp = open( fname_or_fp )
     else:
@@ -278,8 +278,7 @@ def load_gtf(fname_or_fp, use_name_instead_of_id=False,
     
     gene_lines = defaultdict(lambda: ( defaultdict(list), [] ))
     for line in fp:
-        data = parse_gtf_line(line, fix_chrm=True, 
-                              use_name_instead_of_id=use_name_instead_of_id)
+        data = parse_gtf_line(line, fix_chrm=True )
         # skip unparseable lines, or lines without gene ids
         if None == data: continue
         if data.gene_id == "": continue
