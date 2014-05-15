@@ -58,9 +58,11 @@ def partition_coding_and_utr_segments( exons, cds_start, cds_stop ):
     return us_utr_exons, cds_exons, ds_utr_exons
 
 class Gene( object ):
-    def __init__(self, id,chrm, strand, start, stop, transcripts, meta_data={}):
+    def __init__(self, id, name, 
+                 chrm, strand, start, stop, 
+                 transcripts, meta_data={}):
         self.id = id
-        self.name = id
+        self.name = name
         
         self.chrm = chrm
         self.strand = strand
@@ -128,12 +130,13 @@ class Transcript( object ):
     def __init__(self, trans_id, chrm, strand, exons, cds_region,
                  gene_id, score=None, fpkm=None, fpk=None, 
                  promoter=None, polya_region=None, coding_sequence=None,
-                 conf_lo=None, conf_hi=None, frac=None):
+                 conf_lo=None, conf_hi=None, frac=None,
+                 gene_name=None, name=None):
         self.gene_id = gene_id
         self.id = trans_id
 
-        self.gene_name = gene_id
-        self.name = trans_id
+        self.gene_name = gene_name
+        self.name = name
 
         self.ref_gene = None
         self.ref_trans = None
