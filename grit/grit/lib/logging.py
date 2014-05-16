@@ -140,6 +140,7 @@ class Logger( object ):
                                        if pid == None or not os.path.exists("/proc/%i"%pid))
                         self.pid_to_index_mapping[p_index] = os.getpid()
                     except:
+                        #raise
                         return
 
                 # only log message from main
