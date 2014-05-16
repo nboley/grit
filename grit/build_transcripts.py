@@ -11,6 +11,7 @@ from pysam import Fastafile
 from itertools import chain
 from collections import namedtuple
 
+import threading
 import multiprocessing
 from multiprocessing.sharedctypes import RawArray, RawValue
 from lib.multiprocessing_utils import Pool
@@ -28,6 +29,8 @@ import config
 
 import cPickle as pickle
 import Queue
+
+import random
 
 GeneElements = namedtuple('GeneElements', 
                           ['id', 'chrm', 'strand',
@@ -225,7 +228,8 @@ def build_gene(elements, fasta=None, ref_genes=None):
     
     return gene
 
-def worker( elements, output,
+def worker( elements, 
+            output,
             gtf_ofp, tracking_ofp,
             fasta_fp, ref_genes ):
     # if appropriate, open the fasta file
@@ -233,11 +237,7 @@ def worker( elements, output,
     else: fasta = None
     while True:
         config.log_statement("WAITING FOR QUEUE (%i)" % elements.qsize())
-        try: gene_elements = elements.get(timeout=0.1)
-        except Queue.Empty:
-            time.sleep(0.1)
-            continue
-        config.log_statement("")
+        gene_elements = elements.get()
         if gene_elements == 'FINISHED':
             config.log_statement("")
             return
@@ -297,13 +297,11 @@ def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
                                   tss_es, internal_es, tes_es,
                                   se_ts, promoters, polyas, 
                                   grpd_exons['intron'] )
-
-        config.log_statement( 
-            "Putting elements into queue")
-        elements.put(gene_data)
-        config.log_statement( 
-            "PUT elements into queue")
-    
+        while True:
+            try: elements.put(gene_data, timeout=0.1)
+            except Queue.Full: continue
+            else: break
+        
     config.log_statement( 
         "FINISHED Clustering elements into genes for %s:%s" % (contig, strand))
     return    
@@ -319,6 +317,51 @@ def add_elements_for_contig_and_strand_worker(
         add_elements_for_contig_and_strand(
             (contig, strand), grpd_exons,
             elements, gene_id_cntr)
+
+def feed_elements(raw_elements, elements):
+    all_args = multiprocessing.Queue()
+    for (contig, strand), grpd_exons in raw_elements.iteritems():
+        all_args.put([(contig, strand), dict(grpd_exons)])
+    for i in xrange(config.NTHREADS):
+        all_args.put('FINISHED')
+
+    gene_id_cntr = multiprocessing.Value('i', 0)
+    if config.NTHREADS in (None, 1):
+        add_elements_for_contig_and_strand_worker(
+            all_args, elements, gene_id_cntr)
+    else:
+        cluster_pids = []
+        for i in xrange(min(all_args.qsize(), config.NTHREADS)):
+            pid = os.fork()
+            if pid == 0:
+                add_elements_for_contig_and_strand_worker(
+                    all_args, elements, gene_id_cntr)
+                os._exit(0)
+
+            cluster_pids.append(pid)
+
+        for pid in cluster_pids:
+            os.waitpid(pid, 0) 
+
+    for i in xrange(2*config.NTHREADS):
+        elements.put('FINISHED')
+    
+    config.log_statement("Finished adding elements")
+    return
+
+def spawn_transcript_building_children(args, nthreads):
+    pids = []
+    for i in xrange(config.NTHREADS):
+        pid = os.fork()
+        if pid == 0:
+            worker(*args)
+            os._exit(0)
+        pids.append(pid)
+
+    for pid in pids:
+        os.waitpid(pid, 0) 
+    
+    return
 
 def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname, 
                       fasta_fp=None, ref_genes=None):
@@ -346,63 +389,33 @@ def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname,
              "locus".ljust(30), 
              "length"]) + "\n")
     
-    
-    all_args = multiprocessing.Queue()
-    for (contig, strand), grpd_exons in raw_elements.iteritems():
-        all_args.put([(contig, strand), dict(grpd_exons)])
-    for i in xrange(config.NTHREADS):
-        all_args.put('FINISHED')
-    
     config.log_statement( "Clustering elements" )    
-    elements = multiprocessing.Queue(2*config.NTHREADS)
-    gene_id_cntr = multiprocessing.Value('i', 0)
-    if config.NTHREADS in (None, 1):
-        add_elements_for_contig_and_strand_worker(
-            all_args, elements, gene_id_cntr)
-    else:
-        outer_pid = os.fork()
-        if outer_pid == 0:
-            cluster_pids = []
-            for i in xrange(min(all_args.qsize(), config.NTHREADS)):
-                pid = os.fork()
-                if pid == 0:
-                    add_elements_for_contig_and_strand_worker(
-                        all_args, elements, gene_id_cntr)
-                    os._exit(0)
+    manager = multiprocessing.Manager()
+    elements = manager.Queue()
 
-                cluster_pids.append(pid)
-
-            for pid in cluster_pids:
-                os.waitpid(pid, 0) 
-    
-            #config.log_statement( "Adding FINISHED notices to queue" )        
-            for i in xrange(config.NTHREADS):
-                elements.put('FINISHED')    
-            config.log_statement("Finished adding elements")
-            os._exit(0)
-            
     output = multiprocessing.Queue()
-    
-    config.log_statement( "Spawning transcript building children" )        
-    args = [elements, output, 
-            gtf_ofp, tracking_ofp,
-            fasta_fp, ref_genes]
-    if config.NTHREADS in (None, 1):
-        worker(*args)
-    else:
-        pids = [outer_pid,]
-        for i in xrange(config.NTHREADS):
-            pid = os.fork()
-            if pid == 0:
-                worker(*args)
-                os._exit(0)
-            
-            pids.append(pid)
 
-        config.log_statement("Waiting on children")
-        for pid in pids:
-            os.waitpid(pid, 0) 
-        
+    transcript_building_children_args = [
+        elements, output, 
+        gtf_ofp, tracking_ofp,
+        fasta_fp, ref_genes]
+    
+    elements_feeder_pid = os.fork()
+    if elements_feeder_pid == 0:
+        feed_elements(raw_elements, elements)
+        spawn_transcript_building_children(
+            transcript_building_children_args, len(raw_elements))
+        os._exit(0)
+    
+    transcript_building_pid = os.fork()
+    if transcript_building_pid == 0:
+        spawn_transcript_building_children(
+            transcript_building_children_args, config.NTHREADS - len(raw_elements))
+        os._exit(0)
+    
+    for pid in [elements_feeder_pid, transcript_building_pid]:
+        os.waitpid(pid, 0)        
+    
     genes = []
     while True:
         try: genes.append(output.get_nowait())
