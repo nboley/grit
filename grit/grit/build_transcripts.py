@@ -228,47 +228,60 @@ def build_gene(elements, fasta=None, ref_genes=None):
     
     return gene
 
-def worker( elements, 
-            output,
-            gtf_ofp, tracking_ofp,
-            fasta_fp, ref_genes ):
+def build_and_write_gene(gene_elements, output,
+                         gtf_ofp, tracking_ofp,
+                         fasta, ref_genes ):
+    # build the gene with transcripts, and optionally call orfs
+    try:
+        config.log_statement(
+            "Building transcript and ORFs for Gene %s" % gene_elements.id)
+        
+        gene = build_gene(gene_elements, fasta, ref_genes)
+        if gene == None: 
+            return
+        config.log_statement(
+            "FINISHED Building transcript and ORFs for Gene %s" % gene.id)
+
+        # dump a pickel of the gene to a temp file, and set that in the 
+        # output manager
+        ofname = gene.write_to_temp_file(config.tmp_dir)
+        output.put((gene.id, len(gene.transcripts), ofname))
+
+        write_gene_to_gtf(gtf_ofp, gene)
+        write_gene_to_tracking_file(tracking_ofp, gene)
+    except Exception, inst:
+        config.log_statement(
+            "ERROR building transcript in %s: %s"%(gene_elements.id, inst))
+        if config.DEBUG_VERBOSE:
+            config.log_statement( traceback.format_exc(), log=True )
+    
+    return
+
+def build_transcripts_worker( elements, 
+                              output,
+                              gtf_ofp, tracking_ofp,
+                              fasta_fp, ref_genes ):
     # if appropriate, open the fasta file
     if fasta_fp != None: fasta = Fastafile(fasta_fp.name)
     else: fasta = None
     while True:
-        config.log_statement(
-            "Waiting for gene to process (%i in queue)" % elements.qsize())
+        config.log_statement("Waiting for gene to process.")
         gene_elements = elements.get()
         if gene_elements == 'FINISHED':
             config.log_statement("")
             return
-        config.log_statement(
-            "Building transcript and ORFs for Gene %s" % gene_elements.id)
-        
-        # build the gene with transcripts, and optionally call orfs
-        try:
-            gene = build_gene(gene_elements, fasta, ref_genes)
-            if gene == None: continue
-            config.log_statement(
-                "FINISHED Building transcript and ORFs for Gene %s" % gene.id)
-
-            # dump a pickel of the gene to a temp file, and set that in the 
-            # output manager
-            ofname = gene.write_to_temp_file(config.tmp_dir)
-            output.put((gene.id, len(gene.transcripts), ofname))
-            
-            write_gene_to_gtf(gtf_ofp, gene)
-            write_gene_to_tracking_file(tracking_ofp, gene)
-        except Exception, inst:
-            config.log_statement(
-                "ERROR building transcript in %s: %s"%(gene_elements.id, inst))
-            if config.DEBUG_VERBOSE:
-                config.log_statement( traceback.format_exc(), log=True )
-    
+        build_and_write_gene( gene_elements, output, 
+                              gtf_ofp, tracking_ofp,
+                              fasta, ref_genes)
     return
 
-def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
-                                       elements, gene_id_cntr):
+def add_elements_for_contig_and_strand((contig, strand), 
+                                       grpd_exons, elements, gene_id_cntr,
+                                       output, gtf_ofp, tracking_ofp, 
+                                       fasta_fp, ref_genes):
+    if fasta_fp != None: fasta = Fastafile(fasta_fp.name)
+    else: fasta = None
+    
     config.log_statement( 
         "Clustering elements into genes for %s:%s" % ( contig, strand ) )
     
@@ -300,7 +313,12 @@ def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
                                   grpd_exons['intron'] )
         while True:
             try: elements.put(gene_data, timeout=0.1)
-            except Queue.Full: continue
+            except Queue.Full: 
+                build_and_write_gene( gene_data, output, 
+                                      gtf_ofp, tracking_ofp,
+                                      fasta, ref_genes)
+
+                continue
             else: break
         
     config.log_statement( 
@@ -308,7 +326,9 @@ def add_elements_for_contig_and_strand((contig, strand), grpd_exons,
     return    
 
 def add_elements_for_contig_and_strand_worker(
-        args_queue, elements, gene_id_cntr):
+        args_queue, elements, gene_id_cntr,
+        output, gtf_ofp, tracking_ofp, 
+        fasta_fp, ref_genes):
     while True:
         args = args_queue.get()
         if args == 'FINISHED': 
@@ -317,9 +337,13 @@ def add_elements_for_contig_and_strand_worker(
         (contig, strand), grpd_exons = args
         add_elements_for_contig_and_strand(
             (contig, strand), grpd_exons,
-            elements, gene_id_cntr)
+            elements, gene_id_cntr,
+            output, gtf_ofp, tracking_ofp, 
+            fasta_fp, ref_genes)
 
-def feed_elements(raw_elements, elements):
+def feed_elements(raw_elements, elements, 
+                  output, gtf_ofp, tracking_ofp, 
+                  fasta_fp, ref_genes ):
     all_args = multiprocessing.Queue()
     for (contig, strand), grpd_exons in raw_elements.iteritems():
         all_args.put([(contig, strand), dict(grpd_exons)])
@@ -327,16 +351,18 @@ def feed_elements(raw_elements, elements):
         all_args.put('FINISHED')
 
     gene_id_cntr = multiprocessing.Value('i', 0)
+    worker_args = [ all_args, elements, gene_id_cntr,
+                    output, gtf_ofp, tracking_ofp, 
+                    fasta_fp, ref_genes ]
+
     if config.NTHREADS in (None, 1):
-        add_elements_for_contig_and_strand_worker(
-            all_args, elements, gene_id_cntr)
+        add_elements_for_contig_and_strand_worker(*worker_args)
     else:
         cluster_pids = []
         for i in xrange(min(all_args.qsize(), config.NTHREADS)):
             pid = os.fork()
             if pid == 0:
-                add_elements_for_contig_and_strand_worker(
-                    all_args, elements, gene_id_cntr)
+                add_elements_for_contig_and_strand_worker(*worker_args)
                 os._exit(0)
 
             cluster_pids.append(pid)
@@ -355,10 +381,10 @@ def spawn_transcript_building_children(args, nthreads):
     for i in xrange(config.NTHREADS):
         pid = os.fork()
         if pid == 0:
-            worker(*args)
+            build_transcripts_worker(*args)
             os._exit(0)
         pids.append(pid)
-
+    
     for pid in pids:
         os.waitpid(pid, 0) 
     
@@ -370,7 +396,7 @@ def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname,
     """    
     # make sure that we're starting from the start of the 
     # elements files
-    config.log_statement( "Loading %s" % exons_bed_fp.name )
+    config.log_statement( "Loading %s" % exons_bed_fp.name, log=True )
     exons_bed_fp.seek(0)
     raw_elements = load_elements( exons_bed_fp )
     config.log_statement( "Finished Loading %s" % exons_bed_fp.name )
@@ -390,7 +416,7 @@ def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname,
              "locus".ljust(30), 
              "length"]) + "\n")
     
-    config.log_statement( "Clustering elements" )    
+    config.log_statement( "Building Transcripts", log=True )
     manager = multiprocessing.Manager()
     elements = manager.Queue()
 
@@ -403,7 +429,9 @@ def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname,
     
     elements_feeder_pid = os.fork()
     if elements_feeder_pid == 0:
-        feed_elements(raw_elements, elements)
+        feed_elements( raw_elements, elements,
+                       output, gtf_ofp, tracking_ofp, 
+                       fasta_fp, ref_genes )
         spawn_transcript_building_children(
             transcript_building_children_args, len(raw_elements))
         os._exit(0)

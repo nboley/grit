@@ -108,7 +108,12 @@ class Logger( object ):
     
     def __call__( self, message, display=True, log=False ):
         message = str(message)
-        
+        if not self.use_ncurses:
+            if log: 
+                self.log_ofstream.write(message.strip() + "\n" )
+                self.log_ofstream.flush()
+            return
+
         # if the message is empty, always display and never log
         if message == "": 
             display = True

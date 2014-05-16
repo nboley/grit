@@ -30,8 +30,6 @@ import config
 
 import cPickle as pickle
 
-import Queue
-
 SAMPLE_ID = ''
 REP_ID = ''
 
