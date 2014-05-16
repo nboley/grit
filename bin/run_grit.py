@@ -575,7 +575,8 @@ def main():
     # if the reference genes weren't loaded while parsing the data, and we
     # need the reference elements, then load the reference genes now
     if args.reference != None and sample_data.ref_genes == None:
-        if config.VERBOSE: config.log_statement("Loading annotation file.")
+        if config.VERBOSE: 
+            config.log_statement("Loading annotation file.", log=True)
         sample_data.ref_genes = load_gtf(args.reference)
     
     # find elements if necessary, load the gtf if we are running in 
@@ -654,8 +655,9 @@ def main():
                     config.log_statement("Loading fldists")
                     fl_dists = pickle.load(fp)
             except IOError:
-                config.log_statement("Estimating fragment length distribution")
-                fl_dists = grit.frag_len.build_fl_dists( elements, rnaseq_reads )
+                config.log_statement(
+                    "Estimating fragment length distribution", log=True)
+                fl_dists = grit.frag_len.build_fl_dists(elements, rnaseq_reads)
                 with open(fldist_fname, "w") as ofp:
                     pickle.dump(fl_dists, ofp)
             
