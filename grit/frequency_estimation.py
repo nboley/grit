@@ -56,20 +56,31 @@ except ImportError:
 import sparsify_support_fns
 
 def calc_lhd( freqs, observed_array, expected_array, 
-              sparse_penalty=None, index=None ):
+              sparse_penalty=0, sparse_index=None ):
     rv = sparsify_support_fns.calc_lhd(freqs, observed_array, expected_array)
-    if sparse_penalty != None:
-        penalty = math.log(sparse_penalty) - math.log(freqs[index])
-        rv -= math.exp(penalty)
+
+    if sparse_penalty > 0:
+        if sparse_index != None:
+            penalty = math.log(sparse_penalty) - math.log(freqs[sparse_index])
+            rv -= math.exp(penalty)
+        else:
+            #rv -= sparse_penalty*(freqs**2).sum()
+            rv -= sparse_penalty*(freqs*numpy.log(freqs)).sum()
+
     return rv
 
 def calc_gradient( freqs, observed_array, expected_array,
-                   sparse_penalty=None, index=None):
+                   sparse_penalty=0, sparse_index=None):
     rv = sparsify_support_fns.calc_gradient(
         freqs, observed_array, expected_array)
-    if sparse_penalty != None:
-        penalty = math.log(sparse_penalty) - 2*math.log(freqs[index])
-        rv[index] -= math.exp(penalty)
+    if sparse_penalty > 0:
+        if sparse_index != None:
+            penalty = math.log(sparse_penalty) - 2*math.log(freqs[sparse_index])
+            rv[sparse_index] -= math.exp(penalty)
+        else:
+            #rv += sparse_penalty*2*freqs
+            rv += sparse_penalty*(1 + numpy.log(freqs))
+    
     return rv
 
 def is_row_identifiable(X, i_to_check):
@@ -427,11 +438,11 @@ def estimate_transcript_frequencies_sparse(
     #        full_expected_array, observed_array)[0])
     x = numpy.ones(n, dtype=float)/n
     eps = 0.1
-    sparse_penalty = 1.
+    sparse_penalty = 100
     if min_sparse_penalty == None:
         min_sparse_penalty = LHD_ABS_TOL
         # always skip the out of gene transcript
-        sparse_index = numpy.argmax(x[1:]) + 1
+        #sparse_index = numpy.argmax(x[1:]) + 1
     
     start_time = time.time()
     #config.log_statement( "Iteration\tlog lhd\t\tchange lhd\tn 
@@ -506,9 +517,10 @@ def estimate_sparse_transcript_frequencies(observed_array, full_expected_array):
     return best_x
 
 def estimate_transcript_frequencies(observed_array, full_expected_array):
-    return estimate_transcript_frequencies_sparse(
+    rv = estimate_transcript_frequencies_sparse(
         observed_array, full_expected_array, 
         None, None )
+    return rv
         
 
 def estimate_confidence_bound( f_mat, 
