@@ -236,7 +236,8 @@ def worker( elements,
     if fasta_fp != None: fasta = Fastafile(fasta_fp.name)
     else: fasta = None
     while True:
-        config.log_statement("WAITING FOR QUEUE (%i)" % elements.qsize())
+        config.log_statement(
+            "Waiting for gene to process (%i in queue)" % elements.qsize())
         gene_elements = elements.get()
         if gene_elements == 'FINISHED':
             config.log_statement("")
