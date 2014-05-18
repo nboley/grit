@@ -58,6 +58,8 @@ class SharedData(object):
 
         with self.design_mat_lock: 
             fname = self.design_mat_filenames[gene_id].value
+        if fname == '': 
+            raise ValueError, "No design matrix for '%s'" % gene_id
         with open(fname) as fp:
             f_mat = pickle.load(fp)
         self._cached_fmat_gene_id = gene_id
@@ -660,7 +662,7 @@ def quantify_transcript_expression(
     
     if config.VERBOSE: config.log_statement( 
         "Writing output data to tracking file" )
-    
+
     expression_ofp = ThreadSafeFile(ofname, "w")
     write_data_to_tracking_file(data, fl_dists, expression_ofp)    
     expression_ofp.close()
