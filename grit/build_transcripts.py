@@ -27,7 +27,6 @@ from elements import \
 
 import config
 
-import cPickle as pickle
 import Queue
 
 import random
@@ -244,9 +243,10 @@ def build_and_write_gene(gene_elements, output,
 
         # dump a pickle of the gene to a temp file, and set that in the 
         # output manager
-        ofname = gene.write_to_temp_file(config.tmp_dir)
+        ofname = gene.write_to_file(
+            os.path.join(config.tmp_dir, "%s.gene" % gene.id))
         output.put((gene.id, len(gene.transcripts), ofname))
-
+        
         write_gene_to_gtf(gtf_ofp, gene)
         write_gene_to_tracking_file(tracking_ofp, gene)
     except Exception, inst:
@@ -356,25 +356,22 @@ def feed_elements(raw_elements, elements,
                     output, gtf_ofp, tracking_ofp, 
                     fasta_fp, ref_genes ]
     cluster_pids = []
-    if config.NTHREADS in (None, 1):
-        add_elements_for_contig_and_strand_worker(*worker_args)
-    else:
-        for i in xrange(min(len(raw_elements), config.NTHREADS)):
-            pid = os.fork()
-            if pid == 0:
-                add_elements_for_contig_and_strand_worker(*worker_args)
-                with nthreads_remaining.get_lock():
-                    nthreads_remaining.value -= 1
-                    config.log_statement("Finished adding elements (%i left)" 
-                                         % nthreads_remaining.value)
-                build_transcripts_worker( elements, 
-                                          output,
-                                          gtf_ofp, tracking_ofp,
-                                          fasta_fp, ref_genes )      
-                os._exit(0)
+    for i in xrange(min(len(raw_elements), config.NTHREADS)):
+        pid = os.fork()
+        if pid == 0:
+            add_elements_for_contig_and_strand_worker(*worker_args)
+            with nthreads_remaining.get_lock():
+                nthreads_remaining.value -= 1
+                config.log_statement("Finished adding elements (%i left)" 
+                                     % nthreads_remaining.value)
+            build_transcripts_worker( elements, 
+                                      output,
+                                      gtf_ofp, tracking_ofp,
+                                      fasta_fp, ref_genes )      
+            os._exit(0)
 
-            cluster_pids.append(pid)
-    
+        cluster_pids.append(pid)
+
     while True:
         with nthreads_remaining.get_lock():
             if nthreads_remaining.value == 0:
@@ -382,10 +379,10 @@ def feed_elements(raw_elements, elements,
                     elements.put('FINISHED')
                 break
         time.sleep(1.0)
-    
+
     for pid in cluster_pids:
         os.waitpid(pid, 0) 
-
+    
     config.log_statement("Finished adding elements")
     return
 
@@ -426,8 +423,9 @@ def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname,
         gtf_ofp, tracking_ofp,
         fasta_fp, ref_genes]
 
+    
     pids = []
-    for i in xrange(config.NTHREADS - len(raw_elements)):
+    for i in xrange(max(1,config.NTHREADS - len(raw_elements))):
         pid = os.fork()
         if pid == 0:
             build_transcripts_worker(elements, 
@@ -436,14 +434,14 @@ def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname,
                                      fasta_fp, ref_genes)
             os._exit(0)
         pids.append(pid)
-    
+
     elements_feeder_pid = os.fork()
     if elements_feeder_pid == 0:
         feed_elements( raw_elements, elements, 
                        output, gtf_ofp, tracking_ofp, 
                        fasta_fp, ref_genes )
         os._exit(0)
-    
+
     for pid in pids:
         os.waitpid(pid, 0) 
 

@@ -109,9 +109,10 @@ class Logger( object ):
     def __call__( self, message, display=True, log=False ):
         message = str(message)
         if not self.use_ncurses:
-            if log: 
+            if log or (config.DEBUG_VERBOSE and message.strip() != ''): 
                 self.log_ofstream.write(message.strip() + "\n" )
                 self.log_ofstream.flush()
+                sys.stderr.write(message.strip() + "\n" )
             return
 
         # if the message is empty, always display and never log
@@ -123,7 +124,7 @@ class Logger( object ):
         if log and self.log_ofstream != None:
             self.log_ofstream.write(message.strip() + "\n" )
             self.log_ofstream.flush()
-            
+        
         # if we're not using ncurses, then write the message to standard err
         if display and not self.use_ncurses:
             sys.stderr.write(message.strip() + "\n" )
