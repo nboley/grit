@@ -1,11 +1,13 @@
+import os, sys
+
 VERSION = "1.1.3-dev"
 
 # config options shared across modules
 
 # the maximum number of transcripts to build a design matrix for
-MAX_NUM_TRANSCRIPTS = 5000
+MAX_NUM_TRANSCRIPTS = 50000
 # the maximum number of candidate transcripts to build a particualr gene locus
-MAX_NUM_CANDIDATE_TRANSCRIPTS = 25000
+MAX_NUM_CANDIDATE_TRANSCRIPTS = 50000
 
 CB_SIG_LEVEL = 0.025
 
@@ -45,6 +47,11 @@ NUM_TSS_BASES_TO_SKIP = 200
 
 MIN_NUM_POLYA_TAGS = 2
 NUM_TES_BASES_TO_SKIP = 300
+
+tmp_dir = None
+
+def get_gene_tmp_fname(gene_id, sample_type=None, rep_id=None):
+    return os.path.join(tmp_dir, "%s.gene" % gene_id)
 
 def log_statement(*args):
     print args[0]

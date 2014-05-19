@@ -121,7 +121,7 @@ class Logger( object ):
             log = False
         # if we want to log this, and we have an output stream, write this
         # to the log
-        if log and self.log_ofstream != None:
+        if (log or config.DEBUG_VERBOSE) and self.log_ofstream != None:
             self.log_ofstream.write(message.strip() + "\n" )
             self.log_ofstream.flush()
         
