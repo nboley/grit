@@ -624,8 +624,12 @@ def main():
             genes = load_gtf(gtf_fp)
             elements = extract_elements_from_genes(genes)
             for gene in genes:
+                gene_fname = config.get_gene_tmp_fname(
+                    gene.id, sample_type)
                 genes_fnames.append(
-                    (gene.id, len(gene.transcripts), gene.write_to_temp_file()))
+                    (gene.id, 
+                     len(gene.transcripts), 
+                     gene.write_to_file(gene_fname)))
             config.log_statement("Finished Loading %s" % gtf_fp.name)
         else:
             elements = load_elements(elements_fp)

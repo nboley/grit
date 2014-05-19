@@ -65,7 +65,7 @@ def calc_lhd( freqs, observed_array, expected_array,
             rv -= math.exp(penalty)
         else:
             #rv -= sparse_penalty*(freqs**2).sum()
-            rv -= sparse_penalty*(freqs*numpy.log(freqs)).sum()
+            rv += sparse_penalty*(freqs*numpy.log(freqs)).sum()
 
     return rv
 
@@ -79,7 +79,7 @@ def calc_gradient( freqs, observed_array, expected_array,
             rv[sparse_index] -= math.exp(penalty)
         else:
             #rv += sparse_penalty*2*freqs
-            rv += sparse_penalty*(1 + numpy.log(freqs))
+            rv -= sparse_penalty*(1 + numpy.log(freqs))
     
     return rv
 

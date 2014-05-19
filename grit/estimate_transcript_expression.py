@@ -389,9 +389,14 @@ def estimate_confidence_bounds( data, bnd_type ):
         for i in xrange(config.NTHREADS):
             pid = os.fork()
             if pid == 0:
-                find_confidence_bounds_worker(
-                    data, gene_ids, trans_indices_queues, bnd_type)
-                os._exit(0)
+                try:
+                    find_confidence_bounds_worker(
+                        data, gene_ids, trans_indices_queues, bnd_type)
+                except Exception, inst:
+                    config.log_statement( str(error_msg), log=True )
+                    config.log_statement( traceback.format_exc(), log=True )
+                finally:
+                    os._exit(0)
             pids.append(pid)
         
         for pid in pids:
@@ -461,8 +466,13 @@ def estimate_mles( data ):
         for i in xrange(config.NTHREADS):
             pid = os.fork()
             if pid == 0:
-                estimate_mle_worker(*args)
-                os._exit(0)
+                try:
+                    estimate_mle_worker(*args)
+                except Exception, inst:
+                    config.log_statement( str(error_msg), log=True )
+                    config.log_statement( traceback.format_exc(), log=True )
+                finally:
+                    os._exit(0)
             ps.append(pid)
         
         # populate the queue
@@ -537,8 +547,13 @@ def build_design_matrices( data, fl_dists,
             #ps.append(p)
             pid = os.fork()
             if pid == 0:
-                build_design_matrices_worker(*args)
-                os._exit(0)
+                try:
+                    build_design_matrices_worker(*args)
+                except Exception, inst:
+                    config.log_statement( str(error_msg), log=True )
+                    config.log_statement( traceback.format_exc(), log=True )
+                finally:
+                    os._exit(0)
             ps.append(pid)
         
         # populate the queue

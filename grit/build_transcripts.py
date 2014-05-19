@@ -37,6 +37,8 @@ GeneElements = namedtuple('GeneElements',
                            'se_transcripts', 'promoter', 'polyas', 
                            'introns'])
 
+SAMPLE_TYPE = None
+REP_ID = None
 
 def build_transcripts_from_elements( 
         tss_exons, internal_exons, tes_exons, se_transcripts, jns, strand ):
@@ -244,14 +246,16 @@ def build_and_write_gene(gene_elements, output,
         # dump a pickle of the gene to a temp file, and set that in the 
         # output manager
         ofname = gene.write_to_file(
-            os.path.join(config.tmp_dir, "%s.gene" % gene.id))
+            config.get_gene_tmp_fname(gene.id, SAMPLE_TYPE, REP_ID))
+                
         output.put((gene.id, len(gene.transcripts), ofname))
         
         write_gene_to_gtf(gtf_ofp, gene)
         write_gene_to_tracking_file(tracking_ofp, gene)
     except Exception, inst:
         config.log_statement(
-            "ERROR building transcript in %s: %s"%(gene_elements.id, inst))
+            "ERROR building transcript in %s: %s" % (gene_elements.id, inst), 
+            log=True)
         if config.DEBUG_VERBOSE:
             config.log_statement( traceback.format_exc(), log=True )
     
