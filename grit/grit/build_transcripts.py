@@ -255,8 +255,15 @@ def build_and_write_gene(gene_elements, output,
         write_gene_to_gtf(gtf_ofp, gene)
         write_gene_to_tracking_file(tracking_ofp, gene)
     except Exception, inst:
+        start = min(x[0] for x in chain(
+                gene_elements.promoter, gene_elements.polyas))
+        stop = max(x[1] for x in chain(
+                gene_elements.promoter, gene_elements.polyas))
+
         config.log_statement(
-            "ERROR building transcript in %s: %s" % (gene_elements.id, inst), 
+            "ERROR building transcript in %s(%s:%s:%i-%i): %s" % (
+                gene_elements.id, gene_elements.chrm, gene_elements.strand, 
+                start, stop, inst), 
             log=True)
         if config.DEBUG_VERBOSE:
             config.log_statement( traceback.format_exc(), log=True )
@@ -281,6 +288,19 @@ def build_transcripts_worker( elements,
                               fasta, ref_genes)
     return
 
+def group_elements_in_gene(grpd_exons):    
+    for g_start, g_stop in grpd_exons['gene']:
+        args = []
+        for key in ('tss_exon', 'internal_exon', 'tes_exon', 
+                    'single_exon_gene', 'promoter', 'polya', 'intron'):
+            if key not in grpd_exons: 
+                args.append(set())
+            else:
+                exons = [tuple(x) for x in grpd_exons[key].tolist()
+                         if x[0] >= g_start and x[1] <= g_stop]
+                args.append(set(exons))
+        yield args
+
 def add_elements_for_contig_and_strand((contig, strand), 
                                        grpd_exons, elements, gene_id_cntr,
                                        output, gtf_ofp, tracking_ofp, 
@@ -290,7 +310,8 @@ def add_elements_for_contig_and_strand((contig, strand),
     
     config.log_statement( 
         "Clustering elements into genes for %s:%s" % ( contig, strand ) )
-    
+
+    """ old code that actually clustered elements
     args = []
     for key in ('tss_exon', 'internal_exon', 'tes_exon', 
                 'single_exon_gene', 'promoter', 'polya', 'intron'):
@@ -300,9 +321,9 @@ def add_elements_for_contig_and_strand((contig, strand),
             args.append(
                 set(map(tuple, grpd_exons[key].tolist())))
     args.append(strand)
-    
-    for ( tss_es, tes_es, internal_es, 
-          se_ts, promoters, polyas, jns ) in cluster_elements( *args ):
+    """
+    for ( tss_es, internal_es, tes_es,
+          se_ts, promoters, polyas, jns ) in group_elements_in_gene(grpd_exons):
         # skip genes without all of the element types
         if len(se_ts) == 0 and (
                 len(tes_es) == 0 

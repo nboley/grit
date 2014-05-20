@@ -497,8 +497,8 @@ def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads,
             jn_stops[stop] = max( jn_stops[stop], cnt )
         
         for (start, stop), cnt in rnaseq_junctions[(chrm, strand)]:
-            #if (float(cnt)+1)/jn_starts[start] < 0.01: continue
-            #if (float(cnt)+1)/jn_stops[stop] < 0.01: continue
+            if (float(cnt)+1)/jn_starts[start] < 0.01: continue
+            if (float(cnt)+1)/jn_stops[stop] < 0.01: continue
             if stop - start + 1 > config.MAX_INTRON_SIZE: continue
             filtered_junctions[(chrm, strand)][(start, stop)] = cnt
         
@@ -1232,9 +1232,13 @@ def build_raw_elements_in_gene( gene,
     cage_cov, polya_cov = None, None
     
     gene_len = gene.stop - gene.start + 1
-    jns = load_junctions(rnaseq_reads, cage_reads, polya_reads,
-                         [(gene.chrm, gene.strand, gene.start, gene.stop),],
-                         nthreads=1)[(gene.chrm, gene.strand)]    
+    if not config.ONLY_USE_REFERENCE_JUNCTIONS:
+        jns = load_junctions(rnaseq_reads, cage_reads, polya_reads,
+                             [(gene.chrm, gene.strand, gene.start, gene.stop),],
+                             nthreads=1)[(gene.chrm, gene.strand)]    
+    else:
+        jns = defaultdict(int)
+    
     # merge in the reference junctions
     for start, stop in ref_jns:
         jns[(start,stop)] += 0
@@ -1268,7 +1272,8 @@ def build_raw_elements_in_gene( gene,
     
     polya_peaks = filter_polya_peaks(polya_peaks, rnaseq_cov, jns)
     
-    jns = filter_jns(jns, rnaseq_cov, gene)
+    if not config.ONLY_USE_REFERENCE_JUNCTIONS:
+        jns = filter_jns(jns, rnaseq_cov, gene)
 
     return rnaseq_cov, cage_cov, cage_peaks, polya_cov, polya_peaks, jns
 
