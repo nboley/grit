@@ -497,8 +497,8 @@ def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads,
             jn_stops[stop] = max( jn_stops[stop], cnt )
         
         for (start, stop), cnt in rnaseq_junctions[(chrm, strand)]:
-            if (float(cnt)+1)/jn_starts[start] < 0.01: continue
-            if (float(cnt)+1)/jn_stops[stop] < 0.01: continue
+            #if (float(cnt)+1)/jn_starts[start] < 0.01: continue
+            #if (float(cnt)+1)/jn_stops[stop] < 0.01: continue
             if stop - start + 1 > config.MAX_INTRON_SIZE: continue
             filtered_junctions[(chrm, strand)][(start, stop)] = cnt
         
@@ -902,7 +902,6 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
     start_bin_cvg = start_bin.mean_cov( rnaseq_cov )
     for i in xrange( start_index-1, 0, -1 ):
         bin = gene_bins[i]
-        
         # break at canonical introns
         if bin.type == 'INTRON':
             break
@@ -937,7 +936,6 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov,
     start_bin_cvg = start_bin.mean_cov( rnaseq_cov )
     for i in xrange( start_index+1, len(gene_bins) ):
         bin = gene_bins[i]
-
         # if we've reached a canonical intron, break
         if bin.type == 'INTRON':
             break
@@ -1013,21 +1011,22 @@ def find_canonical_and_internal_exons( (chrm, strand), rnaseq_cov, jns ):
     for ce_i, ce_bin in iter_canonical_exons_and_indices():
         ce_bin.type = 'EXON'
         canonical_exons.append( ce_bin )
-        internal_exons.append( ce_bin )
         
-        for r_ext in find_right_exon_extensions(
-                ce_i, ce_bin, bins, rnaseq_cov):
-            exon = copy(ce_bin)
-            exon.right_label = r_ext.right_label
-            exon.stop = r_ext.stop
-            internal_exons.append( exon )
+        right_extensions = find_right_exon_extensions(
+            ce_i, ce_bin, bins, rnaseq_cov)
 
-        for l_ext in find_left_exon_extensions(
-                ce_i, ce_bin, bins, rnaseq_cov):
-            exon = copy(ce_bin)
-            exon.left_label = l_ext.left_label
-            exon.start = l_ext.start
-            internal_exons.append( exon )
+        left_extensions = find_left_exon_extensions(
+            ce_i, ce_bin, bins, rnaseq_cov)
+
+        for left_bin in chain(
+            sorted(left_extensions, key=lambda x:x.stop), (ce_bin,)):
+                for right_bin in chain(
+                    (ce_bin,), sorted(right_extensions, key=lambda x:x.stop)):
+                    internal_exons.append(Bin( 
+                            left_bin.start, right_bin.stop, 
+                            left_bin.left_label, 
+                            right_bin.right_label, 
+                            "EXON" ) )
     
     return canonical_exons, internal_exons
 

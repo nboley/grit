@@ -51,6 +51,9 @@ def build_transcripts_from_elements(
     graph.add_nodes_from( tes_exons )
     
     edges = find_jn_connected_exons(all_exons, jns, strand )
+    for jn, start, stop in edges:
+        assert start in all_exons
+        assert stop in all_exons
     graph.add_edges_from( (start, stop) for jn, start, stop in edges )
     transcripts = []
     for tss in tss_exons:
@@ -60,7 +63,7 @@ def build_transcripts_from_elements(
                 transcripts.append( sorted(transcript) )
                 if len(transcripts) > config.MAX_NUM_CANDIDATE_TRANSCRIPTS:
                     raise ValueError, "Too many candidate transcripts"
-    
+                
     return transcripts + [ [x,] for x in se_transcripts ]
 
 class MaxIterError( ValueError ):
@@ -249,7 +252,6 @@ def build_and_write_gene(gene_elements, output,
             config.get_gene_tmp_fname(gene.id, SAMPLE_TYPE, REP_ID))
                 
         output.put((gene.id, len(gene.transcripts), ofname))
-        
         write_gene_to_gtf(gtf_ofp, gene)
         write_gene_to_tracking_file(tracking_ofp, gene)
     except Exception, inst:
@@ -314,7 +316,7 @@ def add_elements_for_contig_and_strand((contig, strand),
         gene_data = GeneElements( gene_id, contig, strand,
                                   tss_es, internal_es, tes_es,
                                   se_ts, promoters, polyas, 
-                                  grpd_exons['intron'] )
+                                  jns )
         while True:
             try: elements.put(gene_data, timeout=0.1)
             except Queue.Full: 
