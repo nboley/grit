@@ -726,7 +726,14 @@ def bin_rnaseq_reads( reads, chrm, strand, exon_boundaries ):
         else: 
             rlen = r1.rlen
             if rlen != r2.rlen:
-                print >> sys.stderr, "WARNING: read lengths are not the same"
+                config.log_statement(
+                    "WARNING: read lengths are not the same for %s and %s" % (
+                        r1.qname, r2.qname),
+                    log=True, display=False)
+                config.log_statement(
+                    str(r1), log=True, display=False)
+                config.log_statement(
+                    str(r2), log=True, display=False)                    
                 continue
         
         rg = get_read_group( r1, r2 )
