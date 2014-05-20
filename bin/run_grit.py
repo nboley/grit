@@ -328,8 +328,9 @@ class Samples(object):
 def load_ref_elements_to_include(args):
     if None == args.reference and args.use_reference_genes:
         raise ValueError, "--reference must be set if --use-reference-genes is set"
-    if None == args.reference and args.use_reference_junctions:
-        raise ValueError, "--reference must be set if --use-reference-junctions is set"
+    if None == args.reference and (
+            args.use_reference_junctions or args.only_use_reference_junctions):
+        raise ValueError, "--reference must be set if --only_use-reference-junctions is set"
     if None == args.reference and args.use_reference_tss_exons:
         raise ValueError, "--reference must be set if --use-reference-tss is set"
     if None == args.reference and args.use_reference_tes_exons:
@@ -342,7 +343,8 @@ def load_ref_elements_to_include(args):
         'RefElementsToInclude', 
         ['genes', 'junctions', 'TSS', 'TES', 'promoters', 'polya_sites'])
     return RefElementsToInclude( args.use_reference_genes, 
-                                 args.use_reference_junctions,
+                                 ( args.use_reference_junctions 
+                                   or args.only_use_reference_junctions),
                                  args.use_reference_tss_exons, 
                                  args.use_reference_tes_exons,
                                  args.use_reference_promoters,
@@ -403,6 +405,9 @@ def parse_arguments():
     parser.add_argument( '--use-reference-junctions', 
                          default=False, action='store_true',
         help='Include junctions from the reference annotation.')
+    parser.add_argument( '--only-use-reference-junctions', 
+                         default=False, action='store_true',
+        help='Dont identify novel junctions.')
     parser.add_argument( '--use-reference-tss-exons', 
                          default=False, action='store_true',
         help='Use TSS\'s taken from the reference annotation.')
@@ -476,6 +481,9 @@ def parse_arguments():
         args.only_build_candidate_transcripts
     assert not (config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS 
                 and args.only_build_elements)
+
+    config.ONLY_USE_REFERENCE_JUNCTIONS = \
+        args.only_use_reference_junctions
 
     if ( args.dont_estimate_confidence_bounds
          and args.dont_estimate_upper_confidence_bounds ):

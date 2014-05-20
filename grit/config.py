@@ -35,6 +35,7 @@ MIN_GENE_LENGTH = 400
 # the maximum number of bases to expand gene boundaries from annotated genes
 MAX_GENE_EXPANSION = 1000
 
+ONLY_USE_REFERENCE_JUNCTIONS = False
 MIN_EXON_BPKM = 0.1
 EXON_EXT_CVG_RATIO_THRESH = 3
 #POLYA_MERGE_SIZE = 100
