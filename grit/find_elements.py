@@ -492,8 +492,7 @@ def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads,
         files.junctions.load_junctions_in_bam(promoter_reads, regions, nthreads)
     polya_jns = None if polya_reads == None else \
         files.junctions.load_junctions_in_bam(polya_reads, regions, nthreads)
-        
-    if config.VERBOSE: config.log_statement("Filtering junctions")
+    
     filtered_junctions = defaultdict(lambda: defaultdict(int))
     for chrm, strand, region_start, region_stop in regions:        
         # filter junctions by shared donor/acceptor site counts
@@ -1712,7 +1711,7 @@ def find_elements( promoter_reads, rnaseq_reads, polya_reads,
     # wrap everything in a try block so that we can with elegantly handle
     # uncaught exceptions
     try:
-        ofp = ThreadSafeFile( ofname, "w" )
+        ofp = ThreadSafeFile( ofname + "unfinished", "w" )
         ofp.write('track name="%s" visibility=2 itemRgb="On" useScore=1\n' \
                   % ofname)
         
@@ -1751,4 +1750,5 @@ def find_elements( promoter_reads, rnaseq_reads, polya_reads,
     else:
         ofp.close()
     
+    shutil.move(ofname + "unfinished", ofname)
     return ofname

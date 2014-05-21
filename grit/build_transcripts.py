@@ -442,8 +442,7 @@ def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname,
     config.log_statement( "Building Transcripts", log=True )
     manager = multiprocessing.Manager()
     elements = manager.Queue(2*config.NTHREADS)
-
-    output = multiprocessing.Queue()
+    output = manager.Queue()
 
     transcript_building_children_args = [
         elements, output, 
@@ -475,10 +474,13 @@ def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname,
     os.waitpid(elements_feeder_pid, 0)
     
     genes = []
-    while True:
-        try: genes.append(output.get_nowait())
-        except Queue.Empty: break
+    while output.qsize() > 0:
+        try: 
+            genes.append(output.get_nowait())
+        except Queue.Empty: 
+            continue
     
+    assert len(genes) == len(set(genes))
     config.log_statement("Finished building transcripts")
 
     gtf_ofp.close()
@@ -487,6 +489,8 @@ def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname,
     # we store to unfinished so we know if it errors out early
     shutil.move(gtf_ofname + ".unfinished", gtf_ofname)
     shutil.move(tracking_ofname + ".unfinished", tracking_ofname)
+
+    manager.shutdown()
     
     return genes
 
