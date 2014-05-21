@@ -3,6 +3,8 @@ import time
 import math
 import traceback
 
+import shutil
+
 import numpy
 from scipy.stats import beta
 
