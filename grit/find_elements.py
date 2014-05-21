@@ -526,13 +526,13 @@ def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads,
         for (start, stop), cnt, entropy in rnaseq_junctions[(chrm, strand)]:
             if entropy < config.MIN_ENTROPY: continue
             
-            val = beta.ppf(0.05, cnt+1, jn_starts[start]+1)
+            val = beta.ppf(0.01, cnt+1, jn_starts[start]+1)
             if val < config.NOISE_JN_FILTER_FRAC: continue
 
-            val = beta.ppf(0.05, cnt+1, jn_starts[stop]+1)
+            val = beta.ppf(0.01, cnt+1, jn_stops[stop]+1)
             if val < config.NOISE_JN_FILTER_FRAC: continue
 
-            val = beta.ppf(0.05, cnt+1, jn_grps[jn_grp_map[(start, stop)]]+1)
+            val = beta.ppf(0.01, cnt+1, jn_grps[jn_grp_map[(start, stop)]]+1)
             if val < config.NOISE_JN_FILTER_FRAC: continue
                 
             if stop - start + 1 > config.MAX_INTRON_SIZE: 
