@@ -59,5 +59,8 @@ tmp_dir = None
 def get_gene_tmp_fname(gene_id, sample_type=None, rep_id=None):
     return os.path.join(tmp_dir, "%s.gene" % gene_id)
 
+def get_fmat_tmp_fname(gene_id, sample_type=None, rep_id=None):
+    return os.path.join(tmp_dir, "%s.fmat" % gene_id)
+
 def log_statement(*args):
     print args[0]

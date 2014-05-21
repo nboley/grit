@@ -67,8 +67,8 @@ class SharedData(object):
         return f_mat
     
     def set_design_matrix(self, gene_id, f_mat):
-        ofname = os.path.join(config.tmp_dir,  "%s%s%s.fmat" % (
-                SAMPLE_ID, REP_ID, gene_id))
+        ofname = config.get_fmat_tmp_fname(gene_id, SAMPLE_ID, REP_ID)
+        
         # because there's no cache invalidation mechanism, we're only
         # allowed to set the f_mat object once. This also allows us to
         # move the load outside of the lock
