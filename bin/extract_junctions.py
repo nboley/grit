@@ -66,9 +66,10 @@ def main():
     print >> ofp, "track name=junctions useScore=1"
     for (contig, strand), contig_jns in jns.iteritems():
         if FIX_CHRM_NAMES_FOR_UCSC: contig = fix_chrm_name_for_ucsc(contig)
-        for (start, stop), cnt in contig_jns:
+        for (start, stop), cnt, entropy in contig_jns:
             print >> ofp, create_bed_line(
-                contig, strand, start, stop, name='intron', score=cnt)
+                contig, strand, start, stop, name='intron', 
+                score=min(1000, max(0,cnt)))
                             
 
 if __name__ == '__main__':

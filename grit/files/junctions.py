@@ -17,9 +17,7 @@ from grit import config
 
 CONSENSUS_PLUS = 'GTAG'
 CONSENSUS_MINUS = 'CTAC'
-
-MIN_INTRON_LEN = 20
-MIN_FLANKING_SIZE = 12
+                                  
 
 def get_jn_type( chrm, upstrm_intron_pos, dnstrm_intron_pos, 
                  fasta, jn_strand="UNKNOWN" ):
@@ -120,7 +118,7 @@ def iter_jns_in_read( read ):
                       if contig_type == 3]
     
     # return if any of the junctions are too short
-    if any(read.cigar[i][1] < MIN_INTRON_LEN for i in intron_indices):
+    if any(read.cigar[i][1] < config.MIN_INTRON_SIZE for i in intron_indices):
         return
 
     # only accept reads with exactly 1 junction
@@ -140,8 +138,10 @@ def iter_jns_in_read( read ):
         if read.cigar[intron_index+1][0] != 0: continue
 
         # skip introns whose reference match is too short
-        if read.cigar[intron_index-1][1] < MIN_FLANKING_SIZE: continue
-        if read.cigar[intron_index+1][1] < MIN_FLANKING_SIZE: continue
+        if read.cigar[intron_index-1][1] < config.MIN_INTRON_FLANKING_SIZE: 
+            continue
+        if read.cigar[intron_index+1][1] < config.MIN_INTRON_FLANKING_SIZE: 
+            continue
 
         # Find the start base of the intron. We need to add all of the 
         # match and skip bases, and delete the deletions
@@ -161,15 +161,22 @@ def iter_jns_in_read( read ):
         
     return
 
-
 def extract_junctions_in_region( reads, chrm, strand, start=None, end=None, 
                                  allow_introns_to_span_start=False,
-                                 allow_introns_to_span_end=False):
+                                 allow_introns_to_span_end=False,
+                                 only_unique=False ):
     reads.reload()
-    all_junctions = defaultdict(int)
+    all_junctions = defaultdict(lambda: defaultdict(int))
     for i, read in enumerate(reads.iter_reads(chrm, strand, start, end)):
+        # check for uniqueness, if possible
+        try: 
+            if only_unique and int(read.opt('NH')) > 1: continue
+        except KeyError: 
+            pass
+        
         for upstrm_intron_pos, dnstrm_intron_pos in iter_jns_in_read( read ):
-            assert upstrm_intron_pos - dnstrm_intron_pos + 1 < MIN_INTRON_LEN
+            assert ( upstrm_intron_pos - dnstrm_intron_pos + 1 
+                     < config.MIN_INTRON_SIZE )
 
             # Filter out reads that aren't fully in the region
             if start != None:
@@ -184,9 +191,16 @@ def extract_junctions_in_region( reads, chrm, strand, start=None, end=None,
 
             # increment count of junction reads at this read position
             # for this intron or initialize it to 1
-            all_junctions[ (upstrm_intron_pos, dnstrm_intron_pos) ] += 1
+            all_junctions[(upstrm_intron_pos, dnstrm_intron_pos)][read.pos] += 1
     
-    return sorted( all_junctions.iteritems() )
+    rv = []
+    for jn, cnts in sorted(all_junctions.iteritems()):
+        cnts = numpy.array(cnts.values(), dtype=float)
+        ps = cnts/cnts.sum()
+        entropy = max(0, -float((ps*numpy.log2(ps)).sum()))
+        rv.append((jn, int(cnts.sum()), entropy))
+    
+    return rv
 
 def extract_junctions_in_contig( reads, chrm, strand ):
     return extract_junctions_in_region( 
