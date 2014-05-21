@@ -475,7 +475,14 @@ class Bins( list ):
         return
 
 def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads, 
+                               ref_jns,
                                regions, nthreads, ratio_filter, max_jn_size ):
+    if config.ONLY_USE_REFERENCE_JUNCTIONS:
+        rv = defaultdict(lambda: defaultdict(int))
+        for chrm, strand, jn in ref_jns:
+            rv[(chrm, strand)][jn] += 0
+        return rv
+    
     # load and filter the ranseq reads. We can't filter all of the reads because
     # they are on differnet scales, so we only filter the RNAseq and use the 
     # cage and polya to get connectivity at the boundaries.
@@ -485,21 +492,50 @@ def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads,
         files.junctions.load_junctions_in_bam(promoter_reads, regions, nthreads)
     polya_jns = None if polya_reads == None else \
         files.junctions.load_junctions_in_bam(polya_reads, regions, nthreads)
-    
+        
     if config.VERBOSE: config.log_statement("Filtering junctions")
     filtered_junctions = defaultdict(lambda: defaultdict(int))
     for chrm, strand, region_start, region_stop in regions:        
-        # filter junctions
+        # filter junctions by shared donor/acceptor site counts
         jn_starts = defaultdict( int )
         jn_stops = defaultdict( int )
-        for (start, stop), cnt in rnaseq_junctions[(chrm, strand)]:
+        for (start, stop), cnt, entropy in rnaseq_junctions[(chrm, strand)]:
             jn_starts[start] = max( jn_starts[start], cnt )
             jn_stops[stop] = max( jn_stops[stop], cnt )
         
-        for (start, stop), cnt in rnaseq_junctions[(chrm, strand)]:
-            if (float(cnt)+1)/jn_starts[start] < 0.01: continue
-            if (float(cnt)+1)/jn_stops[stop] < 0.01: continue
-            if stop - start + 1 > config.MAX_INTRON_SIZE: continue
+        # filter junctions by overlapping groups of the same length
+        jns_grouped_by_lens = defaultdict(list)
+        for (start, stop), cnt, entropy in rnaseq_junctions[(chrm, strand)]:
+            jns_grouped_by_lens[stop-start+1].append( 
+                ((start, stop), cnt, entropy))
+        
+        jn_grps = []
+        jn_grp_map = {}
+        for jn_len, jns in jns_grouped_by_lens.iteritems():
+            prev_jn = None
+            for jn, cnt, entropy in sorted(jns):
+                if prev_jn == None or jn[0] - prev_jn[0] > 5: 
+                    jn_grp_map[jn] = len(jn_grps)
+                    jn_grps.append(cnt)
+                else:
+                    jn_grp_map[jn] = len(jn_grps) - 1
+                    jn_grps[-1] = max(jn_grps[-1], cnt)
+                prev_jn = jn
+        
+        for (start, stop), cnt, entropy in rnaseq_junctions[(chrm, strand)]:
+            if entropy < config.MIN_ENTROPY: continue
+            
+            val = beta.ppf(0.05, cnt+1, jn_starts[start]+1)
+            if val < config.NOISE_JN_FILTER_FRAC: continue
+
+            val = beta.ppf(0.05, cnt+1, jn_starts[stop]+1)
+            if val < config.NOISE_JN_FILTER_FRAC: continue
+
+            val = beta.ppf(0.05, cnt+1, jn_grps[jn_grp_map[(start, stop)]]+1)
+            if val < config.NOISE_JN_FILTER_FRAC: continue
+                
+            if stop - start + 1 > config.MAX_INTRON_SIZE: 
+                continue
             filtered_junctions[(chrm, strand)][(start, stop)] = cnt
         
         del rnaseq_junctions[(chrm, strand)]
@@ -511,12 +547,18 @@ def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads,
                 filtered_junctions[(chrm, strand)][jn] += 0
             del connectivity_jns[(chrm, strand)]
     
+    # merge in the reference junctions
+    for chrm, strand, jn in ref_jns:
+        filtered_junctions[(chrm, strand)][jn] += 0
+    
     return filtered_junctions
 
 def load_junctions( rnaseq_reads, promoter_reads, polya_reads,
+                    ref_jns,
                     regions, nthreads):
     return load_and_filter_junctions( 
         rnaseq_reads, promoter_reads, polya_reads, 
+        ref_jns,
         regions, nthreads=nthreads, ratio_filter=0.01,
         max_jn_size=config.MAX_INTRON_SIZE)
     
@@ -1232,17 +1274,11 @@ def build_raw_elements_in_gene( gene,
     cage_cov, polya_cov = None, None
     
     gene_len = gene.stop - gene.start + 1
-    if not config.ONLY_USE_REFERENCE_JUNCTIONS:
-        jns = load_junctions(rnaseq_reads, cage_reads, polya_reads,
-                             [(gene.chrm, gene.strand, gene.start, gene.stop),],
-                             nthreads=1)[(gene.chrm, gene.strand)]    
-    else:
-        jns = defaultdict(int)
-    
-    # merge in the reference junctions
-    for start, stop in ref_jns:
-        jns[(start,stop)] += 0
-    
+    jns = load_junctions(rnaseq_reads, cage_reads, polya_reads,
+                         [ (gene.chrm, gene.strand, jn) for jn in ref_jns],
+                         [(gene.chrm, gene.strand, gene.start, gene.stop),],
+                         nthreads=1)[(gene.chrm, gene.strand)]    
+        
     jns = [ (x1-gene.start, x2-gene.start, cnt)  
             for (x1, x2), cnt in sorted(jns.iteritems())
             if points_are_inside_gene(x1, x2)]
