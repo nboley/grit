@@ -19,18 +19,12 @@ import Queue
 import networkx as nx
 
 from files.reads import MergedReads, RNAseqReads, CAGEReads, RAMPAGEReads, \
-    PolyAReads, \
-    clean_chr_name, fix_chrm_name_for_ucsc, get_contigs_and_lens, \
-    guess_strand_from_fname, iter_coverage_intervals_for_read
+    PolyAReads, fix_chrm_name_for_ucsc, get_contigs_and_lens
 import files.junctions
 from files.bed import create_bed_line
 from files.gtf import parse_gtf_line, load_gtf
 
 from elements import find_jn_connected_exons
-
-from lib.logging import Logger
-import lib.arg_parsing
-from lib.arg_parsing import initialize_reads_from_args
 
 import config
 
@@ -96,12 +90,7 @@ def cluster_segments( segments, jns ):
     
     genes_graph = nx.Graph()
     genes_graph.add_nodes_from(xrange(len(boundaries)-1))
-    try:
-        genes_graph.add_edges_from(edges)
-    except:
-        print config.log_statement( str(boundaries), log=True )
-        print config.log_statement( str(edges), log=True )
-        raise
+    genes_graph.add_edges_from(edges)
     
     segments = []
     for g in nx.connected_components(genes_graph):
@@ -1427,9 +1416,10 @@ def find_exons_in_gene( gene, contig_len,
         bin = Bin(start, stop, 'R_JN', 'D_JN', 'INTRON', cnt)
         jn_bins.append( bin )
 
-    retained_intron_bins = Bins(gene.chrm, gene.strand, (
-            intron for intron, cnt in retained_introns.iteritems() 
-            if cnt > 1))
+    retained_intron_bins = filter_exons([
+        intron for intron, cnt in retained_introns.iteritems() 
+        if cnt > 1], rnaseq_cov)
+    retained_intron_bins = Bins(gene.chrm, gene.strand, retained_intron_bins)
     
     for start, stop in iter_retained_intron_connected_exons(
             tss_exons, internal_exons, retained_intron_bins):
@@ -1750,7 +1740,7 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
     # aren't overlapping. This is to allow for gene ends that lie outside of 
     # the previously annotated boundaries
     merged_gene_intervals.sort()
-    for i in xrange(1,len(merged_gene_intervals)-1):
+    for i in xrange(0,len(merged_gene_intervals)-1):
         mid = (merged_gene_intervals[i][1]+merged_gene_intervals[i+1][0])/2
         merged_gene_intervals[i][1] = int(mid)-1
         merged_gene_intervals[i+1][0] = int(mid)+1    
@@ -1758,7 +1748,7 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
         1, merged_gene_intervals[0][0]-config.MAX_GENE_EXPANSION)
     merged_gene_intervals[-1][1] = min( 
         contig_len-1, merged_gene_intervals[-1][1]+config.MAX_GENE_EXPANSION)
-
+    
     # build gene objects with the intervals
     gene_bndry_bins = []
     for start, stop in merged_gene_intervals:

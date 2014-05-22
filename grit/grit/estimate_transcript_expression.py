@@ -232,7 +232,7 @@ def calc_fpkm( gene, fl_dists, freqs, num_reads_in_bam):
 
 def find_confidence_bounds_in_gene( gene, num_reads_in_bams,
                                     f_mat, mle_estimate, 
-                                    trans_indices,
+                                    trans_indices, cntr,
                                     cb_alpha):
     # update the mle_estimate array to only store observable transcripts
     # add 1 to skip the out of gene bin
@@ -255,20 +255,18 @@ def find_confidence_bounds_in_gene( gene, num_reads_in_bams,
     
     res = []
     while True:
-        try: 
-            queue_item = trans_indices.get()
-            if queue_item == 'FINISHED':
+        with cntr.get_lock():
+            index = cntr.value
+            if index == -1: 
                 config.log_statement('')
                 break
-        except IOError:
-            config.log_statement('')
-            break
-        
-        trans_index, exp_mat_row, bnd_type = queue_item
+            cntr.value -= 1
+                
+        trans_index, exp_mat_row, bnd_type = trans_indices[index]
         
         if config.DEBUG_VERBOSE: config.log_statement( 
             "Estimating %s confidence bound for gene %s (%i/%i remain)" % ( 
-            bnd_type, gene.id, trans_indices.qsize(), len(gene.transcripts)))
+            bnd_type, gene.id, cntr.value+1, len(gene.transcripts)))
         try:
             p_value, bnd = frequency_estimation.estimate_confidence_bound( 
                 f_mat, num_reads_in_bams,
@@ -296,80 +294,80 @@ def find_confidence_bounds_in_gene( gene, num_reads_in_bams,
     return res
 
 def find_confidence_bounds_worker( 
-        data, gene_ids, trans_indices_queues, bnd_type ):
+        data, gene_ids, trans_index_cntrs, bnd_type ):
     def get_new_gene():
         # get a gene to process
-        gene_id = gene_ids.get()
-        if gene_id == 'FINISHED': 
+        try: gene_id = gene_ids.get(timeout=0.1)
+        except Queue.Empty: 
+            assert gene_ids.qsize() == 0
             config.log_statement("")
-            no_new_genes = True
             raise IndexError, "No genes left"
         
-        if config.VERBOSE:
-            config.log_statement(
-                "Loading design matrix for gene '%s'" % gene_id)
-                
+        config.log_statement(
+            "Loading design matrix for gene '%s'" % gene_id)
+
         gene = data.get_gene(gene_id)
         f_mat = data.get_design_matrix(gene_id)
         mle_estimate = data.get_mle(gene_id)
-
-        trans_indices = trans_indices_queues[gene_id]
-        for row_num, t_index in enumerate(f_mat.transcript_indices()):
-            trans_indices.put((t_index, row_num+1, bnd_type))
-        for i in xrange(config.NTHREADS):
-            trans_indices.put('FINISHED')
         
-        return gene, f_mat, mle_estimate, trans_indices
+        trans_indices = []
+        for row_num, t_index in enumerate(f_mat.transcript_indices()):
+            trans_indices.append((t_index, row_num+1, bnd_type))
+
+        cntr = trans_index_cntrs[gene_id]
+        with cntr.get_lock():
+            if cntr.value == -1000: 
+                cntr.value = len(trans_indices)-1
+        
+        return gene, f_mat, mle_estimate, trans_indices, cntr
     
     def get_gene_being_processed():
         longest_gene_id = None
-        curr_queue = None
-        gene_len = config.NTHREADS
-        for gene_id, queue in trans_indices_queues.iteritems():
-            if queue.qsize() > gene_len:
+        gene_len = 0
+        for gene_id, cntr in trans_index_cntrs.iteritems():
+            value = cntr.value
+            if value > gene_len:
                 longest_gene_id = gene_id
-                curr_queue = queue
-                gene_len = queue.qsize()
+                gene_len = value
         
         if longest_gene_id == None: 
-            raise IndexError, "No genes with bounds to process"
+            return None
         
         gene = data.get_gene(longest_gene_id)
         f_mat = data.get_design_matrix(longest_gene_id)
         mle_estimate = data.get_mle(longest_gene_id)
-        return gene, f_mat, mle_estimate, curr_queue
 
+        trans_indices = []
+        for row_num, t_index in enumerate(f_mat.transcript_indices()):
+            trans_indices.append((t_index, row_num+1, bnd_type))
+        
+        return ( gene, f_mat, mle_estimate, 
+                 trans_indices, trans_index_cntrs[longest_gene_id] )
+    
     no_new_genes = False    
     num_reads_in_bams = data.get_num_reads_in_bams()
     while True:
         try:
-            if no_new_genes:
-                try: ( gene, f_mat, mle_estimate, trans_indices 
-                       ) = get_gene_being_processed()
-                except IndexError:
+            try: 
+                gene, f_mat, mle_estimate, trans_indices, cntr = get_new_gene()
+            except IndexError: 
+                res = get_gene_being_processed()
+                if res == None: 
                     break
-            else:
-                try: 
-                    gene, f_mat, mle_estimate, trans_indices = get_new_gene()
-                except IndexError: 
-                    no_new_genes = True
-                    continue
-
+                gene, f_mat, mle_estimate, trans_indices, cntr = res
+            
             cbs = find_confidence_bounds_in_gene( 
                 gene, num_reads_in_bams,
                 f_mat, mle_estimate, 
-                trans_indices, 
+                trans_indices, cntr,
                 cb_alpha=config.CB_SIG_LEVEL)
             data.set_cbs(gene.id, cbs)
-            trans_indices.cancel_join_thread()
-            trans_indices.close()
-
+            
             if config.VERBOSE:
                 config.log_statement("Finished processing '%s'" % gene.id)
         except Exception, inst:
-            config.log_statement( str(error_msg), log=True )
             config.log_statement( traceback.format_exc(), log=True )
-            
+    
     config.log_statement("")
     return
 
@@ -380,15 +378,13 @@ def estimate_confidence_bounds( data, bnd_type ):
     ## populate the queue
     # sort so that the biggest genes are processed first
     gene_ids = multiprocessing.Queue()
-    trans_indices_queues = {}
+    trans_index_cntrs = {}
     sorted_gene_ids = sorted(data.gene_ids, 
                              key=lambda x:data.gene_ntranscripts_mapping[x],
                              reverse=True)
     for i, gene_id in enumerate(sorted_gene_ids):
         gene_ids.put(gene_id)
-        trans_indices_queues[gene_id] = multiprocessing.Queue()
-    for i in xrange(config.NTHREADS):
-        gene_ids.put("FINISHED")
+        trans_index_cntrs[gene_id] = multiprocessing.Value( 'i', -1000)
     
     config.log_statement("Waiting on gene bounds children")
 
@@ -402,15 +398,16 @@ def estimate_confidence_bounds( data, bnd_type ):
             if pid == 0:
                 try: 
                     find_confidence_bounds_worker(
-                        data, gene_ids, trans_indices_queues, bnd_type)
+                        data, gene_ids, 
+                        trans_index_cntrs, bnd_type)
                 except Exception, inst:
-                    config.log_statement( str(error_msg), log=True )
                     config.log_statement( traceback.format_exc(), log=True )
                 finally:
                     os._exit(0)
             pids.append(pid)
         
         for pid in pids:
+            config.log_statement("Waiting on pid '%i'" % pid)
             os.waitpid(pid, 0) 
     
     return
@@ -572,7 +569,7 @@ def build_design_matrices( data, fl_dists,
         for i, gene_id in enumerate(sorted_gene_ids):
             gene_ids.put(gene_id)
         for i in xrange(config.NTHREADS):
-            gene_ids.put("FINISHED")
+            gene_ids.put('FINISHED')
         config.log_statement("Waiting on design matrix children")
         
         #while any( p != None and p.is_alive() for p in ps ):
