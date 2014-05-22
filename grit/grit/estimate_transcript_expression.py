@@ -155,17 +155,11 @@ class SharedData(object):
         self.gene_fname_mapping = {}
         self.gene_ntranscripts_mapping = {}
 
-        self.gene_cb_queues = {}
-        self.gene_cb_queues_locks = {}
-
         pickled_gene_fnames.sort(key=lambda x:x[1], reverse=True)
         for gene_id, n_transcripts, fname in pickled_gene_fnames:
             self.gene_fname_mapping[gene_id] = fname
             self.gene_ntranscripts_mapping[gene_id] = n_transcripts
             self.gene_ids.append(gene_id)
-            
-            self.gene_cb_queues[gene_id] = self._manager.list()
-            self.gene_cb_queues_locks[gene_id] = multiprocessing.Lock()
             
             self.design_mat_filenames[gene_id] = multiprocessing.Array(
                 'c', 1000)
