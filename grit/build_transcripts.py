@@ -51,9 +51,6 @@ def build_transcripts_from_elements(
     graph.add_nodes_from( tes_exons )
     
     edges = find_jn_connected_exons(all_exons, jns, strand )
-    for jn, start, stop in edges:
-        assert start in all_exons
-        assert stop in all_exons
     graph.add_edges_from( (start, stop) for jn, start, stop in edges )
     transcripts = []
     for tss in tss_exons:
