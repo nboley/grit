@@ -26,6 +26,8 @@ import files.junctions
 from files.bed import create_bed_line
 from files.gtf import parse_gtf_line, load_gtf
 
+from elements import find_jn_connected_exons
+
 from lib.logging import Logger
 import lib.arg_parsing
 from lib.arg_parsing import initialize_reads_from_args
@@ -340,7 +342,8 @@ def write_unified_bed( elements, ofp ):
         'TES_EXON': 'tes_exon',
         'INTRON': 'intron',
         'POLYA': 'polya',
-        'INTERGENIC_SPACE': 'intergenic'
+        'INTERGENIC_SPACE': 'intergenic',
+        'RETAINED_INTRON': 'retained_intron'
     }
 
     color_mapping = { 
@@ -352,7 +355,8 @@ def write_unified_bed( elements, ofp ):
         'TES_EXON': '255,51,255',
         'INTRON': '100,100,100',
         'POLYA': '255,0,0',
-        'INTERGENIC_SPACE': '254,254,34'
+        'INTERGENIC_SPACE': '254,254,34',
+        'RETAINED_INTRON': '255,255,153'
     }
 
     chrm = elements.chrm
@@ -941,13 +945,10 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
 
 def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
     internal_exons = []
-    ee_indices = []
+    retained_introns = []
     start_bin_cvg = start_bin.mean_cov( rnaseq_cov )
     for i in xrange( start_index-1, 0, -1 ):
         bin = gene_bins[i]
-        # break at canonical introns
-        if bin.type == 'INTRON':
-            break
         
         # make sure the average coverage is high enough
         bin_cvg = bin.mean_cov(rnaseq_cov)   
@@ -964,24 +965,28 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
         # so we take the conservative choice
         start_bin_cvg = max( start_bin_cvg, bin_cvg )
         
-        ee_indices.append( i )
-        internal_exons.append( Bin( bin.start, bin.stop, 
-                                    bin.left_label, bin.right_label, 
-                                    "EXON_EXT"  ) )
+        if bin.type == 'INTRON':
+            new_bin = Bin( bin.start, bin.stop, 
+                           bin.left_label, bin.right_label, 
+                           "RETAINED_INTRON"  )
+            retained_introns.append(new_bin)
+            break
+        
+        new_bin = Bin( bin.start, bin.stop, 
+                       bin.left_label, bin.right_label, 
+                       "EXON_EXT"  )
+        internal_exons.append( new_bin )
     
-    return internal_exons
+    return internal_exons, retained_introns
 
 def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov,
                                 min_ext_ratio=config.EXON_EXT_CVG_RATIO_THRESH, 
                                 min_bpkm=config.MIN_EXON_BPKM):
     exons = []
-    ee_indices = []
+    retained_introns = []
     start_bin_cvg = start_bin.mean_cov( rnaseq_cov )
     for i in xrange( start_index+1, len(gene_bins) ):
         bin = gene_bins[i]
-        # if we've reached a canonical intron, break
-        if bin.type == 'INTRON':
-            break
         
         # make sure the average coverage is high enough
         bin_cvg = bin.mean_cov(rnaseq_cov)
@@ -997,13 +1002,18 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov,
         # so we take the conservative choice
         start_bin_cvg = max( start_bin_cvg, bin_cvg )
 
-        ee_indices.append( i )
-                
+        if bin.type == 'INTRON':
+            new_bin = Bin( bin.start, bin.stop, 
+                           bin.left_label, bin.right_label, 
+                           "RETAINED_INTRON"  )
+            retained_introns.append(new_bin)
+            break
+
         exons.append( Bin( bin.start, bin.stop, 
                            bin.left_label, bin.right_label, 
                            "EXON_EXT"  ) )
     
-    return exons
+    return exons, retained_introns
 
 
 def build_labeled_segments( (chrm, strand), rnaseq_cov, jns, 
@@ -1051,16 +1061,21 @@ def find_canonical_and_internal_exons( (chrm, strand), rnaseq_cov, jns ):
     
     canonical_exons = Bins( chrm, strand )
     internal_exons = Bins( chrm, strand )
+    retained_introns = defaultdict(int)
     for ce_i, ce_bin in iter_canonical_exons_and_indices():
         ce_bin.type = 'EXON'
         canonical_exons.append( ce_bin )
         
-        right_extensions = find_right_exon_extensions(
+        right_extensions, right_retained_introns = find_right_exon_extensions(
             ce_i, ce_bin, bins, rnaseq_cov)
-
-        left_extensions = find_left_exon_extensions(
+        for intron in right_retained_introns:
+            retained_introns[intron] += 1
+        
+        left_extensions, left_retained_introns = find_left_exon_extensions(
             ce_i, ce_bin, bins, rnaseq_cov)
-
+        for intron in left_retained_introns:
+            retained_introns[intron] += 1
+        
         for left_bin in chain(
             sorted(left_extensions, key=lambda x:x.stop), (ce_bin,)):
                 for right_bin in chain(
@@ -1071,7 +1086,7 @@ def find_canonical_and_internal_exons( (chrm, strand), rnaseq_cov, jns ):
                             right_bin.right_label, 
                             "EXON" ) )
     
-    return canonical_exons, internal_exons
+    return canonical_exons, internal_exons, retained_introns
 
 def find_se_genes( 
         (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_peaks  ):
@@ -1153,6 +1168,7 @@ def find_gene_bndry_exons( (chrm, strand), rnaseq_cov, jns, peaks, peak_type ):
         peaks = peaks.reverse_strand(len(rnaseq_cov))
     
     exons = []
+    retained_introns = []
     for peak in peaks:
         # find all bins that start with a peak, and 
         # end with a junction. because it's possible
@@ -1174,17 +1190,24 @@ def find_gene_bndry_exons( (chrm, strand), rnaseq_cov, jns, peaks, peak_type ):
                         start_label, bndry_bin.right_label, exon_label )
             exons.append( exon )
             
-            for r_ext in find_right_exon_extensions(
-                    index, bndry_bin, bins, rnaseq_cov):
+            r_extensions, r_retained_introns = find_right_exon_extensions(
+                index, bndry_bin, bins, rnaseq_cov)
+            retained_introns.extend(r_retained_introns)
+            for r_ext in r_extensions:
                 exon = Bin( 
                     peak.start, r_ext.stop, 
                     start_label, r_ext.right_label, exon_label )
                 exons.append( exon )
+                
     
-    bins = Bins( chrm, strand, sorted(set(exons)))
-    if reverse_bins: bins = bins.reverse_strand(len(rnaseq_cov))
+    exon_bins = Bins( chrm, strand, sorted(set(exons)))
+    r_introns_bins = Bins( chrm, strand, sorted(set(retained_introns)))
     
-    return bins
+    if reverse_bins: 
+        exon_bins = exon_bins.reverse_strand(len(rnaseq_cov))
+        r_introns_bins = r_introns_bins.reverse_strand(len(rnaseq_cov))
+    
+    return exon_bins, r_introns_bins
 
 def re_segment_gene( gene, (chrm, strand, contig_len),
                      rnaseq_cov, jns, cage_peaks, polya_peaks):
@@ -1314,6 +1337,24 @@ def build_raw_elements_in_gene( gene,
 
     return rnaseq_cov, cage_cov, cage_peaks, polya_cov, polya_peaks, jns
 
+def iter_retained_intron_connected_exons(
+        left_exons, right_exons, retained_introns ):
+    graph = nx.DiGraph()
+    left_exons = sorted((x.start, x.stop) for x in left_exons)
+    right_exons = sorted((x.start, x.stop) for x in right_exons)
+
+    graph.add_nodes_from(chain(left_exons, right_exons))
+    retained_jns = [ (x.start+1, x.stop-1) for x in retained_introns ]
+    edges = find_jn_connected_exons(set(chain(left_exons, right_exons)), 
+                                    retained_jns, '+')
+    graph.add_edges_from( (start, stop) for jn, start, stop in edges )    
+    for left in left_exons:
+        for right in right_exons:
+            if left[1] > right[0]: continue
+            for x in nx.all_simple_paths(graph, left, right):
+                yield (x[0][0], x[-1][1])
+    return
+
 def find_exons_in_gene( gene, contig_len,
                         rnaseq_reads, cage_reads, polya_reads,
                         cage_peaks=[], introns=[], polya_peaks=[],
@@ -1365,15 +1406,19 @@ def find_exons_in_gene( gene, contig_len,
     se_genes = find_se_genes( 
         (gene.chrm, gene.strand), rnaseq_cov, jns, cage_peaks, polya_peaks )
     
-    canonical_exons, internal_exons = find_canonical_and_internal_exons(
-        (gene.chrm, gene.strand), rnaseq_cov, jns)
-    tss_exons = find_gene_bndry_exons(
+    canonical_exons, internal_exons, retained_introns = \
+        find_canonical_and_internal_exons(
+            (gene.chrm, gene.strand), rnaseq_cov, jns)
+    
+    tss_exons, tss_retained_introns = find_gene_bndry_exons(
         (gene.chrm, gene.strand), rnaseq_cov, jns, cage_peaks, "CAGE")
-    tes_exons = find_gene_bndry_exons(
+    for intron in tss_retained_introns: retained_introns[intron] += 1
+    tes_exons, tes_retained_introns = find_gene_bndry_exons(
         (gene.chrm, gene.strand), rnaseq_cov, jns, polya_peaks, "POLYA_SEQ")
+    for intron in tes_retained_introns: retained_introns[intron] += 1
     gene_bins = Bins(gene.chrm, gene.strand, build_labeled_segments( 
             (gene.chrm, gene.strand), rnaseq_cov, jns ) )
-    
+        
     jn_bins = Bins(gene.chrm, gene.strand, [])
     for start, stop, cnt in jns:
         if stop - start <= 0:
@@ -1381,6 +1426,24 @@ def find_exons_in_gene( gene, contig_len,
             continue
         bin = Bin(start, stop, 'R_JN', 'D_JN', 'INTRON', cnt)
         jn_bins.append( bin )
+
+    retained_intron_bins = Bins(gene.chrm, gene.strand, (
+            intron for intron, cnt in retained_introns.iteritems() 
+            if cnt > 1))
+    
+    for start, stop in iter_retained_intron_connected_exons(
+            tss_exons, internal_exons, retained_intron_bins):
+        tss_exons.append( Bin(start, stop, 'TSS', 'D_JN', 'TSS_EXON') )
+    for start, stop in iter_retained_intron_connected_exons(
+            internal_exons, internal_exons, retained_intron_bins):
+        internal_exons.append( Bin(start, stop, 'R_JN', 'D_JN', 'EXON') )
+    for start, stop in iter_retained_intron_connected_exons(
+            internal_exons, tes_exons, retained_intron_bins):
+        tes_exons.append( Bin(start, stop, 'D_JN', 'TES', 'TES_EXON'))
+    for start, stop in iter_retained_intron_connected_exons(
+            tss_exons, tes_exons, retained_intron_bins):
+        se_genes.append( Bin(start, stop, 'TSS', 'TES', 'SE_GENE'))
+
     
     # skip the first 200 bases to account for the expected lower coverage near 
     # the transcript bounds
@@ -1397,7 +1460,7 @@ def find_exons_in_gene( gene, contig_len,
         num_stop_bases_to_skip=config.NUM_TES_BASES_TO_SKIP )
 
     elements = Bins(gene.chrm, gene.strand, chain(
-            jn_bins, cage_peaks, polya_peaks, 
+            jn_bins, cage_peaks, polya_peaks, retained_intron_bins,
             tss_exons, internal_exons, tes_exons, se_genes) )
     if gene.strand == '-':
         elements = elements.reverse_strand( gene.stop - gene.start + 1 )

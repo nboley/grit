@@ -8,6 +8,8 @@ from ..transcript import Gene, Transcript, GenomicInterval
     
 from reads import clean_chr_name
 
+from ..config import log_statement
+
 GffLine = namedtuple( "GffLine", ["region", "feature", "score", 
                                   "source", "frame", "group"]  )
 GtfLine = namedtuple( "GtfLine", ["region", "gene_id", "trans_id", "feature", 
@@ -297,8 +299,9 @@ def load_gtf(fname_or_fp, contig=None, strand=None):
             gene = _load_gene_from_gtf_lines(
                 gene_id, gene_lines, transcripts_data)
         except Exception, inst:
-            print >> sys.stderr, "ERROR : Could not load '%s'" % gene_id
-            print >> sys.stderr, "DETAIL: %s" % str( inst )
+            log_statement( 
+                "ERROR : Could not load '%s': %s" % (gene_id, inst), log=True)
+            log_statement( traceback.format_exc(), log=True )
             if DEBUG: raise
             gene = None
         

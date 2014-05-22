@@ -255,8 +255,12 @@ def find_confidence_bounds_in_gene( gene, num_reads_in_bams,
     
     res = []
     while True:
-        queue_item = trans_indices.get()
-        if queue_item == 'FINISHED':
+        try: 
+            queue_item = trans_indices.get()
+            if queue_item == 'FINISHED':
+                config.log_statement('')
+                break
+        except IOError:
             config.log_statement('')
             break
         
@@ -338,28 +342,34 @@ def find_confidence_bounds_worker(
     no_new_genes = False    
     num_reads_in_bams = data.get_num_reads_in_bams()
     while True:
-        if no_new_genes:
-            try: ( gene, f_mat, mle_estimate, trans_indices 
-                   ) = get_gene_being_processed()
-            except IndexError:
-                break
-        else:
-            try: 
-                gene, f_mat, mle_estimate, trans_indices = get_new_gene()
-            except IndexError: 
-                no_new_genes = True
-                continue
-        
-        cbs = find_confidence_bounds_in_gene( 
-            gene, num_reads_in_bams,
-            f_mat, mle_estimate, 
-            trans_indices, 
-            cb_alpha=config.CB_SIG_LEVEL)
-        data.set_cbs(gene.id, cbs)
-        
-        if config.VERBOSE:
-            config.log_statement("Finished processing '%s'" % gene.id)
-    
+        try:
+            if no_new_genes:
+                try: ( gene, f_mat, mle_estimate, trans_indices 
+                       ) = get_gene_being_processed()
+                except IndexError:
+                    break
+            else:
+                try: 
+                    gene, f_mat, mle_estimate, trans_indices = get_new_gene()
+                except IndexError: 
+                    no_new_genes = True
+                    continue
+
+            cbs = find_confidence_bounds_in_gene( 
+                gene, num_reads_in_bams,
+                f_mat, mle_estimate, 
+                trans_indices, 
+                cb_alpha=config.CB_SIG_LEVEL)
+            data.set_cbs(gene.id, cbs)
+            trans_indices.cancel_join_thread()
+            trans_indices.close()
+
+            if config.VERBOSE:
+                config.log_statement("Finished processing '%s'" % gene.id)
+        except Exception, inst:
+            config.log_statement( str(error_msg), log=True )
+            config.log_statement( traceback.format_exc(), log=True )
+            
     config.log_statement("")
     return
 
@@ -372,7 +382,8 @@ def estimate_confidence_bounds( data, bnd_type ):
     gene_ids = multiprocessing.Queue()
     trans_indices_queues = {}
     sorted_gene_ids = sorted(data.gene_ids, 
-                             key=lambda x:data.gene_ntranscripts_mapping[x] )
+                             key=lambda x:data.gene_ntranscripts_mapping[x],
+                             reverse=True)
     for i, gene_id in enumerate(sorted_gene_ids):
         gene_ids.put(gene_id)
         trans_indices_queues[gene_id] = multiprocessing.Queue()
@@ -389,7 +400,7 @@ def estimate_confidence_bounds( data, bnd_type ):
         for i in xrange(config.NTHREADS):
             pid = os.fork()
             if pid == 0:
-                try:
+                try: 
                     find_confidence_bounds_worker(
                         data, gene_ids, trans_indices_queues, bnd_type)
                 except Exception, inst:
@@ -436,7 +447,7 @@ def estimate_mle_worker( gene_ids, data ):
                 gene.chrm, gene.strand, gene.start, gene.stop, inst)
             config.log_statement( error_msg, log=True )
             config.log_statement( traceback.format_exc(), log=True )
-            return None
+            continue
 
         log_lhd = frequency_estimation.calc_lhd( 
             mle, observed_array, expected_array)
@@ -513,16 +524,16 @@ def build_design_matrices_worker( gene_ids,
             f_mat = DesignMatrix(gene, fl_dists, 
                                  rnaseq_reads, promoter_reads, polya_reads,
                                  config.MAX_NUM_TRANSCRIPTS)
-        except Exception, inst:
-            error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
-                os.getpid(), gene.id, 
-                gene.chrm, gene.strand, gene.start, gene.stop, inst)
-            config.log_statement( 
-                error_msg + "\n" + traceback.format_exc(), log=True )
-        else:
+            
             config.log_statement( "WRITING DESIGN MATRIX TO DISK %s" % gene.id )
             data.set_design_matrix(gene.id, f_mat)
             config.log_statement( "FINISHED DESIGN MATRICES %s" % gene.id )
+
+        except Exception, inst:
+            error_msg = "%i: Skipping %s: %s" % (
+                os.getpid(), gene_id, inst )
+            config.log_statement( 
+                error_msg + "\n" + traceback.format_exc(), log=True )
 
 def build_design_matrices( data, fl_dists,
                            (rnaseq_reads, promoter_reads, polya_reads)):    
@@ -571,6 +582,7 @@ def build_design_matrices( data, fl_dists,
         #            gene_ids.qsize(), len(data.gene_ids)))
         #    time.sleep(1.)
         for pid in ps:
+            config.log_statement("Waiting on pid '%i'" % pid)
             os.waitpid(pid, 0)
 
     config.log_statement("Read counts: %s" % str(data.get_num_reads_in_bams()), 
