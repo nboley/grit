@@ -521,13 +521,10 @@ def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads,
             
             val = beta.ppf(0.01, cnt+1, jn_starts[start]+1)
             if val < config.NOISE_JN_FILTER_FRAC: continue
-
             val = beta.ppf(0.01, cnt+1, jn_stops[stop]+1)
             if val < config.NOISE_JN_FILTER_FRAC: continue
-
             val = beta.ppf(0.01, cnt+1, jn_grps[jn_grp_map[(start, stop)]]+1)
             if val < config.NOISE_JN_FILTER_FRAC: continue
-                
             if stop - start + 1 > config.MAX_INTRON_SIZE: 
                 continue
             filtered_junctions[(chrm, strand)][(start, stop)] = cnt
@@ -1257,7 +1254,9 @@ def filter_jns(jns, rnaseq_cov, gene):
         if stop - start + 1 > config.MAX_INTRON_SIZE : continue
         left_intron_cvg = rnaseq_cov[start+10:start+30].sum()/20
         right_intron_cvg = rnaseq_cov[stop-30:stop-10].sum()/20        
-        if (cnt+1)*10 < left_intron_cvg or (cnt+1)*10 < right_intron_cvg:
+        if beta.ppf(0.01,cnt+1,left_intron_cvg+1) < config.NOISE_JN_FILTER_FRAC:
+            continue
+        if beta.ppf(0.01,cnt+1,right_intron_cvg+1)< config.NOISE_JN_FILTER_FRAC:
             continue
         filtered_junctions.append( (start, stop, cnt) )
     
