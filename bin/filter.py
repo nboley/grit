@@ -20,9 +20,13 @@ def parse_arguments():
     parser.add_argument(
         '--conf-lo', type=float, default=-1,
         help='Filter transcripts with a conf_lo below this')
+    parser.add_argument(
+        '--conf-hi', type=float, default=-1,
+        help='Filter transcripts with a conf_hi below this')
  
     args = parser.parse_args()   
-    return args.gtf, args.expression_tracking, args.FPKM, args.conf_lo
+    return ( args.gtf, args.expression_tracking, 
+             args.FPKM, args.conf_lo, args.conf_hi )
 
 def load_expression_data(fp):
     rv = {}
@@ -34,7 +38,8 @@ def load_expression_data(fp):
     return rv
 
 def main():
-    gtf_fp, expression_fp, fpkm_thresh, conf_lo_thresh = parse_arguments()
+    ( gtf_fp, expression_fp, fpkm_thresh, conf_lo_thresh, conf_hi_thresh
+      ) = parse_arguments()
     
     expression_data = load_expression_data(expression_fp)
     for line in gtf_fp:
@@ -49,6 +54,8 @@ def main():
         if fpkm == '-' or float(fpkm) < fpkm_thresh: continue
         conf_lo = float(data[4])
         if conf_lo == '-' or conf_lo < conf_lo_thresh: continue
+        conf_hi = float(data[5])
+        if conf_hi == '-' or conf_hi < conf_hi_thresh: continue
         
         print line,
 
