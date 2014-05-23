@@ -4,10 +4,10 @@ VERSION = "1.1.3-dev"
 
 # config options shared across modules
 
-# the maximum number of transcripts to build a design matrix for
-MAX_NUM_TRANSCRIPTS = 100000
-# the maximum number of candidate transcripts to build a particualr gene locus
-MAX_NUM_CANDIDATE_TRANSCRIPTS = 100000
+# the maximum number of transcripts to produce quantification estimates for
+MAX_NUM_TRANSCRIPTS_TO_QUANTIFY = 1000
+# the maximum number of candidate transcripts to build in a particular gene locus
+MAX_NUM_CANDIDATE_TRANSCRIPTS = 1000000
 
 CB_SIG_LEVEL = 0.025
 

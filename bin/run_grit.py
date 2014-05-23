@@ -424,6 +424,12 @@ def parse_arguments():
     parser.add_argument( '--build-models-with-retained-introns', 
                          default=False, action='store_true',
         help='Include identified retained introns in transcript models.')
+    parser.add_argument( '--max-num-candidate-transcripts', 
+                         default=1000000, type=int,
+        help='Max number of transcript models to build in any gene locus (DEFAULT 1e6).')
+    parser.add_argument( '--max-num-transcripts-to-quantify', 
+                         default=1000, type=int,
+        help='Maximum number of transcript in which to produce quantifications (DEFAULT 1000) (in loci with more than this, we greddily remove low expression elements until we are below the limit).')
     
     parser.add_argument( '--build-bedgraphs', 
                          default=False, action='store_true',
@@ -473,7 +479,13 @@ def parse_arguments():
 
     config.BUILD_MODELS_WITH_RETAINED_INTRONS = \
         args.build_models_with_retained_introns
-    
+
+    config.MAX_NUM_CANDIDATE_TRANSCRIPTS = \
+        args.max_num_candidate_transcripts    
+ 
+    config.MAX_NUM_TRANSCRIPTS_TO_QUANTIFY = \
+        args.max_num_transcripts_to_quantify   
+   
     config.VERBOSE = args.verbose
     
     config.DEBUG_VERBOSE = args.debug_verbose

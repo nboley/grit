@@ -22,7 +22,7 @@ from lib.multiprocessing_utils import Pool, ThreadSafeFile
 from files.gtf import load_gtf, Transcript, Gene
 from files.reads import fix_chrm_name_for_ucsc
 
-from f_matrix import DesignMatrix
+import f_matrix
 import frequency_estimation
 from frag_len import load_fl_dists, FlDist, build_normal_density
 
@@ -32,6 +32,9 @@ import cPickle as pickle
 
 SAMPLE_ID = ''
 REP_ID = ''
+
+class NoDesignMatrixError(Exception):
+    pass
 
 class SharedData(object):
     """Share data across processes.
@@ -59,7 +62,7 @@ class SharedData(object):
         with self.design_mat_lock: 
             fname = self.design_mat_filenames[gene_id].value
         if fname == '': 
-            raise ValueError, "No design matrix for '%s'" % gene_id
+            raise NoDesignMatrixError, "No design matrix for '%s'" % gene_id
         with open(fname) as fp:
             f_mat = pickle.load(fp)
         self._cached_fmat_gene_id = gene_id
@@ -258,9 +261,9 @@ def find_confidence_bounds_in_gene( gene, num_reads_in_bams,
                 
         trans_index, exp_mat_row, bnd_type = trans_indices[index]
         
-        if config.DEBUG_VERBOSE: config.log_statement( 
+        config.log_statement( 
             "Estimating %s confidence bound for gene %s (%i/%i remain)" % ( 
-            bnd_type, gene.id, cntr.value+1, len(gene.transcripts)))
+                bnd_type, gene.id, cntr.value+1, len(gene.transcripts)))
         try:
             p_value, bnd = frequency_estimation.estimate_confidence_bound( 
                 f_mat, num_reads_in_bams,
@@ -290,6 +293,7 @@ def find_confidence_bounds_in_gene( gene, num_reads_in_bams,
 def find_confidence_bounds_worker( 
         data, gene_ids, trans_index_cntrs, bnd_type ):
     def get_new_gene():
+        
         # get a gene to process
         try: gene_id = gene_ids.get(timeout=0.1)
         except Queue.Empty: 
@@ -301,7 +305,14 @@ def find_confidence_bounds_worker(
             "Loading design matrix for gene '%s'" % gene_id)
 
         gene = data.get_gene(gene_id)
-        f_mat = data.get_design_matrix(gene_id)
+        try: 
+            f_mat = data.get_design_matrix(gene_id)
+        except NoDesignMatrixError:
+            if config.DEBUG_VERBOSE:
+                config.log_statement("No design matrix for '%s'" % gene_id, 
+                                     log=True)
+            raise
+
         mle_estimate = data.get_mle(gene_id)
         
         trans_indices = []
@@ -344,6 +355,8 @@ def find_confidence_bounds_worker(
         try:
             try: 
                 gene, f_mat, mle_estimate, trans_indices, cntr = get_new_gene()
+            except NoDesignMatrixError:
+                continue
             except IndexError: 
                 res = get_gene_being_processed()
                 if res == None: 
@@ -425,11 +438,19 @@ def estimate_mle_worker( gene_ids, data ):
                     % (gene.id, gene.chrm, gene.strand, 
                        gene.start, gene.stop, len(gene.transcripts) ) )
             
-            f_mat = data.get_design_matrix(gene_id)
+            try: 
+                f_mat = data.get_design_matrix(gene_id)
+            except NoDesignMatrixError:
+                if config.DEBUG_VERBOSE:
+                    config.log_statement("No design matrix for '%s'" % gene_id, 
+                                         log=True)
+                continue
             num_reads_in_bams = data.get_num_reads_in_bams()
 
             expected_array, observed_array = f_mat.expected_and_observed(
                 num_reads_in_bams)
+            if (expected_array, observed_array) == (None, None): 
+                continue
             mle = frequency_estimation.estimate_transcript_frequencies( 
                 observed_array, expected_array)
         except Exception, inst:
@@ -512,14 +533,20 @@ def build_design_matrices_worker( gene_ids,
                     gene.id, gene.chrm, gene.strand, 
                     gene.start, gene.stop, len(gene.transcripts) ) )
             
-            f_mat = DesignMatrix(gene, fl_dists, 
-                                 rnaseq_reads, promoter_reads, polya_reads,
-                                 config.MAX_NUM_TRANSCRIPTS)
+            f_mat = f_matrix.DesignMatrix(
+                gene, fl_dists, 
+                rnaseq_reads, promoter_reads, polya_reads,
+                config.MAX_NUM_TRANSCRIPTS_TO_QUANTIFY)
             
             config.log_statement( "WRITING DESIGN MATRIX TO DISK %s" % gene.id )
             data.set_design_matrix(gene.id, f_mat)
             config.log_statement( "FINISHED DESIGN MATRICES %s" % gene.id )
 
+        except f_matrix.NoObservableTranscriptsError:
+            if config.DEBUG_VERBOSE:
+                config.log_statement(
+                    "No observable transcripts for '%s'" % gene_id, log=True)
+            continue
         except Exception, inst:
             error_msg = "%i: Skipping %s: %s" % (
                 os.getpid(), gene_id, inst )

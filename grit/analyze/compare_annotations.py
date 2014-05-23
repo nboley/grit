@@ -5,6 +5,7 @@ import sys, os
 from collections import defaultdict
 from itertools import izip
 
+sys.path.insert(0, "/home/nboley/grit/grit/")
 from grit.files.gtf import load_gtf
 
 VERBOSE = True
