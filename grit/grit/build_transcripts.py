@@ -40,6 +40,9 @@ GeneElements = namedtuple('GeneElements',
 SAMPLE_TYPE = None
 REP_ID = None
 
+class TooManyCandidateTranscriptsError(Exception):
+    pass
+
 def build_transcripts_from_elements( 
         tss_exons, internal_exons, tes_exons, se_transcripts, jns, strand ):
                        
@@ -59,7 +62,7 @@ def build_transcripts_from_elements(
             for transcript in nx.all_simple_paths(graph, tss, tes, cutoff):
                 transcripts.append( sorted(transcript) )
                 if len(transcripts) > config.MAX_NUM_CANDIDATE_TRANSCRIPTS:
-                    raise ValueError, "Too many candidate transcripts"
+                    raise TooManyCandidateTranscriptsError, "Too many candidate transcripts"
                 
     return transcripts + [ [x,] for x in se_transcripts ]
 
@@ -251,12 +254,23 @@ def build_and_write_gene(gene_elements, output,
         output.put((gene.id, len(gene.transcripts), ofname))
         write_gene_to_gtf(gtf_ofp, gene)
         write_gene_to_tracking_file(tracking_ofp, gene)
+    except TooManyCandidateTranscriptsError:
+        if config.DEBUG_VERBOSE:
+            start = min(x[0] for x in chain(
+                    gene_elements.promoter, gene_elements.polyas))
+            stop = max(x[1] for x in chain(
+                    gene_elements.promoter, gene_elements.polyas))
+            config.log_statement(
+                "Too many candidate transcripts in %s(%s:%s:%i-%i)" % (
+                    gene_elements.id, gene_elements.chrm, gene_elements.strand, 
+                    start, stop), 
+                log=True)
+        return
     except Exception, inst:
         start = min(x[0] for x in chain(
                 gene_elements.promoter, gene_elements.polyas))
         stop = max(x[1] for x in chain(
                 gene_elements.promoter, gene_elements.polyas))
-
         config.log_statement(
             "ERROR building transcript in %s(%s:%s:%i-%i): %s" % (
                 gene_elements.id, gene_elements.chrm, gene_elements.strand, 

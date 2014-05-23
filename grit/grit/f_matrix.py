@@ -23,6 +23,8 @@ from collections import defaultdict
 from files.reads import ( iter_coverage_intervals_for_read, get_read_group,
                           CAGEReads, RAMPAGEReads, PolyAReads )
 
+class NoObservableTranscriptsError(Exception):
+    pass
 
 ################################################################################
 #
@@ -928,7 +930,7 @@ class DesignMatrix(object):
             self.num_tp_reads = None
 
         if all( mat == None for mat in self.obs_cnt_arrays ):
-            raise ValueError, "No observable transcripts"
+            raise NoObservableTranscriptsError, "No observable transcripts"
         
         # initialize the filtered_transcripts to the unobservable transcripts
         self.filtered_transcripts = set(list(self.unobservable_transcripts))
