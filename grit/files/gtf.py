@@ -123,8 +123,11 @@ def parse_gtf_line( line, fix_chrm=True ):
     if "gene_id" not in meta_data:
         raise ValueError, "GTF lines require a gene_id field."
     if "transcript_id" not in meta_data:
-        raise ValueError, "GTF lines require a transcript_id field."
-        
+        # ENSEMBL adds 'gene' lines without a transcript ID, so I guess
+        # we can't raise these errors
+        return None
+        #raise ValueError, "GTF lines require a transcript_id field."
+    
     gene_id = get_name_from_field(meta_data[ 'gene_id' ])
     trans_id = get_name_from_field(meta_data[ 'transcript_id' ])
     
