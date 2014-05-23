@@ -1357,6 +1357,59 @@ def iter_retained_intron_connected_exons(
                 yield (x[0][0], x[-1][1])
     return
 
+def merge_tss_exons(tss_exons):
+    grpd_exons = defaultdict(list)
+    for exon in tss_exons:
+        grpd_exons[exon.stop].append(exon)
+    merged_tss_exons = []
+    for stop, exons in grpd_exons.iteritems():
+        exons.sort(key=lambda x:x.start)
+        curr_start = exons[0].start
+        score = exons[0].score
+        for exon in exons[1:]:
+            if exon.start - curr_start < config.TES_EXON_MERGE_DISTANCE:
+                score += exon.score
+            else:
+                merged_tss_exons.append( Bin(curr_start, stop,
+                                             exon.left_label, 
+                                             exon.right_label,
+                                             exon.type, score) )
+                curr_start = exon.start
+                score = exon.score
+            
+        merged_tss_exons.append( Bin(curr_start, stop,
+                                     exon.left_label, 
+                                     exon.right_label,
+                                     exon.type, score) )
+    return merged_tss_exons
+
+def merge_tes_exons(tes_exons):
+    grpd_exons = defaultdict(list)
+    for exon in tes_exons:
+        grpd_exons[exon.start].append(exon)
+    merged_tes_exons = []
+    for start, exons in grpd_exons.iteritems():
+        exons.sort(key=lambda x:x.stop)
+        curr_stop = exons[0].stop
+        score = exons[0].score
+        for exon in exons[1:]:
+            if exon.stop - curr_stop < config.TES_EXON_MERGE_DISTANCE:
+                curr_stop = exon.stop
+                score += exon.score
+            else:
+                merged_tes_exons.append( Bin(start, curr_stop,
+                                            exon.left_label, 
+                                            exon.right_label,
+                                            exon.type, score) )
+                curr_stop = exon.stop
+                score = exon.score
+
+        merged_tes_exons.append( Bin(start, curr_stop,
+                                     exon.left_label, 
+                                     exon.right_label,
+                                     exon.type, score) )
+    return merged_tes_exons
+
 def find_exons_in_gene( gene, contig_len,
                         rnaseq_reads, cage_reads, polya_reads,
                         cage_peaks=[], introns=[], polya_peaks=[],
@@ -1448,12 +1501,16 @@ def find_exons_in_gene( gene, contig_len,
     
     # skip the first 200 bases to account for the expected lower coverage near 
     # the transcript bounds
-    tss_exons = filter_exons(
+    tss_exons = list(filter_exons(
         tss_exons, rnaseq_cov, 
-        num_start_bases_to_skip=config.NUM_TSS_BASES_TO_SKIP)
-    tes_exons = filter_exons(
+        num_start_bases_to_skip=config.NUM_TSS_BASES_TO_SKIP))
+    tss_exons = merge_tss_exons(tss_exons)
+
+    tes_exons = list(filter_exons(
         tes_exons, rnaseq_cov, 
-        num_stop_bases_to_skip=config.NUM_TES_BASES_TO_SKIP)
+        num_stop_bases_to_skip=config.NUM_TES_BASES_TO_SKIP))
+    tes_exons = merge_tes_exons(tes_exons)
+
     internal_exons = filter_exons( internal_exons, rnaseq_cov )
     se_genes = filter_exons( 
         se_genes, rnaseq_cov, 
