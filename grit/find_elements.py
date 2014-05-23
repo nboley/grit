@@ -942,6 +942,11 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
         start_bin_cvg = max( start_bin_cvg, bin_cvg )
         
         if bin.type == 'INTRON':
+            if bin.stop - bin.start <= config.MIN_INTRON_SIZE: 
+                break
+            left_cvg = rnaseq_cov[bin.start-30:bin.start-10].mean()
+            if (left_cvg+1e-6)/(bin_cvg+1e-6) > config.EXON_EXT_CVG_RATIO_THRESH:
+                break
             new_bin = Bin( bin.start, bin.stop, 
                            bin.left_label, bin.right_label, 
                            "RETAINED_INTRON"  )
@@ -955,9 +960,7 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
     
     return internal_exons, retained_introns
 
-def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov,
-                                min_ext_ratio=config.EXON_EXT_CVG_RATIO_THRESH, 
-                                min_bpkm=config.MIN_EXON_BPKM):
+def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov):
     exons = []
     retained_introns = []
     start_bin_cvg = start_bin.mean_cov( rnaseq_cov )
@@ -966,19 +969,21 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov,
         
         # make sure the average coverage is high enough
         bin_cvg = bin.mean_cov(rnaseq_cov)
-        if bin_cvg < min_bpkm:
+        if bin_cvg < config.MIN_EXON_BPKM:
             break
         
         if bin.stop - bin.start > 20 and \
-                (start_bin_cvg+1e-6)/(bin_cvg+1e-6) > min_ext_ratio:
+                ( (start_bin_cvg+1e-6)/(bin_cvg+1e-6) 
+                  > config.EXON_EXT_CVG_RATIO_THRESH ):
             break
-                
-        # update the bin coverage. In cases where the coverage increases from
-        # the canonical exon, we know that the increase is due to inhomogeneity
-        # so we take the conservative choice
-        start_bin_cvg = max( start_bin_cvg, bin_cvg )
-
+        
         if bin.type == 'INTRON':
+            if bin.stop - bin.start <= config.MIN_INTRON_SIZE: 
+                break
+            right_cvg = rnaseq_cov[bin.stop+11:bin.stop+31].mean()
+            if ( (right_cvg+1e-6)/(bin_cvg+1e-6) 
+                 > config.EXON_EXT_CVG_RATIO_THRESH ):
+                break
             new_bin = Bin( bin.start, bin.stop, 
                            bin.left_label, bin.right_label, 
                            "RETAINED_INTRON"  )
@@ -988,6 +993,11 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov,
         exons.append( Bin( bin.start, bin.stop, 
                            bin.left_label, bin.right_label, 
                            "EXON_EXT"  ) )
+    
+        # update the bin coverage. In cases where the coverage increases from
+        # the canonical exon, we know that the increase is due to inhomogeneity
+        # so we take the conservative choice
+        start_bin_cvg = max( start_bin_cvg, bin_cvg )
     
     return exons, retained_introns
 
@@ -1142,6 +1152,7 @@ def find_gene_bndry_exons( (chrm, strand), rnaseq_cov, jns, peaks, peak_type ):
     if reverse_bins: 
         bins = bins.reverse_strand(len(rnaseq_cov))
         peaks = peaks.reverse_strand(len(rnaseq_cov))
+        rnaseq_cov = rnaseq_cov[::-1]
     
     exons = []
     retained_introns = []
@@ -1351,7 +1362,6 @@ def find_exons_in_gene( gene, contig_len,
                         cage_peaks=[], introns=[], polya_peaks=[],
                         resplit_genes=True):
     assert isinstance( gene, Bins )
-    
     config.log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" % 
                    (gene.chrm, gene.strand, gene.start, gene.stop) )
     
@@ -1408,7 +1418,6 @@ def find_exons_in_gene( gene, contig_len,
     for intron in tes_retained_introns: retained_introns[intron] += 1
     gene_bins = Bins(gene.chrm, gene.strand, build_labeled_segments( 
             (gene.chrm, gene.strand), rnaseq_cov, jns ) )
-        
     jn_bins = Bins(gene.chrm, gene.strand, [])
     for start, stop, cnt in jns:
         if stop - start <= 0:
