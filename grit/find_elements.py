@@ -930,7 +930,7 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
         bin_cvg = bin.mean_cov(rnaseq_cov)   
         if bin_cvg < config.MIN_EXON_BPKM:
             break
-
+        
         if bin.stop - bin.start > 20 and \
                 (start_bin_cvg+1e-6)/(bin_cvg+1e-6) > \
                 config.EXON_EXT_CVG_RATIO_THRESH:
@@ -1421,19 +1421,20 @@ def find_exons_in_gene( gene, contig_len,
         intron for intron, cnt in retained_introns.iteritems() 
         if cnt > 1], rnaseq_cov)
     retained_intron_bins = Bins(gene.chrm, gene.strand, retained_intron_bins)
-    
-    for start, stop in iter_retained_intron_connected_exons(
-            tss_exons, internal_exons, retained_intron_bins):
-        tss_exons.append( Bin(start, stop, 'TSS', 'D_JN', 'TSS_EXON') )
-    for start, stop in iter_retained_intron_connected_exons(
-            internal_exons, internal_exons, retained_intron_bins):
-        internal_exons.append( Bin(start, stop, 'R_JN', 'D_JN', 'EXON') )
-    for start, stop in iter_retained_intron_connected_exons(
-            internal_exons, tes_exons, retained_intron_bins):
-        tes_exons.append( Bin(start, stop, 'D_JN', 'TES', 'TES_EXON'))
-    for start, stop in iter_retained_intron_connected_exons(
-            tss_exons, tes_exons, retained_intron_bins):
-        se_genes.append( Bin(start, stop, 'TSS', 'TES', 'SE_GENE'))
+
+    if config.BUILD_MODELS_WITH_RETAINED_INTRONS:
+        for start, stop in iter_retained_intron_connected_exons(
+                tss_exons, internal_exons, retained_intron_bins):
+            tss_exons.append( Bin(start, stop, 'TSS', 'D_JN', 'TSS_EXON') )
+        for start, stop in iter_retained_intron_connected_exons(
+                internal_exons, internal_exons, retained_intron_bins):
+            internal_exons.append( Bin(start, stop, 'R_JN', 'D_JN', 'EXON') )
+        for start, stop in iter_retained_intron_connected_exons(
+                internal_exons, tes_exons, retained_intron_bins):
+            tes_exons.append( Bin(start, stop, 'D_JN', 'TES', 'TES_EXON'))
+        for start, stop in iter_retained_intron_connected_exons(
+                tss_exons, tes_exons, retained_intron_bins):
+            se_genes.append( Bin(start, stop, 'TSS', 'TES', 'SE_GENE'))
 
     
     # skip the first 200 bases to account for the expected lower coverage near 

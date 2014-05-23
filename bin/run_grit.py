@@ -421,6 +421,10 @@ def parse_arguments():
                          default=False, action='store_true',
         help='Use polya sites inferred from the end of reference transcripts.')
 
+    parser.add_argument( '--build-models-with-retained-introns', 
+                         default=False, action='store_true',
+        help='Include identified retained introns in transcript models.')
+    
     parser.add_argument( '--build-bedgraphs', 
                          default=False, action='store_true',
         help='Build read coverage bedgraphs.')
@@ -467,6 +471,9 @@ def parse_arguments():
             False == args.only_build_candidate_transcripts:
         raise ValueError, "--control or --rnaseq-reads must be set"
 
+    config.BUILD_MODELS_WITH_RETAINED_INTRONS = \
+        args.build_models_with_retained_introns
+    
     config.VERBOSE = args.verbose
     
     config.DEBUG_VERBOSE = args.debug_verbose

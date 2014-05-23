@@ -367,9 +367,9 @@ def estimate_transcript_frequencies_line_search(
         else: curr_lhd = prev_lhd
         
         assert curr_lhd >= prev_lhd, "%e %e %e" % (curr_lhd, prev_lhd, curr_lhd - prev_lhd)
-        if i > 3 and (alpha == 0 or curr_lhd - prev_lhd < abs_tol):
+        if i > 100 and (alpha == 0 or curr_lhd - prev_lhd < abs_tol):
             zeros_counter += 1
-            if zeros_counter > 3:
+            if zeros_counter > 20:
                 break
         else:
             zeros_counter = 0
