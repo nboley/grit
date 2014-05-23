@@ -335,16 +335,14 @@ def add_elements_for_contig_and_strand((contig, strand),
                                   tss_es, internal_es, tes_es,
                                   se_ts, promoters, polyas, 
                                   jns )
-        while True:
-            try: elements.put(gene_data, timeout=0.1)
-            except Queue.Full: 
-                build_and_write_gene( gene_data, output, 
-                                      gtf_ofp, tracking_ofp,
-                                      fasta, ref_genes)
 
-                continue
-            else: break
-        
+        try: 
+            elements.put(gene_data, timeout=0.1)
+        except Queue.Full: 
+            build_and_write_gene( gene_data, output, 
+                                  gtf_ofp, tracking_ofp,
+                                  fasta, ref_genes)
+    
     config.log_statement( 
         "FINISHED Clustering elements into genes for %s:%s" % (contig, strand))
     return    
