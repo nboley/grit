@@ -71,7 +71,7 @@ def write_array_to_opstream(ofp, buffer, buff_start, chrm, chrm_length ):
             prev_pos, prev_val = pos+1, val
     
     if prev_val > 1e-12:
-        line = "chr%s\t%i\t%i\t%.2f" % (
+        line = "%s\t%i\t%i\t%.2f" % (
             chrm, buff_start+prev_pos, buff_start+pos+1, prev_val )
         ofp.write(line+"\n")
     
