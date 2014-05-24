@@ -30,7 +30,7 @@ ESTIMATE_LOWER_CONFIDENCE_BOUNDS = True
 # the minimum number of flanking bases we need to identify a junction
 # from a gapped read alignmento
 MIN_INTRON_FLANKING_SIZE = 12 
-MIN_ENTROPY = 0.0
+MIN_ENTROPY = 0
 MIN_INTRON_SIZE = 40
 MIN_EXON_SIZE = 40 #MIN_INTRON_SIZE
 MAX_EMPTY_REGION_SIZE = 200 #MIN_INTRON_SIZE
@@ -38,10 +38,12 @@ MAX_INTRON_SIZE = int(1e6)
 MIN_GENE_LENGTH = 400
 # the maximum number of bases to expand gene boundaries from annotated genes
 MAX_GENE_EXPANSION = 1000
+
 NOISE_JN_FILTER_FRAC = 0.05
+MAX_JN_OFFSET_FILTER = 15
 
 ONLY_USE_REFERENCE_JUNCTIONS = False
-MIN_EXON_BPKM = 0.1
+MIN_EXON_AVG_CVG = 1.0
 EXON_EXT_CVG_RATIO_THRESH = 3
 BUILD_MODELS_WITH_RETAINED_INTRONS = False
 
