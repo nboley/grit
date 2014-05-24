@@ -189,7 +189,7 @@ def filter_exon(exon, wig, num_start_bases_to_skip=0, num_stop_bases_to_skip=0):
     div_len = len(vals)/n_div
     for i in xrange(n_div):
         seg = vals[i*div_len:(i+1)*div_len]
-        if seg.mean() < config.MIN_EXON_BPKM:
+        if seg.mean() < config.MIN_EXON_AVG_CVG:
             return True
 
     return False
@@ -469,8 +469,10 @@ class Bins( list ):
         
         return
 
-def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads, 
-                               regions, nthreads, ratio_filter, max_jn_size ):
+def load_and_filter_junctions( 
+        rnaseq_reads, promoter_reads, polya_reads, 
+        region, nthreads ):
+    chrm, strand, region_start, region_stop = region
     if config.ONLY_USE_REFERENCE_JUNCTIONS:
         return {(chrm, strand): defaultdict(int)}
     
@@ -478,71 +480,65 @@ def load_and_filter_junctions( rnaseq_reads, promoter_reads, polya_reads,
     # they are on differnet scales, so we only filter the RNAseq and use the 
     # cage and polya to get connectivity at the boundaries.
     rnaseq_junctions = files.junctions.load_junctions_in_bam(
-        rnaseq_reads, regions, nthreads=nthreads)
+        rnaseq_reads, [region,], nthreads=nthreads)[(chrm, strand)]
     promoter_jns = None if promoter_reads == None else \
-        files.junctions.load_junctions_in_bam(promoter_reads, regions, nthreads)
+        files.junctions.load_junctions_in_bam(
+            promoter_reads, [region,], nthreads)[(chrm, strand)]
     polya_jns = None if polya_reads == None else \
-        files.junctions.load_junctions_in_bam(polya_reads, regions, nthreads)
+        files.junctions.load_junctions_in_bam(
+            polya_reads, [region,], nthreads)[(chrm, strand)]
     
-    filtered_junctions = defaultdict(lambda: defaultdict(int))
-    for chrm, strand, region_start, region_stop in regions:        
-        # filter junctions by shared donor/acceptor site counts
-        jn_starts = defaultdict( int )
-        jn_stops = defaultdict( int )
-        for (start, stop), cnt, entropy in rnaseq_junctions[(chrm, strand)]:
-            jn_starts[start] = max( jn_starts[start], cnt )
-            jn_stops[stop] = max( jn_stops[stop], cnt )
-        
-        # filter junctions by overlapping groups of the same length
-        jns_grouped_by_lens = defaultdict(list)
-        for (start, stop), cnt, entropy in rnaseq_junctions[(chrm, strand)]:
-            jns_grouped_by_lens[stop-start+1].append( 
-                ((start, stop), cnt, entropy))
-        
-        jn_grps = []
-        jn_grp_map = {}
-        for jn_len, jns in jns_grouped_by_lens.iteritems():
-            prev_jn = None
-            for jn, cnt, entropy in sorted(jns):
-                if prev_jn == None or jn[0] - prev_jn[0] > 5: 
-                    jn_grp_map[jn] = len(jn_grps)
-                    jn_grps.append(cnt)
-                else:
-                    jn_grp_map[jn] = len(jn_grps) - 1
-                    jn_grps[-1] = max(jn_grps[-1], cnt)
-                prev_jn = jn
-        
-        for (start, stop), cnt, entropy in rnaseq_junctions[(chrm, strand)]:
-            if entropy < config.MIN_ENTROPY: continue
-            
-            val = beta.ppf(0.01, cnt+1, jn_starts[start]+1)
-            if val < config.NOISE_JN_FILTER_FRAC: continue
-            val = beta.ppf(0.01, cnt+1, jn_stops[stop]+1)
-            if val < config.NOISE_JN_FILTER_FRAC: continue
-            val = beta.ppf(0.01, cnt+1, jn_grps[jn_grp_map[(start, stop)]]+1)
-            if val < config.NOISE_JN_FILTER_FRAC: continue
-            if stop - start + 1 > config.MAX_INTRON_SIZE: continue
-                
-            filtered_junctions[(chrm, strand)][(start, stop)] = cnt
-        
-        del rnaseq_junctions[(chrm, strand)]
-        
-        # add in the cage and polya reads, for connectivity
-        for connectivity_jns in (promoter_jns, polya_jns):
-            if connectivity_jns == None: continue
-            for jn, cnt in connectivity_jns[(chrm, strand)]:
-                filtered_junctions[(chrm, strand)][jn] += 0
-            del connectivity_jns[(chrm, strand)]
-        
-    return filtered_junctions
+    filtered_junctions = defaultdict(int)
 
-def load_junctions( rnaseq_reads, promoter_reads, polya_reads,
-                    regions, nthreads):
-    return load_and_filter_junctions( 
-        rnaseq_reads, promoter_reads, polya_reads, 
-        regions, nthreads=nthreads, ratio_filter=0.01,
-        max_jn_size=config.MAX_INTRON_SIZE)
+    # filter junctions by shared donor/acceptor site counts
+    jn_starts = defaultdict( int )
+    jn_stops = defaultdict( int )
+    for (start, stop), cnt, entropy in rnaseq_junctions:
+        jn_starts[start] = max( jn_starts[start], cnt )
+        jn_stops[stop] = max( jn_stops[stop], cnt )
+        
+    # filter junctions by overlapping groups of the same length
+    jns_grouped_by_lens = defaultdict(list)
+    for (start, stop), cnt, entropy in rnaseq_junctions:
+        jns_grouped_by_lens[stop-start+1].append( 
+            ((start, stop), cnt, entropy))
+        
+    jn_grps = []
+    jn_grp_map = {}
+    for jn_len, jns in jns_grouped_by_lens.iteritems():
+        prev_jn = None
+        for jn, cnt, entropy in sorted(jns):
+            if ( prev_jn == None or 
+                jn[0] - prev_jn[0] > config.MAX_JN_OFFSET_FILTER):
+                jn_grp_map[jn] = len(jn_grps)
+                jn_grps.append(cnt)
+            else:
+                jn_grp_map[jn] = len(jn_grps) - 1
+                jn_grps[-1] = max(jn_grps[-1], cnt)
+            prev_jn = jn
+        
+    for (start, stop), cnt, entropy in rnaseq_junctions:
+        if entropy < config.MIN_ENTROPY: continue
+
+        val = beta.ppf(0.01, cnt+1, jn_starts[start]+1)
+        if val < config.NOISE_JN_FILTER_FRAC: continue
+        val = beta.ppf(0.01, cnt+1, jn_stops[stop]+1)
+        if val < config.NOISE_JN_FILTER_FRAC: continue
+        val = beta.ppf(0.01, cnt+1, jn_grps[jn_grp_map[(start, stop)]]+1)
+        if val < config.NOISE_JN_FILTER_FRAC: continue
+        if stop - start + 1 > config.MAX_INTRON_SIZE: continue
+
+        filtered_junctions[(start, stop)] = cnt
+
+    # add in the cage and polya reads, for connectivity. We 
+    # don't filter these. 
+    for connectivity_jns in (promoter_jns, polya_jns):
+        if connectivity_jns == None: continue
+        for jn, cnt in connectivity_jns:
+            filtered_junctions[jn] += cnt
+        del connectivity_jns
     
+    return filtered_junctions    
 
 def find_initial_segmentation_worker( 
         candidate_boundaries, candidate_boundaries_lock,
@@ -928,7 +924,7 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
         
         # make sure the average coverage is high enough
         bin_cvg = bin.mean_cov(rnaseq_cov)   
-        if bin_cvg < config.MIN_EXON_BPKM:
+        if bin_cvg < config.MIN_EXON_AVG_CVG:
             break
         
         if bin.stop - bin.start > 20 and \
@@ -969,7 +965,7 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov):
         
         # make sure the average coverage is high enough
         bin_cvg = bin.mean_cov(rnaseq_cov)
-        if bin_cvg < config.MIN_EXON_BPKM:
+        if bin_cvg < config.MIN_EXON_AVG_CVG:
             break
         
         if bin.stop - bin.start > 20 and \
@@ -1247,19 +1243,27 @@ def re_segment_gene( gene, (chrm, strand, contig_len),
     
     return new_genes
 
-def filter_jns(jns, rnaseq_cov, gene, prob_gte_thresh):
+def filter_jns(jns, ref_jns, rnaseq_cov, gene):
     filtered_junctions = []
     for (start, stop, cnt) in jns:
         if start < 0 or stop >= gene.stop - gene.start + 1: continue
         if stop - start + 1 > config.MAX_INTRON_SIZE : continue
         left_intron_cvg = rnaseq_cov[start+10:start+30].sum()/20
-        right_intron_cvg = rnaseq_cov[stop-30:stop-10].sum()/20        
-        if ( beta.ppf(prob_gte_thresh, cnt+1, left_intron_cvg+1) 
-                 < config.NOISE_JN_FILTER_FRAC):
-            continue
-        if ( beta.ppf(prob_gte_thresh, cnt+1, right_intron_cvg+1) 
-                 < config.NOISE_JN_FILTER_FRAC ):
-            continue
+        right_intron_cvg = rnaseq_cov[stop-30:stop-10].sum()/20
+        if (start, stop) not in ref_jns:
+            if ( beta.ppf(0.01, cnt+1, left_intron_cvg+1) 
+                     < config.NOISE_JN_FILTER_FRAC):
+                continue
+            if ( beta.ppf(0.01, cnt+1, right_intron_cvg+1) 
+                     < config.NOISE_JN_FILTER_FRAC ):
+                continue
+        elif not config.ONLY_USE_REFERENCE_JUNCTIONS:
+            if ( beta.ppf(0.99, cnt+1, left_intron_cvg+1) 
+                     < config.NOISE_JN_FILTER_FRAC):
+                continue
+            if ( beta.ppf(0.99, cnt+1, right_intron_cvg+1) 
+                     < config.NOISE_JN_FILTER_FRAC ):
+                continue
         filtered_junctions.append( (start, stop, cnt) )
     
     return filtered_junctions
@@ -1293,6 +1297,8 @@ def build_raw_elements_in_gene( gene,
                    for x1, x2 in ref_cage_peaks 
                    if points_are_inside_gene(x1, x2)]
     assert all( 0 <= start <= stop for start, stop in cage_peaks )
+    if gene.strand == '-':
+        cage_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in cage_peaks ]
     
     if cage_reads != None:
         cage_cov = find_coverage_in_gene(gene, cage_reads)
@@ -1301,42 +1307,42 @@ def build_raw_elements_in_gene( gene,
                     for x1, x2 in ref_polya_peaks
                     if points_are_inside_gene(x1, x2)]
     assert all( 0 <= start <= stop for start, stop in polya_peaks )
+    if gene.strand == '-':
+        polya_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in polya_peaks ]
     
     if polya_reads != None:
         polya_cov = find_coverage_in_gene(gene, polya_reads)
     
     rnaseq_cov = find_coverage_in_gene( gene, rnaseq_reads )
     
-    jns = load_junctions(rnaseq_reads, cage_reads, polya_reads,
-                         [(gene.chrm, gene.strand, gene.start, gene.stop),],
-                         nthreads=1)[(gene.chrm, gene.strand)]    
-        
-    jns = [ (x1-gene.start, x2-gene.start, cnt)  
-            for (x1, x2), cnt in sorted(jns.iteritems())
-            if points_are_inside_gene(x1, x2)]
-
-    if gene.strand == '-':
-        jns = [ (gene_len-x2, gene_len-x1, cnt) for x1, x2, cnt in jns ]
-        cage_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in cage_peaks ]
-        polya_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in polya_peaks ]
-
+    jns = load_and_filter_junctions(
+        rnaseq_reads, cage_reads, polya_reads,
+        (gene.chrm, gene.strand, gene.start, gene.stop),
+        nthreads=1)
+    
+    # merge in the reference junctions
+    for jn in ref_jns:
+        jns[jn] += 0
+    
+    # put the jucntions in gene coordinates
+    if gene.strand == '+':
+        ref_jns_set = set( 
+            (x1-gene.start, x2-gene.start)  
+            for x1, x2 in ref_jns )            
+        jns = [ (x1-gene.start, x2-gene.start, cnt)  
+                for (x1, x2), cnt in sorted(jns.iteritems())
+                if points_are_inside_gene(x1, x2)]
+    else: # gene.strand == '-':
+        ref_jns_set = set( 
+            (gene_len-x2+gene.start, gene_len-x1+gene.start)  
+            for x1, x2 in ref_jns )            
+        jns = [ (gene_len-x2+gene.start, gene_len-x1+gene.start, cnt)  
+                for (x1, x2), cnt in sorted(jns.iteritems())
+                if points_are_inside_gene(x1, x2)]
+    
+    jns = filter_jns(jns, ref_jns_set, rnaseq_cov, gene)
     polya_peaks = filter_polya_peaks(polya_peaks, rnaseq_cov, jns)
 
-    jns = filter_jns(jns, rnaseq_cov, gene, 0.01)
-    novel_jns = set((start, stop) for start, stop, cnt in jns)
-
-    # merge in the reference junctions
-    for x1, x2 in ref_jns:
-        if gene.strand == '+':
-            jn = (x1-gene.start, x2-gene.start)
-        if gene.strand == '-': 
-            jn = (gene_len-x2+gene.start, gene_len-x1+gene.start)
-        if jn not in novel_jns:
-            jns.append( (jn[0], jn[1], 0) )
-    
-    if not config.ONLY_USE_REFERENCE_JUNCTIONS:
-        jns = filter_jns(jns, rnaseq_cov, gene, 0.99)
-    
     return rnaseq_cov, cage_cov, cage_peaks, polya_cov, polya_peaks, jns
 
 def iter_retained_intron_connected_exons(
