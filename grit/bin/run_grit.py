@@ -421,15 +421,22 @@ def parse_arguments():
                          default=False, action='store_true',
         help='Use polya sites inferred from the end of reference transcripts.')
 
-    parser.add_argument( '--build-models-with-retained-introns', 
-                         default=False, action='store_true',
-        help='Include identified retained introns in transcript models.')
     parser.add_argument( '--max-num-candidate-transcripts', 
                          default=1000000, type=int,
         help='Max number of transcript models to build in any gene locus (DEFAULT 1e6).')
     parser.add_argument( '--max-num-transcripts-to-quantify', 
                          default=1000, type=int,
         help='Maximum number of transcript in which to produce quantifications (DEFAULT 1000) (in loci with more than this, we greddily remove low expression elements until we are below the limit).')
+
+    parser.add_argument( '--build-models-with-retained-introns', 
+                         default=False, action='store_true',
+        help='Include identified retained introns in transcript models.')
+    parser.add_argument( '--TSS-exon-merge-distance', 
+                         default=0, type=int,
+        help='Merge TSS exons with identical 3\' splice sites that are within X basepairs (default 0 - dont merge) .')
+    parser.add_argument( '--TES-exon-merge-distance', 
+                         default=0, type=int,
+        help='Merge TES exons with identical 5\' splice sites that are within X basepairs (default 0 - dont merge) .')
     
     parser.add_argument( '--build-bedgraphs', 
                          default=False, action='store_true',
@@ -477,15 +484,21 @@ def parse_arguments():
             False == args.only_build_candidate_transcripts:
         raise ValueError, "--control or --rnaseq-reads must be set"
 
-    config.BUILD_MODELS_WITH_RETAINED_INTRONS = \
-        args.build_models_with_retained_introns
-
     config.MAX_NUM_CANDIDATE_TRANSCRIPTS = \
         args.max_num_candidate_transcripts    
  
     config.MAX_NUM_TRANSCRIPTS_TO_QUANTIFY = \
         args.max_num_transcripts_to_quantify   
+
+    config.BUILD_MODELS_WITH_RETAINED_INTRONS = \
+        args.build_models_with_retained_introns
    
+    config.TSS_EXON_MERGE_DISTANCE = \
+        args.TSS_exon_merge_distance
+
+    config.TES_EXON_MERGE_DISTANCE = \
+        args.TES_exon_merge_distance
+
     config.VERBOSE = args.verbose
     
     config.DEBUG_VERBOSE = args.debug_verbose
