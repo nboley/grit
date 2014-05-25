@@ -936,16 +936,19 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
         bin_cvg = bin.mean_cov(rnaseq_cov)   
         if bin_cvg < config.MIN_EXON_AVG_CVG:
             break
-        
+
+        # make sure the median bin civerage is high enough
         if bin.stop - bin.start > 20 and \
                 (start_bin_cvg+1e-6)/(bin_cvg+1e-6) > \
                 config.EXON_EXT_CVG_RATIO_THRESH:
             break
-                
-        # update the bin coverage. In cases where the coverage increases from
-        # the canonical exon, we know that the increase is due to inhomogeneity
-        # so we take the conservative choice
-        start_bin_cvg = max( start_bin_cvg, bin_cvg )
+
+        # make sure the boundary ratio is high enough
+        right_cvg = rnaseq_cov[start_bin.start:start_bin.start+20].mean()
+        left_cvg = rnaseq_cov[start_bin.start-30:start_bin.start-10].mean()
+        if ( (left_cvg+1e-6)/(right_cvg+1e-6) 
+             > config.EXON_EXT_CVG_RATIO_THRESH ):
+            break
         
         if bin.type == 'INTRON':
             if bin.stop - bin.start <= config.MIN_INTRON_SIZE: 
@@ -963,6 +966,11 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
                        bin.left_label, bin.right_label, 
                        "EXON_EXT"  )
         internal_exons.append( new_bin )
+
+        # update the bin coverage. In cases where the coverage increases from
+        # the canonical exon, we know that the increase is due to inhomogeneity
+        # so we take the conservative choice
+        start_bin_cvg = max( start_bin_cvg, bin_cvg )
     
     return internal_exons, retained_introns
 
