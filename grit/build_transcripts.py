@@ -255,16 +255,15 @@ def build_and_write_gene(gene_elements, output,
         write_gene_to_gtf(gtf_ofp, gene)
         write_gene_to_tracking_file(tracking_ofp, gene)
     except TooManyCandidateTranscriptsError:
-        if config.DEBUG_VERBOSE:
-            start = min(x[0] for x in chain(
-                    gene_elements.promoter, gene_elements.polyas))
-            stop = max(x[1] for x in chain(
-                    gene_elements.promoter, gene_elements.polyas))
-            config.log_statement(
-                "Too many candidate transcripts in %s(%s:%s:%i-%i)" % (
-                    gene_elements.id, gene_elements.chrm, gene_elements.strand, 
-                    start, stop), 
-                log=True)
+        start = min(x[0] for x in chain(
+                gene_elements.promoter, gene_elements.polyas))
+        stop = max(x[1] for x in chain(
+                gene_elements.promoter, gene_elements.polyas))
+        config.log_statement(
+            "Too many candidate transcripts in %s(%s:%s:%i-%i)" % (
+                gene_elements.id, gene_elements.chrm, gene_elements.strand, 
+                start, stop), 
+            log=True)
         return
     except Exception, inst:
         start = min(x[0] for x in chain(
