@@ -473,6 +473,8 @@ def load_and_filter_junctions(
         rnaseq_reads, promoter_reads, polya_reads, 
         region, nthreads ):
     chrm, strand, region_start, region_stop = region
+    anti_strand_region = [ 
+        chrm, '+' if strand == '-' else '-', region_start, region_stop ]
     if config.ONLY_USE_REFERENCE_JUNCTIONS:
         return {(chrm, strand): defaultdict(int)}
     
@@ -481,6 +483,8 @@ def load_and_filter_junctions(
     # cage and polya to get connectivity at the boundaries.
     rnaseq_junctions = files.junctions.load_junctions_in_bam(
         rnaseq_reads, [region,], nthreads=nthreads)[(chrm, strand)]
+    anti_strand_rnaseq_junctions = files.junctions.load_junctions_in_bam(
+        rnaseq_reads, [anti_strand_region,], nthreads=nthreads).values()[0]
     promoter_jns = None if promoter_reads == None else \
         files.junctions.load_junctions_in_bam(
             promoter_reads, [region,], nthreads)[(chrm, strand)]
@@ -489,7 +493,12 @@ def load_and_filter_junctions(
             polya_reads, [region,], nthreads)[(chrm, strand)]
     
     filtered_junctions = defaultdict(int)
-
+    
+    # filter junctions by counts on the oppsotie strand
+    anti_strand_cnts = {}
+    for jn, cnt, entropy in rnaseq_junctions:
+        anti_strand_cnts[jn] = cnt
+    
     # filter junctions by shared donor/acceptor site counts
     jn_starts = defaultdict( int )
     jn_stops = defaultdict( int )
@@ -526,8 +535,9 @@ def load_and_filter_junctions(
         if val < config.NOISE_JN_FILTER_FRAC: continue
         val = beta.ppf(0.01, cnt+1, jn_grps[jn_grp_map[(start, stop)]]+1)
         if val < config.NOISE_JN_FILTER_FRAC: continue
+        if ( (cnt+1.)/(anti_strand_cnts[(start, stop)]+1) <= 1.):
+            continue
         if stop - start + 1 > config.MAX_INTRON_SIZE: continue
-
         filtered_junctions[(start, stop)] = cnt
 
     # add in the cage and polya reads, for connectivity. We 
@@ -967,18 +977,22 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov):
         bin_cvg = bin.mean_cov(rnaseq_cov)
         if bin_cvg < config.MIN_EXON_AVG_CVG:
             break
-        
+
+        # make sure the bin median coverage is high enough
         if bin.stop - bin.start > 20 and \
                 ( (start_bin_cvg+1e-6)/(bin_cvg+1e-6) 
                   > config.EXON_EXT_CVG_RATIO_THRESH ):
             break
-        
+
+        # make sure the boundary ratio is high enough
+        left_cvg = rnaseq_cov[start_bin.stop-20:start_bin.stop].mean()
+        right_cvg = rnaseq_cov[start_bin.stop+11:start_bin.stop+31].mean()
+        if ( (left_cvg+1e-6)/(right_cvg+1e-6) 
+             > config.EXON_EXT_CVG_RATIO_THRESH ):
+            break
+                
         if bin.type == 'INTRON':
             if bin.stop - bin.start <= config.MIN_INTRON_SIZE: 
-                break
-            right_cvg = rnaseq_cov[bin.stop+11:bin.stop+31].mean()
-            if ( (right_cvg+1e-6)/(bin_cvg+1e-6) 
-                 > config.EXON_EXT_CVG_RATIO_THRESH ):
                 break
             new_bin = Bin( bin.start, bin.stop, 
                            bin.left_label, bin.right_label, 
@@ -1174,7 +1188,7 @@ def find_gene_bndry_exons( (chrm, strand), rnaseq_cov, jns, peaks, peak_type ):
             exons.append( exon )
             
             r_extensions, r_retained_introns = find_right_exon_extensions(
-                index, bndry_bin, bins, rnaseq_cov)
+                index, exon, bins, rnaseq_cov)
             retained_introns.extend(r_retained_introns)
             for r_ext in r_extensions:
                 exon = Bin( 
@@ -1251,19 +1265,19 @@ def filter_jns(jns, ref_jns, rnaseq_cov, gene):
         left_intron_cvg = rnaseq_cov[start+10:start+30].sum()/20
         right_intron_cvg = rnaseq_cov[stop-30:stop-10].sum()/20
         if (start, stop) not in ref_jns:
-            if ( beta.ppf(0.01, cnt+1, left_intron_cvg+1) 
-                     < config.NOISE_JN_FILTER_FRAC):
-                continue
-            if ( beta.ppf(0.01, cnt+1, right_intron_cvg+1) 
-                     < config.NOISE_JN_FILTER_FRAC ):
-                continue
-        elif not config.ONLY_USE_REFERENCE_JUNCTIONS:
             if ( beta.ppf(0.99, cnt+1, left_intron_cvg+1) 
                      < config.NOISE_JN_FILTER_FRAC):
                 continue
             if ( beta.ppf(0.99, cnt+1, right_intron_cvg+1) 
                      < config.NOISE_JN_FILTER_FRAC ):
                 continue
+        #elif not config.ONLY_USE_REFERENCE_JUNCTIONS:
+        #    if ( beta.ppf(0.99, cnt+1, left_intron_cvg+1) 
+        #             < config.NOISE_JN_FILTER_FRAC):
+        #        continue
+        #    if ( beta.ppf(0.99, cnt+1, right_intron_cvg+1) 
+        #             < config.NOISE_JN_FILTER_FRAC ):
+        #        continue
         filtered_junctions.append( (start, stop, cnt) )
     
     return filtered_junctions
