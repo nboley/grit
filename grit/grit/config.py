@@ -7,7 +7,7 @@ VERSION = "1.1.3-dev"
 # the maximum number of transcripts to produce quantification estimates for
 MAX_NUM_TRANSCRIPTS_TO_QUANTIFY = 1000
 # the maximum number of candidate transcripts to build in a particular gene locus
-MAX_NUM_CANDIDATE_TRANSCRIPTS = 1000000
+MAX_NUM_CANDIDATE_TRANSCRIPTS = 50000
 
 CB_SIG_LEVEL = 0.025
 
@@ -43,8 +43,8 @@ NOISE_JN_FILTER_FRAC = 0.05
 MAX_JN_OFFSET_FILTER = 15
 
 ONLY_USE_REFERENCE_JUNCTIONS = False
-MIN_EXON_AVG_CVG = 1.0
-EXON_EXT_CVG_RATIO_THRESH = 5
+MIN_EXON_AVG_CVG = 0.1
+EXON_EXT_CVG_RATIO_THRESH = 3
 BUILD_MODELS_WITH_RETAINED_INTRONS = False
 
 CAGE_PEAK_WIN_SIZE = 15

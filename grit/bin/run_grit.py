@@ -422,7 +422,7 @@ def parse_arguments():
         help='Use polya sites inferred from the end of reference transcripts.')
 
     parser.add_argument( '--max-num-candidate-transcripts', 
-                         default=1000000, type=int,
+                         default=50000, type=int,
         help='Max number of transcript models to build in any gene locus (DEFAULT 1e6).')
     parser.add_argument( '--max-num-transcripts-to-quantify', 
                          default=1000, type=int,
