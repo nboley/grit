@@ -355,6 +355,9 @@ def add_elements_for_contig_and_strand((contig, strand),
             build_and_write_gene( gene_data, output, 
                                   gtf_ofp, tracking_ofp,
                                   fasta, ref_genes)
+            config.log_statement( 
+                "Clustering elements into genes for %s:%s" % ( 
+                    contig, strand ) )
     
     config.log_statement( 
         "FINISHED Clustering elements into genes for %s:%s" % (contig, strand))
@@ -385,13 +388,14 @@ def feed_elements(raw_elements, elements,
     for i in xrange(config.NTHREADS):
         all_args.put('FINISHED')
 
+    num_add_element_threads = min(len(raw_elements), config.NTHREADS)
     gene_id_cntr = multiprocessing.Value('i', 0)
-    nthreads_remaining = multiprocessing.Value('i', len(raw_elements))
+    nthreads_remaining = multiprocessing.Value('i', num_add_element_threads)
     worker_args = [ all_args, elements, gene_id_cntr,
                     output, gtf_ofp, tracking_ofp, 
                     fasta_fp, ref_genes ]
     cluster_pids = []
-    for i in xrange(min(len(raw_elements), config.NTHREADS)):
+    for i in xrange(num_add_element_threads):
         pid = os.fork()
         if pid == 0:
             add_elements_for_contig_and_strand_worker(*worker_args)
