@@ -58,6 +58,7 @@ NUM_TES_BASES_TO_SKIP = 300
 
 TES_EXON_MERGE_DISTANCE = 0
 TSS_EXON_MERGE_DISTANCE = 0
+MAX_DISTAL_SIZE_FOR_MATCH_OFFSET = 100
 
 tmp_dir = None
 
@@ -67,5 +68,5 @@ def get_gene_tmp_fname(gene_id, sample_type=None, rep_id=None):
 def get_fmat_tmp_fname(gene_id, sample_type=None, rep_id=None):
     return os.path.join(tmp_dir, "%s.fmat" % gene_id)
 
-def log_statement(*args):
+def log_statement(*args, **kwargs):
     print args[0]
