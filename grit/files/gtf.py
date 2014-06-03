@@ -3,6 +3,7 @@
 import os, sys
 from collections import namedtuple, defaultdict
 import itertools
+import tempfile
 
 from ..transcript import Gene, Transcript, GenomicInterval
     
@@ -215,7 +216,7 @@ def _load_gene_from_gtf_lines( gene_id, gene_lines, transcripts_data ):
         gene_start = min(t.start for t in transcripts )
         gene_stop = max(t.stop for t in transcripts )
         # get gene name, making sure they are all the same for the gene id
-        gene_name = set(t.gene_name for t in transcripts)
+        gene_name = set(t.gene_id for t in transcripts)
         assert len(gene_name) == 1
         gene_name = gene_name.pop()
         gene_meta_data = {}
@@ -317,6 +318,77 @@ def load_gtf(fname_or_fp, contig=None, strand=None):
         fp.close()
     
     return genes
+
+def load_next_gene_from_gtf(fp, contig=None, strand=None):
+    def load_next_line():
+        while True:
+            line = fp.readline()
+            if line == '': return None
+            data = parse_gtf_line(line, fix_chrm=True )
+            # skip unparseable lines, or lines without gene ids
+            if None == data: continue
+            if data.gene_id == "": continue
+            if contig != None and data.region.chr != contig: continue
+            if strand != None and data.region.strand != strand: continue
+            return data
+    
+    # load the first line, and initialize the data structures
+    data = load_next_line()
+    # if the file is empty, return None
+    if data == None: raise StopIteration, "No more data in fp"
+    gene_id = data.gene_id
+    gene_lines = []
+    transcripts_lines = defaultdict(list)
+    if data.feature == 'gene': gene_lines.append(data)
+    else: transcripts_lines[data.trans_id].append(data)
+    
+    while True:
+        pos = fp.tell()
+        data = load_next_line()
+        # if the file is empty, we're done
+        if data == None: break
+        # if we've found a new gene, then put the file pointer at the position
+        # of the new gene, and then we're done loading lines
+        if data.gene_id != gene_id: 
+            fp.seek(pos)
+            break
+        if data.feature == 'gene': gene_lines.append(data)
+        else: transcripts_lines[data.trans_id].append(data)
+    
+    # load the gene into a gene data structure
+    try:
+        gene = _load_gene_from_gtf_lines(
+            gene_id, gene_lines, transcripts_lines)
+    except Exception, inst:
+        log_statement( 
+            "ERROR : Could not load '%s': %s" % (gene_id, inst), log=True)
+        log_statement( traceback.format_exc(), log=True )
+        if DEBUG: raise
+        return None
+    else:
+        return gene
+
+def load_gtf_into_pickled_files(fname_or_fp, contig=None, strand=None):
+    if isinstance( fname_or_fp, str ):
+        fp = open( fname_or_fp )
+    else:
+        assert isinstance( fname_or_fp, file )
+        fp = fname_or_fp
+    
+    # initialize the tmp directory
+    op_dir = os.path.abspath(tempfile.mkdtemp(prefix=".pickled_genes",dir="./"))
+    genes_and_fnames = {}
+    while True:
+        try: 
+            gene = load_next_gene_from_gtf(fp, contig, strand)
+            ofname = os.path.join(op_dir, "%s.gene" % gene.id)
+            assert gene.id not in genes_and_fnames
+            gene.write_to_file(ofname)
+            genes_and_fnames[gene.id] = (
+                (gene.chrm, gene.strand, gene.start, gene.stop),
+                ofname)
+        except StopIteration:
+            return genes_and_fnames
 
 def create_gff_line( region, grp_id, score=0, \
                      feature='.', source='.', frame='.' ):
