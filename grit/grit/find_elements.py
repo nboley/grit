@@ -1368,7 +1368,8 @@ def build_raw_elements_in_gene( gene,
     return rnaseq_cov, cage_cov, cage_peaks, polya_cov, polya_peaks, jns
 
 def iter_retained_intron_connected_exons(
-        left_exons, right_exons, retained_introns ):
+        left_exons, right_exons, retained_introns,
+        max_num_exons=None):
     graph = nx.DiGraph()
     left_exons = sorted((x.start, x.stop) for x in left_exons)
     right_exons = sorted((x.start, x.stop) for x in right_exons)
@@ -1378,10 +1379,15 @@ def iter_retained_intron_connected_exons(
     edges = find_jn_connected_exons(set(chain(left_exons, right_exons)), 
                                     retained_jns, '+')
     graph.add_edges_from( (start, stop) for jn, start, stop in edges )    
+    cntr = 0
     for left in left_exons:
         for right in right_exons:
             if left[1] > right[0]: continue
-            for x in nx.all_simple_paths(graph, left, right):
+            for x in nx.all_simple_paths(
+                    graph, left, right, max_num_exons-cntr+1):
+                cntr += 1
+                if max_num_exons != None and cntr > max_num_exons:
+                    raise ValueError, "Too many retained introns"
                 yield (x[0][0], x[-1][1])
     return
 
@@ -1513,19 +1519,42 @@ def find_exons_in_gene( gene, contig_len,
     retained_intron_bins = Bins(gene.chrm, gene.strand, retained_intron_bins)
 
     if config.BUILD_MODELS_WITH_RETAINED_INTRONS:
-        for start, stop in iter_retained_intron_connected_exons(
-                tss_exons, internal_exons, retained_intron_bins):
-            tss_exons.append( Bin(start, stop, 'TSS', 'D_JN', 'TSS_EXON') )
-        for start, stop in iter_retained_intron_connected_exons(
-                internal_exons, internal_exons, retained_intron_bins):
-            internal_exons.append( Bin(start, stop, 'R_JN', 'D_JN', 'EXON') )
-        for start, stop in iter_retained_intron_connected_exons(
-                internal_exons, tes_exons, retained_intron_bins):
-            tes_exons.append( Bin(start, stop, 'D_JN', 'TES', 'TES_EXON'))
-        for start, stop in iter_retained_intron_connected_exons(
-                tss_exons, tes_exons, retained_intron_bins):
-            se_genes.append( Bin(start, stop, 'TSS', 'TES', 'SE_GENE'))
+        try:
+            cnt = 0
+            tss_RI_exons = [ 
+                Bin(start, stop, 'TSS', 'D_JN', 'TSS_EXON')
+                for start, stop in iter_retained_intron_connected_exons(
+                    tss_exons, internal_exons, retained_intron_bins,
+                    config.MAX_NUM_CANDIDATE_TRANSCRIPTS - cnt) ]
+            cnt += len(tss_RI_exons)
+            internal_RI_exons = [ 
+                Bin(start, stop, 'R_JN', 'D_JN', 'EXON')
+                for start, stop in iter_retained_intron_connected_exons(
+                    tss_exons, internal_exons, retained_intron_bins,
+                    config.MAX_NUM_CANDIDATE_TRANSCRIPTS - cnt) ]
+            cnt += len(internal_RI_exons)
+            tes_RI_exons = [ 
+                Bin(start, stop, 'D_JN', 'TES', 'TES_EXON')
+                for start, stop in iter_retained_intron_connected_exons(
+                    tss_exons, internal_exons, retained_intron_bins,
+                    config.MAX_NUM_CANDIDATE_TRANSCRIPTS - cnt) ]
+            cnt += len(tes_RI_exons)
+            single_exon_RI_transcripts = [ 
+                Bin(start, stop, 'TSS', 'TES', 'SE_GENE')
+                for start, stop in iter_retained_intron_connected_exons(
+                    tss_exons, internal_exons, retained_intron_bins,
+                    config.MAX_NUM_CANDIDATE_TRANSCRIPTS - cnt) ]
+            cnt += len(single_exon_RI_transcripts)
+        except ValueError:
+            config.log_statement( 
+                "Skipping %s:%s:%i-%i: Too many retained introns" %
+                (gene.chrm, gene.strand, gene.start, gene.stop), log=True )
+            return [], gene_bins, None
 
+        tss_exons.extend(tss_RI_exons)
+        internal_exons.extend(internal_RI_exons)
+        tes_exons.extend(tes_RI_exons)
+        se_genes.extend(single_exon_RI_transcripts)
     
     # skip the first 200 bases to account for the expected lower coverage near 
     # the transcript bounds
