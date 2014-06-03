@@ -10,6 +10,8 @@ from reads import clean_chr_name
 
 from ..config import log_statement
 
+import traceback
+
 GffLine = namedtuple( "GffLine", ["region", "feature", "score", 
                                   "source", "frame", "group"]  )
 GtfLine = namedtuple( "GtfLine", ["region", "gene_id", "trans_id", "feature", 

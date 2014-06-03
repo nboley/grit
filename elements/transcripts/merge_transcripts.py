@@ -19,8 +19,8 @@ from scipy.cluster.hierarchy import fclusterdata
 VERBOSE = True
 MERGE_DISTAL_ENDS = False
 SINGLE_LINKAGE_CLUSTER = True
-LINKAGE_CLUSTER_GAP = 50
-LINKAGE_CLUSTER_MAX_DIFF = 200
+LINKAGE_CLUSTER_GAP = 500
+LINKAGE_CLUSTER_MAX_DIFF = 2000
 
 def build_exon_to_transcripts_map( transcripts, source_fnames ):
     exon_to_transcripts_map = defaultdict( lambda: defaultdict(list) )

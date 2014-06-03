@@ -158,6 +158,11 @@ def rename_transcripts(gene, ref_genes):
     if len(ref_genes) == 0:
         return gene
     
+    max_tes_offset = ( 
+        config.MAX_DISTAL_SIZE_FOR_MATCH_OFFSET+config.TES_EXON_MERGE_DISTANCE)
+    max_tss_offset = ( 
+        config.MAX_DISTAL_SIZE_FOR_MATCH_OFFSET+config.TSS_EXON_MERGE_DISTANCE)
+    
     for t in gene.transcripts:
         best_match = None
         best_match_score = (0, -1e9, 0)
