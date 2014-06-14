@@ -8,7 +8,7 @@ import tempfile
 from ..transcript import Gene, Transcript, GenomicInterval
     
 from reads import clean_chr_name
-
+from tracking import load_expression_tracking_data
 from ..config import log_statement
 
 import traceback
@@ -319,7 +319,8 @@ def load_gtf(fname_or_fp, contig=None, strand=None):
     
     return genes
 
-def load_next_gene_from_gtf(fp, contig=None, strand=None):
+def load_next_gene_from_gtf(fp, contig=None, strand=None, 
+                            all_expression_data=[]):
     def load_next_line():
         while True:
             line = fp.readline()
@@ -331,6 +332,25 @@ def load_next_gene_from_gtf(fp, contig=None, strand=None):
             if contig != None and data.region.chr != contig: continue
             if strand != None and data.region.strand != strand: continue
             return data
+    
+    def set_expression_data(transcript):
+        def mean_or_none(data):
+            if len(data) == 0: return None
+            return sum(data)/len(data)
+        
+        fpkms = []
+        conf_los = []
+        conf_his = []
+        for expression_data in all_expression_data:
+            try: data = expression_data[transcript.id]
+            except KeyError: continue
+            if data.FPKM != None: fpkms.append(data.FPKM)
+            if data.FPKM_lo != None: conf_los.append(data.FPKM_lo)
+            if data.FPKM_hi != None: conf_his.append(data.FPKM_hi)
+        
+        transcript.fpkm = mean_or_none(fpkms)
+        transcript.conf_lo = mean_or_none(conf_los)
+        transcript.conf_hi = mean_or_none(conf_his)
     
     # load the first line, and initialize the data structures
     data = load_next_line()
@@ -359,6 +379,8 @@ def load_next_gene_from_gtf(fp, contig=None, strand=None):
     try:
         gene = _load_gene_from_gtf_lines(
             gene_id, gene_lines, transcripts_lines)
+        for t in gene.transcripts:
+            set_expression_data(t)
     except Exception, inst:
         log_statement( 
             "ERROR : Could not load '%s': %s" % (gene_id, inst), log=True)
@@ -368,19 +390,28 @@ def load_next_gene_from_gtf(fp, contig=None, strand=None):
     else:
         return gene
 
-def load_gtf_into_pickled_files(fname_or_fp, contig=None, strand=None):
+def load_gtf_into_pickled_files(fname_or_fp, 
+                                contig=None, strand=None,
+                                expression_fnames=[]):
     if isinstance( fname_or_fp, str ):
         fp = open( fname_or_fp )
     else:
         assert isinstance( fname_or_fp, file )
         fp = fname_or_fp
     
+    # load the expression data
+    all_expression_data = []
+    for fname in expression_fnames:
+        with open(fname) as exp_fp:
+            all_expression_data.append(load_expression_tracking_data(exp_fp))
+    
     # initialize the tmp directory
     op_dir = os.path.abspath(tempfile.mkdtemp(prefix=".pickled_genes",dir="./"))
     genes_and_fnames = {}
     while True:
         try: 
-            gene = load_next_gene_from_gtf(fp, contig, strand)
+            gene = load_next_gene_from_gtf(
+                fp, contig, strand, all_expression_data)
             ofname = os.path.join(op_dir, "%s.gene" % gene.id)
             assert gene.id not in genes_and_fnames
             gene.write_to_file(ofname)
