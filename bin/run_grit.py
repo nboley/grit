@@ -675,7 +675,9 @@ def main():
             elements = load_elements(elements_fp)
             genes_fnames = grit.build_transcripts.build_transcripts(
                 elements_fp, gtf_fname, tracking_fname, 
-                args.fasta, sample_data.ref_genes)
+                args.fasta, sample_data.ref_genes,
+                sample_type=sample_type, rep_id=None)
+        
         if config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS: continue
         rep_ids = sample_data.get_rep_ids(sample_type)
         
@@ -707,8 +709,8 @@ def main():
             
             grit.estimate_transcript_expression.quantify_transcript_expression(
                 promoter_reads, rnaseq_reads, polya_reads,
-                genes_fnames, fl_dists,
-                exp_ofname )
+                genes_fnames, fl_dists, exp_ofname, 
+                sample_type=sample_type, rep_id=rep_id )
     
 if __name__ == '__main__':
     try: main()

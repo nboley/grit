@@ -30,8 +30,8 @@ import config
 
 import cPickle as pickle
 
-SAMPLE_ID = ''
-REP_ID = ''
+SAMPLE_ID = None
+REP_ID = None
 
 class NoDesignMatrixError(Exception):
     pass
@@ -667,9 +667,14 @@ def write_data_to_tracking_file(data, fl_dists, ofp):
 def quantify_transcript_expression(
     promoter_reads, rnaseq_reads, polya_reads,
     pickled_gene_fnames, fl_dists,
-    ofname ):
+    ofname, sample_type=None, rep_id=None ):
     """Build transcripts
     """
+    global SAMPLE_ID
+    SAMPLE_ID=sample_type
+    global REP_ID
+    REP_ID = rep_id
+    
     write_design_matrices=False
 
     if config.VERBOSE: config.log_statement( 

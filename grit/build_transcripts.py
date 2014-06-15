@@ -255,7 +255,7 @@ def build_and_write_gene(gene_elements, output,
         # output manager
         ofname = gene.write_to_file(
             config.get_gene_tmp_fname(gene.id, SAMPLE_TYPE, REP_ID))
-                
+        
         output.put((gene.id, len(gene.transcripts), ofname))
         write_gene_to_gtf(gtf_ofp, gene)
         write_gene_to_tracking_file(tracking_ofp, gene)
@@ -431,9 +431,16 @@ def feed_elements(raw_elements, elements,
     return
 
 def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname, 
-                      fasta_fp=None, ref_genes=None):
+                      fasta_fp=None, ref_genes=None,
+                      sample_type=None, rep_id=None):
     """Build transcripts
     """    
+    # set the sample ype and rep id for the output tmp file names
+    global SAMPLE_TYPE
+    SAMPLE_TYPE = sample_type
+    global REP_ID
+    REP_ID = rep_id
+    
     # make sure that we're starting from the start of the 
     # elements files
     config.log_statement( "Loading %s" % exons_bed_fp.name, log=True )
