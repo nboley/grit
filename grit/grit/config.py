@@ -63,10 +63,17 @@ MAX_DISTAL_SIZE_FOR_MATCH_OFFSET = 100
 tmp_dir = None
 
 def get_gene_tmp_fname(gene_id, sample_type=None, rep_id=None):
-    return os.path.join(tmp_dir, "%s.gene" % gene_id)
+    rv = os.path.join(tmp_dir, "%s" % gene_id )
+    if sample_type != None: rv += ".%s" % sample_type
+    if rep_id != None: rv += ".%s" % rep_id
+    return rv + ".gene"
+
 
 def get_fmat_tmp_fname(gene_id, sample_type=None, rep_id=None):
-    return os.path.join(tmp_dir, "%s.fmat" % gene_id)
+    rv = os.path.join(tmp_dir, "%s" % gene_id )
+    if sample_type != None: rv += ".%s" % sample_type
+    if rep_id != None: rv += ".%s" % rep_id
+    return rv + ".fmat"
 
 def log_statement(*args, **kwargs):
     print args[0]

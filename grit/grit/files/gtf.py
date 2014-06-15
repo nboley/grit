@@ -407,19 +407,56 @@ def load_gtf_into_pickled_files(fname_or_fp,
     
     # initialize the tmp directory
     op_dir = os.path.abspath(tempfile.mkdtemp(prefix=".pickled_genes",dir="./"))
-    genes_and_fnames = {}
+    pickled_gene_fnames = []
     while True:
         try: 
             gene = load_next_gene_from_gtf(
                 fp, contig, strand, all_expression_data)
             ofname = os.path.join(op_dir, "%s.gene" % gene.id)
-            assert gene.id not in genes_and_fnames
             gene.write_to_file(ofname)
-            genes_and_fnames[gene.id] = (
-                (gene.chrm, gene.strand, gene.start, gene.stop),
-                ofname)
+            pickled_gene_fnames.append( ofname )
         except StopIteration:
-            return genes_and_fnames
+            return pickled_gene_fnames
+
+def load_gtf_and_expression_data_into_pickled_files(fname):
+    sample_type = os.path.basename(fname).split('.')[0]
+    expression_fnames = [ 
+            os.path.join(os.path.dirname(fname), f) 
+            for f in os.listdir(os.path.dirname(fname)) 
+            if os.path.basename(f).startswith(sample_type)
+            and os.path.basename(f).endswith("expression_tracking") ]
+    pickled_gene_fnames = load_gtf_into_pickled_files(
+            fname, expression_fnames=expression_fnames)
+    return pickled_gene_fnames
+
+def load_multiple_gtfs_into_pickled_files(fnames):
+    # load all the gtfs
+    import multiprocessing
+    manager = multiprocessing.Manager()
+    all_genes_and_fnames = manager.list()
+    all_genes_and_fnames_lock = multiprocessing.Lock()
+    pids = []
+    for fname in fnames:
+        pid = os.fork()
+        if pid == 0:
+            log_statement("Loading %s" % fname)
+            pickled_gene_fnames = load_gtf_and_expression_data_into_pickled_files(
+                fname)
+            with all_genes_and_fnames_lock:
+                all_genes_and_fnames.append((fname, pickled_gene_fnames))
+            log_statement("FINISHED Loading %s" % fname)
+            os._exit(0)
+        else:
+            pids.append(pid)
+    
+    for pid in pids:
+        os.waitpid(pid, 0)
+    del all_genes_and_fnames_lock
+    all_genes_and_fnames = list(all_genes_and_fnames)
+    manager.shutdown()
+    
+    return all_genes_and_fnames
+
 
 def create_gff_line( region, grp_id, score=0, \
                      feature='.', source='.', frame='.' ):
