@@ -647,6 +647,7 @@ def main():
         return 
 
     # build transcripts for each sample
+    sample_type_and_pickled_gene_fnames = []
     for sample_type, (elements_fp, gtf_fp) in elements.iteritems():
         gtf_fname = sample_type + ".gtf"
         tracking_fname = sample_type + ".transcript_tracking"
@@ -677,10 +678,16 @@ def main():
                 elements_fp, gtf_fname, tracking_fname, 
                 args.fasta, sample_data.ref_genes,
                 sample_type=sample_type, rep_id=None)
-        
-        if config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS: continue
+            sample_type_and_pickled_gene_fnames.append(
+                ( sample_type, genes_fnames))
+    
+    from grit.merge import merge_genes
+    merge_genes(sample_type_and_pickled_gene_fnames, sys.stdout, sys.stdout)
+    if config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS: return
+    for sample_type, genes_fnames in sample_type_and_pickled_gene_fnames:
         rep_ids = sample_data.get_rep_ids(sample_type)
-        
+        # if we are running from the command line, there wont be rep ids,
+        # so initialize this to none
         if len(rep_ids) == 0: rep_ids = [None,]
         for rep_id in rep_ids:
             config.log_statement("Loading reads for %s-%s" % (
