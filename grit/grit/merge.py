@@ -112,14 +112,14 @@ def reduce_internal_clustered_transcripts(
 
 def reduce_gene_clustered_transcripts(
         genes, new_gene_id,
-        min_upper_fpkm, 
-        max_intrasample_fpkm_ratio, 
-        max_intersample_fpkm_ratio,
-        max_cluster_gap):
+        min_upper_fpkm=-1, 
+        max_intrasample_fpkm_ratio=1e6, 
+        max_intersample_fpkm_ratio=1e6,
+        max_cluster_gap=50):
     # unpickle the genes, and find the expression thresholds    
     unpickled_genes = []
-    max_fpkm_lb_across_samples = 0
-    max_fpkm_lb_in_sample = defaultdict(float)
+    max_fpkm_lb_across_samples = -1.0
+    max_fpkm_lb_in_sample = defaultdict(lambda: -1.0)
     
     for gtf_fname, pickled_fname in genes:
         with open(pickled_fname) as fp:
@@ -130,7 +130,7 @@ def reduce_gene_clustered_transcripts(
                 transcript.conf_lo for transcript in gene.transcripts
                 if transcript.conf_lo != None )
         except ValueError:
-                continue
+            continue
         max_fpkm_lb_across_samples = max( 
                 max_fpkm_lb_across_samples, max_fpkm_lb_in_gene )
         max_fpkm_lb_in_sample[gtf_fname] = max(
@@ -145,9 +145,10 @@ def reduce_gene_clustered_transcripts(
                 min_upper_fpkm, 
                 max_fpkm_lb_in_sample[gtf_fname]/max_intrasample_fpkm_ratio,
                 max_fpkm_lb_across_samples/max_intersample_fpkm_ratio)
-        
         for transcript in gene.transcripts:
-            if transcript.conf_hi < min_max_fpkm: continue
+            # if we have expression scores and this transcript is below the
+            # threshold, then skip it
+            if min_max_fpkm >= 0 and transcript.conf_hi < min_max_fpkm: continue
             IB_key = transcript.IB_key()
             internal_clustered_transcript_groups[IB_key].append(
                 (transcript, gtf_fname))
@@ -166,7 +167,7 @@ def reduce_gene_clustered_transcripts(
             merged_transcripts.append(merged_transcript)
             merged_transcript_sources.append(
                 zip(old_transcripts, sources))
-
+    
     new_gene = Gene(new_gene_id, None,
                     chrm=merged_transcripts[0].chrm,
                     strand=merged_transcripts[0].strand,
