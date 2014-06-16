@@ -151,7 +151,7 @@ def iter_jns_in_read( read ):
             elif code == 1: n_pre_intron_bases -= size
             elif code == 2: n_pre_intron_bases += size
             elif code == 3: n_pre_intron_bases += size
-            elif code == 4: n_pre_intron_bases += size
+            #elif code == 4: n_pre_intron_bases += size
         
         # add one to left_intron since bam files are 0-based
         upstrm_intron_pos = read.pos + n_pre_intron_bases + 1

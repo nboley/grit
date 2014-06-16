@@ -11,7 +11,8 @@ sys.path.insert(0, "/home/nboley/grit/grit/")
 from grit.files.gtf import load_gtf
 from grit.files.reads import (
     MergedReads, clean_chr_name,
-    RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads )
+    RNAseqReads, CAGEReads, RAMPAGEReads, PolyAReads,
+    fix_chrm_name_for_ucsc)
 
 from grit.lib.logging import Logger
 
@@ -19,6 +20,8 @@ import grit.find_elements
 import grit.build_transcripts
 import grit.estimate_transcript_expression
 import grit.frag_len
+from grit.merge import (
+    group_overlapping_genes, reduce_gene_clustered_transcripts )
 
 import grit.config as config
 
@@ -28,6 +31,21 @@ ControlFileEntry = namedtuple('ControlFileEntry', [
         'filename'])
 
 import numpy
+
+def write_gene_to_gtf( ofp, gene ):
+    lines = []
+    for index, transcript in enumerate(gene.transcripts):
+        meta_data = {}
+        
+        if config.FIX_CHRM_NAMES_FOR_UCSC:
+            transcript.chrm = fix_chrm_name_for_ucsc(transcript.chrm)
+        assert transcript.gene_id != None
+        lines.append( transcript.build_gtf_lines(
+                meta_data, source="grit") + "\n" )
+    
+    ofp.write( "".join(lines) )    
+    return
+
 
 def convert_elements_to_arrays(all_elements):
     # convert into array
@@ -648,6 +666,7 @@ def main():
 
     # build transcripts for each sample
     sample_type_and_pickled_gene_fnames = []
+    fl_dists = []
     for sample_type, (elements_fp, gtf_fp) in elements.iteritems():
         gtf_fname = sample_type + ".gtf"
         tracking_fname = sample_type + ".transcript_tracking"
@@ -663,7 +682,7 @@ def main():
             config.log_statement( "Loading %s" % gtf_fp.name )
             genes_fnames = []
             genes = load_gtf(gtf_fp)
-            elements = extract_elements_from_genes(genes)
+            gene_elements = extract_elements_from_genes(genes)
             for gene in genes:
                 gene_fname = config.get_gene_tmp_fname(
                     gene.id, sample_type)
@@ -673,18 +692,59 @@ def main():
                      gene.write_to_file(gene_fname)))
             config.log_statement("Finished Loading %s" % gtf_fp.name)
         else:
-            elements = load_elements(elements_fp)
+            gene_elements = load_elements(elements_fp)
             genes_fnames = grit.build_transcripts.build_transcripts(
                 elements_fp, gtf_fname, tracking_fname, 
                 args.fasta, sample_data.ref_genes,
                 sample_type=sample_type, rep_id=None)
             sample_type_and_pickled_gene_fnames.append(
-                ( sample_type, genes_fnames))
+                ( sample_type, [ x[2] for x in genes_fnames]))
+
+        # estimate the fragment length distribution
+        rep_ids = sample_data.get_rep_ids(sample_type)
+        # if we are running from the command line, there wont be rep ids,
+        # so initialize this to none
+        if len(rep_ids) == 0: rep_ids = [None,]
+        for rep_id in rep_ids:
+            (promoter_reads, rnaseq_reads, polya_reads) = sample_data.get_reads(
+                sample_type, rep_id, 
+                verify_args=False, include_merged=False)
+            
+            fldist_fname = "%s.%s.fldists" % (sample_type, rep_id)
+            try: 
+                with open(fldist_fname) as fp:
+                    config.log_statement("Loading fldists")
+                    fl_dists = pickle.load(fp)
+            except IOError:
+                config.log_statement(
+                    "Estimating fragment length distribution", log=True)
+                fl_dists = grit.frag_len.build_fl_dists(
+                    gene_elements, rnaseq_reads)
+                with open(fldist_fname, "w") as ofp:
+                    pickle.dump(fl_dists, ofp)
+
     
-    from grit.merge import merge_genes
-    merge_genes(sample_type_and_pickled_gene_fnames, sys.stdout, sys.stdout)
+    #build the merged gtf file
+    gene_id_cntr = 1
+    merged_gene_pickled_fnames = []
+    output = []
+    gtf_ofp = file("merged.gtf", "w")
+    gtf_ofp.write("track name=merged useScore=1\n")
+    for genes in group_overlapping_genes(sample_type_and_pickled_gene_fnames):
+        new_gene_id = "GENE_%i" % gene_id_cntr
+        gene_id_cntr += 1
+        merged_gene, merged_transcript_sources = reduce_gene_clustered_transcripts(
+            genes, new_gene_id, max_cluster_gap=max(
+                config.TSS_EXON_MERGE_DISTANCE, config.TES_EXON_MERGE_DISTANCE))
+        ofname = config.get_gene_tmp_fname(merged_gene.id, 'merged')
+        merged_gene.write_to_file(ofname)
+        merged_gene_pickled_fnames.append(
+            (merged_gene.id, len(merged_gene.transcripts), ofname))
+        write_gene_to_gtf(gtf_ofp, merged_gene)
+    gtf_ofp.close()
+    
     if config.ONLY_BUILD_CANDIDATE_TRANSCRIPTS: return
-    for sample_type, genes_fnames in sample_type_and_pickled_gene_fnames:
+    for sample_type in elements.keys():
         rep_ids = sample_data.get_rep_ids(sample_type)
         # if we are running from the command line, there wont be rep ids,
         # so initialize this to none
@@ -702,21 +762,15 @@ def main():
             else:
                 exp_ofname = "%s.%s.expression_tracking" % (sample_type, rep_id)
             
+
             fldist_fname = "%s.%s.fldists" % (sample_type, rep_id)
-            try: 
-                with open(fldist_fname) as fp:
-                    config.log_statement("Loading fldists")
-                    fl_dists = pickle.load(fp)
-            except IOError:
-                config.log_statement(
-                    "Estimating fragment length distribution", log=True)
-                fl_dists = grit.frag_len.build_fl_dists(elements, rnaseq_reads)
-                with open(fldist_fname, "w") as ofp:
-                    pickle.dump(fl_dists, ofp)
+            with open(fldist_fname) as fp:
+                config.log_statement("Loading fldists")
+                fl_dists = pickle.load(fp)
             
             grit.estimate_transcript_expression.quantify_transcript_expression(
                 promoter_reads, rnaseq_reads, polya_reads,
-                genes_fnames, fl_dists, exp_ofname, 
+                merged_gene_pickled_fnames, fl_dists, exp_ofname, 
                 sample_type=sample_type, rep_id=rep_id )
     
 if __name__ == '__main__':
