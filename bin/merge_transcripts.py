@@ -36,15 +36,15 @@ def parse_arguments():
         help='Try to format contig names in the ucsc format (typically by prepending a chr).')    
     
     parser.add_argument(
-        '--min-fpkm-ub', default=0.0, type=float,
+        '--min-fpkm-ub', type=float, 
         help='Filter transcripts with fpkms upper bounds below this value.')
 
     parser.add_argument(
-        '--intrasample-max-fpkm-ratio', type=float, default=1e6,
+        '--intrasample-max-fpkm-ratio', type=float, 
         help='For each gene cluster and sample, filter transcripts whose fpkm upper bound is this many times lower than the maximum fpkm lower bound.')
 
     parser.add_argument(
-        '--intersample-max-fpkm-ratio', type=float, default=1e6,
+        '--intersample-max-fpkm-ratio', type=float, 
         help='For each gene cluster and between all samples, filter transcripts whose fpkm upper bound is this many times lower than the maximum fpkm lower bound.')
         
     parser.add_argument(
