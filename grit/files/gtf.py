@@ -251,6 +251,9 @@ class Annotation(object):
         self._gene_map = {}
         self._gene_locs = defaultdict(list)
     
+    def __len__(self):
+        return len(self._genes)
+    
     def append(self, gene):
         # make sure this is a gene object
         assert isinstance(gene, Gene)

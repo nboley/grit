@@ -183,7 +183,7 @@ def filter_exon(exon, wig, num_start_bases_to_skip=0, num_stop_bases_to_skip=0):
     '''
     start = exon.start + num_start_bases_to_skip
     end = exon.stop - num_stop_bases_to_skip
-    if end - start < config.MIN_EXON_SIZE: return False
+    if end - start < config.MIN_EXON_SIZE: return True
     vals = wig[start:end+1]
     n_div = max( 1, int(len(vals)/config.MAX_EMPTY_REGION_SIZE) )
     div_len = len(vals)/n_div
@@ -533,8 +533,8 @@ def load_and_filter_junctions(
         if val < config.NOISE_JN_FILTER_FRAC: continue
         val = beta.ppf(0.01, cnt+1, jn_stops[stop]+1)
         if val < config.NOISE_JN_FILTER_FRAC: continue
-        val = beta.ppf(0.01, cnt+1, jn_grps[jn_grp_map[(start, stop)]]+1)
-        if val < config.NOISE_JN_FILTER_FRAC: continue
+        #val = beta.ppf(0.01, cnt+1, jn_grps[jn_grp_map[(start, stop)]]+1)
+        #if val < config.NOISE_JN_FILTER_FRAC: continue
         if ( (cnt+1.)/(anti_strand_cnts[(start, stop)]+1) <= 1.):
             continue
         if stop - start + 1 > config.MAX_INTRON_SIZE: continue
@@ -1530,19 +1530,19 @@ def find_exons_in_gene( gene, contig_len,
             internal_RI_exons = [ 
                 Bin(start, stop, 'R_JN', 'D_JN', 'EXON')
                 for start, stop in iter_retained_intron_connected_exons(
-                    tss_exons, internal_exons, retained_intron_bins,
+                    internal_exons, internal_exons, retained_intron_bins,
                     config.MAX_NUM_CANDIDATE_TRANSCRIPTS - cnt) ]
             cnt += len(internal_RI_exons)
             tes_RI_exons = [ 
                 Bin(start, stop, 'D_JN', 'TES', 'TES_EXON')
                 for start, stop in iter_retained_intron_connected_exons(
-                    tss_exons, internal_exons, retained_intron_bins,
+                    internal_exons, tes_exons, retained_intron_bins,
                     config.MAX_NUM_CANDIDATE_TRANSCRIPTS - cnt) ]
             cnt += len(tes_RI_exons)
             single_exon_RI_transcripts = [ 
                 Bin(start, stop, 'TSS', 'TES', 'SE_GENE')
                 for start, stop in iter_retained_intron_connected_exons(
-                    tss_exons, internal_exons, retained_intron_bins,
+                    tss_exons, tes_exons, retained_intron_bins,
                     config.MAX_NUM_CANDIDATE_TRANSCRIPTS - cnt) ]
             cnt += len(single_exon_RI_transcripts)
         except ValueError:
