@@ -142,11 +142,13 @@ def iter_coverage_intervals_for_read(read):
         # skip past skipped regions
         elif contig_type == 3:
             start += length
+        # XXX BUG
         # skip past soft clipped regions, because the
         # actual aligned sequence doesnt start until we've moved
         # past the clipped region
         elif contig_type == 4:
-            start += length
+            pass
+        #    start += length
         # hard clipped regions are not present int he aligned 
         # sequence, so do nothing
         elif contig_type == 5:

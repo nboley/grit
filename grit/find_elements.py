@@ -183,7 +183,7 @@ def filter_exon(exon, wig, num_start_bases_to_skip=0, num_stop_bases_to_skip=0):
     '''
     start = exon.start + num_start_bases_to_skip
     end = exon.stop - num_stop_bases_to_skip
-    if end - start < config.MIN_EXON_SIZE: return True
+    if start <= end - 10: return False
     vals = wig[start:end+1]
     n_div = max( 1, int(len(vals)/config.MAX_EMPTY_REGION_SIZE) )
     div_len = len(vals)/n_div
@@ -1401,7 +1401,7 @@ def merge_tss_exons(tss_exons):
         curr_start = exons[0].start
         score = exons[0].score
         for exon in exons[1:]:
-            if exon.start - curr_start < config.TES_EXON_MERGE_DISTANCE:
+            if exon.start - curr_start < config.TSS_EXON_MERGE_DISTANCE:
                 score += exon.score
             else:
                 merged_tss_exons.append( Bin(curr_start, stop,
