@@ -112,12 +112,13 @@ def reduce_internal_clustered_transcripts(
 
 def reduce_gene_clustered_transcripts(
         genes, new_gene_id,
-        min_upper_fpkm=-1, 
-        max_intrasample_fpkm_ratio=1e6, 
-        max_intersample_fpkm_ratio=1e6,
+        min_upper_fpkm=None, 
+        max_intrasample_fpkm_ratio=None, 
+        max_intersample_fpkm_ratio=None,
         max_cluster_gap=50):
     # unpickle the genes, and find the expression thresholds    
     unpickled_genes = []
+    if min_upper_fpkm == None: min_upper_fpkm = -1
     max_fpkm_lb_across_samples = -1.0
     max_fpkm_lb_in_sample = defaultdict(lambda: -1.0)
     
@@ -143,12 +144,15 @@ def reduce_gene_clustered_transcripts(
     for gtf_fname, gene in genes:
         min_max_fpkm = max(
                 min_upper_fpkm, 
-                max_fpkm_lb_in_sample[gtf_fname]/max_intrasample_fpkm_ratio,
-                max_fpkm_lb_across_samples/max_intersample_fpkm_ratio)
+                ( max_fpkm_lb_in_sample[gtf_fname]/max_intrasample_fpkm_ratio 
+                  if max_intrasample_fpkm_ratio != None else -1 ),
+                ( max_fpkm_lb_across_samples/max_intersample_fpkm_ratio
+                  if max_intersample_fpkm_ratio != None else -1 )
+                )
         for transcript in gene.transcripts:
             # if we have expression scores and this transcript is below the
             # threshold, then skip it
-            if min_max_fpkm >= 0 and transcript.conf_hi < min_max_fpkm: continue
+            if min_max_fpkm > 0 and transcript.conf_hi < min_max_fpkm: continue
             IB_key = transcript.IB_key()
             internal_clustered_transcript_groups[IB_key].append(
                 (transcript, gtf_fname))
