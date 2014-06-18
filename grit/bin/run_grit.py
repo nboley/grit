@@ -679,8 +679,13 @@ def main():
                 msg = "WARNING: '%s' already exists - using existing file."
                 config.log_statement(msg % gtf_fname, log=True)
         if gtf_fp != None:
-            config.log_statement( "Loading %s" % gtf_fp.name )
+            config.log_statement( "Loading %s" % gtf_fp.name, log=True )
             genes_fnames = []
+            fnames = [ fname for fname in os.listdir(config.tmp_dir)
+                       if fname.endswith("%s.gene" % sample_type) ]
+            sample_type_and_pickled_gene_fnames.append( (sample_type, fnames) )
+            continue
+            """
             genes = load_gtf(gtf_fp)
             gene_elements = extract_elements_from_genes(genes)
             for gene in genes:
@@ -691,6 +696,7 @@ def main():
                      len(gene.transcripts), 
                      gene.write_to_file(gene_fname)))
             config.log_statement("Finished Loading %s" % gtf_fp.name)
+            """
         else:
             gene_elements = load_elements(elements_fp)
             genes_fnames = grit.build_transcripts.build_transcripts(
