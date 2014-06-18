@@ -89,7 +89,8 @@ def write_reduced_gene_to_file(new_gene, merged_transcript_sources,
             tracking_lines.append(line)
     
     ofp.write("\n".join(gtf_lines)+"\n")
-    tracking_ofp.write("\n".join(tracking_lines)+"\n")
+    if tracking_ofp != None:
+        tracking_ofp.write("\n".join(tracking_lines)+"\n")
     return
 
 def merge_clustered_genes_worker(clustered_genes, clustered_genes_lock, 
@@ -111,7 +112,7 @@ def merge_clustered_genes_worker(clustered_genes, clustered_genes_lock,
             max_cluster_gap=500)
         write_reduced_gene_to_file(
             new_gene, merged_transcript_sources, ofp, tracking_ofp)
-   
+    
     return
 
 def merge_genes(all_sources_and_genes, ofp, sources_ofp):
@@ -123,7 +124,9 @@ def merge_genes(all_sources_and_genes, ofp, sources_ofp):
     manager = multiprocessing.Manager()
     grpd_genes = manager.list()
     grpd_genes_lock = multiprocessing.Lock()
-    grpd_genes = group_overlapping_genes(all_sources_and_genes)
+
+    for genes in group_overlapping_genes(all_sources_and_genes):
+        grpd_genes.append(genes)
     
     # merge gene clustered transcripts
     config.log_statement("Merging transcripts", log=True)
@@ -160,6 +163,7 @@ def main():
     merge_genes(all_genes_and_fnames, ofp, sources_ofp)
     
     ofp.close()
-    sources_ofp.close()
+    if sources_ofp != None:
+        sources_ofp.close()
 
 main()
