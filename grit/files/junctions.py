@@ -291,9 +291,6 @@ def load_junctions_in_bam( reads, regions=None, nthreads=1):
             config.log_statement("Merging junctions from threads")
         junctions = {}
         for key in all_jns.keys():
-            contig_jns = defaultdict(int)
-            for jn, cnt in all_jns[key]:
-                contig_jns[jn] += cnt
-            junctions[key] = sorted(contig_jns.iteritems())
+            junctions[key] = sorted(all_jns[key])
         return junctions
     assert False

@@ -183,7 +183,7 @@ def filter_exon(exon, wig, num_start_bases_to_skip=0, num_stop_bases_to_skip=0):
     '''
     start = exon.start + num_start_bases_to_skip
     end = exon.stop - num_stop_bases_to_skip
-    if start <= end - 10: return False
+    if start >= end - 10: return False
     vals = wig[start:end+1]
     n_div = max( 1, int(len(vals)/config.MAX_EMPTY_REGION_SIZE) )
     div_len = len(vals)/n_div
@@ -473,8 +473,9 @@ def load_and_filter_junctions(
         rnaseq_reads, promoter_reads, polya_reads, 
         region, nthreads ):
     chrm, strand, region_start, region_stop = region
+    anti_strand = '+' if strand == '-' else '-'
     anti_strand_region = [ 
-        chrm, '+' if strand == '-' else '-', region_start, region_stop ]
+        chrm, anti_strand, region_start, region_stop ]
     if config.ONLY_USE_REFERENCE_JUNCTIONS:
         assert False
         return {(chrm, strand): defaultdict(int)}
@@ -485,7 +486,8 @@ def load_and_filter_junctions(
     rnaseq_junctions = files.junctions.load_junctions_in_bam(
         rnaseq_reads, [region,], nthreads=nthreads)[(chrm, strand)]
     anti_strand_rnaseq_junctions = files.junctions.load_junctions_in_bam(
-        rnaseq_reads, [anti_strand_region,], nthreads=nthreads).values()[0]
+        rnaseq_reads, [anti_strand_region,], nthreads=nthreads)[
+        (chrm, anti_strand)]
     promoter_jns = None if promoter_reads == None else \
         files.junctions.load_junctions_in_bam(
             promoter_reads, [region,], nthreads)[(chrm, strand)]
@@ -668,9 +670,9 @@ def find_gene_boundaries((chrm, strand, contig_len),
         
     if junctions == None:
         # load junctions from the RNAseq data
-        junctions = load_junctions( 
+        junctions = load_and_filter_junctions( 
             rnaseq_reads, cage_reads, polya_reads, 
-            [(chrm, strand, 0, contig_len),], nthreads )[(chrm, strand)]
+            (chrm, strand, 0, contig_len), nthreads )[(chrm, strand)]
     
     # update the junctions with the reference junctions, and sort them
     if ref_elements_to_include.junctions:
@@ -1753,11 +1755,12 @@ def find_all_gene_segments( contig_lens,
                 for jn in contig_ref_elements['intron']:
                     junctions[(chrm, strand)][jn] += 0
         
-        discovered_junctions = load_junctions( 
-            rnaseq_reads, promoter_reads, polya_reads, regions, config.NTHREADS)
-        for (chrm, strand), contig_jns in discovered_junctions.iteritems():
-            for jn, cnt in contig_jns.iteritems():
-                junctions[(chrm, strand)][jn] += cnt                
+        for region in regions:
+            discovered_junctions = load_and_filter_junctions( 
+                rnaseq_reads, promoter_reads, polya_reads, 
+                region, config.NTHREADS)
+            for jn, cnt in discovered_junctions.iteritems():
+                junctions[(region[0], region[1])][jn] += cnt                
         del discovered_junctions
         
 
