@@ -659,15 +659,17 @@ def main():
         elements = {sample_type: (args.elements, None)}
     else:
         elements = discover_elements(sample_data, args)
-
-    # if we are only building elements, then we are done
-    if args.only_build_elements:
-        return 
-
+    
     # build transcripts for each sample
     sample_type_and_pickled_gene_fnames = []
     fl_dists = []
     for sample_type, (elements_fp, gtf_fp) in elements.iteritems():
+        # if we are only building elements, then we still need to 
+        # loop through the samples because they are built lazily, 
+        # but we dont need to do anything else
+        if args.only_build_elements:
+            continue
+
         gtf_fname = sample_type + ".gtf"
         tracking_fname = sample_type + ".transcript_tracking"
         assert elements_fp == None or gtf_fp == None
@@ -729,6 +731,8 @@ def main():
                 with open(fldist_fname, "w") as ofp:
                     pickle.dump(fl_dists, ofp)
 
+    if args.only_build_elements:
+        return
     
     #build the merged gtf file
     gene_id_cntr = 1

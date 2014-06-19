@@ -476,6 +476,7 @@ def load_and_filter_junctions(
     anti_strand_region = [ 
         chrm, '+' if strand == '-' else '-', region_start, region_stop ]
     if config.ONLY_USE_REFERENCE_JUNCTIONS:
+        assert False
         return {(chrm, strand): defaultdict(int)}
     
     # load and filter the ranseq reads. We can't filter all of the reads because
@@ -495,8 +496,8 @@ def load_and_filter_junctions(
     filtered_junctions = defaultdict(int)
     
     # filter junctions by counts on the oppsotie strand
-    anti_strand_cnts = {}
-    for jn, cnt, entropy in rnaseq_junctions:
+    anti_strand_cnts = defaultdict(int)
+    for jn, cnt, entropy in anti_strand_rnaseq_junctions:
         anti_strand_cnts[jn] = cnt
     
     # filter junctions by shared donor/acceptor site counts
@@ -506,6 +507,7 @@ def load_and_filter_junctions(
         jn_starts[start] = max( jn_starts[start], cnt )
         jn_stops[stop] = max( jn_stops[stop], cnt )
         
+    """
     # filter junctions by overlapping groups of the same length
     jns_grouped_by_lens = defaultdict(list)
     for (start, stop), cnt, entropy in rnaseq_junctions:
@@ -525,10 +527,11 @@ def load_and_filter_junctions(
                 jn_grp_map[jn] = len(jn_grps) - 1
                 jn_grps[-1] = max(jn_grps[-1], cnt)
             prev_jn = jn
-        
+    """
+    
     for (start, stop), cnt, entropy in rnaseq_junctions:
         if entropy < config.MIN_ENTROPY: continue
-
+        
         val = beta.ppf(0.01, cnt+1, jn_starts[start]+1)
         if val < config.NOISE_JN_FILTER_FRAC: continue
         val = beta.ppf(0.01, cnt+1, jn_stops[stop]+1)
