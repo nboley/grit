@@ -1278,11 +1278,10 @@ def filter_jns(jns, ref_jns, rnaseq_cov, gene):
         left_intron_cvg = rnaseq_cov[start+10:start+30].sum()/20
         right_intron_cvg = rnaseq_cov[stop-30:stop-10].sum()/20
         if (start, stop) not in ref_jns:
-            if ( beta.ppf(0.99, cnt+1, left_intron_cvg+1) 
-                     < config.NOISE_JN_FILTER_FRAC):
-                continue
-            if ( beta.ppf(0.99, cnt+1, right_intron_cvg+1) 
-                     < config.NOISE_JN_FILTER_FRAC ):
+            if ( ( beta.ppf(0.975, cnt+1, left_intron_cvg+1) 
+                   < 1./config.EXON_EXT_CVG_RATIO_THRESH ) 
+                 or ( beta.ppf(0.975, cnt+1, right_intron_cvg+1) 
+                       < 1./config.EXON_EXT_CVG_RATIO_THRESH ) ):
                 continue
         #elif not config.ONLY_USE_REFERENCE_JUNCTIONS:
         #    if ( beta.ppf(0.99, cnt+1, left_intron_cvg+1) 
