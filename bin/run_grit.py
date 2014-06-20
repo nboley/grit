@@ -146,6 +146,9 @@ class Samples(object):
         return lines
     
     def verify_args_are_sufficient(self, rnaseq_reads, promoter_reads, polya_reads):
+        if len(rnaseq_reads) == 0:
+            raise ValueError, "RNAseq reads must be provided for each sample"
+        
         if ( len(promoter_reads) == 0
              and not self.args.use_reference_tss_exons
              and not self.args.use_reference_promoters):
@@ -569,7 +572,7 @@ def parse_arguments():
             raise OSError, "Directory '%s' already exists: either remove it, change the --output-dir option, or use the --continue-run option" % args.output_dir
     os.chdir(args.output_dir)
     
-    log_ofstream = open( "log.txt", "w" )
+    log_ofstream = open( "log.txt", "a" )
     log_statement = Logger(
         nthreads=config.NTHREADS,
         use_ncurses=(not args.batch_mode), 
@@ -683,7 +686,8 @@ def main():
         if gtf_fp != None:
             config.log_statement( "Loading %s" % gtf_fp.name, log=True )
             genes_fnames = []
-            fnames = [ fname for fname in os.listdir(config.tmp_dir)
+            fnames = [ os.path.join(config.tmp_dir, fname) 
+                       for fname in os.listdir(config.tmp_dir)
                        if fname.endswith("%s.gene" % sample_type) ]
             sample_type_and_pickled_gene_fnames.append( (sample_type, fnames) )
             continue
