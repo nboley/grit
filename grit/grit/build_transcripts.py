@@ -43,28 +43,34 @@ REP_ID = None
 class TooManyCandidateTranscriptsError(Exception):
     pass
 
+def iter_paths(graph, tss_exons, tes_exons):
+    paths = [[exon,] for exon in tss_exons]
+    while len(paths) > 0:
+        curr_path = paths.pop()
+        for child in graph.successors(curr_path[-1]):
+            if child in tes_exons:
+                yield curr_path + [child,]
+            else:
+                paths.append(curr_path + [child,])
+    return
+
 def build_transcripts_from_elements( 
         tss_exons, internal_exons, tes_exons, se_transcripts, jns, strand ):
-                       
     # build a directed graph, with edges leading from exon to exon via junctions
     all_exons = sorted(chain(tss_exons, internal_exons, tes_exons))
     graph = nx.DiGraph()
     graph.add_nodes_from( tss_exons )
     graph.add_nodes_from( internal_exons )
     graph.add_nodes_from( tes_exons )
-    
     edges = find_jn_connected_exons(all_exons, jns, strand )
     graph.add_edges_from( (start, stop) for jn, start, stop in edges )
-    transcripts = []
-    for tss in tss_exons:
-        for tes in tes_exons:
-            cutoff = config.MAX_NUM_CANDIDATE_TRANSCRIPTS-len(transcripts)+1
-            for transcript in nx.all_simple_paths(graph, tss, tes, cutoff):
-                transcripts.append( sorted(transcript) )
-                if len(transcripts) > config.MAX_NUM_CANDIDATE_TRANSCRIPTS:
-                    raise TooManyCandidateTranscriptsError, "Too many candidate transcripts"
-                
-    return transcripts + [ [x,] for x in se_transcripts ]
+    assert nx.is_directed_acyclic_graph(graph)
+    transcripts = [ [x,] for x in se_transcripts ]
+    for transcript in iter_paths(graph, tss_exons, tes_exons):
+        transcripts.append( sorted(transcript) )
+        if len(transcripts) > config.MAX_NUM_CANDIDATE_TRANSCRIPTS:
+            raise TooManyCandidateTranscriptsError, "Too many candidate transcripts"
+    return transcripts
 
 class MaxIterError( ValueError ):
     pass
@@ -241,9 +247,15 @@ def build_and_write_gene(gene_elements, output,
                          gtf_ofp, tracking_ofp,
                          fasta, ref_genes ):
     # build the gene with transcripts, and optionally call orfs
+    start = min(x[0] for x in chain(
+            gene_elements.promoter, gene_elements.polyas))
+    stop = max(x[1] for x in chain(
+            gene_elements.promoter, gene_elements.polyas))
     try:
         config.log_statement(
-            "Building transcript and ORFs for Gene %s" % gene_elements.id)
+            "Building transcripts and ORFs for %s (%s:%s:%i-%i)" % (
+                gene_elements.id, gene_elements.chrm, gene_elements.strand, 
+                start, stop) )
         
         gene = build_gene(gene_elements, fasta, ref_genes)
         if gene == None: 
@@ -260,10 +272,6 @@ def build_and_write_gene(gene_elements, output,
         write_gene_to_gtf(gtf_ofp, gene)
         write_gene_to_tracking_file(tracking_ofp, gene)
     except TooManyCandidateTranscriptsError:
-        start = min(x[0] for x in chain(
-                gene_elements.promoter, gene_elements.polyas))
-        stop = max(x[1] for x in chain(
-                gene_elements.promoter, gene_elements.polyas))
         config.log_statement(
             "Too many candidate transcripts in %s(%s:%s:%i-%i)" % (
                 gene_elements.id, gene_elements.chrm, gene_elements.strand, 
@@ -271,10 +279,6 @@ def build_and_write_gene(gene_elements, output,
             log=True)
         return
     except Exception, inst:
-        start = min(x[0] for x in chain(
-                gene_elements.promoter, gene_elements.polyas))
-        stop = max(x[1] for x in chain(
-                gene_elements.promoter, gene_elements.polyas))
         config.log_statement(
             "ERROR building transcript in %s(%s:%s:%i-%i): %s" % (
                 gene_elements.id, gene_elements.chrm, gene_elements.strand, 
@@ -475,7 +479,7 @@ def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname,
 
     
     pids = []
-    for i in xrange(max(1,config.NTHREADS - len(raw_elements))):
+    for i in xrange(max(0,config.NTHREADS - len(raw_elements))):
         pid = os.fork()
         if pid == 0:
             build_transcripts_worker(elements, 
