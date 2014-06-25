@@ -275,6 +275,12 @@ class MergedReads( object ):
             for rd in reads.iter_reads( chrm, strand, start, stop  ):
                 yield rd    
         return
+
+    def iter_reads_and_strand( self, chrm, start=None, stop=None ):
+        for reads in self._reads:
+            for res in reads.iter_reads_and_strand( chrm, start, stop  ):
+                yield res    
+        return
     
     def iter_paired_reads( self, chrm, strand, start, stop ):
         for reads in self._reads:
@@ -414,6 +420,12 @@ class Reads( pysam.Samfile ):
             if rd_strand == strand:
                 yield read
         
+        return
+
+    def iter_reads_and_strand( self, chrm, start=None, stop=None ):
+        for read in self.fetch( chrm, start, stop  ):
+            rd_strand = self.get_strand(read)
+            yield read, rd_strand
         return
 
     def iter_paired_reads( self, chrm, strand, start, stop ):
