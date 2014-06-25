@@ -37,7 +37,8 @@ def populate_cvg_array_for_contig(
         buffer_array = reads.build_read_coverage_array( 
             chrm, strand, block_index*BUFFER_SIZE, (block_index+1)*BUFFER_SIZE )
         write_array_to_opstream( 
-            ofp, buffer_array, block_index*BUFFER_SIZE, chrm, chrm_length)
+            ofp, buffer_array, block_index*BUFFER_SIZE, 
+            chrm, chrm_length, strand)
     
     
     ofp.seek(0)
@@ -49,7 +50,8 @@ def populate_cvg_array_for_contig(
     return
 
 
-def write_array_to_opstream(ofp, buffer, buff_start, chrm, chrm_length ):
+def write_array_to_opstream(ofp, buffer, buff_start, 
+                            chrm, chrm_length, strand ):
     """write buffer to disk, buff_start determines the start of buffer in 
        genomic coordinates.
     """
@@ -65,14 +67,16 @@ def write_array_to_opstream(ofp, buffer, buff_start, chrm, chrm_length ):
             break
         if val != prev_val:
             if prev_val > 1e-12:
+                write_val = -prev_val if strand == '-' else prev_val
                 line = "%s\t%i\t%i\t%.2f" % (
-                    chrm, buff_start+prev_pos, buff_start+pos+1, prev_val )
+                    chrm, buff_start+prev_pos, buff_start+pos+1, write_val )
                 ofp.write(line+"\n")
             prev_pos, prev_val = pos+1, val
     
     if prev_val > 1e-12:
+        write_val = -prev_val if strand == '-' else prev_val
         line = "%s\t%i\t%i\t%.2f" % (
-            chrm, buff_start+prev_pos, buff_start+pos+1, prev_val )
+            chrm, buff_start+prev_pos, buff_start+pos+1, write_val )
         ofp.write(line+"\n")
     
     return
