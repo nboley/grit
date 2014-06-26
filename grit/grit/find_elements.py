@@ -11,7 +11,7 @@ from scipy.stats import beta
 from collections import defaultdict, namedtuple
 from itertools import chain, izip
 from bisect import bisect
-from copy import copy
+from copy import copy, deepcopy
 
 import multiprocessing
 import Queue
@@ -430,20 +430,35 @@ class Bins( list ):
             length = max( (bin.stop - bin.start)/4, 1)
             colors = bin._find_colors( self.strand )
             if isinstance( colors, str ):
-                op = self._bed_template.format(
-                    start=bin.start,stop=bin.stop+1,color=colors, 
-                    name="%s_%s"%(bin.left_label, bin.right_label) )
-                ofp.write( op )
+                op= create_bed_line( 
+                    fix_chrm_name_for_ucsc(self.chrm), self.strand, 
+                    bin.start-1, bin.stop, 
+                    name="%s_%s"%(bin.left_label, bin.right_label),
+                    score=1000,
+                    color=colors,
+                    use_thick_lines=True,
+                    blocks=[])
+                ofp.write( op + "\n" )
             else:
-                op = self._bed_template.format(
-                    start=bin.start,stop=(bin.start + length),color=colors[0], 
-                    name=bin.left_label)
-                ofp.write( op )
-                
-                op = self._bed_template.format(
-                    start=(bin.stop-length),stop=bin.stop,color=colors[1],
-                    name=bin.right_label)
-                ofp.write( op )
+                op= create_bed_line( 
+                    fix_chrm_name_for_ucsc(self.chrm), self.strand, 
+                    start=(bin.stop-length)-1, stop=bin.stop,
+                    name=bin.left_label,
+                    score=1000,
+                    color=colors[0],
+                    use_thick_lines=True,
+                    blocks=[])
+                ofp.write( op + "\n" )
+
+                op= create_bed_line( 
+                    fix_chrm_name_for_ucsc(self.chrm), self.strand, 
+                    start=(bin.stop-length)-1,stop=bin.stop,
+                    name=bin.right_label,
+                    score=1000,
+                    color=colors[1],
+                    use_thick_lines=True,
+                    blocks=[])
+                ofp.write( op + "\n" )
         
         return
 
@@ -943,17 +958,17 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
             break
 
         # make sure the median bin civerage is high enough
-        if bin.stop - bin.start > 20 and \
-                (start_bin_cvg+1e-6)/(bin_cvg+1e-6) > \
-                config.EXON_EXT_CVG_RATIO_THRESH:
+        if ( (start_bin_cvg+1e-6)/(bin_cvg+1e-6)
+             > config.EXON_EXT_CVG_RATIO_THRESH ):
             break
 
         # make sure the boundary ratio is high enough
-        right_cvg = rnaseq_cov[start_bin.start:start_bin.start+20].mean()
-        left_cvg = rnaseq_cov[start_bin.start-30:start_bin.start-10].mean()
-        if ( (left_cvg+1e-6)/(right_cvg+1e-6) 
-             > config.EXON_EXT_CVG_RATIO_THRESH ):
-            break
+        #if bin.stop - bin.start > 20:
+        #    right_cvg = rnaseq_cov[start_bin.start:start_bin.start+20].mean()
+        #    left_cvg = rnaseq_cov[start_bin.start-30:start_bin.start-10].mean()
+        #    if ( (left_cvg+1e-6)/(right_cvg+1e-6) 
+        #         > config.EXON_EXT_CVG_RATIO_THRESH ):
+        #        break
         
         if bin.type == 'INTRON':
             if bin.stop - bin.start <= config.MIN_INTRON_SIZE: 
@@ -992,17 +1007,17 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov):
             break
 
         # make sure the bin median coverage is high enough
-        if bin.stop - bin.start > 20 and \
-                ( (start_bin_cvg+1e-6)/(bin_cvg+1e-6) 
-                  > config.EXON_EXT_CVG_RATIO_THRESH ):
-            break
-
-        # make sure the boundary ratio is high enough
-        left_cvg = rnaseq_cov[start_bin.stop-20:start_bin.stop].mean()
-        right_cvg = rnaseq_cov[start_bin.stop+11:start_bin.stop+31].mean()
-        if ( (left_cvg+1e-6)/(right_cvg+1e-6) 
+        if ( (start_bin_cvg+1e-6)/(bin_cvg+1e-6) 
              > config.EXON_EXT_CVG_RATIO_THRESH ):
             break
+        
+        #if bin.stop - bin.start > 20:
+        #    # make sure the boundary ratio is high enough
+        #    left_cvg = rnaseq_cov[start_bin.stop-20:start_bin.stop].mean()
+        #    right_cvg = rnaseq_cov[start_bin.stop+11:start_bin.stop+31].mean()
+        #    if ( (left_cvg+1e-6)/(right_cvg+1e-6) 
+        #         > config.EXON_EXT_CVG_RATIO_THRESH ):
+        #        break
                 
         if bin.type == 'INTRON':
             if bin.stop - bin.start <= config.MIN_INTRON_SIZE: 
@@ -1060,6 +1075,34 @@ def build_labeled_segments( (chrm, strand), rnaseq_cov, jns,
     
     return bins
 
+def extend_exons(rnaseq_cov, ce, 
+                 left_extensions, right_extensions):
+    for left_extension in sorted(deepcopy(left_extensions), 
+                                 key=lambda x:x.stop, reverse=True):
+        canonical_cov = rnaseq_cov[
+            ce.start:max(ce.stop, ce.stop-left_extension.length())+1].mean()
+        cov_ratio = left_extension.mean_cov(rnaseq_cov)/canonical_cov
+        if cov_ratio > 1-1./config.EXON_EXT_CVG_RATIO_THRESH: 
+            ce.start = left_extension.start
+            left_extensions.remove(left_extension)
+        else:
+            break
+
+    canonical_cov = rnaseq_cov[max(ce.start, ce.stop-20):ce.stop+1].mean()
+    for right_extension in sorted(deepcopy(right_extensions), 
+                                  key=lambda x:x.start):
+        canonical_cov = rnaseq_cov[
+            max(ce.start, ce.stop-right_extension.length()):ce.stop+1].mean()
+        cov_ratio = right_extension.mean_cov(rnaseq_cov)/canonical_cov
+        if cov_ratio > 1-1./config.EXON_EXT_CVG_RATIO_THRESH: 
+            ce.stop = right_extension.stop
+            right_extensions.remove(right_extension)
+        else:
+            break
+    
+    return ce, left_extensions, right_extensions
+    
+
 def find_canonical_and_internal_exons( (chrm, strand), rnaseq_cov, jns ):
     bins = build_labeled_segments( (chrm, strand), rnaseq_cov, jns )    
     
@@ -1084,6 +1127,9 @@ def find_canonical_and_internal_exons( (chrm, strand), rnaseq_cov, jns ):
             ce_i, ce_bin, bins, rnaseq_cov)
         for intron in left_retained_introns:
             retained_introns[intron] += 1
+        
+        ce_bin, left_extensions, right_extensions = extend_exons(
+            rnaseq_cov, ce_bin, left_extensions, right_extensions)
         
         for left_bin in chain(
             sorted(left_extensions, key=lambda x:x.stop), (ce_bin,)):
@@ -1275,8 +1321,8 @@ def filter_jns(jns, ref_jns, rnaseq_cov, gene):
     for (start, stop, cnt) in jns:
         if start < 0 or stop >= gene.stop - gene.start + 1: continue
         if stop - start + 1 > config.MAX_INTRON_SIZE : continue
-        left_intron_cvg = rnaseq_cov[start+10:start+30].sum()/20
-        right_intron_cvg = rnaseq_cov[stop-30:stop-10].sum()/20
+        left_intron_cvg = rnaseq_cov[start-1]
+        right_intron_cvg = rnaseq_cov[stop+1]
         if (start, stop) not in ref_jns:
             if ( ( beta.ppf(0.975, cnt+1, left_intron_cvg+1) 
                    < 1./config.EXON_EXT_CVG_RATIO_THRESH ) 
@@ -1628,6 +1674,7 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
     write_unified_bed( elements, ofp)
 
     if config.WRITE_DEBUG_DATA:
+        
         pseudo_exons.writeBed( ofp )
     
     config.log_statement( "FINISHED Finding Exons in Chrm %s Strand %s Pos %i-%i" %
