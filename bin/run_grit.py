@@ -712,28 +712,29 @@ def main():
             sample_type_and_pickled_gene_fnames.append(
                 ( sample_type, [ x[2] for x in genes_fnames]))
 
-        # estimate the fragment length distribution
-        rep_ids = sample_data.get_rep_ids(sample_type)
-        # if we are running from the command line, there wont be rep ids,
-        # so initialize this to none
-        if len(rep_ids) == 0: rep_ids = [None,]
-        for rep_id in rep_ids:
-            (promoter_reads, rnaseq_reads, polya_reads) = sample_data.get_reads(
-                sample_type, rep_id, 
-                verify_args=False, include_merged=False)
-            
-            fldist_fname = "%s.%s.fldists" % (sample_type, rep_id)
-            try: 
-                with open(fldist_fname) as fp:
-                    config.log_statement("Loading fldists")
-                    fl_dists = pickle.load(fp)
-            except IOError:
-                config.log_statement(
-                    "Estimating fragment length distribution", log=True)
-                fl_dists = grit.frag_len.build_fl_dists(
-                    gene_elements, rnaseq_reads)
-                with open(fldist_fname, "w") as ofp:
-                    pickle.dump(fl_dists, ofp)
+        if not args.only_build_candidate_transcripts:
+            # estimate the fragment length distribution
+            rep_ids = sample_data.get_rep_ids(sample_type)
+            # if we are running from the command line, there wont be rep ids,
+            # so initialize this to none
+            if len(rep_ids) == 0: rep_ids = [None,]
+            for rep_id in rep_ids:
+                (promoter_reads, rnaseq_reads, polya_reads) = sample_data.get_reads(
+                    sample_type, rep_id, 
+                    verify_args=False, include_merged=False)
+
+                fldist_fname = "%s.%s.fldists" % (sample_type, rep_id)
+                try: 
+                    with open(fldist_fname) as fp:
+                        config.log_statement("Loading fldists")
+                        fl_dists = pickle.load(fp)
+                except IOError:
+                    config.log_statement(
+                        "Estimating fragment length distribution", log=True)
+                    fl_dists = grit.frag_len.build_fl_dists(
+                        gene_elements, rnaseq_reads)
+                    with open(fldist_fname, "w") as ofp:
+                        pickle.dump(fl_dists, ofp)
 
     if args.only_build_elements:
         return
