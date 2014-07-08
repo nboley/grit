@@ -1319,7 +1319,7 @@ def re_segment_gene( gene, (chrm, strand, contig_len),
 def filter_jns(jns, ref_jns, rnaseq_cov, gene):
     filtered_junctions = []
     for (start, stop, cnt) in jns:
-        if start < 0 or stop >= gene.stop - gene.start + 1: continue
+        if start < 0 or stop >= gene.stop - gene.start: continue
         if stop - start + 1 > config.MAX_INTRON_SIZE : continue
         left_intron_cvg = rnaseq_cov[start-1]
         right_intron_cvg = rnaseq_cov[stop+1]
@@ -1716,9 +1716,14 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
         with genes_queue_lock: n_threads_running.value += 1
 
         # find the exons and genes
-        rv = find_exons_and_process_data(gene, contig_lens, ofp,
-                                         ref_elements, ref_elements_to_include,
-                                         rnaseq_reads, cage_reads, polya_reads)
+        try:
+            rv = find_exons_and_process_data(gene, contig_lens, ofp,
+                                             ref_elements, ref_elements_to_include,
+                                             rnaseq_reads, cage_reads, polya_reads)
+        except Exception, inst:
+            config.log_statement( "Uncaught exception in find_exons_and_process_data", log=True )
+            config.log_statement( traceback.format_exc(), log=True, display=False )
+            rv = None
         
         # if the return value is new genes, then add these to the queue
         if rv != None:
