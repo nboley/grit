@@ -297,6 +297,10 @@ class MergedReads( object ):
         new_reads = [ reads.reload() for reads in self._reads ]
         return MergedReads( new_reads )
 
+class TranscriptMappedReads( pysam.Samfile ):
+    pass
+
+
 class Reads( pysam.Samfile ):
     """Subclass the samfile object to include a method that returns reads 
        and their pairs.
