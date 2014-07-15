@@ -5,7 +5,7 @@ from itertools import izip
 
 from reads import fix_chrm_name_for_ucsc
 
-from grit import config
+import grit.config
 
 FPKMTrackingLine = namedtuple( 
     'FPKMTrackingLine', 

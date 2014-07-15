@@ -33,15 +33,6 @@ class NoObservableTranscriptsError(Exception):
 #
 #
 
-def find_nonoverlapping_boundaries( transcripts ):
-    boundaries = set()
-    for transcript in transcripts:
-        for exon in transcript.exons:
-            boundaries.add( exon[0] )
-            boundaries.add( exon[1]+1 )
-    
-    return numpy.array( sorted( boundaries ) )
-
 def find_nonoverlapping_contig_indices( contigs, contig_boundaries ):
     """Convert transcripts into lists of non-overlapping contig indices.
     
@@ -509,7 +500,7 @@ def build_expected_and_observed_rnaseq_counts( gene, reads, fl_dists ):
     # find the set of non-overlapping exons, and convert the transcripts to 
     # lists of these non-overlapping indices. All of the f_matrix code uses
     # this representation.     
-    exon_boundaries = find_nonoverlapping_boundaries(gene.transcripts)
+    exon_boundaries = numpy.array(gene.find_nonoverlapping_boundaries())
     transcripts_non_overlapping_exon_indices = \
         list(build_nonoverlapping_indices( 
                 gene.transcripts, exon_boundaries ))
@@ -1032,4 +1023,3 @@ def tests( ):
         
 if __name__ =='__main__':
     tests()
-    
