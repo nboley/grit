@@ -30,21 +30,20 @@ def populate_cvg_array_for_contig(
     reads.reload()
     
     # open a tempory file to write this to
-    ofp = tempfile.NamedTemporaryFile(delete=False)
+    with tempfile.NamedTemporaryFile(delete=True) as ofp:
+        # only find blocks of BUFFER_SIZE - to avoid running out of memory
+        for block_index in xrange(int(chrm_length/BUFFER_SIZE)+1):
+            buffer_array = reads.build_read_coverage_array( 
+                chrm, strand, 
+                block_index*BUFFER_SIZE, 
+                (block_index+1)*BUFFER_SIZE )
+            write_array_to_opstream( 
+                ofp, buffer_array, block_index*BUFFER_SIZE, 
+                chrm, chrm_length, strand)
+        
+        ofp.seek(0)
+        merged_ofp.write( ofp.read() )
     
-    # only find blocks of BUFFER_SIZE - to avoid running out of memory
-    for block_index in xrange(int(chrm_length/BUFFER_SIZE)+1):
-        buffer_array = reads.build_read_coverage_array( 
-            chrm, strand, block_index*BUFFER_SIZE, (block_index+1)*BUFFER_SIZE )
-        write_array_to_opstream( 
-            ofp, buffer_array, block_index*BUFFER_SIZE, 
-            chrm, chrm_length, strand)
-    
-    
-    ofp.seek(0)
-    merged_ofp.write( ofp.read() )
-    ofp.close()
-
     if VERBOSE: print "Finished ", chrm, strand
     
     return

@@ -71,6 +71,15 @@ class Gene( object ):
         self.transcripts = transcripts
         self.meta_data = meta_data
         return    
+
+    def find_nonoverlapping_boundaries( self ):
+        boundaries = set()
+        for transcript in self.transcripts:
+            for exon in transcript.exons:
+                boundaries.add( exon[0] )
+                boundaries.add( exon[1]+1 )
+
+        return sorted( boundaries )
     
     def write_to_file(self, ofname=None):
         if ofname == None:
