@@ -10,6 +10,7 @@ ExpressionTrackingLine = namedtuple(
     ["tracking_id", "gene_id", 
      "coverage", "FPKM", "FPKM_lo", "FPKM_hi", "status"])
 
+
 def load_expression_tracking_data(fp):
     rv = {}
     for line_num, line in enumerate(fp):
@@ -24,37 +25,6 @@ def load_expression_tracking_data(fp):
         rv[data.tracking_id] = data
     
     return rv
-
-def parse_arguments():
-    import argparse
-    
-    parser = argparse.ArgumentParser(
-        description = 'Produce an expression gtf from a gtf and expression file.' )
-    parser.add_argument(
-        'gtf', type=file,
-        help='GTF file to filter.' )
-    parser.add_argument(
-        'expression_tracking_files', type=file, nargs='+',
-        help='Expression tracking files to build transcripts from.' )
-    parser.add_argument(
-        '--min-fpkm-ub', default=0.0, type=float,
-        help='Filter transcripts with fpkms upper bounds below this value.')
-    parser.add_argument(
-        '--min-fpkm-lb', default=0.0, type=float,
-        help='Filter transcripts with fpkms upper bounds below this value.')
-    parser.add_argument(
-        '--intrasample-max-fpkm-ratio', type=float, default=1e6,
-        help='For each gene cluster and sample, filter transcripts whose fpkm upper bound is this many times lower than the maximum fpkm lower bound.')
-    parser.add_argument(
-        '--intersample-max-fpkm-ratio', type=float, default=1e6,
-        help='For each gene cluster and between all samples, filter transcripts whose fpkm upper bound is this many times lower than the maximum fpkm lower bound.')
-
- 
-    args = parser.parse_args()   
-    return ( args.gtf, args.expression_tracking_files, 
-             args.min_fpkm_lb, args.min_fpkm_ub,
-             args.intrasample_max_fpkm_ratio, 
-             args.intersample_max_fpkm_ratio )
 
 def find_transcript_stats(expression_fps):
     rv = defaultdict(lambda: defaultdict(list))
@@ -103,8 +73,56 @@ def find_valid_transcripts( expression_data,
                 min_fpkm_lb, min_fpkm_ub,
                 intrasample_max_fpkm_ratio,
                 intersample_max_fpkm_ratio))
-    
     return valid_transcripts
+
+def parse_arguments():
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description = 'Produce an expression gtf from a gtf and expression file.' )
+    parser.add_argument(
+        'gtf', type=file,
+        help='GTF file to filter.' )
+    parser.add_argument(
+        'expression_tracking_files', type=file, nargs='+',
+        help='Expression tracking files to build transcripts from.' )
+    parser.add_argument(
+        '--min-fpkm-ub', default=0.0, type=float,
+        help='Filter transcripts with fpkms upper bounds below this value.')
+    parser.add_argument(
+        '--min-fpkm-lb', default=0.0, type=float,
+        help='Filter transcripts with fpkms upper bounds below this value.')
+    parser.add_argument(
+        '--intrasample-max-fpkm-ratio', type=float, default=1e6,
+        help='For each gene cluster and sample, filter transcripts whose fpkm upper bound is this many times lower than the maximum fpkm lower bound.')
+    parser.add_argument(
+        '--intersample-max-fpkm-ratio', type=float, default=1e6,
+        help='For each gene cluster and between all samples, filter transcripts whose fpkm upper bound is this many times lower than the maximum fpkm lower bound.')
+
+ 
+    args = parser.parse_args()   
+    return ( args.gtf, args.expression_tracking_files, 
+             args.min_fpkm_lb, args.min_fpkm_ub,
+             args.intrasample_max_fpkm_ratio, 
+             args.intersample_max_fpkm_ratio )
+
+def build_track_line(track_line, 
+                     (min_fpkm_lb, min_fpkm_ub,
+                      intrasample_max_fpkm_ratio, 
+                      intersample_max_fpkm_ratio)):
+    data = track_line.split()
+    name_field = [(i, x) for i, x in enumerate(data) if x.startswith("name")]
+    assert len(name_field) <= 1
+    # if there's no name field, return
+    if len(name_field) == 0: return track_line
+
+    filter_str = ".filtered"
+    name = "=".join(name_field[0][1].split("=")[1:])
+    if name[-1] == '"':
+        new_name = name[:-1] + filter_str + '"'
+    else:
+        new_name = name + filter_str
+    return track_line.replace(name, new_name).strip()
 
 def main():
     ( gtf_fp, expression_fps, 
@@ -123,7 +141,11 @@ def main():
 
     for line in gtf_fp:
         if line.startswith( "track" ): 
-            print line,
+            print build_track_line(
+                line, (
+                    min_fpkm_lb, min_fpkm_ub, 
+                    intrasample_max_fpkm_ration,
+                    intersample_max_fpkm_ratio ) )
             continue
         
         t_id = re.findall( pat, line)[0]

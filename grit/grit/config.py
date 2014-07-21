@@ -33,7 +33,7 @@ MIN_INTRON_FLANKING_SIZE = 12
 MIN_ENTROPY = 0
 MIN_INTRON_SIZE = 40
 MAX_EMPTY_REGION_SIZE = 200 #MIN_INTRON_SIZE
-MAX_INTRON_SIZE = int(50000)
+MAX_INTRON_SIZE = int(1e6)
 MIN_GENE_LENGTH = 400
 # the maximum number of bases to expand gene boundaries from annotated genes
 MAX_GENE_EXPANSION = 1000
