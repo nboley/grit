@@ -73,7 +73,7 @@ def flatten( regions ):
 def build_empty_array():
     return numpy.array(())
 
-def cluster_segments( segments, jns ):
+def cluster_intron_connected_segments( segments, introns ):
     if len(segments) == 0:
         return []
     segments = sorted(segments)
@@ -81,10 +81,14 @@ def cluster_segments( segments, jns ):
     segment_stops = numpy.array([x[1] for x in segments])
 
     edges = set()
-    for start, stop in jns:
-        #print start, stop, 
+    for start, stop in introns:
+        # Skip junctions that dont fall into any segment
         if start-1 < segment_starts[0]: continue
         if stop+1 >= segment_stops[-1]: continue
+        
+        # find which bin the segments fall into. Note, that since the 
+        # segments don't necessarily tile the genome, it's possible
+        # for the returned bin to not actually contain the junction
         start_bin = segment_starts.searchsorted( start-1, side='right' )-1
         assert start_bin >= 0
         stop_bin = segment_starts.searchsorted( stop+1, side='right' )-1
@@ -95,7 +99,12 @@ def cluster_segments( segments, jns ):
             assert ( segment_starts[start_bin] <= 
                      start-1 <= segment_stops[start_bin] )
             assert ( segment_starts[stop_bin] <= 
-                     stop+1 <= segment_stops[stop_bin])
+                     stop+1 <= segment_stops[stop_bin]), str(
+                         [segment_starts[stop_bin], 
+                          stop+1, segment_stops[stop_bin], 
+                          stop_bin, len(segment_stops), 
+                          segment_starts[stop_bin+1], 
+                          segment_stops[stop_bin+1]])
         #if start > segment_stops[start_bin]: continue
         #if stop > segment_stops[stop_bin]: continue
         # XXX - dont rememeber why I was doing this
@@ -1780,9 +1789,13 @@ def find_segments_and_jns_worker(
         segments, 
         transcribed_regions, jns, lock,
         rnaseq_reads, promoter_reads, polya_reads ):
+    length_of_segments = segments.qsize()
     while True:
         segment = segments.get()
-        if segment == 'FINISHED': return
+        if segment == 'FINISHED': 
+            config.log_statement("")
+            return
+        config.log_statement("Finding genes and jns in %s" % str(segment) )
         ( r_transcribed_regions, r_jns 
             ) = find_transcribed_regions_and_jns_in_segment(
               segment, rnaseq_reads, promoter_reads, polya_reads) 
@@ -1807,7 +1820,8 @@ def find_all_gene_segments( contig_lens,
     if region_to_use != None:
         for chrm in contig_lens.keys():
             if chrm != region_to_use: del contig_lens[chrm]
-    
+
+    config.log_statement("Spawning gene segment finding children")    
     segments_queue = multiprocessing.Queue()
     manager = multiprocessing.Manager()
     transcribed_regions = {}
@@ -1828,20 +1842,33 @@ def find_all_gene_segments( contig_lens,
                 rnaseq_reads, promoter_reads, polya_reads )
             os._exit(0)
         pids.append(pid)
-    
+
+    config.log_statement("Populating gene segment queue")        
     segments = split_genome_into_segments(contig_lens)
     for segment in segments: segments_queue.put(segment)
     for i in xrange(config.NTHREADS): segments_queue.put('FINISHED')
     
-    for pid in pids:
-        os.waitpid(pid, 0) 
+    while segments_queue.qsize() > 2*config.NTHREADS:
+        config.log_statement(
+            "Waiting on gene segment finding children (%i/%i segments remain)" 
+            %(segments_queue.qsize(), len(segments)))        
+        time.sleep(0.5)
     
+    for i, pid in enumerate(pids):
+        config.log_statement(
+            "Waiting on gene segment finding children (%i/%i children remain)" 
+            %(len(pids)-i, len(pids)))
+        os.waitpid(pid, 0) 
+
+    config.log_statement("Merging gene segments")
     merged_transcribed_regions = {}
     for key, intervals in transcribed_regions.iteritems():
-        merged_transcribed_regions[key]=merge_disjoint_closed_closed_intervals(
-            intervals)
-    transcribed_regions = merged_transcribed_regions
+        merged_transcribed_regions[
+            key] = merge_disjoint_closed_closed_intervals(intervals)
     
+    transcribed_regions = merged_transcribed_regions
+
+    config.log_statement("Filtering junctions")    
     filtered_jns = {}
     for contig in contig_lens.keys():
         plus_jns, minus_jns = prefilter_jns(
@@ -1857,6 +1884,7 @@ def find_all_gene_segments( contig_lens,
             for jn in config_ref_elements['intron']:
                 filtered_junctions[key][jn] += 0
     
+    config.log_statement("Clustering gene segments")    
     # build bins for all of the genes and junctions, converting them to 1-based
     # in the process
     new_genes = []
@@ -1870,7 +1898,7 @@ def find_all_gene_segments( contig_lens,
                     in sorted(filtered_jns[key].iteritems()) ]
             for start, stop, cnt in jns:
                 new_introns[-1].append( Bin(start+1, stop+1, "D_JN","R_JN","INTRON") )
-            intervals = cluster_segments(
+            intervals = cluster_intron_connected_segments(
                 transcribed_regions[key], 
                 [(start, stop) for start, stop, cnt in jns ] )
             # add the intergenic space, since there could be genes in the interior
@@ -1961,6 +1989,7 @@ def find_elements( promoter_reads, rnaseq_reads, polya_reads,
                 regions.append( (contig, strand, 0, contig_len) )        
         
         # load the reference elements
+        config.log_statement("Finding gene segments")
         gene_segments, junctions = find_all_gene_segments( 
             contig_lens, 
             rnaseq_reads, promoter_reads, polya_reads,
