@@ -153,7 +153,7 @@ def iter_jns_in_read( read ):
         n_pre_intron_bases = 0
         for code, size in read.cigar[:intron_index]:
             if code == 0: n_pre_intron_bases += size
-            elif code == 1: n_pre_intron_bases -= size
+            elif code == 1: pass
             elif code == 2: n_pre_intron_bases += size
             elif code == 3: n_pre_intron_bases += size
             #elif code == 4: n_pre_intron_bases += size

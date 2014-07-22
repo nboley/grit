@@ -136,6 +136,7 @@ def iter_coverage_intervals_for_read(read):
         # skip reference insertions
         elif contig_type == 1:
             pass
+            # start += length
         # move past refernce deletions
         elif contig_type == 2:
             start += length
