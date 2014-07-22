@@ -126,7 +126,7 @@ def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000,
 def iter_coverage_intervals_for_read(read):
     # we loop through each contig in the cigar string to deal
     # with junctions reads.
-    # add 1 to the start because bam files are 0 based
+    # note that the bam files are 0 based
     start = read.pos
     for contig_type, length in read.cigar:
         # if this is a match, add it 
@@ -142,16 +142,9 @@ def iter_coverage_intervals_for_read(read):
         # skip past skipped regions
         elif contig_type == 3:
             start += length
-        # XXX BUG
-        # skip past soft clipped regions, because the
-        # actual aligned sequence doesnt start until we've moved
-        # past the clipped region
-        elif contig_type == 4:
-            pass
-        #    start += length
-        # hard clipped regions are not present int he aligned 
-        # sequence, so do nothing
-        elif contig_type == 5:
+        # since read positions dont include clipped regions, 
+        # ignore clipping
+        elif contig_type == 4 or contig_type == 5:
             pass
         else:
             print >> sys.stderr, "Unrecognized cigar format:", read.cigar

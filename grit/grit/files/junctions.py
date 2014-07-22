@@ -109,6 +109,11 @@ class Junction( _JnNamedTuple ):
             self.region, group_id_str, score=count, feature='intron' )
 
 def iter_jns_in_read( read ):
+    """Iter junctions in read.
+
+    Returns 0-based closed-closed intron coordiantes. 
+    """
+
     # quickly check if read could span a single intron
     if len( read.cigar ) < 3:
         return
@@ -153,8 +158,7 @@ def iter_jns_in_read( read ):
             elif code == 3: n_pre_intron_bases += size
             #elif code == 4: n_pre_intron_bases += size
         
-        # add one to left_intron since bam files are 0-based
-        upstrm_intron_pos = read.pos + n_pre_intron_bases + 1
+        upstrm_intron_pos = read.pos + n_pre_intron_bases
         dnstrm_intron_pos = upstrm_intron_pos + read.cigar[intron_index][1] - 1
         
         yield (upstrm_intron_pos, dnstrm_intron_pos)
