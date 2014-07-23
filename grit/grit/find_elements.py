@@ -1323,19 +1323,21 @@ def build_raw_elements_in_gene( gene,
     if gene.strand == '+':
         ref_jns_set = set( 
             (x1-gene.start, x2-gene.start)  
-            for x1, x2 in ref_jns )            
+            for x1, x2 in ref_jns )
+        # we cahnge the coordinates for the inside gene test becasue
+        # the junctions are intron coordinates
         jns = [ (x1-gene.start, x2-gene.start, cnt)  
                 for (x1, x2), cnt in sorted(jns.iteritems())
-                if points_are_inside_gene(x1, x2)]
+                if points_are_inside_gene(x1-1, x2+1)]
     else: # gene.strand == '-':
         ref_jns_set = set( 
             (gene_len-x2+gene.start, gene_len-x1+gene.start)  
             for x1, x2 in ref_jns )            
         jns = [ (gene_len-x2+gene.start, gene_len-x1+gene.start, cnt)  
                 for (x1, x2), cnt in sorted(jns.iteritems())
-                if points_are_inside_gene(x1, x2)]
+                if points_are_inside_gene(x1-1, x2+1)]
     
-    jns = filter_jns(jns, ref_jns_set, rnaseq_cov, gene)
+    #jns = filter_jns(jns, ref_jns_set, rnaseq_cov, gene)
     polya_peaks = filter_polya_peaks(polya_peaks, rnaseq_cov, jns)
 
     return rnaseq_cov, cage_cov, cage_peaks, polya_cov, polya_peaks, jns
@@ -1880,7 +1882,7 @@ def find_all_gene_segments( contig_lens,
     config.log_statement("Clustering gene segments")    
     # build bins for all of the genes and junctions, converting them to 1-based
     # in the process
-    new_genes = []
+    new_genes = Bins( contig, strand )
     new_introns = []
     for contig, contig_len in contig_lens.iteritems():
         for strand in '+-':
@@ -1890,7 +1892,7 @@ def find_all_gene_segments( contig_lens,
                     for (start, stop), cnt 
                     in sorted(filtered_jns[key].iteritems()) ]
             for start, stop, cnt in jns:
-                new_introns[-1].append( Bin(start+1, stop+1, "D_JN","R_JN","INTRON") )
+                new_introns[-1].append( Bin(start, stop, "D_JN","R_JN","INTRON") )
             intervals = cluster_intron_connected_segments(
                 transcribed_regions[key], 
                 [(start, stop) for start, stop, cnt in jns ] )
@@ -1898,20 +1900,20 @@ def find_all_gene_segments( contig_lens,
             for segments in intervals: 
                 new_gene = Bins( contig, strand )
                 for start, stop in segments:
-                    new_gene.append( Bin(start+1, stop+1, "ESTART","ESTOP","GENE") )
+                    new_gene.append( Bin(start, stop, "ESTART","ESTOP","GENE") )
                 if new_gene.stop-new_gene.start+1 < config.MIN_GENE_LENGTH: 
                     continue
                 new_genes.append(new_gene)
     
-    #with open("tmp.bed", "w") as fp:
-    #    fp.write(
-    #        'track name="test" visibility=2 itemRgb="On" useScore=1\n')
-    #    for gene in new_genes:
-    #        write_unified_bed(gene, fp)
-    #    for jn in new_introns:
-    #        write_unified_bed(jn, fp)
+    if config.WRITE_DEBUG_DATA:
+        with open("genes_and_jns.bed", "w") as fp:
+            fp.write(
+                'track name="test" visibility=2 itemRgb="On" useScore=1\n')
+            write_unified_bed(new_genes, fp)
+            for jn in new_introns:
+                write_unified_bed(jn, fp)
 
-    return new_genes, new_introns
+    return list(new_genes), new_introns
     #assert False
 
 def find_exons( contig_lens, gene_bndry_bins, ofp,
