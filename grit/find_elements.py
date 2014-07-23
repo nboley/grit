@@ -99,12 +99,7 @@ def cluster_intron_connected_segments( segments, introns ):
         assert ( segment_starts[start_bin] <= 
                  start-1 <= segment_stops[start_bin] )
         assert ( segment_starts[stop_bin] <= 
-                 stop+1 <= segment_stops[stop_bin]), str(
-                     [segment_starts[stop_bin], 
-                      stop+1, segment_stops[stop_bin], 
-                      stop_bin, len(segment_stops), 
-                      segment_starts[stop_bin+1], 
-                      segment_stops[stop_bin+1]])
+                 stop+1 <= segment_stops[stop_bin])
         
         #if start > segment_stops[start_bin]: continue
         #if stop > segment_stops[stop_bin]: continue
@@ -441,8 +436,7 @@ def write_unified_bed( elements, ofp ):
             element_type = element.type
             score = element.score
         elif isinstance(element, Bins):
-            # subtract 1 because beds are 0-based
-            blocks = [(x.start-1, x.stop-1) for x in element]
+            blocks = [(x.start, x.stop) for x in list(element)]
             use_thick_lines = True
             element_type = 'GENE'
             score = 1000
@@ -450,11 +444,10 @@ def write_unified_bed( elements, ofp ):
         
         grp_id = element_type + "_%s_%s_%i_%i" % region
 
-        # subtract 1 because we work in 1 based coords, but beds are 0-based
         # also, add 1 to stop because beds are open-closed ( which means no net 
         # change for the stop coordinate )
         bed_line = create_bed_line( chrm, elements.strand, 
-                                    element.start-1, element.stop, 
+                                    element.start, element.stop+1, 
                                     feature_mapping[element_type],
                                     score=score,
                                     color=color_mapping[element_type],
@@ -512,7 +505,7 @@ class Bins( list ):
             if isinstance( colors, str ):
                 op= create_bed_line( 
                     fix_chrm_name_for_ucsc(self.chrm), self.strand, 
-                    bin.start-1, bin.stop, 
+                    bin.start, bin.stop+1, 
                     name="%s_%s"%(bin.left_label, bin.right_label),
                     score=1000,
                     color=colors,
@@ -522,7 +515,7 @@ class Bins( list ):
             else:
                 op= create_bed_line( 
                     fix_chrm_name_for_ucsc(self.chrm), self.strand, 
-                    start=(bin.stop-length)-1, stop=bin.stop,
+                    start=(bin.stop-length), stop=bin.stop+1,
                     name=bin.left_label,
                     score=1000,
                     color=colors[0],
@@ -557,8 +550,9 @@ class Bins( list ):
             chrm = elements.chrm
             if config.FIX_CHRM_NAMES_FOR_UCSC:
                 chrm = fix_chrm_name_for_ucsc(self.chrm)
+            # add 1 because gffs are 1-based
             region = GenomicInterval(chrm, self.strand, 
-                                     bin.start, bin.stop)
+                                     bin.start+1, bin.stop+1)
             grp_id = "%s_%s_%i_%i" % region
             ofp.write( create_gff_line(region, grp_id) + "\n" )
         
@@ -1560,7 +1554,7 @@ def find_exons_in_gene( gene, contig_len,
         elements = elements.reverse_strand( gene.stop - gene.start + 1 )
     elements = elements.shift( gene.start )
     elements.append( gene )
-
+    
     if gene.strand == '-':
         gene_bins = gene_bins.reverse_strand( gene.stop - gene.start + 1 )
     gene_bins = gene_bins.shift( gene.start )
@@ -1587,7 +1581,6 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
         gene_ref_elements['intron'],
         gene_ref_elements['polya'],
         resplit_genes=(False == ref_elements_to_include.genes))
-
     if new_gene_boundaries != None:
         return new_gene_boundaries
     
@@ -1602,8 +1595,7 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
                              "TES_EXON") )
     write_unified_bed( elements, ofp)
 
-    if config.WRITE_DEBUG_DATA:
-        
+    if config.WRITE_DEBUG_DATA:        
         pseudo_exons.writeBed( ofp )
     
     config.log_statement( "FINISHED Finding Exons in Chrm %s Strand %s Pos %i-%i" %
@@ -1909,15 +1901,15 @@ def find_all_gene_segments( contig_lens,
                     new_gene.append( Bin(start+1, stop+1, "ESTART","ESTOP","GENE") )
                 if new_gene.stop-new_gene.start+1 < config.MIN_GENE_LENGTH: 
                     continue
-                new_genes.append(Bins( contig, strand, [new_gene,] ))
+                new_genes.append(new_gene)
     
-    with open("tmp.bed", "w") as fp:
-        fp.write(
-            'track name="test" visibility=2 itemRgb="On" useScore=1\n')
-        for gene in new_genes:
-            write_unified_bed(gene, fp)
-        for jn in new_introns:
-            write_unified_bed(jn, fp)
+    #with open("tmp.bed", "w") as fp:
+    #    fp.write(
+    #        'track name="test" visibility=2 itemRgb="On" useScore=1\n')
+    #    for gene in new_genes:
+    #        write_unified_bed(gene, fp)
+    #    for jn in new_introns:
+    #        write_unified_bed(jn, fp)
 
     return new_genes, new_introns
     #assert False

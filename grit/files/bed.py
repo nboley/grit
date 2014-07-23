@@ -36,7 +36,7 @@ def create_bed_line( chrm, strand, start, stop,
     data.append( "%i" % n_blocks )
     data.append( ",".join(map(str, b_sizes)) )
     data.append( ",".join(map(str, b_starts)) )
-
+    
     return "\t".join( data )
 
 def parse_bed_line(line):
