@@ -92,19 +92,20 @@ def cluster_intron_connected_segments( segments, introns ):
         start_bin = segment_starts.searchsorted( start-1, side='right' )-1
         assert start_bin >= 0
         stop_bin = segment_starts.searchsorted( stop+1, side='right' )-1
-        if start_bin != stop_bin:
-            # since the read coverage is determined in part determined by 
-            # the junctions, we should never see a junction that doesn't fall
-            # into a segment
-            assert ( segment_starts[start_bin] <= 
-                     start-1 <= segment_stops[start_bin] )
-            assert ( segment_starts[stop_bin] <= 
-                     stop+1 <= segment_stops[stop_bin]), str(
-                         [segment_starts[stop_bin], 
-                          stop+1, segment_stops[stop_bin], 
-                          stop_bin, len(segment_stops), 
-                          segment_starts[stop_bin+1], 
-                          segment_stops[stop_bin+1]])
+
+        # since the read coverage is determined in part determined by 
+        # the junctions, we should never see a junction that doesn't fall
+        # into a segment
+        assert ( segment_starts[start_bin] <= 
+                 start-1 <= segment_stops[start_bin] )
+        assert ( segment_starts[stop_bin] <= 
+                 stop+1 <= segment_stops[stop_bin]), str(
+                     [segment_starts[stop_bin], 
+                      stop+1, segment_stops[stop_bin], 
+                      stop_bin, len(segment_stops), 
+                      segment_starts[stop_bin+1], 
+                      segment_stops[stop_bin+1]])
+        
         #if start > segment_stops[start_bin]: continue
         #if stop > segment_stops[stop_bin]: continue
         # XXX - dont rememeber why I was doing this
