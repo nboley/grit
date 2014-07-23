@@ -278,6 +278,17 @@ class Annotation(object):
 
         return
 
+    def iter_elements(self, chrm, strand, r_start, r_stop):
+        for gene in self._gene_locs[(clean_chr_name(chrm), strand)]:
+            if gene.stop < r_start: continue
+            if gene.start > r_stop: continue
+            for element_type, elements in gene.extract_elements().iteritems():
+                for start, stop in elements:
+                    if stop < r_start or start > r_stop: continue
+                    yield element_type, (start, stop)
+        
+        return
+
     def __iter__(self):
         return iter(self._genes)
     
