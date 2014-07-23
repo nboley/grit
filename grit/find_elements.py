@@ -96,11 +96,23 @@ def cluster_intron_connected_segments( segments, introns ):
         # since the read coverage is determined in part determined by 
         # the junctions, we should never see a junction that doesn't fall
         # into a segment
-        assert ( segment_starts[start_bin] <= 
-                 start-1 <= segment_stops[start_bin] )
-        assert ( segment_starts[stop_bin] <= 
-                 stop+1 <= segment_stops[stop_bin])
-        
+        try:
+            assert ( segment_starts[start_bin] <= 
+                     start-1 <= segment_stops[start_bin] ), str([
+                         segment_starts[start_bin],
+                     start-1, segment_stops[start_bin],
+                         segment_starts[start_bin+1],
+                         start-1, segment_stops[start_bin+1]])
+
+            assert ( segment_starts[stop_bin] <= 
+                     stop+1 <= segment_stops[stop_bin]), str([
+                         segment_starts[stop_bin],
+                         stop-1, segment_stops[stop_bin],
+                         segment_starts[stop_bin+1],
+                         stop-1, segment_stops[stop_bin+1]])
+        except:
+            raise
+            continue
         #if start > segment_stops[start_bin]: continue
         #if stop > segment_stops[stop_bin]: continue
         # XXX - dont rememeber why I was doing this
@@ -111,7 +123,7 @@ def cluster_intron_connected_segments( segments, introns ):
                        int(max(start_bin, stop_bin))))
     
     genes_graph = nx.Graph()
-    genes_graph.add_nodes_from(xrange(len(segment_starts)-1))
+    genes_graph.add_nodes_from(xrange(len(segment_starts)))
     genes_graph.add_edges_from(edges)
     
     segments = []
@@ -1695,7 +1707,8 @@ def extract_reference_elements(genes, ref_elements_to_include):
 
 def find_transcribed_regions_and_jns_in_segment(
         (contig, r_start, r_stop), 
-        rnaseq_reads, promoter_reads, polya_reads ):
+        rnaseq_reads, promoter_reads, polya_reads,
+        ref_elements, ref_elements_to_include):
     #reg = numpy.array([1,7,6,0,0,0,4,0])
     #print reg, find_empty_regions(reg, min_length=4)
     #print reg, find_transcribed_regions(reg, min_empty_region_length=4)
@@ -1715,6 +1728,28 @@ def find_transcribed_regions_and_jns_in_segment(
                 # skip jns whose start does not overlap this region
                 if jn[0] < r_start or jn[0] > r_stop: continue
                 jn_reads[strand][jn] += 1
+
+    # add pseudo coverage for annotated jns. This is so that the clustering
+    # algorithm knows which gene segments to join if a jn falls outside of 
+    # a region with observed transcription
+    if ref_elements != None and len(ref_elements_to_include) > 0:
+        ref_jns = []
+        for strand in "+-":
+            for element_type, (start, stop) in ref_elements.iter_elements(
+                    contig, strand, 
+                    r_start-config.MIN_INTRON_SIZE-1, 
+                    r_stop+config.MIN_INTRON_SIZE+1):
+                if element_type == 'intron':
+                    ref_jns.append((strand, start-r_start, stop-r_start))
+                    jn_reads[strand][(start,stop)] += 0
+                elif element_type in ref_elements_to_include:
+                    cov[strand][
+                        max(0,start-r_start):max(0, stop-r_start+1)] += 1
+        # add in the junction coverage
+        for strand, start, stop in ref_jns:
+            cov[strand][max(0, start-1-config.MIN_INTRON_SIZE):
+                        max(0, start-1+1)] += 1
+            cov[strand][stop:stop+config.MIN_INTRON_SIZE+1] += 1
     
     transcribed_regions = {'+': [], '-': []}
     for strand, counts in cov.iteritems():
@@ -1783,7 +1818,8 @@ def split_genome_into_segments(contig_lens, min_segment_length=5000):
 def find_segments_and_jns_worker(
         segments, 
         transcribed_regions, jns, lock,
-        rnaseq_reads, promoter_reads, polya_reads ):
+        rnaseq_reads, promoter_reads, polya_reads,
+        ref_elements, ref_elements_to_include):
     length_of_segments = segments.qsize()
     while True:
         segment = segments.get()
@@ -1793,7 +1829,8 @@ def find_segments_and_jns_worker(
         config.log_statement("Finding genes and jns in %s" % str(segment) )
         ( r_transcribed_regions, r_jns 
             ) = find_transcribed_regions_and_jns_in_segment(
-              segment, rnaseq_reads, promoter_reads, polya_reads) 
+                segment, rnaseq_reads, promoter_reads, polya_reads, 
+                ref_elements, ref_elements_to_include) 
         with lock:
             transcribed_regions[(segment[0], '+')].extend([
                 (start+segment[1], stop+segment[1])
@@ -1827,6 +1864,18 @@ def find_all_gene_segments( contig_lens,
             jns[(contig, strand)] = manager.list()
     lock = multiprocessing.Lock()
 
+    ref_element_types_to_include = set()
+    if ref_elements_to_include.junctions: 
+        ref_element_types_to_include.add('intron')
+    if ref_elements_to_include.TSS: 
+        ref_element_types_to_include.add('tss_exon')
+    if ref_elements_to_include.TES: 
+        ref_element_types_to_include.add('tes_exon')
+    if ref_elements_to_include.promoters: 
+        ref_element_types_to_include.add('promoter')
+    if ref_elements_to_include.polya_sites: 
+        ref_element_types_to_include.add('polya')
+    
     pids = []
     for i in xrange(config.NTHREADS):
         pid = os.fork()
@@ -1834,7 +1883,8 @@ def find_all_gene_segments( contig_lens,
             find_segments_and_jns_worker(
                 segments_queue, 
                 transcribed_regions, jns, lock,
-                rnaseq_reads, promoter_reads, polya_reads )
+                rnaseq_reads, promoter_reads, polya_reads,
+                ref_genes, ref_element_types_to_include)
             os._exit(0)
         pids.append(pid)
 
@@ -1860,9 +1910,8 @@ def find_all_gene_segments( contig_lens,
     for key, intervals in transcribed_regions.iteritems():
         merged_transcribed_regions[
             key] = merge_disjoint_closed_closed_intervals(intervals)
-    
     transcribed_regions = merged_transcribed_regions
-
+    
     config.log_statement("Filtering junctions")    
     filtered_jns = {}
     for contig in contig_lens.keys():
@@ -1875,17 +1924,19 @@ def find_all_gene_segments( contig_lens,
     manager.shutdown()
     
     if ref_elements_to_include.junctions:
-        for key, contig_ref_elements in ref_elements.iteritems():
-            for jn in config_ref_elements['intron']:
-                filtered_junctions[key][jn] += 0
+        for gene in ref_genes:
+            for jn in gene.extract_elements()['intron']:
+                if jn not in filtered_jns[(gene.chrm, gene.strand)]:
+                    filtered_jns[(gene.chrm, gene.strand)][jn] = 0
     
     config.log_statement("Clustering gene segments")    
     # build bins for all of the genes and junctions, converting them to 1-based
     # in the process
-    new_genes = Bins( contig, strand )
+    new_genes = []
     new_introns = []
     for contig, contig_len in contig_lens.iteritems():
         for strand in '+-':
+            new_genes.append(Bins( contig, strand ))
             new_introns.append(Bins( contig, strand ))
             key = (contig, strand)
             jns = [ (start, stop, cnt) 
@@ -1903,18 +1954,18 @@ def find_all_gene_segments( contig_lens,
                     new_gene.append( Bin(start, stop, "ESTART","ESTOP","GENE") )
                 if new_gene.stop-new_gene.start+1 < config.MIN_GENE_LENGTH: 
                     continue
-                new_genes.append(new_gene)
+                new_genes[-1].append(new_gene)
     
     if config.WRITE_DEBUG_DATA:
-        with open("genes_and_jns.bed", "w") as fp:
+        with open("tmp.bed", "w") as fp:
             fp.write(
                 'track name="test" visibility=2 itemRgb="On" useScore=1\n')
-            write_unified_bed(new_genes, fp)
+            for contig_genes in new_genes:
+                write_unified_bed(contig_genes, fp)
             for jn in new_introns:
                 write_unified_bed(jn, fp)
 
-    return list(new_genes), new_introns
-    #assert False
+    return list(chain(*new_genes)), new_introns
 
 def find_exons( contig_lens, gene_bndry_bins, ofp,
                 rnaseq_reads, cage_reads, polya_reads,
