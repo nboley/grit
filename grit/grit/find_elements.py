@@ -1844,15 +1844,95 @@ def find_segments_and_jns_worker(
     
     return
 
+def load_gene_bndry_bins( genes, contig, strand, contig_len ):  
+    config.log_statement( "Loading gene boundaries from annotated genes in %s:%s" % (  
+            contig, strand) )  
+  
+    ## find the gene regions in this contig. Note that these  
+    ## may be overlapping  
+    gene_intervals = []  
+    for gene in genes:  
+        if gene.chrm != contig: continue  
+        if gene.strand != strand: continue  
+        gene_intervals.append((gene.start, gene.stop))  
+    if len(gene_intervals) == 0: return []  
+      
+    ## merge overlapping genes regions by building a graph with nodes  
+    ## of all gene regions, and edges with all overlapping genes   
+  
+    # first, find the edges by probing into the sorted intervals  
+    gene_intervals.sort()  
+    gene_starts = numpy.array([interval[0] for interval in gene_intervals])  
+    overlapping_genes = []  
+    for gene_index, (start, stop) in enumerate(gene_intervals):  
+        start_i = numpy.searchsorted(gene_starts, start)  
+        # start looping over potentially overlapping intervals  
+        for i, gene_interval in enumerate(gene_intervals[start_i:]):  
+            # if we have surpassed all potentially overlapping intervals,  
+            # then we don't need to go any further  
+            if gene_interval[0] > stop: break  
+            # if the intervals overlap ( I dont think I need this test, but  
+            # it's cheap and this could be an insidious bug )  
+            if not (stop < gene_interval[0] or start > gene_interval[1] ):  
+                overlapping_genes.append( (int(gene_index), int(i+start_i)) )  
+      
+    # buld the graph, find the connected components, and build   
+    # the set of merged intervals  
+    genes_graph = nx.Graph()  
+    genes_graph.add_nodes_from(xrange(len(gene_starts)))  
+    genes_graph.add_edges_from(overlapping_genes)  
+    merged_gene_intervals = []  
+    for genes in nx.connected_components(genes_graph):  
+        start = min( gene_intervals[i][0] for i in genes )  
+        stop = max( gene_intervals[i][1] for i in genes )  
+        merged_gene_intervals.append( [start, stop] )  
+      
+    # expand the gene boundaries to their maximum amount such that the genes   
+    # aren't overlapping. This is to allow for gene ends that lie outside of   
+    # the previously annotated boundaries  
+    merged_gene_intervals.sort()  
+    for i in xrange(0,len(merged_gene_intervals)-1):  
+        mid = (merged_gene_intervals[i][1]+merged_gene_intervals[i+1][0])/2  
+        merged_gene_intervals[i][1] = int(mid)-1  
+        merged_gene_intervals[i+1][0] = int(mid)+1      
+    merged_gene_intervals[0][0] = max(   
+        1, merged_gene_intervals[0][0]-config.MAX_GENE_EXPANSION)  
+    merged_gene_intervals[-1][1] = min(   
+        contig_len-1, merged_gene_intervals[-1][1]+config.MAX_GENE_EXPANSION)  
+      
+    # build gene objects with the intervals  
+    gene_bndry_bins = []  
+    for start, stop in merged_gene_intervals:  
+        gene_bin = Bins( contig, strand, [  
+                Bin(start, stop, 'GENE', 'GENE', 'GENE'),] )  
+        gene_bndry_bins.append( gene_bin )  
+      
+    config.log_statement( "" )  
+      
+    return gene_bndry_bins  
+
+
 def find_all_gene_segments( contig_lens,
                             rnaseq_reads, promoter_reads, polya_reads,
                             ref_genes, ref_elements_to_include,
-                            region_to_use=None,
-                            junctions=None):
+                            region_to_use=None ):
+    contig_lens = copy(contig_lens)
     if region_to_use != None:
         for chrm in contig_lens.keys():
             if chrm != region_to_use: del contig_lens[chrm]
 
+    # if we are supposed to use the annotation genes
+    if ref_elements_to_include.genes == True:
+        gene_bndry_bins = []
+        for contig, contig_len in contig_lens.iteritems():
+            for strand in '+-':
+                contig_gene_bndry_bins = load_gene_bndry_bins(
+                    ref_genes, contig, strand, contig_len)
+                gene_bndry_bins.extend( contig_gene_bndry_bins )
+        return gene_bndry_bins
+
+    if ref_elements_to_include.genes:
+                pass
     config.log_statement("Spawning gene segment finding children")    
     segments_queue = multiprocessing.Queue()
     manager = multiprocessing.Manager()
@@ -1943,11 +2023,11 @@ def find_all_gene_segments( contig_lens,
                     for (start, stop), cnt 
                     in sorted(filtered_jns[key].iteritems()) ]
             for start, stop, cnt in jns:
-                new_introns[-1].append( Bin(start, stop, "D_JN","R_JN","INTRON") )
+                new_introns[-1].append(Bin(start, stop, "D_JN","R_JN","INTRON"))
             intervals = cluster_intron_connected_segments(
                 transcribed_regions[key], 
                 [(start, stop) for start, stop, cnt in jns ] )
-            # add the intergenic space, since there could be genes in the interior
+            # add the intergenic space, since there could be interior genes
             for segments in intervals: 
                 new_gene = Bins( contig, strand )
                 for start, stop in segments:
@@ -1957,15 +2037,15 @@ def find_all_gene_segments( contig_lens,
                 new_genes[-1].append(new_gene)
     
     if config.WRITE_DEBUG_DATA:
-        with open("tmp.bed", "w") as fp:
+        with open("discovered_gene_bounds.bed", "w") as fp:
             fp.write(
-                'track name="test" visibility=2 itemRgb="On" useScore=1\n')
+                'track name="discovered_gene_bounds" visibility=2 itemRgb="On" useScore=1\n')
             for contig_genes in new_genes:
                 write_unified_bed(contig_genes, fp)
             for jn in new_introns:
                 write_unified_bed(jn, fp)
 
-    return list(chain(*new_genes)), new_introns
+    return list(chain(*new_genes))
 
 def find_exons( contig_lens, gene_bndry_bins, ofp,
                 rnaseq_reads, cage_reads, polya_reads,
@@ -2036,12 +2116,11 @@ def find_elements( promoter_reads, rnaseq_reads, polya_reads,
         
         # load the reference elements
         config.log_statement("Finding gene segments")
-        gene_segments, junctions = find_all_gene_segments( 
+        gene_segments = find_all_gene_segments( 
             contig_lens, 
             rnaseq_reads, promoter_reads, polya_reads,
             ref_genes, ref_elements_to_include, 
-            region_to_use=region_to_use,
-            junctions=None)
+            region_to_use=region_to_use )
         
         # sort genes from longest to shortest. This should help improve the 
         # multicore performance
