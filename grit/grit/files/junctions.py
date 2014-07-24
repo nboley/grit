@@ -126,10 +126,14 @@ def iter_jns_in_read( read ):
     if any(read.cigar[i][1] < config.MIN_INTRON_SIZE for i in intron_indices):
         return
 
+    # forbid jucntion calling in reads with ref insertions or deletions
+    if any(code in (1,2) for code, length in read.cigar):
+        return
+    
     # only accept reads with exactly 1 junction
     if len(intron_indices) != 1: 
         return
-
+    
     intron_index = intron_indices[0]
     # iterate thorough all of the junctions
     for intron_index in intron_indices:
@@ -153,7 +157,7 @@ def iter_jns_in_read( read ):
         n_pre_intron_bases = 0
         for code, size in read.cigar[:intron_index]:
             if code == 0: n_pre_intron_bases += size
-            elif code == 1: pass
+            elif code == 1: pass #n_pre_intron_bases += size
             elif code == 2: n_pre_intron_bases += size
             elif code == 3: n_pre_intron_bases += size
             #elif code == 4: n_pre_intron_bases += size
