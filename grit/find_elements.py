@@ -889,13 +889,14 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
         
         # make sure the average coverage is high enough
         bin_cvg = bin.mean_cov(rnaseq_cov)   
-        if bin_cvg < config.MIN_EXON_AVG_CVG:
-            break
+        if bin.length() > config.MIN_INTRON_SIZE:
+            if bin_cvg < config.MIN_EXON_AVG_CVG:
+                break
 
-        # make sure the median bin civerage is high enough
-        if ( (start_bin_cvg+1e-6)/(bin_cvg+1e-6)
-             > config.EXON_EXT_CVG_RATIO_THRESH ):
-            break
+            # make sure the median bin civerage is high enough
+            if ( (start_bin_cvg+1e-6)/(bin_cvg+1e-6)
+                 > config.EXON_EXT_CVG_RATIO_THRESH ):
+                break
 
         # make sure the boundary ratio is high enough
         #if bin.stop - bin.start > 20:
@@ -938,13 +939,14 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov):
         
         # make sure the average coverage is high enough
         bin_cvg = bin.mean_cov(rnaseq_cov)
-        if bin_cvg < config.MIN_EXON_AVG_CVG:
-            break
+        if bin.length() > config.MIN_INTRON_SIZE:
+            if bin_cvg < config.MIN_EXON_AVG_CVG:
+                break
 
-        # make sure the bin median coverage is high enough
-        if ( (start_bin_cvg+1e-6)/(bin_cvg+1e-6) 
-             > config.EXON_EXT_CVG_RATIO_THRESH ):
-            break
+            # make sure the bin median coverage is high enough
+            if ( (start_bin_cvg+1e-6)/(bin_cvg+1e-6) 
+                 > config.EXON_EXT_CVG_RATIO_THRESH ):
+                break
         
         #if bin.stop - bin.start > 20:
         #    # make sure the boundary ratio is high enough
@@ -1014,6 +1016,7 @@ def extend_exons(rnaseq_cov, ce,
                  left_extensions, right_extensions):
     for left_extension in sorted(deepcopy(left_extensions), 
                                  key=lambda x:x.stop, reverse=True):
+        break
         canonical_cov = rnaseq_cov[
             ce.start:max(ce.stop, ce.stop-left_extension.length())+1].mean()
         cov_ratio = left_extension.mean_cov(rnaseq_cov)/canonical_cov
@@ -1026,6 +1029,7 @@ def extend_exons(rnaseq_cov, ce,
     canonical_cov = rnaseq_cov[max(ce.start, ce.stop-20):ce.stop+1].mean()
     for right_extension in sorted(deepcopy(right_extensions), 
                                   key=lambda x:x.start):
+        break
         canonical_cov = rnaseq_cov[
             max(ce.start, ce.stop-right_extension.length()):ce.stop+1].mean()
         cov_ratio = right_extension.mean_cov(rnaseq_cov)/canonical_cov
