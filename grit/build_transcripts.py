@@ -43,7 +43,7 @@ REP_ID = None
 class TooManyCandidateTranscriptsError(Exception):
     pass
 
-def iter_paths(graph, tss_exons, tes_exons):
+def iter_transcripts(graph, tss_exons, tes_exons):
     paths = [[exon,] for exon in tss_exons]
     while len(paths) > 0:
         curr_path = paths.pop()
@@ -54,7 +54,37 @@ def iter_paths(graph, tss_exons, tes_exons):
                 paths.append(curr_path + [child,])
     return
 
-def build_transcripts_from_elements( 
+def path_len(path):
+    return sum(exon[1]-exon[0]+1 for exon in path)
+
+def iter_transcriplets(graph, tss_exons, tes_exons, max_length):
+    start_exons = set(tss_exons)
+    while len(start_exons) > 0:
+        paths = [[exon,] for exon in start_exons]
+        start_exons = set()
+        while len(paths) > 0:
+            curr_path = paths.pop()
+            for child in graph.successors(curr_path[-1]):
+                new_path = curr_path + [child,]
+                # if child is a tes exon, then there
+                # is nowhere to go so we are done
+                if child in tes_exons:
+                    yield new_path
+                # if this is greater than the maximum 
+                # length, then yield the path, and 
+                # add the first exon as a new start exon
+                elif path_len(new_path) > max_length:
+                    yield new_path
+                    # new_path must have at least 2 elements, because
+                    # of the start exon and child
+                    start_exons.add(new_path[1])
+                # otherwise, keep building on this path
+                else:
+                    paths.append(new_path)
+    return
+
+
+def build_splice_graph(
         tss_exons, internal_exons, tes_exons, se_transcripts, jns, strand ):
     # build a directed graph, with edges leading from exon to exon via junctions
     all_exons = sorted(chain(tss_exons, internal_exons, tes_exons))
@@ -65,8 +95,25 @@ def build_transcripts_from_elements(
     edges = find_jn_connected_exons(all_exons, jns, strand )
     graph.add_edges_from( (start, stop) for jn, start, stop in edges )
     assert nx.is_directed_acyclic_graph(graph)
+    return graph
+
+def build_transcripts_from_elements( 
+        tss_exons, internal_exons, tes_exons, se_transcripts, jns, strand ):
+    graph = build_splice_graph(
+        tss_exons, internal_exons, tes_exons, se_transcripts, jns, strand)
     transcripts = [ [x,] for x in se_transcripts ]
-    for transcript in iter_paths(graph, tss_exons, tes_exons):
+    for transcript in iter_transcripts(graph, tss_exons, tes_exons):
+        transcripts.append( sorted(transcript) )
+        if len(transcripts) > config.MAX_NUM_CANDIDATE_TRANSCRIPTS:
+            raise TooManyCandidateTranscriptsError, "Too many candidate transcripts"
+    return transcripts
+
+def build_transcript_fragments_from_elements( 
+        tss_exons, internal_exons, tes_exons, se_transcripts, jns, strand ):
+    graph = build_splice_graph(
+        tss_exons, internal_exons, tes_exons, se_transcripts, jns, strand)
+    transcripts = [ [x,] for x in se_transcripts ]
+    for transcript in iter_transcriplets(graph, tss_exons, tes_exons, 600):
         transcripts.append( sorted(transcript) )
         if len(transcripts) > config.MAX_NUM_CANDIDATE_TRANSCRIPTS:
             raise TooManyCandidateTranscriptsError, "Too many candidate transcripts"
