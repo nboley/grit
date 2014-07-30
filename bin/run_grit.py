@@ -673,8 +673,9 @@ def main():
         if args.only_build_elements:
             continue
 
-        gtf_fname = sample_type + ".gtf"
-        tracking_fname = sample_type + ".transcript_tracking"
+        gtf_fname = "%s.gtf" % sample_type
+        tracking_fname = "%s.transcript_tracking" % sample_type
+
         assert elements_fp == None or gtf_fp == None
         # try to load an already built gtf
         if args.continue_run and gtf_fp == None:

@@ -40,6 +40,8 @@ class FlDist( object ):
     def __init__( self, fl_min, fl_max, fl_density, stats=None ):
         assert fl_min <= fl_max
         assert fl_max < 100000
+        assert sum(fl_density) == 1.
+        
         try:
             assert type( fl_min ) == int
             assert type( fl_max ) == int
@@ -57,7 +59,8 @@ class FlDist( object ):
         self.fl_density_weighted_cumsum = \
             self.fl_density*numpy.arange( fl_min, fl_max+1 )
         self.fl_density_weighted_cumsum = self.fl_density_weighted_cumsum.cumsum()
-
+        
+        
         # build and set the hash value
         self._hash_value = hash( ( self.fl_min, self.fl_max, \
                                    tuple( self.fl_density ) ) )
@@ -109,6 +112,8 @@ def build_uniform_density( fl_min, fl_max ):
     return FlDist( fl_min, fl_max,  numpy.ones( length )/length )
 
 def build_normal_density( fl_min, fl_max, mean, sd ):
+    # hack sd's of 0 - for simulations
+    sd += 1e-6
     length = fl_max - fl_min + 1
     assert length < 100000
     from scipy.stats import norm
@@ -535,7 +540,7 @@ def estimate_normal_fl_dist_from_reads(reads, max_num_fragments_to_sample=500):
         if len( frag_lens ) > max_num_fragments_to_sample: break
 
     if len( frag_lens ) < 50:
-        err_str = "There are not enough reads to estimate an fl dist"
+        err_str = "There are not enough reads (%i) to estimate an fl dist" % len(frag_lens)
         raise ValueError, err_str
     
     return estimate_normal_fl_dist_from_fragments( frag_lens )

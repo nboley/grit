@@ -78,7 +78,7 @@ class Gene( object ):
             for exon in transcript.exons:
                 boundaries.add( exon[0] )
                 boundaries.add( exon[1]+1 )
-
+        
         return sorted( boundaries )
     
     def write_to_file(self, ofname=None):

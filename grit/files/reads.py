@@ -450,7 +450,7 @@ class Reads( pysam.Samfile ):
             # if there is no mate, skip this read
             except KeyError:
                 if DEBUG:
-                    print "No mate: ", read1.pos, read1.aend
+                    print "No mate: ", read1.pos, read1.aend-1
                 continue
 
             assert read1.query == None or \
@@ -572,9 +572,9 @@ class CAGEReads(Reads):
                 rd_strand = '+' if rd_strand == '-' else '-'
             if strand != rd_strand: continue
             if strand == '-':
-                peak_pos = max(rd.pos, rd.aend)
+                peak_pos = max(rd.pos, rd.aend-1)
             else:
-                peak_pos = min(rd.pos, rd.aend)
+                peak_pos = min(rd.pos, rd.aend-1)
             if peak_pos < start or peak_pos > stop:
                 continue
             
@@ -693,7 +693,7 @@ class PolyAReads(Reads):
             
             # determine which pos of the read corresponds to the 
             # poly(a) site
-            if rd_strand == '+': pos = rd.aend
+            if rd_strand == '+': pos = rd.aend-1
             else: pos = rd.pos
             
             # skip sites that aren't within the requested range
