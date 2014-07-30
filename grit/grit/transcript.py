@@ -132,7 +132,6 @@ class Gene( object ):
                 elements['tes_exon'].add(tes_exon)
                 polya = t.find_polya_region()
                 elements['polya'].add(polya)
-        
         return elements
 
 class Transcript( object ):
@@ -363,10 +362,10 @@ class Transcript( object ):
         # at the beggining of the transcript
         if self.strand == '+':
             return ( self.exons[0][0],
-                     min(self.exons[0][0]+inferred_promoter_length, 
+                     min(self.exons[0][0]+inferred_promoter_length-1, 
                          self.exons[0][1]) )
         else:
-            return ( max( self.exons[-1][1]-inferred_promoter_length, 
+            return ( max( self.exons[-1][1]-inferred_promoter_length+1, 
                           self.exons[-1][0] ),
                      self.exons[-1][1] )
         
@@ -380,12 +379,12 @@ class Transcript( object ):
         # otherwise, return *up to* the first inferred_promoter_length bases
         # at the beggining of the transcript
         if self.strand == '+':
-            return ( max( self.exons[-1][1]-inferred_polya_region_length, 
+            return ( max( self.exons[-1][1]-inferred_polya_region_length+1, 
                           self.exons[-1][0] ),
                      self.exons[-1][1] )
         else:
             return ( self.exons[0][0],
-                     min(self.exons[0][0]+inferred_polya_region_length, 
+                     min(self.exons[0][0]+inferred_polya_region_length-1, 
                          self.exons[0][1]) )
         
         assert False

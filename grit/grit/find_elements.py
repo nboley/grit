@@ -1306,18 +1306,15 @@ def build_raw_elements_in_gene( gene,
                    if points_are_inside_gene(x1, x2)]
     assert all( 0 <= start <= stop for start, stop in cage_peaks )
     if gene.strand == '-':
-        cage_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in cage_peaks ]
-    
+        cage_peaks = [ (gene_len-x2-1, gene_len-x1-1) for x1, x2 in cage_peaks ]
     if cage_reads != None:
         cage_cov = find_coverage_in_gene(gene, cage_reads)
-    
     polya_peaks = [ (x1-gene.start, x2-gene.start)
                     for x1, x2 in ref_polya_peaks
                     if points_are_inside_gene(x1, x2)]
     assert all( 0 <= start <= stop for start, stop in polya_peaks )
     if gene.strand == '-':
-        polya_peaks = [ (gene_len-x2, gene_len-x1) for x1, x2 in polya_peaks ]
-    
+        polya_peaks = [ (gene_len-x2-1, gene_len-x1-1) for x1, x2 in polya_peaks ]
     if polya_reads != None:
         polya_cov = find_coverage_in_gene(gene, polya_reads)
     
@@ -1447,7 +1444,6 @@ def find_exons_in_gene( gene, contig_len,
         gene, rnaseq_reads, cage_reads, polya_reads, 
         cage_peaks, introns, polya_peaks)
     ### END Prepare input data #########################################
-    
     # initialize the cage peaks with the reference provided set
     cage_peaks = Bins( gene.chrm, gene.strand, (
         Bin(pk_start, pk_stop, "CAGE_PEAK_START","CAGE_PEAK_STOP","CAGE_PEAK")
@@ -1610,7 +1606,7 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
         resplit_genes=(False == ref_elements_to_include.genes))
     if new_gene_boundaries != None:
         return new_gene_boundaries
-
+    
     # merge in the reference elements
     for tss_exon in gene_ref_elements['tss_exon']:
         elements.append( Bin(tss_exon[0], tss_exon[1], 
