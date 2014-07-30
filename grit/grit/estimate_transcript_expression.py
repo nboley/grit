@@ -446,7 +446,6 @@ def estimate_mle_worker( gene_ids, data ):
                                          log=True)
                 continue
             num_reads_in_bams = data.get_num_reads_in_bams()
-
             expected_array, observed_array = f_mat.expected_and_observed(
                 num_reads_in_bams)
             if (expected_array, observed_array) == (None, None): 

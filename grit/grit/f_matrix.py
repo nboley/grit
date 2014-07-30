@@ -370,14 +370,12 @@ def estimate_num_paired_reads_from_bin(
             min_fl = max( min_stop - start_pos, fl_dist.fl_min )
             max_fl = min( max_stop - start_pos, fl_dist.fl_max )
             if min_fl > max_fl: continue
-
             density += fl_dist.fl_density_cumsum[ max_fl - fl_dist.fl_min ]
             if min_fl > fl_dist.fl_min:
                 density -= fl_dist.fl_density_cumsum[min_fl - fl_dist.fl_min-1]
         return density
     
     density = do()
-    
     return float( density )
 
 def calc_expected_cnts( exon_boundaries, transcripts, fl_dists_and_read_lens, \
@@ -419,7 +417,6 @@ def calc_expected_cnts( exon_boundaries, transcripts, fl_dists_and_read_lens, \
                         read_len, max_num_unmappable_bases )
 
                     cached_f_mat_entries[ key ] = pseudo_cnt
-                
                 if not f_mat_entries.has_key( key ):
                     n_bins += 1
                     f_mat_entries[key]= numpy.zeros( 
@@ -507,18 +504,22 @@ def build_expected_and_observed_rnaseq_counts( gene, reads, fl_dists ):
     
     binned_reads = bin_rnaseq_reads( 
         reads, gene.chrm, gene.strand, exon_boundaries)
-    
     observed_cnts = build_observed_cnts( binned_reads, fl_dists )    
     read_groups_and_read_lens =  set( (RG, read_len) for RG, read_len, bin 
                                         in binned_reads.iterkeys() )
     
     fl_dists_and_read_lens = [ (fl_dists[RG], read_len) for read_len, RG  
                                in read_groups_and_read_lens ]
+
+    """
+    # TODO XXX
+    print exon_boundaries
+    print observed_cnts.values()
+    """
     
     expected_cnts = calc_expected_cnts( 
         exon_boundaries, transcripts_non_overlapping_exon_indices, 
         fl_dists_and_read_lens)
-    
     return expected_cnts, observed_cnts
 
 def build_expected_and_observed_transcript_bndry_counts( 
@@ -746,6 +747,7 @@ class DesignMatrix(object):
         expected_rnaseq_cnts, observed_rnaseq_cnts = \
             build_expected_and_observed_rnaseq_counts( 
                 gene, rnaseq_reads, fl_dists )
+        
         # if no transcripts are observable given the fl dist, then return nothing
         if len( expected_rnaseq_cnts ) == 0:
             self.array_types.append('RNASeq')

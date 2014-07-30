@@ -207,10 +207,8 @@ def find_empty_regions( cov, thresh=1e-6,
     assert len(starts) == len(stops)
     return [ x for x in izip(starts, stops) if x[1]-x[0]+1 >= min_length ]
 
-def find_transcribed_regions( 
-        cov, thresh=1e-6, 
-        min_empty_region_length=config.MAX_EMPTY_REGION_SIZE ):
-    empty_regions = find_empty_regions(cov, thresh, min_empty_region_length)
+def find_transcribed_regions( cov, thresh=1e-6 ):
+    empty_regions = find_empty_regions(cov, thresh, 0)
     if len(empty_regions) == 0: 
         return [[0, len(cov)-1],]
 
@@ -228,15 +226,14 @@ def find_transcribed_regions(
         transcribed_regions[-1].append(len(cov)-1)
     return transcribed_regions
 
-def merge_disjoint_closed_closed_intervals(
-        intervals, min_empty_region_length=None):
-    if min_empty_region_length == None: 
-        min_empty_region_length = config.MAX_EMPTY_REGION_SIZE
+def merge_adjacent_intervals(
+        intervals, max_merge_distance=None):
+    if len(intervals) == 0: return []
     intervals.sort()
     merged_intervals = [list(intervals[0]),]
     prev_stop = merged_intervals[-1][1]
     for start, stop in intervals[1:]:
-        if start - min_empty_region_length - 1 <= prev_stop:
+        if start - max_merge_distance - 1 <= prev_stop:
             merged_intervals[-1][1] = stop
         else:
             merged_intervals.append([start, stop])
@@ -311,11 +308,11 @@ class Bin( object ):
         return cov_array[self.start:self.stop].mean()
     
     def reverse_strand(self, contig_len):
-        return Bin(contig_len-self.stop, contig_len-self.start, 
+        return Bin(contig_len-1-self.stop, contig_len-1-self.start, 
                    self.right_label, self.left_label, self.type)
 
     def reverse_coords(self, contig_len):
-        return Bin(contig_len-self.stop, contig_len-self.start, 
+        return Bin(contig_len-1-self.stop, contig_len-1-self.start, 
                    self.left_label, self.right_label, self.type)
     
     def shift(self, shift_amnt):
@@ -725,8 +722,9 @@ def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
         #pre_peak_cov = rnaseq_cov[peak_st-100:peak_st].sum()
         #post_peak_cov = rnaseq_cov[peak_st:peak_sp+100].sum()
         #if post_peak_cov/(pre_peak_cov+1e-6) < 5: continue
-        cage_peaks.append( Bin( peak_st, peak_sp+1,
-                                "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK") )
+        cage_peaks.append( Bin( peak_st, peak_sp,
+                                "CAGE_PEAK_START", "CAGE_PEAK_STOP", 
+                                "CAGE_PEAK") )
     return cage_peaks
 
 def find_polya_peaks_in_gene( ( chrm, strand ), gene, polya_cov, rnaseq_cov ):
@@ -756,7 +754,7 @@ def find_polya_peaks_in_gene( ( chrm, strand ), gene, polya_cov, rnaseq_cov ):
         return polya_sites
     
     for peak_st, peak_sp in raw_peaks:
-        polya_bin = Bin( peak_st, peak_sp+1,
+        polya_bin = Bin( peak_st, peak_sp,
                          "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA")
         polya_sites.append( polya_bin )
     
@@ -861,16 +859,14 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
     
         
     new_peaks_and_scores = []
-    scores = (cumsum_cvg_array[3:] - cumsum_cvg_array[:-3])/3.
     for peak, score in peaks_and_scores:
-        peak_scores = scores[peak[0]:peak[1]+1]
+        peak_scores = cov[peak[0]:peak[1]+1]
         max_score = peak_scores.max()
         good_indices = (peak_scores >= max_score*config.MAX_CAGE_FRAC).nonzero()[0]
         new_peak = [
                 peak[0] + int(good_indices.min()), 
-                peak[0] + int(good_indices.max() + 2)  ]
-        new_score = float(
-            cumsum_cvg_array[new_peak[1]+1] - cumsum_cvg_array[new_peak[0]])
+                peak[0] + int(good_indices.max())  ]
+        new_score = float(cov[new_peak[0]:new_peak[1]+1].sum())
         new_peaks_and_scores.append( (new_peak, new_score) )
     
     peaks_and_scores = sorted( new_peaks_and_scores )
@@ -980,27 +976,28 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov):
 def build_labeled_segments( (chrm, strand), rnaseq_cov, jns, 
                             transcript_bndries=[] ):
     locs = defaultdict(set)    
-    
     for start, stop, cnt in jns:
-        if start < 1 or stop > len(rnaseq_cov): continue
+        if start < 0 or stop > len(rnaseq_cov): continue
         #assert start-1 not in locs, "%i in locs" % (start-1)
-        locs[start-1].add( "D_JN" )
+        # XXX - TODO
+        # shoudl these be plus/minus one since they are junctions
+        # and not introns?
+        locs[start].add( "D_JN" )
+        # add 1 to make these closed-open
         locs[stop+1].add( "R_JN" )
 
     for bndry in sorted(transcript_bndries, reverse=True):
         locs[ bndry ].add( "TRANS_BNDRY" )
-    
     # build all of the bins
     poss = sorted( locs.iteritems() )
     poss = merge_empty_labels( poss )
     if len( poss ) == 0: 
         return Bins( chrm, strand )
+    if poss[0][0] > 0:
+        poss.insert( 0, (0, set(["GENE_BNDRY",])) )
+    if poss[-1][0] < len(rnaseq_cov):
+        poss.append( (len(rnaseq_cov), set(["GENE_BNDRY",])) )
 
-    if poss[0][0] > 1:
-        poss.insert( 0, (1, set(["GENE_BNDRY",])) )
-    if poss[-1][0] < len(rnaseq_cov)-1:
-        poss.append( (len(rnaseq_cov)-1, set(["GENE_BNDRY",])) )
-    
     bins = Bins( chrm, strand )
     for index, ((start, left_labels), (stop, right_labels)) in \
             enumerate(izip(poss[:-1], poss[1:])):
@@ -1008,7 +1005,8 @@ def build_labeled_segments( (chrm, strand), rnaseq_cov, jns,
             for right_label in right_labels:
                 bin_type = ( "INTRON" if left_label == 'D_JN' 
                              and right_label == 'R_JN' else None )
-                bins.append(Bin(start, stop, left_label, right_label, bin_type))
+                # subtract 1 to make these closed-closed
+                bins.append(Bin(start, stop-1, left_label, right_label, bin_type))
     
     return bins
 
@@ -1043,8 +1041,7 @@ def extend_exons(rnaseq_cov, ce,
     
 
 def find_canonical_and_internal_exons( (chrm, strand), rnaseq_cov, jns ):
-    bins = build_labeled_segments( (chrm, strand), rnaseq_cov, jns )    
-    
+    bins = build_labeled_segments( (chrm, strand), rnaseq_cov, jns )        
     def iter_canonical_exons_and_indices():
         for i, bin in enumerate( bins ):
             if bin.left_label == 'R_JN' and bin.right_label == 'D_JN':
@@ -1176,7 +1173,7 @@ def find_gene_bndry_exons( (chrm, strand), rnaseq_cov, jns, peaks, peak_type ):
             if bin.right_label not in stop_labels: continue
             if bin.stop > peak.start:
                 bndry_exon_indices_and_bins.append( (i, bin) )
-            if bin.stop > peak.stop: break
+            if bin.stop >= peak.stop: break
         
         # for each start bin ( from the previous step )
         # we look for contigous signal. 
@@ -1347,15 +1344,14 @@ def build_raw_elements_in_gene( gene,
                 if points_are_inside_gene(x1-1, x2+1)]
     else: # gene.strand == '-':
         ref_jns_set = set( 
-            (gene_len-x2+gene.start, gene_len-x1+gene.start)  
-            for x1, x2 in ref_jns )            
-        jns = [ (gene_len-x2+gene.start, gene_len-x1+gene.start, cnt)  
+            (gene_len-x2+gene.start-1, gene_len-x1+gene.start-1)  
+            for x1, x2 in ref_jns )    
+        jns = [ (gene_len-x2+gene.start-1, gene_len-x1+gene.start-1, cnt)  
                 for (x1, x2), cnt in sorted(jns.iteritems())
                 if points_are_inside_gene(x1-1, x2+1)]
-    
     #jns = filter_jns(jns, ref_jns_set, rnaseq_cov, gene)
     polya_peaks = filter_polya_peaks(polya_peaks, rnaseq_cov, jns)
-
+    
     return rnaseq_cov, cage_cov, cage_peaks, polya_cov, polya_peaks, jns
 
 def iter_retained_intron_connected_exons(
@@ -1442,7 +1438,6 @@ def find_exons_in_gene( gene, contig_len,
     assert isinstance( gene, Bins )
     config.log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" % 
                    (gene.chrm, gene.strand, gene.start, gene.stop) )
-    
     ###########################################################
     # Shift all of the input data to be in the gene region, and 
     # reverse it when necessary
@@ -1455,7 +1450,7 @@ def find_exons_in_gene( gene, contig_len,
     
     # initialize the cage peaks with the reference provided set
     cage_peaks = Bins( gene.chrm, gene.strand, (
-        Bin(pk_start, pk_stop+1, "CAGE_PEAK_START","CAGE_PEAK_STOP","CAGE_PEAK")
+        Bin(pk_start, pk_stop, "CAGE_PEAK_START","CAGE_PEAK_STOP","CAGE_PEAK")
         for pk_start, pk_stop in cage_peaks ))
     if cage_reads != None:
         cage_peaks.extend( find_cage_peaks_in_gene( 
@@ -1463,7 +1458,7 @@ def find_exons_in_gene( gene, contig_len,
     
     # initialize the polya peaks with the reference provided set
     polya_peaks = Bins( gene.chrm, gene.strand, (
-       Bin( pk_start, pk_stop+1, "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA")
+       Bin( pk_start, pk_stop, "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA")
         for pk_start, pk_stop in polya_peaks ))
     if polya_reads != None:
         polya_peaks.extend( find_polya_peaks_in_gene( 
@@ -1484,6 +1479,23 @@ def find_exons_in_gene( gene, contig_len,
     se_genes = find_se_genes( 
         (gene.chrm, gene.strand), rnaseq_cov, jns, cage_peaks, polya_peaks )
     
+    """
+    bins = build_labeled_segments( (gene.chrm, gene.strand), rnaseq_cov, jns )
+    if gene.strand == '-':
+        bins = bins.reverse_strand( gene.stop - gene.start + 1)
+    bins = bins.shift( gene.start )
+    
+    exon_bndries = numpy.array(sorted([bin.start for bin in bins
+                                   ] + [bins[-1].stop+1,]) )
+    print bins
+    print exon_bndries
+    import f_matrix
+    binned_reads = f_matrix.bin_rnaseq_reads(
+        rnaseq_reads, gene.chrm, gene.strand, exon_bndries)
+    print binned_reads
+    print binned_reads.values()
+    """
+    
     canonical_exons, internal_exons, retained_introns = \
         find_canonical_and_internal_exons(
             (gene.chrm, gene.strand), rnaseq_cov, jns)
@@ -1503,7 +1515,7 @@ def find_exons_in_gene( gene, contig_len,
             continue
         bin = Bin(start, stop, 'R_JN', 'D_JN', 'INTRON', cnt)
         jn_bins.append( bin )
-
+    
     retained_intron_bins = filter_exons([
         intron for intron, cnt in retained_introns.iteritems() 
         if cnt > 1], rnaseq_cov)
@@ -1564,19 +1576,17 @@ def find_exons_in_gene( gene, contig_len,
         se_genes, rnaseq_cov, 
         num_start_bases_to_skip=config.NUM_TSS_BASES_TO_SKIP, 
         num_stop_bases_to_skip=config.NUM_TES_BASES_TO_SKIP )
-    
     elements = Bins(gene.chrm, gene.strand, chain(
             jn_bins, cage_peaks, polya_peaks, retained_intron_bins,
             tss_exons, internal_exons, tes_exons, se_genes) )
     if gene.strand == '-':
         elements = elements.reverse_strand( gene.stop - gene.start + 1 )
+    
     elements = elements.shift( gene.start )
     elements.append( gene )
-    
     if gene.strand == '-':
         gene_bins = gene_bins.reverse_strand( gene.stop - gene.start + 1 )
     gene_bins = gene_bins.shift( gene.start )
-    
     return elements, gene_bins, None
         
 
@@ -1591,7 +1601,6 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
             if stop < gene.start: continue
             if start > gene.stop: break
             gene_ref_elements[key].append((start, stop))
-    
     elements, pseudo_exons, new_gene_boundaries = find_exons_in_gene(
         gene, contig_lens[gene.chrm],
         rnaseq_reads, cage_reads, polya_reads, 
@@ -1601,7 +1610,7 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
         resplit_genes=(False == ref_elements_to_include.genes))
     if new_gene_boundaries != None:
         return new_gene_boundaries
-    
+
     # merge in the reference elements
     for tss_exon in gene_ref_elements['tss_exon']:
         elements.append( Bin(tss_exon[0], tss_exon[1], 
@@ -1612,7 +1621,7 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
                              "REF_TES_EXON_START", "REF_TES_EXON_STOP",
                              "TES_EXON") )
     write_unified_bed( elements, ofp)
-
+    
     if config.WRITE_DEBUG_DATA:        
         pseudo_exons.writeBed( ofp )
     
@@ -1686,11 +1695,9 @@ def extract_reference_elements(genes, ref_elements_to_include):
     
     for gene in genes:
         elements = gene.extract_elements()
-        # we add 1 to everything because find elements is 1 based, but 
-        # extract elements is 0 based
         def add_elements(key):
             for start, stop in elements[key]:
-                ref_elements[(gene.chrm, gene.strand)][key].add((start+1, stop+1))
+                ref_elements[(gene.chrm, gene.strand)][key].add((start, stop))
 
         if ref_elements_to_include.junctions:
             add_elements('intron')
@@ -1721,6 +1728,7 @@ def find_transcribed_regions_and_jns_in_segment(
             '-': numpy.zeros(reg_len, dtype=float) }
     jn_reads = {'+': defaultdict(int), '-': defaultdict(int)}
     for reads in (rnaseq_reads, promoter_reads, polya_reads):
+        if reads == None: continue
         for read, strand in reads.iter_reads_and_strand(
                 contig, r_start, r_stop):
             for start, stop in iter_coverage_intervals_for_read(read):
@@ -1993,7 +2001,8 @@ def find_all_gene_segments( contig_lens,
     merged_transcribed_regions = {}
     for key, intervals in transcribed_regions.iteritems():
         merged_transcribed_regions[
-            key] = merge_disjoint_closed_closed_intervals(intervals)
+            key] = merge_adjacent_intervals(
+                intervals, config.MAX_EMPTY_REGION_SIZE)
     transcribed_regions = merged_transcribed_regions
     
     config.log_statement("Filtering junctions")    
@@ -2111,7 +2120,6 @@ def find_elements( promoter_reads, rnaseq_reads, polya_reads,
             [ reads for reads in [rnaseq_reads, promoter_reads, polya_reads]
               if reads != None ] )
         contig_lens = dict(zip(contigs, contig_lens))
-        
         regions = []
         for contig, contig_len in contig_lens.iteritems():
             if region_to_use != None and contig != region_to_use: continue
@@ -2125,11 +2133,9 @@ def find_elements( promoter_reads, rnaseq_reads, polya_reads,
             rnaseq_reads, promoter_reads, polya_reads,
             ref_genes, ref_elements_to_include, 
             region_to_use=region_to_use )
-        
         # sort genes from longest to shortest. This should help improve the 
         # multicore performance
         gene_segments.sort( key=lambda x: x.stop-x.start, reverse=True )
-                
         find_exons( contig_lens, gene_segments, ofp,
                     rnaseq_reads, promoter_reads, polya_reads,
                     ref_genes, ref_elements_to_include, 

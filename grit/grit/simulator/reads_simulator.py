@@ -19,6 +19,7 @@ FREQ_GTF_STRINGS = [ 'freq', 'frac' ]
 
 # add slide dir to sys.path and import frag_len mod
 #sys.path.append(os.path.join(os.path.dirname(sys.argv[0]), ".." ))
+sys.path.insert(0, "/home/nboley/grit/grit/")
 import grit.frag_len as frag_len
 from grit.files.gtf import load_gtf
 from grit.files.reads import clean_chr_name
