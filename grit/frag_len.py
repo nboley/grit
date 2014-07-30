@@ -40,7 +40,7 @@ class FlDist( object ):
     def __init__( self, fl_min, fl_max, fl_density, stats=None ):
         assert fl_min <= fl_max
         assert fl_max < 100000
-        assert sum(fl_density) == 1.
+        assert abs(sum(fl_density) - 1.) < 1e-6
         
         try:
             assert type( fl_min ) == int
@@ -328,7 +328,6 @@ def build_robust_fl_dist_with_stats( fragment_lengths ):
     for fl in new_fls:
         emp_dist[ fl - lower_bnd ] += 1
     emp_dist = emp_dist/emp_dist.sum()
-
     # build the fl dist object
     fl_dist = FlDist( int(lower_bnd), int(upper_bnd), emp_dist, stats )
     
