@@ -11,6 +11,8 @@ LET_READS_OVERLAP = True
 
 DEBUG=False
 
+from scipy.stats import beta
+
 import config
 
 import networkx as nx
@@ -737,6 +739,72 @@ def bin_rnaseq_reads( reads, chrm, strand, exon_boundaries ):
         binned_reads[( rlen, rg, tuple(sorted((bin1,bin2))))] += 1
     
     return dict(binned_reads)
+
+def bin_single_end_rnaseq_reads(reads, chrm, strand, exon_boundaries):
+    # first get the paired reads
+    gene_start = int(exon_boundaries[0])
+    gene_stop = int(exon_boundaries[-1])
+    paired_reads = list( reads.iter_paired_reads(
+            chrm, strand, gene_start, gene_stop) )
+    bins = defaultdict(int)
+    for r in chain(*paired_reads):
+        bin = []
+        for start, stop in iter_coverage_intervals_for_read( r ):
+            bin.extend(
+                find_nonoverlapping_exons_covered_by_segment( 
+                    exon_boundaries, start, stop ))
+        bins[(r.inferred_length, tuple(bin))] += 1
+    return bins
+
+def build_element_expected_and_observed(
+        rnaseq_reads, exon_boundaries, gene):
+    binned_reads = bin_single_end_rnaseq_reads(
+        rnaseq_reads, gene.chrm, gene.strand, exon_boundaries)
+    num_reads = float(sum(binned_reads.values()))
+    fragment_cnts = find_expected_single_bin_freqs(
+        exon_boundaries, binned_reads.keys())
+    
+    #### calculate the read length normalized bin counts
+    # estimate the marginal fraction of each read length
+    read_len_freqs = defaultdict(int)
+    for (read_len, bin), cnt in binned_reads.iteritems():
+        read_len_freqs[read_len] += cnt/num_reads
+    # normalize and group the bin type fragment counts
+    rd_len_grpd_fragment_cnts = defaultdict(int)
+    for (read_len, bin), cnt in fragment_cnts.iteritems():
+        rd_len_grpd_fragment_cnts[bin] += cnt*read_len_freqs[read_len]
+    num_frags = sum(rd_len_grpd_fragment_cnts.values())
+    for bin, cnt in list(rd_len_grpd_fragment_cnts.iteritems()):
+        rd_len_grpd_fragment_cnts[bin] = cnt/num_frags
+    rd_len_grpd_fragment_freqs = rd_len_grpd_fragment_cnts
+    
+    # group binned reads by read length
+    rd_len_grpd_binned_reads = defaultdict(int)
+    for (read_len, bin), cnt in binned_reads.iteritems():
+        rd_len_grpd_binned_reads[bin] += cnt
+    return rd_len_grpd_fragment_freqs, rd_len_grpd_binned_reads
+
+def find_expected_single_bin_freqs(exon_boundaries, read_lens_and_bins):
+    def bin_len(i):
+        return exon_boundaries[i+1] - exon_boundaries[i]
+    
+    bin_counts = {}
+    for read_len, bin_indices in read_lens_and_bins:
+        assert sum(bin_len(i) for i in bin_indices) >= read_len
+        if len(bin_indices) == 1: 
+            num_frags = bin_len(bin_indices[0]) - read_len
+        elif len(bin_indices) == 2:
+            num_frags = min(bin_len(bin_indices[0]), 
+                            bin_len(bin_indices[1]), 
+                            read_len)
+        else:
+            interior_len = sum(bin_len(i) for i in bin_indices[1:-1])
+            num_frags = min(bin_len(bin_indices[0]), 
+                            bin_len(bin_indices[-1]), 
+                            read_len-interior_len)
+        
+        bin_counts[(read_len, bin_indices)] = num_frags
+    return bin_counts
 
 class DesignMatrix(object):
     def filter_design_matrix(self):        

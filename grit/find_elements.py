@@ -592,7 +592,6 @@ def load_and_filter_junctions(
     polya_jns = None if polya_reads == None else \
         files.junctions.load_junctions_in_bam(
             polya_reads, [region,], nthreads)[(chrm, strand)]
-    
     filtered_junctions = defaultdict(int)
     
     # filter junctions by counts on the oppsotie strand
@@ -632,10 +631,10 @@ def load_and_filter_junctions(
     for (start, stop), cnt, entropy in rnaseq_junctions:
         if entropy < config.MIN_ENTROPY: continue
         
-        val = beta.ppf(0.01, cnt+1, jn_starts[start]+1)
-        if val < config.NOISE_JN_FILTER_FRAC: continue
-        val = beta.ppf(0.01, cnt+1, jn_stops[stop]+1)
-        if val < config.NOISE_JN_FILTER_FRAC: continue
+        #val = beta.ppf(0.01, cnt+1, jn_starts[start]+1)
+        #if val < config.NOISE_JN_FILTER_FRAC: continue
+        #val = beta.ppf(0.01, cnt+1, jn_stops[stop]+1)
+        #if val < config.NOISE_JN_FILTER_FRAC: continue
         #val = beta.ppf(0.01, cnt+1, jn_grps[jn_grp_map[(start, stop)]]+1)
         #if val < config.NOISE_JN_FILTER_FRAC: continue
         if ( (cnt+1.)/(anti_strand_cnts[(start, stop)]+1) <= 1.):
@@ -1475,7 +1474,6 @@ def find_exons_in_gene( gene, contig_len,
     se_genes = find_se_genes( 
         (gene.chrm, gene.strand), rnaseq_cov, jns, cage_peaks, polya_peaks )
     
-    """
     bins = build_labeled_segments( (gene.chrm, gene.strand), rnaseq_cov, jns )
     if gene.strand == '-':
         bins = bins.reverse_strand( gene.stop - gene.start + 1)
@@ -1483,15 +1481,24 @@ def find_exons_in_gene( gene, contig_len,
     
     exon_bndries = numpy.array(sorted([bin.start for bin in bins
                                    ] + [bins[-1].stop+1,]) )
-    print bins
-    print exon_bndries
     import f_matrix
-    binned_reads = f_matrix.bin_rnaseq_reads(
-        rnaseq_reads, gene.chrm, gene.strand, exon_bndries)
-    print binned_reads
-    print binned_reads.values()
-    """
+    (bin_freqs, binned_reads) = f_matrix.build_element_expected_and_observed(
+                rnaseq_reads, exon_bndries, gene)
     
+    # estimate the frequency bounds
+    ubs, lbs = {}, {}
+    num_reads = sum(binned_reads.values())
+    for bin, cnt in binned_reads.iteritems():
+        ubs[bin] = beta.ppf(0.99, cnt+1, num_reads+1)*(1./bin_freqs[bin])
+        lbs[bin] = beta.ppf(0.01, cnt+1, num_reads+1)*(1./bin_freqs[bin])
+    max_lb = max(lbs.values())
+    print ubs
+    print lbs
+    bins_to_filter = [ bin for bin, ub in ubs.iteritems() 
+                       if ub/max_lb < config.ELEMENT_FILTER_FRAC ]
+    print "BINS TO FILTER", bins_to_filter
+    for bin in bins_to_filter:
+        print [(exon_bndries[i], exon_bndries[i+1]) for i in bin]
     canonical_exons, internal_exons, retained_introns = \
         find_canonical_and_internal_exons(
             (gene.chrm, gene.strand), rnaseq_cov, jns)
