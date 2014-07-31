@@ -295,9 +295,11 @@ def build_and_write_gene(gene_elements, output,
                          fasta, ref_genes ):
     # build the gene with transcripts, and optionally call orfs
     start = min(x[0] for x in chain(
-            gene_elements.tss_exons, gene_elements.tes_exons))
+        gene_elements.tss_exons, gene_elements.tes_exons,
+        gene_elements.promoter, gene_elements.polyas))
     stop = max(x[1] for x in chain(
-            gene_elements.tss_exons, gene_elements.tes_exons))
+        gene_elements.tss_exons, gene_elements.tes_exons,
+        gene_elements.promoter, gene_elements.polyas))
     try:
         config.log_statement(
             "Building transcripts and ORFs for %s (%s:%s:%i-%i)" % (

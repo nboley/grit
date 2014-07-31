@@ -775,14 +775,13 @@ def build_element_expected_and_observed(
         rd_len_grpd_fragment_cnts[bin] += cnt*read_len_freqs[read_len]
     num_frags = sum(rd_len_grpd_fragment_cnts.values())
     for bin, cnt in list(rd_len_grpd_fragment_cnts.iteritems()):
-        rd_len_grpd_fragment_cnts[bin] = cnt/num_frags
-    rd_len_grpd_fragment_freqs = rd_len_grpd_fragment_cnts
+        rd_len_grpd_fragment_cnts[bin] = cnt
     
     # group binned reads by read length
     rd_len_grpd_binned_reads = defaultdict(int)
     for (read_len, bin), cnt in binned_reads.iteritems():
         rd_len_grpd_binned_reads[bin] += cnt
-    return rd_len_grpd_fragment_freqs, rd_len_grpd_binned_reads
+    return rd_len_grpd_fragment_cnts, rd_len_grpd_binned_reads
 
 def find_expected_single_bin_freqs(exon_boundaries, read_lens_and_bins):
     def bin_len(i):
