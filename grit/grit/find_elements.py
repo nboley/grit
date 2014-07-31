@@ -18,6 +18,8 @@ import Queue
 
 import networkx as nx
 
+ReadCounts = namedtuple('ReadCounts', ['Promoters', 'RNASeq', 'Polya'])
+
 from files.reads import MergedReads, RNAseqReads, CAGEReads, \
     RAMPAGEReads, PolyAReads, \
     fix_chrm_name_for_ucsc, get_contigs_and_lens
@@ -1731,10 +1733,17 @@ def find_transcribed_regions_and_jns_in_segment(
     cov = { '+': numpy.zeros(reg_len, dtype=float), 
             '-': numpy.zeros(reg_len, dtype=float) }
     jn_reads = {'+': defaultdict(int), '-': defaultdict(int)}
-    for reads in (rnaseq_reads, promoter_reads, polya_reads):
+    num_unique_reads = [0.0, 0.0, 0.0]
+    for reads_i,reads in enumerate((promoter_reads, rnaseq_reads, polya_reads)):
         if reads == None: continue
         for read, strand in reads.iter_reads_and_strand(
                 contig, r_start, r_stop):
+            try: val = read.opt('XP')
+            except KeyError: 
+                try: val = 1./read.opt('NH')
+                except KeyError:
+                    val = 1.
+            num_unique_reads[reads_i] += val
             for start, stop in iter_coverage_intervals_for_read(read):
                 # if start - r_start > reg_len, then it doesn't do 
                 # anything, so the next line is not necessary
@@ -1774,7 +1783,7 @@ def find_transcribed_regions_and_jns_in_segment(
     
     jn_reads['+'] = sorted(jn_reads['+'].iteritems())
     jn_reads['-'] = sorted(jn_reads['-'].iteritems())
-    return transcribed_regions, jn_reads
+    return transcribed_regions, jn_reads, ReadCounts(*num_unique_reads)
 
 def prefilter_jns(plus_jns, minus_jns):
     all_filtered_jns = []
@@ -1835,7 +1844,8 @@ def find_segments_and_jns_worker(
         segments, 
         transcribed_regions, jns, lock,
         rnaseq_reads, promoter_reads, polya_reads,
-        ref_elements, ref_elements_to_include):
+        ref_elements, ref_elements_to_include,
+        num_unique_reads):
     length_of_segments = segments.qsize()
     while True:
         segment = segments.get()
@@ -1843,7 +1853,7 @@ def find_segments_and_jns_worker(
             config.log_statement("")
             return
         config.log_statement("Finding genes and jns in %s" % str(segment) )
-        ( r_transcribed_regions, r_jns 
+        ( r_transcribed_regions, r_jns, r_n_unique_reads
             ) = find_transcribed_regions_and_jns_in_segment(
                 segment, rnaseq_reads, promoter_reads, polya_reads, 
                 ref_elements, ref_elements_to_include) 
@@ -1857,6 +1867,9 @@ def find_segments_and_jns_worker(
 
             jns[(segment[0], '+')].extend(r_jns['+'])
             jns[(segment[0], '-')].extend(r_jns['-'])
+            
+            for i, val in enumerate(r_n_unique_reads):
+                num_unique_reads[i].value += val
     
     return
 
@@ -1952,6 +1965,9 @@ def find_all_gene_segments( contig_lens,
     config.log_statement("Spawning gene segment finding children")    
     segments_queue = multiprocessing.Queue()
     manager = multiprocessing.Manager()
+    num_unique_reads = ReadCounts(multiprocessing.Value('d', 0.0), 
+                                  multiprocessing.Value('d', 0.0), 
+                                  multiprocessing.Value('d', 0.0))
     transcribed_regions = {}
     jns = {}
     for strand in "+-":
@@ -1980,7 +1996,8 @@ def find_all_gene_segments( contig_lens,
                 segments_queue, 
                 transcribed_regions, jns, lock,
                 rnaseq_reads, promoter_reads, polya_reads,
-                ref_genes, ref_element_types_to_include)
+                ref_genes, ref_element_types_to_include,
+                num_unique_reads)
             os._exit(0)
         pids.append(pid)
 
@@ -2000,6 +2017,9 @@ def find_all_gene_segments( contig_lens,
             "Waiting on gene segment finding children (%i/%i children remain)" 
             %(len(pids)-i, len(pids)))
         os.waitpid(pid, 0) 
+
+    num_unique_reads = ReadCounts(*(x.value for x in num_unique_reads))
+    config.log_statement(str(num_unique_reads), log=True)
 
     config.log_statement("Merging gene segments")
     merged_transcribed_regions = {}
