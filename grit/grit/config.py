@@ -27,6 +27,8 @@ TOTAL_MAPPED_READS = None
 ESTIMATE_UPPER_CONFIDENCE_BOUNDS = True
 ESTIMATE_LOWER_CONFIDENCE_BOUNDS = True
 
+ELEMENT_FILTER_FRAC = 0.05
+
 # the minimum number of flanking bases we need to identify a junction
 # from a gapped read alignmento
 MIN_INTRON_FLANKING_SIZE = 12 
