@@ -304,7 +304,7 @@ class Bin( object ):
         return self.stop - self.start + 1
     
     def mean_cov( self, cov_array ):
-        return numpy.median(cov_array[self.start:self.stop])
+        return numpy.median(cov_array[self.start:self.stop+1])
         return cov_array[self.start:self.stop].mean()
     
     def reverse_strand(self, contig_len):
@@ -606,7 +606,6 @@ def load_and_filter_junctions(
         jn_starts[start] = max( jn_starts[start], cnt )
         jn_stops[stop] = max( jn_stops[stop], cnt )
         
-    """
     # filter junctions by overlapping groups of the same length
     jns_grouped_by_lens = defaultdict(list)
     for (start, stop), cnt, entropy in rnaseq_junctions:
@@ -626,17 +625,16 @@ def load_and_filter_junctions(
                 jn_grp_map[jn] = len(jn_grps) - 1
                 jn_grps[-1] = max(jn_grps[-1], cnt)
             prev_jn = jn
-    """
     
     for (start, stop), cnt, entropy in rnaseq_junctions:
         if entropy < config.MIN_ENTROPY: continue
         
-        #val = beta.ppf(0.01, cnt+1, jn_starts[start]+1)
-        #if val < config.NOISE_JN_FILTER_FRAC: continue
-        #val = beta.ppf(0.01, cnt+1, jn_stops[stop]+1)
-        #if val < config.NOISE_JN_FILTER_FRAC: continue
-        #val = beta.ppf(0.01, cnt+1, jn_grps[jn_grp_map[(start, stop)]]+1)
-        #if val < config.NOISE_JN_FILTER_FRAC: continue
+        val = beta.ppf(0.01, cnt+1, jn_starts[start]+1)
+        if val < config.NOISE_JN_FILTER_FRAC: continue
+        val = beta.ppf(0.01, cnt+1, jn_stops[stop]+1)
+        if val < config.NOISE_JN_FILTER_FRAC: continue
+        val = beta.ppf(0.01, cnt+1, jn_grps[jn_grp_map[(start, stop)]]+1)
+        if val < config.NOISE_JN_FILTER_FRAC: continue
         if ( (cnt+1.)/(anti_strand_cnts[(start, stop)]+1) <= 1.):
             continue
         if stop - start + 1 > config.MAX_INTRON_SIZE: continue
@@ -884,14 +882,13 @@ def find_left_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov ):
         
         # make sure the average coverage is high enough
         bin_cvg = bin.mean_cov(rnaseq_cov)   
-        if bin.length() > config.MIN_INTRON_SIZE:
-            if bin_cvg < config.MIN_EXON_AVG_CVG:
-                break
+        if bin_cvg < config.MIN_EXON_AVG_CVG:
+            break
 
-            # make sure the median bin civerage is high enough
-            if ( (start_bin_cvg+1e-6)/(bin_cvg+1e-6)
-                 > config.EXON_EXT_CVG_RATIO_THRESH ):
-                break
+        # make sure the median bin civerage is high enough
+        if ( (start_bin_cvg+1e-6)/(bin_cvg+1e-6)
+             > config.EXON_EXT_CVG_RATIO_THRESH ):
+            break
 
         # make sure the boundary ratio is high enough
         #if bin.stop - bin.start > 20:
@@ -934,14 +931,13 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov):
         
         # make sure the average coverage is high enough
         bin_cvg = bin.mean_cov(rnaseq_cov)
-        if bin.length() > config.MIN_INTRON_SIZE:
-            if bin_cvg < config.MIN_EXON_AVG_CVG:
-                break
+        if bin_cvg < config.MIN_EXON_AVG_CVG:
+            break
 
-            # make sure the bin median coverage is high enough
-            if ( (start_bin_cvg+1e-6)/(bin_cvg+1e-6) 
-                 > config.EXON_EXT_CVG_RATIO_THRESH ):
-                break
+        # make sure the bin median coverage is high enough
+        if ( (start_bin_cvg+1e-6)/(bin_cvg+1e-6) 
+             > config.EXON_EXT_CVG_RATIO_THRESH ):
+            break
         
         #if bin.stop - bin.start > 20:
         #    # make sure the boundary ratio is high enough
@@ -1462,7 +1458,7 @@ def find_exons_in_gene( gene, contig_len,
     ## boundaries for regions in which we can not produce transcripts
     #if len(cage_peaks) == 0 or len(polya_peaks) == 0:
     #    return Bins(gene.chrm, gene.strand), None, None
-    
+        
     if resplit_genes and len(gene) == 1 and (
             len(cage_peaks) > 0 and len(polya_peaks) > 0):
         new_genes = re_segment_gene( 
@@ -1474,6 +1470,7 @@ def find_exons_in_gene( gene, contig_len,
     se_genes = find_se_genes( 
         (gene.chrm, gene.strand), rnaseq_cov, jns, cage_peaks, polya_peaks )
     
+    """
     bins = build_labeled_segments( (gene.chrm, gene.strand), rnaseq_cov, jns )
     if gene.strand == '-':
         bins = bins.reverse_strand( gene.stop - gene.start + 1)
@@ -1482,23 +1479,27 @@ def find_exons_in_gene( gene, contig_len,
     exon_bndries = numpy.array(sorted([bin.start for bin in bins
                                    ] + [bins[-1].stop+1,]) )
     import f_matrix
-    (bin_freqs, binned_reads) = f_matrix.build_element_expected_and_observed(
-                rnaseq_reads, exon_bndries, gene)
-    
+    (bin_frag_cnts,binned_reads) = f_matrix.build_element_expected_and_observed(
+        rnaseq_reads, exon_bndries, gene)
     # estimate the frequency bounds
     ubs, lbs = {}, {}
     num_reads = sum(binned_reads.values())
     for bin, cnt in binned_reads.iteritems():
-        ubs[bin] = beta.ppf(0.99, cnt+1, num_reads+1)*(1./bin_freqs[bin])
-        lbs[bin] = beta.ppf(0.01, cnt+1, num_reads+1)*(1./bin_freqs[bin])
+        ubs[bin] = beta.ppf(0.99, cnt+1, num_reads+1)*(1./bin_frag_cnts[bin])
+        lbs[bin] = beta.ppf(0.01, cnt+1, num_reads+1)*(1./bin_frag_cnts[bin])
     max_lb = max(lbs.values())
-    print ubs
-    print lbs
     bins_to_filter = [ bin for bin, ub in ubs.iteritems() 
                        if ub/max_lb < config.ELEMENT_FILTER_FRAC ]
     print "BINS TO FILTER", bins_to_filter
+    print jns
+    jns = [jn for jn in jns
+           if beta.ppf(0.99, jn[2]+1, num_reads+1)*(1./75)/max_lb
+           > config.ELEMENT_FILTER_FRAC ]
+    print jns
     for bin in bins_to_filter:
         print [(exon_bndries[i], exon_bndries[i+1]) for i in bin]
+    """
+    
     canonical_exons, internal_exons, retained_introns = \
         find_canonical_and_internal_exons(
             (gene.chrm, gene.strand), rnaseq_cov, jns)
