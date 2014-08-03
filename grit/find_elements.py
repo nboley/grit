@@ -1456,6 +1456,7 @@ def find_exons_in_gene( gene, contig_len,
     if polya_reads != None:
         polya_peaks.extend( find_polya_peaks_in_gene( 
             (gene.chrm, gene.strand), gene, polya_cov, rnaseq_cov ) )
+    
     ## TODO - re-enable to give cleaner gene boundaries. As is, we'll provide
     ## boundaries for regions in which we can not produce transcripts
     #if len(cage_peaks) == 0 or len(polya_peaks) == 0:
@@ -1471,36 +1472,6 @@ def find_exons_in_gene( gene, contig_len,
     
     se_genes = find_se_genes( 
         (gene.chrm, gene.strand), rnaseq_cov, jns, cage_peaks, polya_peaks )
-    
-    """
-    bins = build_labeled_segments( (gene.chrm, gene.strand), rnaseq_cov, jns )
-    if gene.strand == '-':
-        bins = bins.reverse_strand( gene.stop - gene.start + 1)
-    bins = bins.shift( gene.start )
-    
-    exon_bndries = numpy.array(sorted([bin.start for bin in bins
-                                   ] + [bins[-1].stop+1,]) )
-    import f_matrix
-    (bin_frag_cnts,binned_reads) = f_matrix.build_element_expected_and_observed(
-        rnaseq_reads, exon_bndries, gene)
-    # estimate the frequency bounds
-    ubs, lbs = {}, {}
-    num_reads = sum(binned_reads.values())
-    for bin, cnt in binned_reads.iteritems():
-        ubs[bin] = beta.ppf(0.99, cnt+1, num_reads+1)*(1./bin_frag_cnts[bin])
-        lbs[bin] = beta.ppf(0.01, cnt+1, num_reads+1)*(1./bin_frag_cnts[bin])
-    max_lb = max(lbs.values())
-    bins_to_filter = [ bin for bin, ub in ubs.iteritems() 
-                       if ub/max_lb < config.ELEMENT_FILTER_FRAC ]
-    print "BINS TO FILTER", bins_to_filter
-    print jns
-    jns = [jn for jn in jns
-           if beta.ppf(0.99, jn[2]+1, num_reads+1)*(1./75)/max_lb
-           > config.ELEMENT_FILTER_FRAC ]
-    print jns
-    for bin in bins_to_filter:
-        print [(exon_bndries[i], exon_bndries[i+1]) for i in bin]
-    """
     
     canonical_exons, internal_exons, retained_introns = \
         find_canonical_and_internal_exons(
@@ -1595,6 +1566,36 @@ def find_exons_in_gene( gene, contig_len,
     gene_bins = gene_bins.shift( gene.start )
     return elements, gene_bins, None
         
+def estimate_element_expression(elements, rnaseq_reads):
+    gene = next( x for x in elements if isinstance(x, Bins))    
+    exon_bndries = sorted(set([bin.start for bin in elements] + [gene.stop,]))
+    exon_bndries = numpy.array(exon_bndries)
+    import f_matrix 
+    (bin_frag_cnts,binned_reads) = f_matrix.build_element_expected_and_observed(
+        rnaseq_reads, exon_bndries, gene)
+    # estimate the frequency bounds
+    print binned_reads
+    print bin_frag_cnts 
+    ubs, lbs = {}, {}
+    num_reads = sum(binned_reads.values())
+    for bin, cnt in binned_reads.iteritems():
+        ubs[bin] = beta.ppf(0.99, cnt+1, num_reads+1)*(1./bin_frag_cnts[bin])
+        lbs[bin] = beta.ppf(0.01, cnt+1, num_reads+1)*(1./bin_frag_cnts[bin])
+    max_lb = max(lbs.values())
+    print ubs
+    print lbs
+    bins_to_filter = [ bin for bin, ub in ubs.iteritems() 
+                       if ub/max_lb < config.ELEMENT_FILTER_FRAC ]
+    print "BINS TO FILTER", bins_to_filter
+    print jns
+    jns = [jn for jn in jns
+           if beta.ppf(0.99, jn[2]+1, num_reads+1)*(1./75)/max_lb
+           > config.ELEMENT_FILTER_FRAC ]
+    print jns
+    for bin in bins_to_filter:
+        print [(exon_bndries[i], exon_bndries[i+1]) for i in bin]
+
+
 
 def find_exons_and_process_data(gene, contig_lens, ofp,
                                 ref_elements, ref_elements_to_include,
@@ -1626,6 +1627,7 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
         elements.append( Bin(tes_exon[0], tes_exon[1], 
                              "REF_TES_EXON_START", "REF_TES_EXON_STOP",
                              "TES_EXON") )
+    
     write_unified_bed( elements, ofp)
     
     if config.WRITE_DEBUG_DATA:        
