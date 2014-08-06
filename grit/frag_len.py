@@ -552,9 +552,8 @@ def estimate_normal_fl_dist_from_fragments( frag_lens ):
     min_fl, max_fl = int(trimmed_fragments[0]), int(trimmed_fragments[-1])
     mean, sd = trimmed_fragments.mean(), trimmed_fragments.std()
     return { 'mean': build_normal_density( min_fl, max_fl, mean, sd ) }, frag_lens
-    
-def estimate_fl_dists( reads, exons ):
-    fragments = find_fragments( reads, exons )
+
+def estimate_fl_dists_from_fragments( fragments ):
     if len( fragments ) == 0:
         return None, fragments
     if len(fragments) > 5000:
@@ -574,6 +573,10 @@ def estimate_fl_dists( reads, exons ):
         fl_dists, fragments = estimate_normal_fl_dist_from_reads(reads)
 
     return fl_dists, fragments
+    
+def estimate_fl_dists( reads, exons ):
+    fragments = find_fragments( reads, exons )
+    return estimate_fl_dists_from_fragments(fragments)
 
 def parse_arguments():
     import argparse

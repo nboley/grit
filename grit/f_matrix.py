@@ -763,7 +763,7 @@ def build_element_expected_and_observed(
     num_reads = float(sum(binned_reads.values()))
     fragment_cnts = find_expected_single_bin_freqs(
         exon_boundaries, binned_reads.keys())
-    
+    return fragment_cnts, binned_reads
     #### calculate the read length normalized bin counts
     # estimate the marginal fraction of each read length
     read_len_freqs = defaultdict(int)

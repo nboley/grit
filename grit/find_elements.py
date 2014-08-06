@@ -19,6 +19,8 @@ import Queue
 import networkx as nx
 
 ReadCounts = namedtuple('ReadCounts', ['Promoters', 'RNASeq', 'Polya'])
+read_counts = None
+fl_dist = None
 
 from files.reads import MergedReads, RNAseqReads, CAGEReads, \
     RAMPAGEReads, PolyAReads, \
@@ -29,6 +31,8 @@ from files.gtf import parse_gtf_line, load_gtf
 from files.reads import iter_coverage_intervals_for_read
 
 from elements import find_jn_connected_exons
+
+from frag_len import FlDist
 
 import config
 
@@ -301,6 +305,10 @@ class Bin( object ):
         self.right_label = right_label
         self.type = bin_type
         self.score = score
+
+        self.tpm_ub = None
+        self.tpm = None
+        self.tpm_lb = None
     
     def length( self ):
         return self.stop - self.start + 1
@@ -322,11 +330,14 @@ class Bin( object ):
                    self.left_label, self.right_label, self.type)
     
     def __repr__( self ):
-        if self.type == None:
-            return "%i-%i:%s:%s" % ( self.start, self.stop, self.left_label,
-                                       self.right_label )
-
-        return "%s:%i-%i" % ( self.type, self.start, self.stop )
+        type_str =  ( 
+            "%s-%s" % ( self.left_label, self.right_label ) 
+            if self.type == None else self.type )
+        loc_str = "%i-%i" % ( self.start, self.stop )
+        rv = "%s:%s" % (type_str, loc_str)
+        if self.tpm != None:
+            rv += ":%.2f-%.2f TPM" % (self.tpm_lb, self.tpm_ub)
+        return rv
     
     def __hash__( self ):
         return hash( (self.start, self.stop, self.type, 
@@ -970,8 +981,44 @@ def find_right_exon_extensions( start_index, start_bin, gene_bins, rnaseq_cov):
     return exons, retained_introns
 
 
+def estimate_peak_expression(peaks, peak_cov, rnaseq_cov, peak_type):
+    assert peak_type in ('TSS', 'TES')
+    total_read_cnts = ( 
+        read_counts.Promoters if peak_type == 'TSS' else read_counts.Polya )
+    strand = '+' if peak_type == 'TSS' else '-'
+    for peak in peaks:
+        cnt = float(peak_cov[peak.start:peak.stop+1].sum())
+        peak.tpm = cnt/total_read_cnts
+        peak.tpm_ub = 1e6*beta.ppf(0.99, cnt+1, total_read_cnts)/total_read_cnts
+        peak.tpm_lb = 1e6*beta.ppf(0.01, cnt+1, total_read_cnts)/total_read_cnts
+    
+    return peaks
+
+def estimate_segment_expression(gene, rnaseq_cov, jns, 
+                                cage_cov, cage_peaks, 
+                                polya_cov, polya_peaks):
+    read_lens = {75: 1.0}
+    
+    cage_peaks = estimate_peak_expression(
+        cage_peaks, cage_cov, rnaseq_cov, 'TSS')
+    polya_peaks = estimate_peak_expression(
+        polya_peaks, polya_cov, rnaseq_cov, 'TES')
+
+    nonoverlapping_segments = build_labeled_segments( 
+        (gene.chrm, gene.strand), rnaseq_cov, jns,
+        cage_peaks, polya_peaks )
+    
+    for segment in nonoverlapping_segments:
+        if segment.left_label == 'CAGE_PEAK':
+            pass
+    print nonoverlapping_segments
+    print cage_peaks
+    print polya_peaks
+
+    pass
+
 def build_labeled_segments( (chrm, strand), rnaseq_cov, jns, 
-                            transcript_bndries=[] ):
+                            cage_peaks=[], polya_peaks=[] ):
     locs = defaultdict(set)    
     for start, stop, cnt in jns:
         if start < 0 or stop > len(rnaseq_cov): continue
@@ -983,8 +1030,12 @@ def build_labeled_segments( (chrm, strand), rnaseq_cov, jns,
         # add 1 to make these closed-open
         locs[stop+1].add( "R_JN" )
 
-    for bndry in sorted(transcript_bndries, reverse=True):
-        locs[ bndry ].add( "TRANS_BNDRY" )
+
+    for cage_peak in cage_peaks:
+        locs[ cage_peak.start ].add( cage_peak.left_label )
+    for polya_peak in polya_peaks:
+        locs[ polya_peak.stop+1 ].add( polya_peak.right_label )
+    
     # build all of the bins
     poss = sorted( locs.iteritems() )
     poss = merge_empty_labels( poss )
@@ -1425,7 +1476,7 @@ def merge_tes_exons(tes_exons):
                                      exon.type, score) )
     return merged_tes_exons
 
-def find_exons_in_gene( gene, contig_len,
+def find_exons_in_gene_old( gene, contig_len,
                         rnaseq_reads, cage_reads, polya_reads,
                         cage_peaks=[], introns=[], polya_peaks=[],
                         resplit_genes=True):
@@ -1457,6 +1508,11 @@ def find_exons_in_gene( gene, contig_len,
         polya_peaks.extend( find_polya_peaks_in_gene( 
             (gene.chrm, gene.strand), gene, polya_cov, rnaseq_cov ) )
     
+    #estimate_segment_expression(gene, rnaseq_cov, jns,
+    #                            cage_cov, cage_peaks,
+    #                            polya_cov, polya_peaks)
+    #assert False
+
     ## TODO - re-enable to give cleaner gene boundaries. As is, we'll provide
     ## boundaries for regions in which we can not produce transcripts
     #if len(cage_peaks) == 0 or len(polya_peaks) == 0:
@@ -1565,6 +1621,106 @@ def find_exons_in_gene( gene, contig_len,
         gene_bins = gene_bins.reverse_strand( gene.stop - gene.start + 1 )
     gene_bins = gene_bins.shift( gene.start )
     return elements, gene_bins, None
+
+def find_transcript_fragments_covering_region(
+        segment_graph, segment_bnds, segment_index, max_frag_len):
+    # first find transcripts before this segment
+    print segment_graph.nodes()
+    print segment_bnds
+    def seg_len(i): return segment_bnds[i] - segment_bnds[i+1]
+    
+    def build_neighbor_paths(side):
+        assert side in ('BEFORE', 'AFTER')
+        complete_paths = []
+        partial_paths = [([segment_index,], 0),]
+        while len(partial_paths) > 0:
+            curr_path, curr_path_len = partial_paths.pop()
+            if side == 'BEFORE':
+                neighbors = list(segment_graph.predecessors(curr_path[0]))
+            else:
+                neighbors = list(segment_graph.successors(curr_path[-1]))
+
+            if len(neighbors) == 0: 
+                complete_paths.append(curr_path)
+            else:
+                for child in neighbors:
+                    if side == 'BEFORE':
+                        new_path = [child,] + curr_path
+                    else:
+                        new_path = curr_path + [child,]
+                    new_path_len = seg_len(child) + curr_path_len
+                    if new_path_len >= max_frag_len:
+                        complete_paths.append((new_path, new_path_len))
+                    else:
+                        partial_paths.append((new_path, new_path_len))
+        if side == 'BEFORE': return [x[:-1] for x in complete_paths]
+        else: return [x[1:] for x in complete_paths]
+    
+    def build_genome_segments_from_path(segment_indexes):        
+        merged_intervals = merge_adjacent_intervals(
+            zip(segment_indexes, segment_indexes), 
+            max_merge_distance=0)
+        coords = []
+        for start, stop in merged_intervals:
+            coords.append([segment_bnds[start], segment_bnds[stop+1]-1])
+        return coords
+        
+    complete_before_paths = build_neighbor_paths('BEFORE')
+    complete_after_paths = build_neighbor_paths('AFTER')    
+    transcripts = []
+    for bp in complete_before_paths:
+        for ap in complete_after_paths:
+            before_trim_len = max(0, max_frag_len - sum(seg_len(i) for i in bp))
+            after_trim_len = max(0, max_frag_len - sum(seg_len(i) for i in ap))
+            segments = bp + [segment_index,] + ap
+            segments = build_genome_segments_from_path(segments)
+            segments[0][0] = segments[0][0] + before_trim_len
+            segments[-1][1] = segments[-1][1] - after_trim_len
+            transcripts.append( segments )
+    
+    return transcripts
+
+def find_exons_in_gene( gene, contig_len,
+                        rnaseq_reads, cage_reads, polya_reads,
+                        cage_peaks=[], introns=[], polya_peaks=[],
+                        resplit_genes=True):
+    assert isinstance( gene, Bins )
+    jns = load_and_filter_junctions(
+        rnaseq_reads, cage_reads, polya_reads,
+        (gene.chrm, gene.strand, gene.start, gene.stop),
+        nthreads=1)
+    
+    # build the pseudo exon set
+    segments = set([gene.start, gene.stop])
+    for (start, stop) in jns:
+        segments.add(start)
+        segments.add(stop+1)
+    segments = numpy.array(sorted(segments))
+
+    # build the exon segment connectivity graph
+    graph = nx.DiGraph()
+    graph.add_nodes_from(xrange(0, len(segments)-2))
+    graph.add_edges_from(zip(xrange(len(segments)-2),
+                             xrange(1, len(segments)+1-2)))
+    for (start, stop) in jns:
+        start_i = segments.searchsorted(start)-1
+        stop_i = segments.searchsorted(stop+1)-1+1
+        graph.add_edge(start_i, stop_i)
+
+    # find the transcript fragments that overlap a specific sub exon
+    t_fragments = find_transcript_fragments_covering_region(
+        graph, segments, 0, fl_dist.fl_max)
+    print t_fragments
+    assert False
+    
+    segments = numpy.array(sorted(segments))
+    import f_matrix 
+    (bin_frag_cnts,binned_reads) = f_matrix.build_element_expected_and_observed(
+        rnaseq_reads, segments, gene)
+    print bin_frag_cnts
+    print binned_reads
+    assert False
+
         
 def estimate_element_expression(elements, rnaseq_reads):
     gene = next( x for x in elements if isinstance(x, Bins))    
@@ -1736,6 +1892,8 @@ def find_transcribed_regions_and_jns_in_segment(
             '-': numpy.zeros(reg_len, dtype=float) }
     jn_reads = {'+': defaultdict(int), '-': defaultdict(int)}
     num_unique_reads = [0.0, 0.0, 0.0]
+    fragment_lengths =  defaultdict(int)
+    read_mates = {}
     for reads_i,reads in enumerate((promoter_reads, rnaseq_reads, polya_reads)):
         if reads == None: continue
         for read, strand in reads.iter_reads_and_strand(
@@ -1745,6 +1903,8 @@ def find_transcribed_regions_and_jns_in_segment(
                 try: val = 1./read.opt('NH')
                 except KeyError:
                     val = 1.
+                        
+            if read.is_paired: val /= 2
             num_unique_reads[reads_i] += val
             for start, stop in iter_coverage_intervals_for_read(read):
                 # if start - r_start > reg_len, then it doesn't do 
@@ -1755,7 +1915,23 @@ def find_transcribed_regions_and_jns_in_segment(
                 # skip jns whose start does not overlap this region
                 if jn[0] < r_start or jn[0] > r_stop: continue
                 jn_reads[strand][jn] += 1
-
+            
+            # if this is before the mate, then store it to match later
+            if read.is_proper_pair:
+                if read.pos < read.pnext:
+                    read_mates[read.qname] = read
+                else:
+                    assert read.pos >= read.pnext
+                    if read.qname in read_mates:
+                        mate = read_mates[read.qname]
+                        if ( mate.alen == mate.inferred_length 
+                             and read.alen == read.inferred_length ):
+                            fsize = max(
+                                read.aend, read.pos, mate.pos, mate.aend) - min(
+                                    read.aend, read.pos, mate.pos, mate.aend)
+                            fragment_lengths[fsize] += val
+                        del read_mates[read.qname]
+            
     # add pseudo coverage for annotated jns. This is so that the clustering
     # algorithm knows which gene segments to join if a jn falls outside of 
     # a region with observed transcription
@@ -1785,7 +1961,10 @@ def find_transcribed_regions_and_jns_in_segment(
     
     jn_reads['+'] = sorted(jn_reads['+'].iteritems())
     jn_reads['-'] = sorted(jn_reads['-'].iteritems())
-    return transcribed_regions, jn_reads, ReadCounts(*num_unique_reads)
+    
+    return ( 
+        transcribed_regions, jn_reads, 
+        ReadCounts(*num_unique_reads), fragment_lengths )
 
 def prefilter_jns(plus_jns, minus_jns):
     all_filtered_jns = []
@@ -1844,7 +2023,7 @@ def split_genome_into_segments(contig_lens, min_segment_length=5000):
 
 def find_segments_and_jns_worker(
         segments, 
-        transcribed_regions, jns, lock,
+        transcribed_regions, jns, frag_lens, lock,
         rnaseq_reads, promoter_reads, polya_reads,
         ref_elements, ref_elements_to_include,
         num_unique_reads):
@@ -1855,11 +2034,16 @@ def find_segments_and_jns_worker(
             config.log_statement("")
             return
         config.log_statement("Finding genes and jns in %s" % str(segment) )
-        ( r_transcribed_regions, r_jns, r_n_unique_reads
+        ( r_transcribed_regions, r_jns, r_n_unique_reads, r_frag_lens,
             ) = find_transcribed_regions_and_jns_in_segment(
                 segment, rnaseq_reads, promoter_reads, polya_reads, 
                 ref_elements, ref_elements_to_include) 
         with lock:
+            for length, count in r_frag_lens.iteritems():
+                if length not in frag_lens:
+                    frag_lens[length] = 0
+                frag_lens[length] += count
+            
             transcribed_regions[(segment[0], '+')].extend([
                 (start+segment[1], stop+segment[1])
                 for start, stop in r_transcribed_regions['+']])
@@ -1976,6 +2160,7 @@ def find_all_gene_segments( contig_lens,
         for contig in contig_lens.keys():
             transcribed_regions[(contig, strand)] = manager.list()
             jns[(contig, strand)] = manager.list()
+    frag_lens = manager.dict()
     lock = multiprocessing.Lock()
 
     ref_element_types_to_include = set()
@@ -1996,7 +2181,7 @@ def find_all_gene_segments( contig_lens,
         if pid == 0:
             find_segments_and_jns_worker(
                 segments_queue, 
-                transcribed_regions, jns, lock,
+                transcribed_regions, jns, frag_lens, lock,
                 rnaseq_reads, promoter_reads, polya_reads,
                 ref_genes, ref_element_types_to_include,
                 num_unique_reads)
@@ -2019,9 +2204,10 @@ def find_all_gene_segments( contig_lens,
             "Waiting on gene segment finding children (%i/%i children remain)" 
             %(len(pids)-i, len(pids)))
         os.waitpid(pid, 0) 
-
-    num_unique_reads = ReadCounts(*(x.value for x in num_unique_reads))
-    config.log_statement(str(num_unique_reads), log=True)
+    
+    global read_counts
+    read_counts = ReadCounts(*(x.value for x in num_unique_reads))
+    config.log_statement(str(read_counts), log=True)
 
     config.log_statement("Merging gene segments")
     merged_transcribed_regions = {}
@@ -2039,6 +2225,17 @@ def find_all_gene_segments( contig_lens,
         filtered_jns[(contig, '+')] = plus_jns
         filtered_jns[(contig, '-')] = minus_jns
     
+    # build the fragment length distribution
+    frag_lens = dict(frag_lens)
+    min_fl = min(frag_lens.keys())
+    max_fl = max(frag_lens.keys())
+    fl_density = numpy.zeros(max_fl - min_fl + 1)
+    for fl, cnt in frag_lens.iteritems():
+        fl_density[fl-min_fl] += cnt
+    fl_density = fl_density/fl_density.sum()
+    global fl_dist
+    fl_dist = FlDist(min_fl, max_fl, fl_density)
+
     # we are down with the manager
     manager.shutdown()
     
