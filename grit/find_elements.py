@@ -1131,7 +1131,7 @@ def find_se_genes(
         (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_peaks  ):
     polya_sites = numpy.array(sorted(x.stop-1 for x in polya_peaks))
     bins = build_labeled_segments( 
-        (chrm, strand), rnaseq_cov, jns, transcript_bndries=polya_sites )
+        (chrm, strand), rnaseq_cov, jns, polya_peaks=polya_peaks )
     se_genes = Bins( chrm, strand )
     if len(bins) == 0: 
         return se_genes
@@ -1162,7 +1162,7 @@ def find_intergenic_space(
         (chrm, strand), rnaseq_cov, jns, cage_peaks, polya_peaks  ):
     cage_peak_starts = numpy.array(sorted(x.start for x in cage_peaks))
     bins = build_labeled_segments( 
-        (chrm, strand), rnaseq_cov, jns, transcript_bndries=cage_peak_starts )
+        (chrm, strand), rnaseq_cov, jns, cage_peaks=cage_peaks )
     intergenic_segments = Bins( chrm, strand )
     if len(bins) == 0: 
         return intergenic_segments
@@ -1476,7 +1476,7 @@ def merge_tes_exons(tes_exons):
                                      exon.type, score) )
     return merged_tes_exons
 
-def find_exons_in_gene_old( gene, contig_len,
+def find_exons_in_gene( gene, contig_len,
                         rnaseq_reads, cage_reads, polya_reads,
                         cage_peaks=[], introns=[], polya_peaks=[],
                         resplit_genes=True):
@@ -1680,7 +1680,7 @@ def find_transcript_fragments_covering_region(
     
     return transcripts
 
-def find_exons_in_gene( gene, contig_len,
+def find_exons_in_gene_new( gene, contig_len,
                         rnaseq_reads, cage_reads, polya_reads,
                         cage_peaks=[], introns=[], polya_peaks=[],
                         resplit_genes=True):
