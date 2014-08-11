@@ -324,7 +324,9 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
             elif transcript.frac != None:
                 assert len(genes) == 1
                 weight = transcript.frac
-            else: assert False, "Transcript has neither an FPKM nor a frac"
+            else: 
+                weight = 1./len(gene.transcripts)
+                #assert False, "Transcript has neither an FPKM nor a frac"
             transcripts.append( transcript )
             transcript_weights.append( weight )
     
