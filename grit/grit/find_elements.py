@@ -1672,7 +1672,8 @@ def find_transcribed_fragments_covering_region(
         segment_graph, segment_bnds, segment_bnd_labels, 
         segment_index, max_frag_len):
     # first find transcripts before this segment
-    def seg_len(i): return segment_bnds[i] - segment_bnds[i+1]
+    def seg_len(i): 
+        return segment_bnds[i+1]-segment_bnds[i]
     
     def build_neighbor_paths(side):
         assert side in ('BEFORE', 'AFTER')
@@ -1684,9 +1685,9 @@ def find_transcribed_fragments_covering_region(
                 neighbors = list(segment_graph.predecessors(curr_path[0]))
             else:
                 neighbors = list(segment_graph.successors(curr_path[-1]))
-
+            
             if len(neighbors) == 0: 
-                complete_paths.append(curr_path)
+                complete_paths.append((curr_path, curr_path_len))
             else:
                 for child in neighbors:                    
                     if side == 'BEFORE':
@@ -1703,8 +1704,8 @@ def find_transcribed_fragments_covering_region(
                         complete_paths.append((new_path, new_path_len))
                     else:
                         partial_paths.append((new_path, new_path_len))
-        if side == 'BEFORE': return [x[:-1] for x in complete_paths]
-        else: return [x[1:] for x in complete_paths]
+        if side == 'BEFORE': return [x[:-1] for x, x_len in complete_paths]
+        else: return [x[1:] for x, x_len in complete_paths]
     
     def build_genome_segments_from_path(segment_indexes):        
         merged_intervals = merge_adjacent_intervals(
@@ -1743,7 +1744,6 @@ def estimate_exon_segment_expression(
             [(x[0], x[1]) for x in t_fragment], 
             cds_region=None, gene_id="SEG%i" % segment_index)
         transcripts.append(transcript)
-
     transcripts_gene = Gene("%i" % segment_index, "%i" % segment_index, 
                             gene.chrm, gene.strand,
                             min(t.start for t in transcripts),
@@ -1795,12 +1795,6 @@ def estimate_exon_segment_expression(
     #( expected_rnaseq_cnts, observed_rnaseq_cnts
     #  ) = f_matrix.build_expected_and_observed_rnaseq_counts( 
     #    transcripts_gene, rnaseq_reads, fl_dists )
-    print gene
-    print segments_bnds
-    print t_fragments
-    print binned_reads
-    print expected_rnaseq_cnts
-    raw_input()
     exp_cnts, obs_a, un_obs = f_matrix.build_expected_and_observed_arrays(
         expected_rnaseq_cnts, observed_rnaseq_cnts, normalize=False )
     effective_t_lens = exp_cnts.sum(0)
@@ -1829,7 +1823,6 @@ def find_exon_segments_and_introns_in_gene(
         rnaseq_reads, cage_reads, polya_reads,
         (gene.chrm, gene.strand, gene.start, gene.stop),
         nthreads=1)
-    
     """
     # initialize the cage peaks with the reference provided set
     tss_regions = Bins( gene.chrm, gene.strand, (
@@ -1891,7 +1884,7 @@ def find_exon_segments_and_introns_in_gene(
         config.log_statement( 
             "Estimating exon segment expression (%i/%i - %s:%s:%i-%i" %
             (i, len(segment_bnds), 
-             gene.chrm, gene.strand, gene.start, gene.stop) )
+             gene.chrm, gene.strand, gene.start, gene.stop), log=True )
 
         fpkm_lb, fpkm, fpkm_ub = estimate_exon_segment_expression(
             rnaseq_reads, gene, splice_graph, 
@@ -2267,7 +2260,7 @@ def split_genome_into_segments(contig_lens, region_to_use,
         if region_to_use != None and r_chrm != contig: continue
         for start in xrange(0, contig_length, segment_length):
             if region_to_use != None and r_stop < start: continue
-            if region_to_use != None and r_start > start+segment_length: break
+            if region_to_use != None and r_start > start+segment_length: continue
             segments.append(
                 (contig, start, 
                  min(contig_length, start+segment_length-1)))
