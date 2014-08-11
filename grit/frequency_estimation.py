@@ -154,7 +154,7 @@ def line_search( x, f, gradient, max_feasible_step_size ):
     return max(0, alpha)
 
 def project_onto_simplex( x, debug=False ):
-    if ( x >= 0 ).all() and abs( 1-x.sum()  ) < 1e-6: return x
+    if ( x >= 0 ).all() and abs( 1-x.sum()  ) < MIN_TRANSCRIPT_FREQ: return x
     sorted_x = numpy.sort(x)[::-1]
     if debug: config.log_statement( "sorted x: %s" % sorted_x )
     n = len(sorted_x)
@@ -396,7 +396,6 @@ def estimate_transcript_frequencies_line_search(
     #assert numpy.isnan(prev_lhd) or final_lhd - prev_lhd > -abs_tol, \
     #    "Final: %e\tPrev: %e\tDiff: %e\tTol: %e\t %s" % (
     #    final_lhd, prev_lhd, final_lhd-prev_lhd, abs_tol, lhds)
-        
     return final_x, lhds
 
 def estimate_transcript_frequencies_with_cvxopt( 
@@ -449,7 +448,6 @@ def estimate_transcript_frequencies_sparse(
     # iter\ttolerance\ttime (hr:min:sec)" )
     for i in xrange( MAX_NUM_ITERATIONS ):
         prev_x = x.copy()
-        
         x, lhds = estimate_transcript_frequencies_line_search(  
             observed_array, full_expected_array, x, 
             sparse_penalty, sparse_index,
@@ -550,7 +548,8 @@ def estimate_confidence_bound( f_mat,
         min_step_size = 0
         max_step_size = max_feasible_step_size
 
-        assert brentq_fmin(min_step_size) >= 0, "brent min is %e" % brentq_fmin(min_step_size)
+        assert brentq_fmin(min_step_size) >= 0, "brent min is %e" % brentq_fmin(
+            min_step_size)
         if brentq_fmin(max_step_size) >= 0:
             return max_step_size, False
         

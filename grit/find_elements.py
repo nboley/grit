@@ -20,7 +20,7 @@ import networkx as nx
 
 ReadCounts = namedtuple('ReadCounts', ['Promoters', 'RNASeq', 'Polya'])
 read_counts = None
-fl_dist = None
+fl_dists = None
 
 from files.reads import MergedReads, RNAseqReads, CAGEReads, \
     RAMPAGEReads, PolyAReads, \
@@ -33,6 +33,10 @@ from files.reads import iter_coverage_intervals_for_read
 from elements import find_jn_connected_exons
 
 from frag_len import FlDist
+
+from transcript import Transcript, Gene
+import f_matrix     
+import frequency_estimation
 
 import config
 
@@ -295,9 +299,46 @@ def filter_exons( exons, rnaseq_cov,
     
     return
 
+class SegmentBin(object):
+    def __init__(self, start, stop, left_labels, right_labels,
+                 type=None,
+                 fpkm_lb=None, fpkm=None, fpkm_ub=None ):
+        self.start = start
+        self.stop = stop
+        assert stop - start >= 0
+
+        self.left_labels = sorted(left_labels)
+        self.right_labels = sorted(right_labels)
+
+        self.type = type
+        
+        self.fpkm_lb = fpkm_lb
+        self.fpkm = fpkm
+        self.fpkm_ub = fpkm_ub
+    
+    @property
+    def left_label(self):
+        return self.left_labels[0]
+    @property
+    def right_label(self):
+        return self.right_labels[0]
+
+    def __repr__( self ):
+        type_str =  ( 
+            "(%s-%s)" % ( ",".join(self.left_labels), 
+                        ",".join(self.right_labels) ) 
+            if self.type == None else self.type )
+        loc_str = "%i-%i" % ( self.start, self.stop )
+        rv = "%s:%s" % (type_str, loc_str)
+        if self.fpkm != None:
+            rv += ":%.2f-%.2f TPM" % (self.fpkm_lb, self.fpkm_ub)
+        return rv
+
+
 class Bin( object ):
     def __init__( self, start, stop, left_label, right_label, 
-                  bin_type=None, score=1000 ):
+                  bin_type=None, 
+                  score=1000 ):
         self.start = start
         self.stop = stop
         assert stop - start >= 0
@@ -1476,7 +1517,7 @@ def merge_tes_exons(tes_exons):
                                      exon.type, score) )
     return merged_tes_exons
 
-def find_exons_in_gene( gene, contig_len,
+def find_exons_in_gene_old( gene, contig_len,
                         rnaseq_reads, cage_reads, polya_reads,
                         cage_peaks=[], introns=[], polya_peaks=[],
                         resplit_genes=True):
@@ -1622,11 +1663,10 @@ def find_exons_in_gene( gene, contig_len,
     gene_bins = gene_bins.shift( gene.start )
     return elements, gene_bins, None
 
-def find_transcript_fragments_covering_region(
-        segment_graph, segment_bnds, segment_index, max_frag_len):
+def find_transcribed_fragments_covering_region(
+        segment_graph, segment_bnds, segment_bnd_labels, 
+        segment_index, max_frag_len):
     # first find transcripts before this segment
-    print segment_graph.nodes()
-    print segment_bnds
     def seg_len(i): return segment_bnds[i] - segment_bnds[i+1]
     
     def build_neighbor_paths(side):
@@ -1643,11 +1683,16 @@ def find_transcript_fragments_covering_region(
             if len(neighbors) == 0: 
                 complete_paths.append(curr_path)
             else:
-                for child in neighbors:
+                for child in neighbors:                    
                     if side == 'BEFORE':
                         new_path = [child,] + curr_path
                     else:
                         new_path = curr_path + [child,]
+
+                    # if we have hit a tss then add this complete path
+                    if segment_bnd_labels[segment_bnds[child]] in ('TSS', 'TES'):
+                        complete_paths.append(new_path)
+                    
                     new_path_len = seg_len(child) + curr_path_len
                     if new_path_len >= max_frag_len:
                         complete_paths.append((new_path, new_path_len))
@@ -1670,56 +1715,177 @@ def find_transcript_fragments_covering_region(
     transcripts = []
     for bp in complete_before_paths:
         for ap in complete_after_paths:
-            before_trim_len = max(0, max_frag_len - sum(seg_len(i) for i in bp))
-            after_trim_len = max(0, max_frag_len - sum(seg_len(i) for i in ap))
+            before_trim_len = max(0, sum(seg_len(i) for i in bp) - max_frag_len)
+            after_trim_len = max(0, sum(seg_len(i) for i in ap) - max_frag_len)
             segments = bp + [segment_index,] + ap
             segments = build_genome_segments_from_path(segments)
             segments[0][0] = segments[0][0] + before_trim_len
             segments[-1][1] = segments[-1][1] - after_trim_len
             transcripts.append( segments )
-    
     return transcripts
 
-def find_exons_in_gene_new( gene, contig_len,
-                        rnaseq_reads, cage_reads, polya_reads,
-                        cage_peaks=[], introns=[], polya_peaks=[],
-                        resplit_genes=True):
+def estimate_exon_segment_expression(
+        rnaseq_reads, gene, splice_graph, 
+        segments_bnds, segment_bnd_labels, segment_index):
+    # find the transcript fragments that overlap a specific sub exon
+    t_fragments = find_transcribed_fragments_covering_region(
+        splice_graph, segments_bnds, segment_bnd_labels, segment_index, 
+        max( fl_dist.fl_max for fl_dist in fl_dists.values()))
+    transcripts = []
+    for i, t_fragment in enumerate(t_fragments):
+        transcript = Transcript(
+            "SEG%i_%i" % ( segment_index, i ), gene.chrm, gene.strand, 
+            [(x[0], x[1]) for x in t_fragment], 
+            cds_region=None, gene_id="SEG%i" % segment_index)
+        transcripts.append(transcript)
+
+    transcripts_gene = Gene("%i" % segment_index, "%i" % segment_index, 
+                            gene.chrm, gene.strand,
+                            min(t.start for t in transcripts),
+                            max(t.stop for t in transcripts),
+                            transcripts)
+
+    exon_boundaries = numpy.array(
+        sorted(set(transcripts_gene.find_nonoverlapping_boundaries()).union(
+            set([segments_bnds[segment_index], segments_bnds[segment_index+1]]))))
+    transcripts_non_overlapping_exon_indices = \
+        list(f_matrix.build_nonoverlapping_indices( 
+            transcripts_gene.transcripts, exon_boundaries ))
+    # find the transcript segment indices that correspond tot he desired segment index
+    exon_bndry_start_i = next( i for i, bnd in enumerate(exon_boundaries) if 
+                              segments_bnds[segment_index] == bnd )
+    exon_bndry_stop_i = next( i for i, bnd in enumerate(exon_boundaries) if 
+                              segments_bnds[segment_index+1] == bnd ) - 1
+    overlapping_tr_segments = set(xrange(exon_bndry_start_i, exon_bndry_stop_i+1))
+    
+    binned_reads = f_matrix.bin_rnaseq_reads( 
+        rnaseq_reads, gene.chrm, gene.strand, exon_boundaries)
+    read_groups_and_read_lens =  set( (RG, read_len) for RG, read_len, bin 
+                                        in binned_reads.iterkeys() )
+    fl_dists_and_read_lens = [ (RG, fl_dists[RG], read_len) for read_len, RG  
+                               in read_groups_and_read_lens ]
+    
+    expected_rnaseq_cnts = f_matrix.calc_expected_cnts( 
+        exon_boundaries, transcripts_non_overlapping_exon_indices, 
+        fl_dists_and_read_lens)
+
+    # remove the bins that don't overlap the desired segment
+    bins_to_remove = set()
+    for bin, cnt in binned_reads.iteritems():
+        if not any(x in overlapping_tr_segments for x in chain(*bin[-1])):
+            bins_to_remove.add(bin)
+    for bin, exp_cnt in expected_rnaseq_cnts.iteritems():
+        if not any(x in overlapping_tr_segments for x in chain(*bin[-1])):
+            bins_to_remove.add(bin)
+    
+    for bin in bins_to_remove:
+        # if the read doesn't exist in expected that probably means that
+        # it's an intron that doesnt exist in the transcript models
+        try: del expected_rnaseq_cnts[bin]
+        except KeyError: pass
+        try: del binned_reads[bin]
+        except KeyError: pass
+    
+    observed_rnaseq_cnts = f_matrix.build_observed_cnts( binned_reads, fl_dists )    
+    #( expected_rnaseq_cnts, observed_rnaseq_cnts
+    #  ) = f_matrix.build_expected_and_observed_rnaseq_counts( 
+    #    transcripts_gene, rnaseq_reads, fl_dists )
+    
+    exp_cnts, obs_a, un_obs = f_matrix.build_expected_and_observed_arrays(
+        expected_rnaseq_cnts, observed_rnaseq_cnts, normalize=False )
+    effective_t_lens = exp_cnts.sum(0)
+    exp_a, obs_a = f_matrix.cluster_rows(exp_cnts/effective_t_lens, obs_a)
+    #print "Expected", exp_a
+    #print "Observed", obs_a
+    try: 
+        t_freqs = frequency_estimation.estimate_transcript_frequencies(obs_a, exp_a)
+    except frequency_estimation.TooFewReadsError: 
+        t_freqs = numpy.ones(len(transcripts))/len(transcripts)
+    cnt_frac_lb = beta.ppf(0.01, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1)
+    # we use a beta to make sure that this lies between the bounds
+    cnt_frac_mle = beta.ppf(0.50, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1)
+    cnt_frac_ub = beta.ppf(0.99, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1)
+    fpkms = 1e6*numpy.array(
+        [cnt_frac_lb, cnt_frac_mle, cnt_frac_ub])*(
+        t_freqs/(effective_t_lens/1000.)).sum()
+    return fpkms
+
+def find_exon_segments_and_introns_in_gene( 
+        gene, 
+        rnaseq_reads, cage_reads, polya_reads,
+        tss_regions=[], introns=[], tes_regions=[] ):
     assert isinstance( gene, Bins )
     jns = load_and_filter_junctions(
         rnaseq_reads, cage_reads, polya_reads,
         (gene.chrm, gene.strand, gene.start, gene.stop),
         nthreads=1)
     
+    """
+    # initialize the cage peaks with the reference provided set
+    tss_regions = Bins( gene.chrm, gene.strand, (
+        Bin(pk_start, pk_stop, "CAGE_PEAK_START","CAGE_PEAK_STOP","CAGE_PEAK")
+        for pk_start, pk_stop in cage_peaks ))
+    if cage_reads != None:
+        cage_peaks.extend( find_cage_peaks_in_gene( 
+            (gene.chrm, gene.strand), gene, cage_reads, rnaseq_reads ) )
+    
+    # initialize the polya peaks with the reference provided set
+    polya_peaks = Bins( gene.chrm, gene.strand, (
+       Bin( pk_start, pk_stop, "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA")
+        for pk_start, pk_stop in polya_peaks ))
+    if polya_reads != None:
+        polya_peaks.extend( find_polya_peaks_in_gene( 
+            (gene.chrm, gene.strand), gene, polya_reads, cage_reads ) )
+    """
+    
     # build the pseudo exon set
-    segments = set([gene.start, gene.stop])
+    segment_bnds = set([gene.start, gene.stop+1])
+    segment_bnd_labels = defaultdict(set)
+    segment_bnd_labels[gene.start].add( 'GENE_BNDRY' )
+    segment_bnd_labels[gene.stop+1].add( 'GENE_BNDRY' )
     for (start, stop) in jns:
-        segments.add(start)
-        segments.add(stop+1)
-    segments = numpy.array(sorted(segments))
+        segment_bnds.add(start)
+        segment_bnd_labels[start].add('D_JN' if gene.strand == '+' else 'R_JN')
+        segment_bnds.add(stop+1)
+        segment_bnd_labels[stop+1].add('R_JN' if gene.strand == '+' else 'D_JN')
+    
+    for (start, stop) in tss_regions:
+        tss_start = start if gene.strand == '+' else stop + 1
+        segment_bnds.add(tss_start)
+        segment_bnd_labels[tss_start].add('TSS')
+
+    for (start, stop) in tes_regions:
+        tes_start = stop + 1 if gene.strand == '+' else start
+        segment_bnds.add(tes_start)
+        segment_bnd_labels[tes_start].add('TES')
+    
+    segment_bnds = numpy.array(sorted(segment_bnds))
 
     # build the exon segment connectivity graph
-    graph = nx.DiGraph()
-    graph.add_nodes_from(xrange(0, len(segments)-2))
-    graph.add_edges_from(zip(xrange(len(segments)-2),
-                             xrange(1, len(segments)+1-2)))
+    splice_graph = nx.DiGraph()
+    splice_graph.add_nodes_from(xrange(0, len(segment_bnds)-2))
+    splice_graph.add_edges_from(zip(xrange(len(segment_bnds)-2),
+                             xrange(1, len(segment_bnds)+1-2)))
     for (start, stop) in jns:
-        start_i = segments.searchsorted(start)-1
-        stop_i = segments.searchsorted(stop+1)-1+1
-        graph.add_edge(start_i, stop_i)
+        start_i = segment_bnds.searchsorted(start)-1
+        stop_i = segment_bnds.searchsorted(stop+1)-1+1
+        splice_graph.add_edge(start_i, stop_i)
 
-    # find the transcript fragments that overlap a specific sub exon
-    t_fragments = find_transcript_fragments_covering_region(
-        graph, segments, 0, fl_dist.fl_max)
-    print t_fragments
-    assert False
+    # build segment bins
+    bins = Bins( gene.chrm, gene.strand )
+    for i in xrange(len(segment_bnds)-1):
+        fpkm_lb, fpkm, fpkm_ub = estimate_exon_segment_expression(
+            rnaseq_reads, gene, splice_graph, 
+            segment_bnds, segment_bnd_labels, i)
+        start, stop = segment_bnds[i], segment_bnds[i+1]-1
+        left_labels = segment_bnd_labels[start]
+        right_labels = segment_bnd_labels[stop+1]
+        bin = SegmentBin( start, stop, left_labels, right_labels,
+                          type=None,
+                          fpkm_lb=fpkm_lb, fpkm=fpkm, fpkm_ub=fpkm_ub )
+        bins.append(bin)
     
-    segments = numpy.array(sorted(segments))
-    import f_matrix 
-    (bin_frag_cnts,binned_reads) = f_matrix.build_element_expected_and_observed(
-        rnaseq_reads, segments, gene)
-    print bin_frag_cnts
-    print binned_reads
-    assert False
+    return bins, jns
 
         
 def estimate_element_expression(elements, rnaseq_reads):
@@ -1751,7 +1917,52 @@ def estimate_element_expression(elements, rnaseq_reads):
     for bin in bins_to_filter:
         print [(exon_bndries[i], exon_bndries[i+1]) for i in bin]
 
+def determine_exon_type(left_label, right_label):
+    if left_label == 'TSS':
+        if right_label == 'TES': 
+            return 'SE_GENE'
+        else:
+            assert right_label == 'D_JN'
+            return 'TSS_EXON'
 
+    if right_label == 'TES':
+        # we should have alrady caught this case
+        assert left_label != 'TES'
+        assert left_label == 'R_JN'
+        return 'TES_EXON'
+
+    assert left_label == 'R_JN' and right_label == 'D_JN'
+    return 'EXON'
+
+def build_exons_from_exon_segments(exon_segments):
+    EXON_START_LABELS = ('TSS', 'R_JN')
+    EXON_STOP_LABELS = ('TES', 'D_JN')
+    max_min_ee = max(exon_segment.fpkm_lb for exon_segment in exon_segments)
+    # find all of the exon start bins
+    exons = Bins(exon_segments.chrm, exon_segments.strand)
+    for i in xrange(len(exon_segments)):
+        # if this is not allowed to be the start of an exon
+        start_segment = exon_segments[i]
+        for start_label in start_segment.left_labels:
+            if start_label not in EXON_START_LABELS:
+                continue
+            
+            for j in xrange(i, len(exon_segments)):
+                stop_segment = exon_segments[j]
+                if stop_segment.fpkm_ub < config.MIN_EXON_FPKM: break
+                if stop_segment.fpkm_ub*config.MAX_EXPRESISON_RATIO < max_min_ee: break
+                
+                for stop_label in stop_segment.right_labels:
+                    if stop_label not in EXON_STOP_LABELS:
+                        continue
+                    fpkm = min(segment.fpkm for segment in exon_segments[i:j+1])
+                    exon_bin = Bin(start_segment.start, stop_segment.stop, 
+                                   start_label, stop_label,
+                                   determine_exon_type(start_label, stop_label),
+                                   int(fpkm*10))
+                    exons.append(exon_bin)
+    
+    return exons
 
 def find_exons_and_process_data(gene, contig_lens, ofp,
                                 ref_elements, ref_elements_to_include,
@@ -1764,15 +1975,28 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
             if stop < gene.start: continue
             if start > gene.stop: break
             gene_ref_elements[key].append((start, stop))
-    elements, pseudo_exons, new_gene_boundaries = find_exons_in_gene(
-        gene, contig_lens[gene.chrm],
+
+    config.log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" %
+                   (gene.chrm, gene.strand, gene.start, gene.stop) )
+    
+    exon_segments, introns = find_exon_segments_and_introns_in_gene(
+        gene, 
         rnaseq_reads, cage_reads, polya_reads, 
         gene_ref_elements['promoter'], 
         gene_ref_elements['intron'],
-        gene_ref_elements['polya'],
-        resplit_genes=(False == ref_elements_to_include.genes))
-    if new_gene_boundaries != None:
-        return new_gene_boundaries
+        gene_ref_elements['polya'] )
+    
+    if gene.strand == '-': 
+        exon_segments = exon_segments.reverse_strand(contig_lens[gene.strand])
+    elements = build_exons_from_exon_segments(exon_segments)
+    if gene.strand == '-': 
+        elements = exons.reverse_strand(contig_lens[gene.strand])
+        exon_segments = exon_segments.reverse_strand(contig_lens[gene.strand])
+
+    # add in the intron bins        
+    for (start, stop), cnt in introns.iteritems():
+        intron_bin = Bin(start, stop, 'R_JN', 'D_JN', 'INTRON', cnt)
+        elements.append(intron_bin)
     
     # merge in the reference elements
     for tss_exon in gene_ref_elements['tss_exon']:
@@ -1784,10 +2008,12 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
                              "REF_TES_EXON_START", "REF_TES_EXON_STOP",
                              "TES_EXON") )
     
+    # add the gene bin
+    elements.append(gene)
     write_unified_bed( elements, ofp)
     
-    if config.WRITE_DEBUG_DATA:        
-        pseudo_exons.writeBed( ofp )
+    #if config.WRITE_DEBUG_DATA:        
+    #    exon_segments.writeBed( ofp )
     
     config.log_statement( "FINISHED Finding Exons in Chrm %s Strand %s Pos %i-%i" %
                    (gene.chrm, gene.strand, gene.start, gene.stop) )
@@ -1926,9 +2152,10 @@ def find_transcribed_regions_and_jns_in_segment(
                         mate = read_mates[read.qname]
                         if ( mate.alen == mate.inferred_length 
                              and read.alen == read.inferred_length ):
-                            fsize = max(
-                                read.aend, read.pos, mate.pos, mate.aend) - min(
-                                    read.aend, read.pos, mate.pos, mate.aend)
+                            fsize = ( 
+                                max(read.aend, read.pos, mate.pos, mate.aend)
+                                - min(read.aend, read.pos, mate.pos, mate.aend))
+                                
                             fragment_lengths[fsize] += val
                         del read_mates[read.qname]
             
@@ -2060,7 +2287,8 @@ def find_segments_and_jns_worker(
     return
 
 def load_gene_bndry_bins( genes, contig, strand, contig_len ):  
-    config.log_statement( "Loading gene boundaries from annotated genes in %s:%s" % (  
+    config.log_statement( 
+        "Loading gene boundaries from annotated genes in %s:%s" % (  
             contig, strand) )  
   
     ## find the gene regions in this contig. Note that these  
@@ -2227,14 +2455,14 @@ def find_all_gene_segments( contig_lens,
     
     # build the fragment length distribution
     frag_lens = dict(frag_lens)
-    min_fl = min(frag_lens.keys())
-    max_fl = max(frag_lens.keys())
+    min_fl = int(min(frag_lens.keys()))
+    max_fl = int(max(frag_lens.keys()))
     fl_density = numpy.zeros(max_fl - min_fl + 1)
     for fl, cnt in frag_lens.iteritems():
         fl_density[fl-min_fl] += cnt
     fl_density = fl_density/fl_density.sum()
-    global fl_dist
-    fl_dist = FlDist(min_fl, max_fl, fl_density)
+    global fl_dists
+    fl_dists = {'mean': FlDist(min_fl, max_fl, fl_density)}
 
     # we are down with the manager
     manager.shutdown()
