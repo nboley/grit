@@ -580,8 +580,10 @@ def parse_arguments():
     config.log_statement = log_statement
     
     if args.region != None:
-        args.region = clean_chr_name(args.region)
-
+        region_data = args.region.strip().split(":")
+        args.region = ( clean_chr_name(region_data[0]), 
+                        [int(x) for x in region_data[1].split("-")])
+    
     args.ref_elements_to_include = load_ref_elements_to_include(args)
     return args
 
