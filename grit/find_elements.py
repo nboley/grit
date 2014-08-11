@@ -2257,10 +2257,13 @@ def split_genome_into_segments(contig_lens, region_to_use,
                          int(total_length/float(config.NTHREADS*1000)))
     segments = []
     for contig, contig_length in contig_lens.iteritems():
-        if region_to_use != None and r_chrm != contig: continue
+        if region_to_use != None and r_chrm != contig: 
+            continue
         for start in xrange(0, contig_length, segment_length):
-            if region_to_use != None and r_stop < start: continue
-            if region_to_use != None and r_start > start+segment_length: continue
+            if region_to_use != None and r_stop < start: 
+                continue
+            if region_to_use != None and r_start > start+segment_length: 
+                continue
             segments.append(
                 (contig, start, 
                  min(contig_length, start+segment_length-1)))
