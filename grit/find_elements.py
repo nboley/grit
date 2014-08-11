@@ -334,6 +334,11 @@ class SegmentBin(object):
             rv += ":%.2f-%.2f TPM" % (self.fpkm_lb, self.fpkm_ub)
         return rv
 
+    def reverse_strand(self, contig_len):
+        return SegmentBin(contig_len-1-self.stop, contig_len-1-self.start, 
+                          self.right_labels, self.left_labels, self.type,
+                          self.fpkm_lb, self.fpkm, self.fpkm_ub)
+
 
 class Bin( object ):
     def __init__( self, start, stop, left_label, right_label, 
@@ -1690,7 +1695,7 @@ def find_transcribed_fragments_covering_region(
                         new_path = curr_path + [child,]
 
                     # if we have hit a tss then add this complete path
-                    if segment_bnd_labels[segment_bnds[child]] in ('TSS', 'TES'):
+                    if segment_bnd_labels[segment_bnds[child]] in ('TSS','TES'):
                         complete_paths.append(new_path)
                     
                     new_path_len = seg_len(child) + curr_path_len
@@ -1786,11 +1791,16 @@ def estimate_exon_segment_expression(
         try: del binned_reads[bin]
         except KeyError: pass
     
-    observed_rnaseq_cnts = f_matrix.build_observed_cnts( binned_reads, fl_dists )    
+    observed_rnaseq_cnts = f_matrix.build_observed_cnts( binned_reads, fl_dists)
     #( expected_rnaseq_cnts, observed_rnaseq_cnts
     #  ) = f_matrix.build_expected_and_observed_rnaseq_counts( 
     #    transcripts_gene, rnaseq_reads, fl_dists )
-    
+    print gene
+    print segments_bnds
+    print t_fragments
+    print binned_reads
+    print expected_rnaseq_cnts
+    raw_input()
     exp_cnts, obs_a, un_obs = f_matrix.build_expected_and_observed_arrays(
         expected_rnaseq_cnts, observed_rnaseq_cnts, normalize=False )
     effective_t_lens = exp_cnts.sum(0)
@@ -1838,6 +1848,10 @@ def find_exon_segments_and_introns_in_gene(
             (gene.chrm, gene.strand), gene, polya_reads, cage_reads ) )
     """
     
+    config.log_statement( 
+        "Building exon segments in Chrm %s Strand %s Pos %i-%i" %
+        (gene.chrm, gene.strand, gene.start, gene.stop) )
+
     # build the pseudo exon set
     segment_bnds = set([gene.start, gene.stop+1])
     segment_bnd_labels = defaultdict(set)
@@ -1860,12 +1874,12 @@ def find_exon_segments_and_introns_in_gene(
         segment_bnd_labels[tes_start].add('TES')
     
     segment_bnds = numpy.array(sorted(segment_bnds))
-
+    
     # build the exon segment connectivity graph
     splice_graph = nx.DiGraph()
-    splice_graph.add_nodes_from(xrange(0, len(segment_bnds)-2))
-    splice_graph.add_edges_from(zip(xrange(len(segment_bnds)-2),
-                             xrange(1, len(segment_bnds)+1-2)))
+    splice_graph.add_nodes_from(xrange(0, len(segment_bnds)-1))
+    splice_graph.add_edges_from(zip(xrange(len(segment_bnds)-1-1),
+                                    xrange(1, len(segment_bnds)-1)))
     for (start, stop) in jns:
         start_i = segment_bnds.searchsorted(start)-1
         stop_i = segment_bnds.searchsorted(stop+1)-1+1
@@ -1874,6 +1888,11 @@ def find_exon_segments_and_introns_in_gene(
     # build segment bins
     bins = Bins( gene.chrm, gene.strand )
     for i in xrange(len(segment_bnds)-1):
+        config.log_statement( 
+            "Estimating exon segment expression (%i/%i - %s:%s:%i-%i" %
+            (i, len(segment_bnds), 
+             gene.chrm, gene.strand, gene.start, gene.stop) )
+
         fpkm_lb, fpkm, fpkm_ub = estimate_exon_segment_expression(
             rnaseq_reads, gene, splice_graph, 
             segment_bnds, segment_bnd_labels, i)
@@ -1987,11 +2006,11 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
         gene_ref_elements['polya'] )
     
     if gene.strand == '-': 
-        exon_segments = exon_segments.reverse_strand(contig_lens[gene.strand])
+        exon_segments = exon_segments.reverse_strand(contig_lens[gene.chrm])
     elements = build_exons_from_exon_segments(exon_segments)
     if gene.strand == '-': 
-        elements = exons.reverse_strand(contig_lens[gene.strand])
-        exon_segments = exon_segments.reverse_strand(contig_lens[gene.strand])
+        elements = elements.reverse_strand(contig_lens[gene.chrm])
+        exon_segments = exon_segments.reverse_strand(contig_lens[gene.chrm])
 
     # add in the intron bins        
     for (start, stop), cnt in introns.iteritems():
@@ -2232,17 +2251,23 @@ def prefilter_jns(plus_jns, minus_jns):
     
     return all_filtered_jns
 
-def split_genome_into_segments(contig_lens, min_segment_length=5000):
+def split_genome_into_segments(contig_lens, region_to_use, 
+                               min_segment_length=5000):
     """Return non-overlapping segments that cover the genome.
 
     The segments are closed-closed, and strand specific.
     """
+    if region_to_use != None:
+        r_chrm, (r_start, r_stop) = region_to_use
     total_length = sum(contig_lens.values())
     segment_length = max(min_segment_length, 
                          int(total_length/float(config.NTHREADS*1000)))
     segments = []
     for contig, contig_length in contig_lens.iteritems():
+        if region_to_use != None and r_chrm != contig: continue
         for start in xrange(0, contig_length, segment_length):
+            if region_to_use != None and r_stop < start: continue
+            if region_to_use != None and r_start > start+segment_length: break
             segments.append(
                 (contig, start, 
                  min(contig_length, start+segment_length-1)))
@@ -2358,12 +2383,7 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
 def find_all_gene_segments( contig_lens,
                             rnaseq_reads, promoter_reads, polya_reads,
                             ref_genes, ref_elements_to_include,
-                            region_to_use=None ):
-    contig_lens = copy(contig_lens)
-    if region_to_use != None:
-        for chrm in contig_lens.keys():
-            if chrm != region_to_use: del contig_lens[chrm]
-
+                            region_to_use=None ):    
     # if we are supposed to use the annotation genes
     if ref_elements_to_include.genes == True:
         gene_bndry_bins = []
@@ -2373,9 +2393,7 @@ def find_all_gene_segments( contig_lens,
                     ref_genes, contig, strand, contig_len)
                 gene_bndry_bins.extend( contig_gene_bndry_bins )
         return gene_bndry_bins
-
-    if ref_elements_to_include.genes:
-                pass
+    
     config.log_statement("Spawning gene segment finding children")    
     segments_queue = multiprocessing.Queue()
     manager = multiprocessing.Manager()
@@ -2417,8 +2435,9 @@ def find_all_gene_segments( contig_lens,
         pids.append(pid)
 
     config.log_statement("Populating gene segment queue")        
-    segments = split_genome_into_segments(contig_lens)
-    for segment in segments: segments_queue.put(segment)
+    segments = split_genome_into_segments(contig_lens, region_to_use)
+    for segment in segments: 
+        segments_queue.put(segment)
     for i in xrange(config.NTHREADS): segments_queue.put('FINISHED')
     
     while segments_queue.qsize() > 2*config.NTHREADS:
