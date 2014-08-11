@@ -41,7 +41,6 @@ class FlDist( object ):
         assert fl_min <= fl_max
         assert fl_max < 100000
         assert abs(sum(fl_density) - 1.) < 1e-6
-        
         try:
             assert type( fl_min ) == int
             assert type( fl_max ) == int
