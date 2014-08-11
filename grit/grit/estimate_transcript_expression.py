@@ -595,7 +595,7 @@ def build_design_matrices( data, fl_dists,
         #while any( p != None and p.is_alive() for p in ps ):
         #while len(ps) > 0:
         #    config.log_statement(
-        #        "Waiting for design matrix children processes to finish (%i/%i genes remain)"%(
+        #   "Waiting for design matrix children processes to finish (%i/%i genes remain)"%(
         #            gene_ids.qsize(), len(data.gene_ids)))
         #    time.sleep(1.)
         for pid in ps:
@@ -679,7 +679,6 @@ def quantify_transcript_expression(
     if config.VERBOSE: config.log_statement( 
         "Initializing processing data" )        
     data = SharedData(pickled_gene_fnames)
-    
     if config.VERBOSE: config.log_statement( 
         "Building design matrices" )
     build_design_matrices( data, fl_dists,
