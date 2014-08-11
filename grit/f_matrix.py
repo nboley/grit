@@ -394,7 +394,7 @@ def calc_expected_cnts( exon_boundaries, transcripts, fl_dists_and_read_lens, \
     
     # for each candidate trasncript
     n_bins = 0
-    for fl_dist, read_len in fl_dists_and_read_lens:
+    for read_group, fl_dist, read_len in fl_dists_and_read_lens:
         for transcript_index, nonoverlapping_indices in enumerate(transcripts):
             if (n_bins*len(transcripts)*8.)/(1024**3) > max_memory_usage:
                 raise MemoryError, \
@@ -409,7 +409,7 @@ def calc_expected_cnts( exon_boundaries, transcripts, fl_dists_and_read_lens, \
             
             # add the expected counts for paired reads
             for bin in pair:
-                key = (read_len, hash(fl_dist), bin)
+                key = (read_len, read_group, bin)
                 if key in cached_f_mat_entries:
                     pseudo_cnt = cached_f_mat_entries[ key ]
                 else:
@@ -460,7 +460,7 @@ def convert_f_matrices_into_arrays( f_mats, normalize=True ):
 def build_observed_cnts( binned_reads, fl_dists ):
     rv = {}
     for ( read_len, read_group, bin ), value in binned_reads.iteritems():
-        rv[ ( read_len, hash(fl_dists[read_group]), bin ) ] = value
+        rv[ ( read_len, read_group, bin ) ] = value
     
     return rv
 
@@ -490,12 +490,12 @@ def build_expected_and_observed_arrays(
         nonzero_entries = expected_mat.sum(0).nonzero()[0]
         unobservable_transcripts = set(range(expected_mat.shape[1])) \
             - set(nonzero_entries.tolist())
-        observed_mat = numpy.array( observed_mat, dtype=numpy.int )
         expected_mat = expected_mat/(expected_mat.sum(0)+1e-12)
     
+    observed_mat = numpy.array( observed_mat, dtype=numpy.int )
     return expected_mat, observed_mat, unobservable_transcripts
 
-def build_expected_and_observed_rnaseq_counts( gene, reads, fl_dists ):    
+def build_expected_and_observed_rnaseq_counts( gene, reads, fl_dists, filter_bin=None ):    
     # find the set of non-overlapping exons, and convert the transcripts to 
     # lists of these non-overlapping indices. All of the f_matrix code uses
     # this representation.     
@@ -510,7 +510,7 @@ def build_expected_and_observed_rnaseq_counts( gene, reads, fl_dists ):
     read_groups_and_read_lens =  set( (RG, read_len) for RG, read_len, bin 
                                         in binned_reads.iterkeys() )
     
-    fl_dists_and_read_lens = [ (fl_dists[RG], read_len) for read_len, RG  
+    fl_dists_and_read_lens = [ (RG, fl_dists[RG], read_len) for read_len, RG  
                                in read_groups_and_read_lens ]
 
     """
