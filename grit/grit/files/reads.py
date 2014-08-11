@@ -630,17 +630,25 @@ class RAMPAGEReads(Reads):
         for rd in self.fetch( chrm, start, stop ):
             #assert not rd.is_paired
             if rd.mapq <= 1: continue
-            if rd.is_read1 and not rd.is_reverse:
-                rd_strand = '+'
-            elif rd.is_read1 and rd.is_reverse:
-                rd_strand = '-'
-            else:
-                continue
+            if not rd.is_read1: continue
+            rd_strand = '-' if rd.is_reverse else '+'
+            if self.reverse_read_strand:
+                rd_strand = '+' if rd_strand == '-' else '-'            
             if strand != rd_strand: continue
             peak_pos = rd.pos
+            if strand == '-':
+                peak_pos = max(rd.pos, rd.aend-1)
+            else:
+                peak_pos = min(rd.pos, rd.aend-1)
             if peak_pos < start or peak_pos > stop:
                 continue
-            cvg[peak_pos-start] += 1
+            # get the posterior mapping probability, if it exists
+            cnt = 1.
+            for tag, value in rd.tags:
+                if tag == 'XP' and isinstance(value, float):
+                    cnt = value
+                    break
+            cvg[peak_pos-start] += cnt
         
         return cvg
 
