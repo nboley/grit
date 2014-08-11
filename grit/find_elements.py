@@ -657,7 +657,7 @@ def load_and_filter_junctions(
     # don't filter these. 
     for connectivity_jns in (promoter_jns, polya_jns):
         if connectivity_jns == None: continue
-        for jn, cnt in connectivity_jns:
+        for jn, cnt, entropy in connectivity_jns:
             filtered_junctions[jn] += cnt
         del connectivity_jns
     
