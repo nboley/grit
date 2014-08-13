@@ -37,6 +37,8 @@ from frag_len import FlDist
 from transcript import Transcript, Gene
 import f_matrix     
 import frequency_estimation
+frequency_estimation.LHD_ABS_TOL = 1e-1
+frequency_estimation.PARAM_ABS_TOL = 1e-3
 
 import config
 
@@ -317,6 +319,10 @@ class SegmentBin(object):
         self.fpkm_ub = fpkm_ub
     
     @property
+    def score(self):
+        return min(1000, int(10*self.fpkm))
+    
+    @property
     def left_label(self):
         return self.left_labels[0]
     @property
@@ -498,7 +504,7 @@ def write_unified_bed( elements, ofp ):
     for element in elements:
         region = ( chrm, elements.strand, element.start, element.stop)
 
-        if isinstance(element, Bin):
+        if isinstance(element, Bin) or isinstance(element, SegmentBin):
             blocks = []
             use_thick_lines=(element.type != 'INTRON')
             element_type = element.type
@@ -745,7 +751,9 @@ def filter_polya_peaks( polya_peaks, rnaseq_cov, jns ):
     return new_polya_peaks
 
 
-def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
+def find_cage_peak_bins_in_gene( gene, cage_reads, rnaseq_reads ):
+    rnaseq_cov = find_coverage_in_gene( gene, rnaseq_reads )
+    cage_cov = find_coverage_in_gene(gene, cage_reads)
     # threshold the CAGE data. We assume that the CAGE data is a mixture of 
     # reads taken from actually capped transcripts, and random transcribed 
     # regions, or RNA seq covered regions. We zero out any bases where we
@@ -761,35 +769,34 @@ def find_cage_peaks_in_gene( ( chrm, strand ), gene, cage_cov, rnaseq_cov ):
     max_scores = thresholds[ rnaseq_cov ]
     cage_cov[ cage_cov < max_scores ] = 0    
     
-    
     raw_peaks = find_peaks( cage_cov, window_len=config.CAGE_PEAK_WIN_SIZE, 
                             min_score=config.MIN_NUM_CAGE_TAGS,
                             max_score_frac=config.MAX_CAGE_FRAC,
                             max_num_peaks=100)
     
-    cage_peaks = Bins( chrm, strand )
-    if len( raw_peaks ) == 0:
-        return cage_peaks
+    cage_peak_bins = Bins( gene.chrm, gene.strand )
+    for pk_start, pk_stop in raw_peaks:
+        cnt = float(cage_cov[pk_start:pk_stop+1].sum())
+        bin = SegmentBin(
+            gene.start+pk_start, gene.start+pk_stop, 
+            "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK",
+            1e6*beta.ppf(0.01, cnt+1e-6, read_counts.Promoters+1e-6),
+            1e6*beta.ppf(0.50, cnt+1e-6, read_counts.Promoters+1e-6),
+            1e6*beta.ppf(0.99, cnt+1e-6, read_counts.Promoters+1e-6) )
+        cage_peak_bins.append(bin)
     
-    for peak_st, peak_sp in raw_peaks:
-        # make sure there is *some* rnaseq coverage post peak
-        #if rnaseq_cov[peak_st:peak_sp+100].sum() < MIN_NUM_CAGE_TAGS: continue
-        # make sure that there is an increase in coverage from pre to post peak
-        #pre_peak_cov = rnaseq_cov[peak_st-100:peak_st].sum()
-        #post_peak_cov = rnaseq_cov[peak_st:peak_sp+100].sum()
-        #if post_peak_cov/(pre_peak_cov+1e-6) < 5: continue
-        cage_peaks.append( Bin( peak_st, peak_sp,
-                                "CAGE_PEAK_START", "CAGE_PEAK_STOP", 
-                                "CAGE_PEAK") )
-    return cage_peaks
+    return cage_peak_bins
 
-def find_polya_peaks_in_gene( ( chrm, strand ), gene, polya_cov, rnaseq_cov ):
+def find_polya_peak_bins_in_gene( gene, polya_reads, rnaseq_reads ):
+    polya_cov = find_coverage_in_gene(gene, polya_reads)
+    
     # threshold the polya data. We assume that the polya data is a mixture of 
     # reads taken from actually capped transcripts, and random transcribed 
     # regions, or RNA seq covered regions. We zero out any bases where we
     # can't reject the null hypothesis that the observed polya reads all derive 
     # from the background, at alpha = 0.001. 
     """
+    rnaseq_cov = find_coverage_in_gene( gene, rnaseq_reads )
     rnaseq_cov = numpy.array( rnaseq_cov+1-1e-6, dtype=int)
     max_val = rnaseq_cov.max()
     thresholds = TOTAL_MAPPED_READS*beta.ppf( 
@@ -805,14 +812,19 @@ def find_polya_peaks_in_gene( ( chrm, strand ), gene, polya_cov, rnaseq_cov ):
                             min_score=config.MIN_NUM_POLYA_TAGS,
                             max_score_frac=0.05,
                             max_num_peaks=100)
-    polya_sites = Bins( chrm, strand )
+    polya_sites = Bins( gene.chrm, gene.strand )
     if len( raw_peaks ) == 0:
         return polya_sites
     
-    for peak_st, peak_sp in raw_peaks:
-        polya_bin = Bin( peak_st, peak_sp,
-                         "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA")
-        polya_sites.append( polya_bin )
+    for pk_start, pk_stop in raw_peaks:
+        cnt = float(polya_cov[pk_start:pk_stop+1].sum())
+        bin = SegmentBin(
+            gene.start+pk_start, gene.start+pk_stop, 
+            "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA",
+            1e6*beta.ppf(0.01, cnt+1e-6, read_counts.Polya+1e-6),
+            1e6*beta.ppf(0.50, cnt+1e-6, read_counts.Polya+1e-6),
+            1e6*beta.ppf(0.99, cnt+1e-6, read_counts.Polya+1e-6) )
+        polya_sites.append(bin)
     
     return polya_sites
 
@@ -1039,29 +1051,6 @@ def estimate_peak_expression(peaks, peak_cov, rnaseq_cov, peak_type):
         peak.tpm_lb = 1e6*beta.ppf(0.01, cnt+1, total_read_cnts)/total_read_cnts
     
     return peaks
-
-def estimate_segment_expression(gene, rnaseq_cov, jns, 
-                                cage_cov, cage_peaks, 
-                                polya_cov, polya_peaks):
-    read_lens = {75: 1.0}
-    
-    cage_peaks = estimate_peak_expression(
-        cage_peaks, cage_cov, rnaseq_cov, 'TSS')
-    polya_peaks = estimate_peak_expression(
-        polya_peaks, polya_cov, rnaseq_cov, 'TES')
-
-    nonoverlapping_segments = build_labeled_segments( 
-        (gene.chrm, gene.strand), rnaseq_cov, jns,
-        cage_peaks, polya_peaks )
-    
-    for segment in nonoverlapping_segments:
-        if segment.left_label == 'CAGE_PEAK':
-            pass
-    print nonoverlapping_segments
-    print cage_peaks
-    print polya_peaks
-
-    pass
 
 def build_labeled_segments( (chrm, strand), rnaseq_cov, jns, 
                             cage_peaks=[], polya_peaks=[] ):
@@ -1376,7 +1365,7 @@ def find_coverage_in_gene(gene, reads):
         seg_cov = reads.build_read_coverage_array( 
             gene.chrm, gene.strand, x.start, x.stop )
         cov[x.start-gene.start:x.stop-gene.start+1] = seg_cov
-    if gene.strand == '-': cov = cov[::-1]
+    #if gene.strand == '-': cov = cov[::-1]
     return cov
 
 def build_raw_elements_in_gene( gene, 
@@ -1765,6 +1754,9 @@ def estimate_exon_segment_expression(
     
     binned_reads = f_matrix.bin_rnaseq_reads( 
         rnaseq_reads, gene.chrm, gene.strand, exon_boundaries)
+    if len(binned_reads) == 0:
+        return [ 0, 0, beta.ppf(0.99, 1, read_counts.RNASeq+1)*1e6]
+
     read_groups_and_read_lens =  set( (RG, read_len) for RG, read_len, bin 
                                         in binned_reads.iterkeys() )
     fl_dists_and_read_lens = [ (RG, fl_dists[RG], read_len) for read_len, RG  
@@ -1792,9 +1784,6 @@ def estimate_exon_segment_expression(
         except KeyError: pass
     
     observed_rnaseq_cnts = f_matrix.build_observed_cnts( binned_reads, fl_dists)
-    #( expected_rnaseq_cnts, observed_rnaseq_cnts
-    #  ) = f_matrix.build_expected_and_observed_rnaseq_counts( 
-    #    transcripts_gene, rnaseq_reads, fl_dists )
     exp_cnts, obs_a, un_obs = f_matrix.build_expected_and_observed_arrays(
         expected_rnaseq_cnts, observed_rnaseq_cnts, normalize=False )
     effective_t_lens = exp_cnts.sum(0)
@@ -1823,23 +1812,6 @@ def find_exon_segments_and_introns_in_gene(
         rnaseq_reads, cage_reads, polya_reads,
         (gene.chrm, gene.strand, gene.start, gene.stop),
         nthreads=1)
-    """
-    # initialize the cage peaks with the reference provided set
-    tss_regions = Bins( gene.chrm, gene.strand, (
-        Bin(pk_start, pk_stop, "CAGE_PEAK_START","CAGE_PEAK_STOP","CAGE_PEAK")
-        for pk_start, pk_stop in cage_peaks ))
-    if cage_reads != None:
-        cage_peaks.extend( find_cage_peaks_in_gene( 
-            (gene.chrm, gene.strand), gene, cage_reads, rnaseq_reads ) )
-    
-    # initialize the polya peaks with the reference provided set
-    polya_peaks = Bins( gene.chrm, gene.strand, (
-       Bin( pk_start, pk_stop, "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA")
-        for pk_start, pk_stop in polya_peaks ))
-    if polya_reads != None:
-        polya_peaks.extend( find_polya_peaks_in_gene( 
-            (gene.chrm, gene.strand), gene, polya_reads, cage_reads ) )
-    """
     
     config.log_statement( 
         "Building exon segments in Chrm %s Strand %s Pos %i-%i" %
@@ -1856,13 +1828,13 @@ def find_exon_segments_and_introns_in_gene(
         segment_bnds.add(stop+1)
         segment_bnd_labels[stop+1].add('R_JN' if gene.strand == '+' else 'D_JN')
     
-    for (start, stop) in tss_regions:
-        tss_start = start if gene.strand == '+' else stop + 1
+    for tss_bin in tss_regions:
+        tss_start = tss_bin.start if gene.strand == '+' else tss_bin.stop + 1
         segment_bnds.add(tss_start)
         segment_bnd_labels[tss_start].add('TSS')
 
-    for (start, stop) in tes_regions:
-        tes_start = stop + 1 if gene.strand == '+' else start
+    for tes_bin in tes_regions:
+        tes_start = tes_bin.stop + 1 if gene.strand == '+' else tes_bin.start
         segment_bnds.add(tes_start)
         segment_bnd_labels[tes_start].add('TES')
     
@@ -1884,7 +1856,7 @@ def find_exon_segments_and_introns_in_gene(
         config.log_statement( 
             "Estimating exon segment expression (%i/%i - %s:%s:%i-%i" %
             (i, len(segment_bnds), 
-             gene.chrm, gene.strand, gene.start, gene.stop), log=True )
+             gene.chrm, gene.strand, gene.start, gene.stop) )
 
         fpkm_lb, fpkm, fpkm_ub = estimate_exon_segment_expression(
             rnaseq_reads, gene, splice_graph, 
@@ -1898,36 +1870,6 @@ def find_exon_segments_and_introns_in_gene(
         bins.append(bin)
     
     return bins, jns
-
-        
-def estimate_element_expression(elements, rnaseq_reads):
-    gene = next( x for x in elements if isinstance(x, Bins))    
-    exon_bndries = sorted(set([bin.start for bin in elements] + [gene.stop,]))
-    exon_bndries = numpy.array(exon_bndries)
-    import f_matrix 
-    (bin_frag_cnts,binned_reads) = f_matrix.build_element_expected_and_observed(
-        rnaseq_reads, exon_bndries, gene)
-    # estimate the frequency bounds
-    print binned_reads
-    print bin_frag_cnts 
-    ubs, lbs = {}, {}
-    num_reads = sum(binned_reads.values())
-    for bin, cnt in binned_reads.iteritems():
-        ubs[bin] = beta.ppf(0.99, cnt+1, num_reads+1)*(1./bin_frag_cnts[bin])
-        lbs[bin] = beta.ppf(0.01, cnt+1, num_reads+1)*(1./bin_frag_cnts[bin])
-    max_lb = max(lbs.values())
-    print ubs
-    print lbs
-    bins_to_filter = [ bin for bin, ub in ubs.iteritems() 
-                       if ub/max_lb < config.ELEMENT_FILTER_FRAC ]
-    print "BINS TO FILTER", bins_to_filter
-    print jns
-    jns = [jn for jn in jns
-           if beta.ppf(0.99, jn[2]+1, num_reads+1)*(1./75)/max_lb
-           > config.ELEMENT_FILTER_FRAC ]
-    print jns
-    for bin in bins_to_filter:
-        print [(exon_bndries[i], exon_bndries[i+1]) for i in bin]
 
 def determine_exon_type(left_label, right_label):
     if left_label == 'TSS':
@@ -1952,6 +1894,7 @@ def build_exons_from_exon_segments(exon_segments):
     max_min_ee = max(exon_segment.fpkm_lb for exon_segment in exon_segments)
     # find all of the exon start bins
     exons = Bins(exon_segments.chrm, exon_segments.strand)
+    max_fpkm = max( x.fpkm for x in exon_segments )
     for i in xrange(len(exon_segments)):
         # if this is not allowed to be the start of an exon
         start_segment = exon_segments[i]
@@ -1971,7 +1914,7 @@ def build_exons_from_exon_segments(exon_segments):
                     exon_bin = Bin(start_segment.start, stop_segment.stop, 
                                    start_label, stop_label,
                                    determine_exon_type(start_label, stop_label),
-                                   int(fpkm*10))
+                                   int(1000*fpkm/max_fpkm))
                     exons.append(exon_bin)
     
     return exons
@@ -1991,13 +1934,27 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
     config.log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" %
                    (gene.chrm, gene.strand, gene.start, gene.stop) )
     
+    # initialize the cage peaks with the reference provided set
+    tss_bins = Bins( gene.chrm, gene.strand, (
+            Bin(pk_start, pk_stop, 
+                "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK")
+            for pk_start, pk_stop in ref_elements['promoter']) )
+    if cage_reads != None:
+        tss_bins.extend(find_cage_peak_bins_in_gene(gene, cage_reads, rnaseq_reads))
+
+    # initialize the polya peaks with the reference provided set
+    tes_bins = Bins( gene.chrm, gene.strand, (
+       Bin( pk_start, pk_stop, "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA")
+        for pk_start, pk_stop in gene_ref_elements['polya'] ))
+    if polya_reads != None:
+        tes_bins.extend( find_polya_peak_bins_in_gene( 
+                gene, polya_reads, rnaseq_reads ) )
     exon_segments, introns = find_exon_segments_and_introns_in_gene(
         gene, 
         rnaseq_reads, cage_reads, polya_reads, 
-        gene_ref_elements['promoter'], 
+        tss_bins, 
         gene_ref_elements['intron'],
-        gene_ref_elements['polya'] )
-    
+        tes_bins )
     if gene.strand == '-': 
         exon_segments = exon_segments.reverse_strand(contig_lens[gene.chrm])
     elements = build_exons_from_exon_segments(exon_segments)
@@ -2011,10 +1968,12 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
         elements.append(intron_bin)
     
     # merge in the reference elements
+    elements.extend(tss_bins)
     for tss_exon in gene_ref_elements['tss_exon']:
         elements.append( Bin(tss_exon[0], tss_exon[1], 
                              "REF_TSS_EXON_START", "REF_TSS_EXON_STOP",
                              "TSS_EXON") )
+    elements.extend(tes_bins)
     for tes_exon in gene_ref_elements['tes_exon']:
         elements.append( Bin(tes_exon[0], tes_exon[1], 
                              "REF_TES_EXON_START", "REF_TES_EXON_STOP",
@@ -2071,7 +2030,8 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
                                              ref_elements, ref_elements_to_include,
                                              rnaseq_reads, cage_reads, polya_reads)
         except Exception, inst:
-            config.log_statement( "Uncaught exception in find_exons_and_process_data", log=True )
+            config.log_statement( 
+                "Uncaught exception in find_exons_and_process_data", log=True )
             config.log_statement( traceback.format_exc(), log=True, display=False )
             rv = None
         
