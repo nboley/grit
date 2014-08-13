@@ -206,11 +206,11 @@ class Bin(object):
     start = None
     stop = None
     
-    def reverse_strand(self, contig_len):
-        kwargs = self.__dict__
-        kwargs['start'] = contig_len-1-self.stop
-        kwargs['stop'] = contig_len-1-self.start
-        return type(self)(**kwargs)
+    #def reverse_strand(self, contig_len):
+    #    kwargs = self.__dict__
+    #    kwargs['start'] = contig_len-1-self.stop
+    #    kwargs['stop'] = contig_len-1-self.start
+    #    return type(self)(**kwargs)
 
     def mean_cov( self, cov_array ):
         return numpy.median(cov_array[self.start:self.stop+1])
@@ -311,18 +311,10 @@ class SegmentBin(Bin):
 
         self.type = type
         
-        self._score = None
-        
         self.fpkm_lb = fpkm_lb
         self.fpkm = fpkm
         self.fpkm_ub = fpkm_ub
-    
-    @property
-    def score(self):
-        if self._score == None:
-            return min(1000, int(10*self.fpkm))
-        return self._score
-    
+        
     def __repr__( self ):
         type_str =  ( 
             "(%s-%s)" % ( ",".join(self.left_labels), 
