@@ -206,11 +206,14 @@ class Bin(object):
     start = None
     stop = None
     
-    #def reverse_strand(self, contig_len):
-    #    kwargs = self.__dict__
-    #    kwargs['start'] = contig_len-1-self.stop
-    #    kwargs['stop'] = contig_len-1-self.start
-    #    return type(self)(**kwargs)
+    def reverse_strand(self, contig_len):
+        kwargs = copy(self.__dict__)
+        kwargs['start'] = contig_len-1-self.stop
+        kwargs['stop'] = contig_len-1-self.start
+        if 'left_labels' in kwargs:
+            (kwargs['left_labels'], kwargs['right_labels'] 
+             ) = (kwargs['right_labels'], kwargs['left_labels'])
+        return type(self)(**kwargs)
 
     def mean_cov( self, cov_array ):
         return numpy.median(cov_array[self.start:self.stop+1])
@@ -434,13 +437,7 @@ class Bins( list ):
         for bin in reversed(self):
             rev_bins.append( bin.reverse_strand( contig_len ) )
         return rev_bins
-
-    def reverse_coords( self, contig_len ):
-        rev_bins = Bins( self.chrm, self.strand )
-        for bin in reversed(self):
-            rev_bins.append( bin.reverse_coords( contig_len ) )
-        return rev_bins
-
+    
     def shift(self, shift_amnt ):
         shifted_bins = Bins( self.chrm, self.strand )
         for bin in self:
@@ -1170,6 +1167,7 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
     if polya_reads != None:
         tes_bins.extend( find_polya_peak_bins_in_gene( 
                 gene, polya_reads, rnaseq_reads ) )
+    
     exon_segments, introns = find_exon_segments_and_introns_in_gene(
         gene, 
         rnaseq_reads, cage_reads, polya_reads, 
