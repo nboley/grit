@@ -552,7 +552,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description='Call peaks from a RAMPAGE/CAGE experiment and matching RNASeq.')
 
-    parser.add_argument( '--reference', type=file, 
+    parser.add_argument( '--reference', type=file, required=True,
         help='GTF file containing genes to extract gene boundaries from.')
     
     parser.add_argument( '--rnaseq-reads', type=argparse.FileType('rb'), 
@@ -592,11 +592,7 @@ def parse_arguments():
                          help='The fraction of reads that will be trimmed from merged reads.')
     parser.add_argument( '--exp-filter-fraction', default=0.01, type=float,
                          help='Peaks with a relative expression fraction under this amount will be filtered.')
-    
-
-    parser.add_argument( '--ucsc', default=False, action='store_true', 
-                         help='Format the contig names to work with the UCSC genome browser.')
-    
+        
     parser.add_argument( '--verbose', '-v', default=False, action='store_true', 
                          help='Whether or not to print status information.')
     parser.add_argument( '--threads', '-t', default=1, type=int,
