@@ -693,7 +693,7 @@ def bin_rnaseq_reads( reads, chrm, strand, exon_boundaries ):
     gene_start = int(exon_boundaries[0])
     gene_stop = int(exon_boundaries[-1])
     paired_reads = list( reads.iter_paired_reads(
-            chrm, strand, gene_start, gene_stop) )
+            chrm, strand, gene_start, gene_stop+1) )
     
     # find the unique subset of contiguous read sub-locations
     read_locs = set()
@@ -718,7 +718,8 @@ def bin_rnaseq_reads( reads, chrm, strand, exon_boundaries ):
     # finally, aggregate the bins
     binned_reads = defaultdict( int )
     for r1, r2 in paired_reads:
-        if r1.rlen == 0: rlen = sum( x[1] for x in r1.cigar if x[0] == 0 )
+        if r1.rlen == 0: 
+            rlen = sum( x[1] for x in r1.cigar if x[0] == 0 )
         else: 
             rlen = r1.rlen
             if rlen != r2.rlen:
@@ -736,6 +737,10 @@ def bin_rnaseq_reads( reads, chrm, strand, exon_boundaries ):
         rg = get_read_group( r1, r2 )
         bin1 = build_bin_for_read( r1 )
         bin2 = build_bin_for_read( r2 )
+        # skip any reads that don't completely overlap the gene
+        if bin1 == () or bin2== () or any(x==() for x in chain(bin1, bin2)): continue
+        assert len(bin1) > 0
+        assert len(bin2) > 0
         binned_reads[( rlen, rg, tuple(sorted((bin1,bin2))))] += 1
     
     return dict(binned_reads)
