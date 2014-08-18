@@ -11,13 +11,14 @@ from collections import defaultdict, namedtuple
 
 import multiprocessing
 
-from reads import get_strand, get_contigs_and_lens
+# skip circular import problems
+try: from reads import get_strand, get_contigs_and_lens
+except ImportError: pass
 
 from grit import config
 
 CONSENSUS_PLUS = 'GTAG'
 CONSENSUS_MINUS = 'CTAC'
-                                  
 
 def get_jn_type( chrm, upstrm_intron_pos, dnstrm_intron_pos, 
                  fasta, jn_strand="UNKNOWN" ):
