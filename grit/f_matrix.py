@@ -259,8 +259,8 @@ def find_short_read_bins_from_fragment_bin(
     
     return single_end_read_bins, paired_read_bins
 
-def find_possible_read_bins( trans_exon_indices, exon_lens, fl_dist, \
-                             read_len, min_num_mappable_bases=1 ):
+def find_possible_read_bins_for_transcript( 
+    trans_exon_indices, exon_lens, fl_dist, read_len, min_num_mappable_bases=1 ):
     """Find all possible bins. 
 
     """
@@ -299,6 +299,32 @@ def find_possible_read_bins( trans_exon_indices, exon_lens, fl_dist, \
             single_end_read_bins.update( single )
     
     return full_fragment_bins, paired_read_bins, single_end_read_bins
+
+def iter_possible_fragment_bins_for_splice_graph( 
+    graph, segment_bnds, fl_dist ):
+    """Find all possible fragment bins. 
+
+    """
+    def seg_len(i):
+        return segment_bnds[i+1] - segment_bnds[i] 
+    
+    def min_path_len(path):
+        return sum(seg_len(i) for i in path[1:-1]) + min(2, len(path))
+
+    def max_path_len(path):
+        return sum(seg_len(i) for i in path)
+
+    paths = [[i,] for i in graph.nodes()]
+    while len(paths) > 0:
+        curr_path = paths.pop()
+        if max_path_len(curr_path) >= fl_dist.fl_min:
+            yield curr_path
+        for child in graph.successors(curr_path[-1]):
+            child_path = curr_path + [child,]
+            if min_path_len(child_path) <= fl_dist.fl_max:
+                paths.append( child_path )
+    
+    return
 
 def estimate_num_paired_reads_from_bin( 
         bin, transcript, exon_lens,
@@ -402,10 +428,10 @@ def calc_expected_cnts( exon_boundaries, transcripts, fl_dists_and_read_lens, \
             
             # find all of the possible read bins for transcript given this 
             # fl_dist and read length
-            full, pair, single =  \
-                find_possible_read_bins( nonoverlapping_indices, \
-                                         nonoverlapping_exon_lens, fl_dist, \
-                                         read_len, min_num_mappable_bases=1 )
+            ( full, pair, single 
+                ) = find_possible_read_bins_for_transcript( 
+                nonoverlapping_indices, nonoverlapping_exon_lens, fl_dist, 
+                read_len, min_num_mappable_bases=1 )
             
             # add the expected counts for paired reads
             for bin in pair:
@@ -1020,7 +1046,7 @@ def tests( ):
     fl_dist = frag_len.build_uniform_density( 110, 600 )
     read_len = 100
     
-    full, paired, single = find_possible_read_bins( \
+    full, paired, single = find_possible_read_bins_for_transcript( 
         transcript, exon_lens, fl_dist, read_len )
 
     for bin in sorted(full):
@@ -1056,7 +1082,7 @@ def tests( ):
     print exon_lens
     print fl_dist.fl_min, fl_dist.fl_max
     
-    full, paired, single = find_possible_read_bins( \
+    full, paired, single = find_possible_read_bins_for_transcript( 
         transcript, exon_lens, fl_dist, read_len )    
     bins = sorted( paired )
     
