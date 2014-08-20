@@ -1,12 +1,16 @@
 import sys, os
 from itertools import chain
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from copy import copy
 
 import pysam
 import numpy
 
 import grit.config as config
+import junctions
+
+ReadData = namedtuple('ReadData', [
+        'strand', 'read_len', 'read_grp', 'map_prb', 'cov_regions'])
 
 DEBUG = False
 
@@ -165,6 +169,77 @@ def iter_coverage_regions_for_read(
     for start, stop in iter_coverage_intervals_for_read( read ):
         yield chrm, strand, start, stop
     
+    return
+
+def extract_jns_and_reads_in_region((chrm, strand, r_start, r_stop), reads):
+    assert strand in '+-.', "Strand must be -, +, or . for either"
+    
+    pair1_reads = defaultdict(list)
+    pair2_reads = defaultdict(list)
+    jn_reads = {'+': defaultdict(int), '-': defaultdict(int)}
+    
+    for read, rd_strand in reads.iter_reads_and_strand(
+            chrm, r_start, r_stop+1):
+        for jn in junctions.iter_jns_in_read(read):
+            # skip jns whose start does not overlap this region
+            if jn[0] < r_start or jn[0] > r_stop: continue
+            jn_reads[rd_strand][jn] += 1
+        # if this is an anti-strand read, then we only care about the jns
+        if strand != '.' and rd_strand != strand: continue
+        
+        # extract the information we care about:
+        # -strand, alread have this
+        # -regions covered
+        cov_regions = list(iter_coverage_intervals_for_read(read))
+        # -read length
+        read_len = read.inferred_length
+        # -read group
+        try: read_grp = read.opt('RG')
+        except KeyError: read_grp = 'mean'
+        # -probability that the read originated in this location
+        # if we can't find it, assume that it's uniform over alternate
+        # mappings. If we can't find that, then assume that it's unique
+        try: map_prb = read.opt('XP')
+        except KeyError: 
+            try: map_prb = 1./read.opt('NH')
+            except KeyError: map_prb = 1.
+
+        # store the read data - we will join them later
+        read_data = ReadData(rd_strand, read_len, read_grp, map_prb, cov_regions)
+        if read.is_read1: pair1_reads[read.qname].append(read_data)
+        else: pair2_reads[read.qname].append(read_data)
+    
+    return pair1_reads, pair2_reads, jn_reads['+'], jn_reads['-']
+
+def calc_frag_len_from_read_data(read1_data, read2_data):
+    frag_start = min(min(read1_data.cov_regions[0]), 
+                     min(read2_data.cov_regions[0]))
+    frag_stop = max(max(read1_data.cov_regions[0]), 
+                    max(read2_data.cov_regions[0]))
+    return frag_stop - frag_start + 1
+
+def iter_paired_reads(p1_reads, p2_reads, fl_dist=None):
+    for qname, r1_mappings_data in p1_reads.iteritems():
+        if qname not in p2_reads: continue
+        r2_mappings_data = p2_reads[qname]
+        paired_reads = []
+        post_prb_sum = 0.0
+        for r1_data in r1_mappings_data:
+            for r2_data in r2_mappings_data:
+                if r1_data.strand != r2_data.strand: continue
+                assert r1_data.read_grp == r1_data.read_grp
+                flen = calc_frag_len_from_read_data(r1_data, r2_data)
+                # if there is no fragment length data, then 
+                # assume that the fragment sizes are all equally likely
+                post_prb = r1_data.map_prb*r2_data.map_prb
+                if fl_dist != None: assert False
+                post_prb_sum += post_prb
+                paired_reads.append( [
+                        qname, r1_data.strand, r1_data.read_grp, flen, 
+                        r1_data, r2_data, post_prb])
+        for x in paired_reads: x[-1] = x[-1]/post_prb_sum
+        yield qname, paired_reads
+
     return
 
 def get_contigs_and_lens( reads_files ):
@@ -414,18 +489,16 @@ class Reads( pysam.Samfile ):
         return get_strand( 
             read, self.reverse_read_strand, self.pairs_are_opp_strand )
     
-    def iter_reads( self, chrm, strand, start=None, stop=None ):
-        for read in self.fetch( chrm, start, stop  ):
-            rd_strand = self.get_strand(read)
-            if rd_strand == strand:
-                yield read
-        
-        return
-
     def iter_reads_and_strand( self, chrm, start=None, stop=None ):
         for read in self.fetch( chrm, start, stop  ):
             rd_strand = self.get_strand(read)
             yield read, rd_strand
+        return
+
+    def iter_reads( self, chrm, strand, start=None, stop=None ):
+        for read, rd_strand in self.iter_reads_and_strand( chrm, start, stop  ):
+            if rd_strand == strand:
+                yield read        
         return
 
     def iter_paired_reads( self, chrm, strand, start, stop ):
