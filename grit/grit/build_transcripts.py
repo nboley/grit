@@ -57,7 +57,7 @@ def iter_transcripts(graph, tss_exons, tes_exons):
 def path_len(path):
     return sum(exon[1]-exon[0]+1 for exon in path)
 
-def iter_transcriplets(graph, tss_exons, tes_exons, max_length):
+def iter_transcriptlets(graph, tss_exons, tes_exons, max_length):
     start_exons = set(tss_exons)
     while len(start_exons) > 0:
         paths = [[exon,] for exon in start_exons]

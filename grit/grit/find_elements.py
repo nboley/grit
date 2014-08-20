@@ -1074,10 +1074,10 @@ def find_exon_segments_and_introns_in_gene(
     # that fall outside of the gene
     for r1, r2 in izip(gene.regions[:-1], gene.regions[1:]):
         assert r1.stop+2 < r2.start-1+2
-        segment_bnds.add(r1.stop+2)
-        segment_bnd_labels[r1.stop+2].add( 'EMPTY_START' )
-        segment_bnds.add(r2.start-1+2)
-        segment_bnd_labels[r2.start-1+2].add( 'EMPTY_STOP' )
+        segment_bnds.add(r1.stop+1)
+        segment_bnd_labels[r1.stop+1].add( 'EMPTY_START' )
+        segment_bnds.add(r2.start+1)
+        segment_bnd_labels[r2.start+1].add( 'EMPTY_STOP' )
     
     for (start, stop) in jns:
         segment_bnds.add(start)
@@ -1113,12 +1113,11 @@ def find_exon_segments_and_introns_in_gene(
     
     # build the exon segment connectivity graph
     splice_graph = nx.DiGraph()
-    splice_graph.add_nodes_from(xrange(0, len(segment_bnds)-1))
-    #for i in xrange(len(segment_bnds)-1-1):
-    #    if i not in empty_segments and i+1 not in empty_segments:
-    #        splice_graph.add_edge(i, i+1)
-    splice_graph.add_edges_from(zip(xrange(len(segment_bnds)-1-1),
-                                    xrange(1, len(segment_bnds)-1)))
+    splice_graph.add_nodes_from(set(xrange(0, len(segment_bnds)-1))-empty_segments)
+    for i in xrange(len(segment_bnds)-1-1):
+        if i not in empty_segments and i+1 not in empty_segments:
+            splice_graph.add_edge(i, i+1)
+    
     jn_edges = []
     for (start, stop) in jns:
         start_i = segment_bnds.searchsorted(start)-1
@@ -1128,13 +1127,53 @@ def find_exon_segments_and_introns_in_gene(
         jn_edges.append((start_i, stop_i))
         splice_graph.add_edge(start_i, stop_i)
 
+    # build the possible bins    
+    fldists_and_rls = set()
+    for rd_key, mappings in paired_rnaseq_reads:
+        fldists_and_rls.add(tuple(mappings[0][2:4]))
+    
+    exon_lens = segment_bnds[1:] - segment_bnds[:-1]
+    full_frag_bins = set()
+    bins_and_frag_cnts = {}
+    for fl_dist_key, read_len in fldists_and_rls:
+        for fragment_bin in f_matrix.iter_possible_fragment_bins_for_splice_graph( 
+                splice_graph, segment_bnds, fl_dists[fl_dist_key]):
+            se_bins, pe_bins = f_matrix.find_short_read_bins_from_fragment_bin(
+                fragment_bin, exon_lens, read_len, 1 )
+            full_frag_bins.add(tuple(fragment_bin))
+            for pe_bin in pe_bins:
+                exp_frag_cnt = f_matrix.estimate_num_paired_reads_from_bin( 
+                    pe_bin, fragment_bin, exon_lens,
+                    fl_dists[fl_dist_key], read_len ) 
+                if exp_frag_cnt:
+                    bins_and_frag_cnts[pe_bin] = exp_frag_cnt
+        
+    consistent_fragments = []    
+    for nodes in jn_edges + [(i,) for i in splice_graph.nodes()]:
+        print nodes, [bin for bin in full_frag_bins if 
+                      all(node in bin for node in nodes)]
+    # find the set of consistent transcripts overlapping a particular 
+    print bins_and_frag_cnts
+    print full_frag_bins
+    #print gene.regions
+    #print segment_bnds
+    #print splice_graph.nodes()
+    #print splice_graph.edges()
+    #
+    #print fragment_bins
+    #print single_end_bins
+    #print paired_end_bins
+    
+    assert False
     #print paired_rnaseq_reads
     #assert False
     # estimate jn expression
     binned_reads = f_matrix.bin_rnaseq_reads( 
         rnaseq_reads, gene.chrm, gene.strand, segment_bnds)
-    
+
+    print paired_rnaseq_reads[0]
     print segment_bnds
+    print empty_segments
     print binned_reads
     assert False
     num_reads = sum(binned_reads.values())
