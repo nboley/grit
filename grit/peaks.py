@@ -46,9 +46,6 @@ MIN_REL_MERGE_SIZE=1.0
 TRIM_FRACTION = 0.01
 MAX_EXP_FRACTION = 0.01
 
-def log_statement(txt):
-    print txt
-
 def write_bedgraph_from_array(array, region, ofprefix):
     """
     track name=CAGE.pan..plus type=bedGraph
@@ -392,14 +389,14 @@ def call_peaks(region, signal_reads, reads_type,
     
     signal_cov = signal_reads.build_read_coverage_array(**region)    
     if DEBUG_VERBOSE:
-        log_statement("Finished building signal coverage array")
+        config.log_statement("Finished building signal coverage array")
     #signal_cov = build_false_signal(rnaseq_reads, '5p')
     
     original_control_cov = build_control(
         rnaseq_reads, region, reads_type, SMOOTH_WIN_LEN)
     
     if DEBUG_VERBOSE:
-        log_statement("Finished building control coverage array")
+        config.log_statement("Finished building control coverage array")
     
     signal = numpy.ones(len(signal_cov))
     for k in xrange(N_REPS):
@@ -413,7 +410,7 @@ def call_peaks(region, signal_reads, reads_type,
             if DEBUG_VERBOSE: 
                 write_bedgraph_from_array(
                     1000*control_cov, region, "control.%i"%i)
-                log_statement(
+                config.log_statement(
                     "Iter %i: Noise Frac %.2f%%\tReg Coef: %s" % (
                         i+1, noise_frac*100, reg_coef))
             noise_regions = find_noise_regions(
