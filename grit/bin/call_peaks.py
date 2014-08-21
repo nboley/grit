@@ -5,41 +5,16 @@ try: import grit
 except ImportError: sys.path.insert(0, "/home/nboley/grit/grit/")
 
 from grit.lib.multiprocessing_utils import ProcessSafeOPStream
-from grit.config import log_statement
+from grit import config
 
 from grit.files.reads import (
     CAGEReads, RAMPAGEReads, RNAseqReads, PolyAReads, fix_chrm_name_for_ucsc)
 from grit.files.gtf import load_gtf
 
-from grit.peaks import call_peaks
+from grit import peaks
 
 import multiprocessing
 import Queue
-
-NTHREADS = 1
-BACKGROUND_FRACTION = 0.01
-MIN_NOISE_FRAC = 0.05
-MIN_PEAK_SIZE = 5
-MIN_EMPTY_REGION_SIZE = 1
-
-MAX_NUM_ITERATIONS = 25
-
-fix_chrm_name = False
-
-VERBOSE = False
-DEBUG_VERBOSE = False
-
-SMOOTH_WIN_LEN = 10
-PEAK_THRESHOLD = 1.0
-SPLIT_TYPE = 'optimal'
-#SPLIT_TYPE = 'random'
-N_REPS = 1
-if SPLIT_TYPE == 'random': assert N_REPS > 1
-
-MIN_MERGE_SIZE = 30
-MIN_REL_MERGE_SIZE=1.0
-TRIM_FRACTION = 0.01
-MAX_EXP_FRACTION = 0.01
 
 def write_bedgraph_from_array(array, region, ofprefix):
     """
@@ -49,7 +24,8 @@ def write_bedgraph_from_array(array, region, ofprefix):
     chr4    89958   89959   2.00
    """
     chrm = region['chrm']
-    if fix_chrm_name: chrm = fix_chrm_name_for_ucsc(chrm)
+    if config.FIX_CHRM_NAMES_FOR_UCSC: 
+        chrm = config.fix_chrm_name_for_ucsc(chrm)
     start = region['start']
     ofname = "%s.%s.bedgraph" % (
         ofprefix, {'+': 'plus', '-': 'minus'}[region['strand']])
@@ -68,65 +44,32 @@ def write_bedgraph(chrm, peaks, ofp):
     chr4    89955   89956   2.00
     chr4    89958   89959   2.00
    """
-    if fix_chrm_name: chrm = fix_chrm_name_for_ucsc(chrm)
+    if config.FIX_CHRM_NAMES_FOR_UCSC: chrm = fix_chrm_name_for_ucsc(chrm)
     for start, stop, value in peaks:
         ofp.write( "\t".join(
-                ('chr'+chrm, str(start), str(stop+1), "%.2f" % value)) + "\n")
-    return
-
-
-def main_old():
-    # shaggy, chrX:2,527,876-2,574,870
-    #region_tuple = ('X', '+', 2527876, 2574870) #2567051
-    # pan
-    #region_tuple = ('4', '+', 87875, 136552)
-    # trol chrX:2,364,279-2,445,459
-    #region_tuple = ('chrX', '-', 2364279, 2445459)
-    # ptth chr2L:575,415-577,193
-    #region_tuple = ('chrX', '-', 2364279, 2445459)
-    # rfabg chr4:1,084,992-1,097,100
-    region_tuple = ('4', '+', 1084992, 1097100)
-    
-    region = dict(zip(('chrm', 'strand', 'start', 'stop'), region_tuple))
-    cage_fname, rnaseq_fname = sys.argv[1:3]
-    # load the polya data, and build the read coverage array
-    print "Loading ", cage_fname
-    cage_reads = CAGEReads(cage_fname, "rb").init(reverse_read_strand=False)
-    
-    # load the rnaseq data, and build the control
-    print "Loading ", rnaseq_fname
-    rnaseq_reads = RNAseqReads(rnaseq_fname,"rb").init(reverse_read_strand=True)
-
-    peaks = call_peaks(region, cage_reads, 'promoter', rnaseq_reads)
-    
-    ofname = "%s.%s.bedgraph" % (
-        'peaks', {'+': 'plus', '-': 'minus'}[region['strand']])
-    with open(ofname, 'w') as ofp:
-        print >> ofp, "track name=%s type=bedGraph" % ofname
-        write_bedgraph(region['chrm'], peaks, ofp)
-    
+                (chrm, str(start), str(stop+1), "%.2f" % value)) + "\n")
     return
 
 def process_genes(
-        genes_queue, cage_reads, rnaseq_reads, ofp_p, ofp_m):
-    cage_reads.reload()
+        genes_queue, promoter_reads, rnaseq_reads, ofp_p, ofp_m):
+    promoter_reads.reload()
     rnaseq_reads.reload()
     num_genes = genes_queue.qsize()
     while True:
         try: gene = genes_queue.get(timeout=1.0)
         except Queue.Empty: break
         
-        if VERBOSE: log_statement(
+        if config.VERBOSE: config.log_statement(
                 "Processing %s (%i\tremain)" % (
                     gene.id.ljust(30), genes_queue.qsize()))
         region_tuple = ( gene.chrm, gene.strand, 
                          max(0, gene.start-1000), gene.stop+1000)
         region = dict(zip(('chrm', 'strand', 'start', 'stop'), 
                           region_tuple))
-        peaks = call_peaks(
-            region, cage_reads, 'promoter', rnaseq_reads)
+        called_peaks = peaks.call_peaks(
+            region, promoter_reads, 'promoter', rnaseq_reads)
         ofp = ofp_p if region['strand'] == '+' else ofp_m
-        write_bedgraph(region['chrm'], peaks, ofp)
+        write_bedgraph(region['chrm'], called_peaks, ofp)
 
     return
 
@@ -185,37 +128,29 @@ def parse_arguments():
 
         
     args = parser.parse_args()
-    global VERBOSE
-    VERBOSE = args.verbose
+    config.VERBOSE = args.verbose
+    config.FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
+    config.NTHREADS = args.threads
     
-    global fix_chrm_name
-    if args.ucsc: fix_chrm_name = fix_chrm_name_for_ucsc
+    peaks.MIN_MERGE_SIZE = args.min_merge_distance
+    peaks.MIN_REL_MERGE_SIZE = args.min_relative_merge_distance
     
-    global NTHREADS
-    NTHREADS = args.threads
-    
-    global MIN_MERGE_SIZE
-    MIN_MERGE_SIZE = args.min_merge_distance
-    global MIN_REL_MERGE_SIZE
-    MIN_REL_MERGE_SIZE = args.min_relative_merge_distance
-    
-    global TRIM_FRACTION
-    TRIM_FRACTION = args.trim_fraction
-    global MAX_EXP_FRACTION
-    MAX_EXP_FRACTION = args.exp_filter_fraction
+    peaks.TRIM_FRACTION = args.trim_fraction
+    peaks.MAX_EXP_FRACTION = args.exp_filter_fraction
     
     ref_genes = load_gtf(args.reference)
     
     if args.cage_reads != None:
         assert args.rampage_reads == None, "Can not use RAMPAGE and CAGE reads"
-        if VERBOSE: log_statement( "Loading %s" % args.cage_reads.name )
+        if config.VERBOSE: config.log_statement( "Loading %s" % args.cage_reads.name )
         rev_reads = {'forward':False, 'backward':True, 'auto': None}[
             args.cage_read_type]
         promoter_reads = CAGEReads(args.cage_reads.name, "rb").init(
             reverse_read_strand=rev_reads, ref_genes=ref_genes)
     elif args.rampage_reads != None:
         assert args.cage_reads == None, "Can not use RAMPAGE and CAGE reads"
-        if VERBOSE: log_statement( "Loading %s" % args.rampage_reads.name )
+        if config.VERBOSE: 
+            config.log_statement( "Loading %s" % args.rampage_reads.name )
         rev_reads = {'forward':False, 'backward':True, 'auto': None}[
             args.rampage_read_type]
         promoter_reads = RAMPAGEReads(args.rampage_reads.name, "rb").init(
@@ -233,7 +168,6 @@ def parse_arguments():
 def main():
     genes, promoter_reads, rnaseq_reads, ofprefix = parse_arguments()
     
-
     ofp_p = ProcessSafeOPStream(open("%s.plus.bedgraph" % ofprefix, 'w'))
     print >> ofp_p, "track name=%s.plus type=bedGraph" % ofprefix
     ofp_m = ProcessSafeOPStream(open("%s.minus.bedgraph" % ofprefix, 'w'))
@@ -241,12 +175,11 @@ def main():
 
     queue = multiprocessing.Queue()
     for gene in genes:
-        #if gene.id != 'RpS3A': continue
         queue.put(gene)
         
     args = [queue, promoter_reads, rnaseq_reads, ofp_p, ofp_m]
     ps = []
-    for i in xrange(NTHREADS):
+    for i in xrange(config.NTHREADS):
         p = multiprocessing.Process(target=process_genes, args=args)
         p.daemon=True
         p.start()
