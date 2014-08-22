@@ -1002,22 +1002,29 @@ def find_exon_segments_and_introns_in_gene(
     # pre-calculate the expected and observed counts
     binned_reads = f_matrix.bin_rnaseq_reads( 
         rnaseq_reads, gene.chrm, gene.strand, segment_bnds, include_read_type=False)
-    expected_cnts = f_matrix.calc_expected_cnts(segment_bnds, all_transcripts, fl_dists_and_read_lens)
+    expected_cnts = f_matrix.calc_expected_cnts(
+        segment_bnds, all_transcripts, fl_dists_and_read_lens)
     
     segment_bins, jn_bins = [], []
     for j, (element, transcripts) in enumerate(segment_transcripts_map.iteritems()):
         if config.VERBOSE:
-            config.log_statement( "Estimating element expression for segment %i/%i in Chrm %s Strand %s Pos %i-%i" %
-                                  (j, len(segment_transcripts_map), gene.chrm, gene.strand, gene.start, gene.stop) )
+            config.log_statement( 
+                "Estimating element expression for segment %i/%i in Chrm %s Strand %s Pos %i-%i" %
+                (j, len(segment_transcripts_map), 
+                 gene.chrm, gene.strand, gene.start, gene.stop) )
 
         # find the normalized, expected counts for this element
-        exp_bin_cnts_in_segment = defaultdict(lambda: numpy.zeros(len(transcripts), dtype=float))
+        exp_bin_cnts_in_segment = defaultdict(
+            lambda: numpy.zeros(len(transcripts), dtype=float))
         effective_t_lens = numpy.zeros(len(transcripts), dtype=float)
         for i, transcript in enumerate(transcripts):
-            for (rl, RG, pe_bin), frag_cnts in expected_cnts[tuple(transcript)].iteritems():
+            for (rl, RG, pe_bin), frag_cnts in expected_cnts[
+                    tuple(transcript)].iteritems():
                 # skip bins that don't overlap the desired element
-                if not any(bin_contains_element(bin, element) for bin in pe_bin): continue
-                weighted_num_distinct_frags = read_groups_and_rls[(RG, rl)]*float(frag_cnts)
+                if not any(bin_contains_element(bin, element) for bin in pe_bin): 
+                    continue
+                weighted_num_distinct_frags = read_groups_and_rls[
+                    (RG, rl)]*float(frag_cnts)
                 effective_t_lens[i] += weighted_num_distinct_frags
                 exp_bin_cnts_in_segment[pe_bin][i] += weighted_num_distinct_frags
         exp_a, obs_a, zero = f_matrix.build_expected_and_observed_arrays(
@@ -1026,10 +1033,13 @@ def find_exon_segments_and_introns_in_gene(
         try: t_freqs = frequency_estimation.estimate_transcript_frequencies(obs_a, exp_a)
         except frequency_estimation.TooFewReadsError: 
             t_freqs = numpy.ones(len(transcripts), dtype=float)/len(transcripts)
-        cnt_frac_lb = beta.ppf(0.01, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1e-6)
+        cnt_frac_lb = beta.ppf(
+            0.01, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1e-6)
         # we use a beta to make sure that this lies between the bounds
-        cnt_frac_mle = beta.ppf(0.50, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1e-6)
-        cnt_frac_ub = beta.ppf(0.99, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1e-6)
+        cnt_frac_mle = beta.ppf(
+            0.50, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1e-6)
+        cnt_frac_ub = beta.ppf(
+            0.99, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1e-6)
         fpkm_lb, fpkm, fpkm_ub = 1e6*numpy.array(
             [cnt_frac_lb, cnt_frac_mle, cnt_frac_ub])*(
             t_freqs/(effective_t_lens/1000.)).sum()
@@ -1072,7 +1082,8 @@ def determine_exon_type(left_label, right_label):
 
 def build_exons_from_exon_segments(gene, exon_segments, max_min_expression):
     if gene.strand == '-':
-        exon_segments = reverse_strand(sorted(exon_segments, key=lambda x:x.start), gene.stop)
+        exon_segments = reverse_strand(
+            sorted(exon_segments, key=lambda x:x.start), gene.stop)
     
     EXON_START_LABELS = ('TSS', 'R_JN')
     EXON_STOP_LABELS = ('TES', 'D_JN')
@@ -1150,10 +1161,12 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
     min_max_exon_expression = max(
         config.MIN_EXON_FPKM, 
         max(x.fpkm_lb for x in chain(exon_segments, introns))/config.MAX_EXPRESISON_RATIO)
-    gene.elements.extend(build_exons_from_exon_segments(gene, exon_segments, min_max_exon_expression))
+    gene.elements.extend(build_exons_from_exon_segments(
+            gene, exon_segments, min_max_exon_expression))
     
     # introns are both elements and element segments
-    gene.elements.extend(intron for intron in introns if intron.fpkm_ub > min_max_exon_expression)
+    gene.elements.extend(
+        intron for intron in introns if intron.fpkm_ub > min_max_exon_expression)
 
     # merge in the reference elements
     for tss_exon in gene_ref_elements['tss_exon']:
@@ -1640,15 +1653,6 @@ def find_all_gene_segments( contig_lens,
                     continue
                 new_genes.append(new_gene)
     
-    """
-    if config.WRITE_DEBUG_DATA:
-        with open("discovered_gene_bounds.bed", "w") as fp:
-            fp.write('track name="discovered_gene_bounds" visibility=2 itemRgb="On" useScore=1\n')
-            for contig_genes in new_genes:
-                write_unified_bed(contig_genes, fp)
-            for jn in new_introns:
-                write_unified_bed(jn, fp)
-    """
     return new_genes
 
 def find_exons( contig_lens, gene_bndry_bins, ofp,
