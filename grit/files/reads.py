@@ -425,8 +425,10 @@ class Reads( pysam.Samfile ):
                 cnt_diff_strand += 1
             
             # if we've succesfully explored enough genes, then return
-            if cnt_same_strand > 10 and cnt_same_strand > 5*cnt_diff_strand: return False
-            if cnt_diff_strand > 10 and cnt_diff_strand > 5*cnt_same_strand: return True
+            if cnt_same_strand > MIN_GENES_TO_CHECK and cnt_same_strand > 5*cnt_diff_strand: 
+                return False
+            if cnt_diff_strand > MIN_GENES_TO_CHECK and cnt_diff_strand > 5*cnt_same_strand: 
+                return True
         
         assert False, "Could not auto determine 'reverse_read_strand' parameter for '%s' - the read strand parameter should be set in the control file" % self.filename
             
