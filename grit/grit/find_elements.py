@@ -487,91 +487,6 @@ class GeneElements(object):
         
         return
 
-def load_and_filter_junctions( 
-        rnaseq_reads, promoter_reads, polya_reads, 
-        region, nthreads ):
-    chrm, strand, region_start, region_stop = region
-    anti_strand = '+' if strand == '-' else '-'
-    anti_strand_region = [ 
-        chrm, anti_strand, region_start, region_stop ]
-    if config.ONLY_USE_REFERENCE_JUNCTIONS:
-        assert False
-        return {(chrm, strand): defaultdict(int)}
-    
-    # load and filter the ranseq reads. We can't filter all of the reads because
-    # they are on differnet scales, so we only filter the RNAseq and use the 
-    # cage and polya to get connectivity at the boundaries.
-    rnaseq_junctions = files.junctions.load_junctions_in_bam(
-        rnaseq_reads, [region,], nthreads=nthreads)[(chrm, strand)]
-    anti_strand_rnaseq_junctions = files.junctions.load_junctions_in_bam(
-        rnaseq_reads, [anti_strand_region,], nthreads=nthreads)[
-        (chrm, anti_strand)]
-    promoter_jns = None if promoter_reads == None else \
-        files.junctions.load_junctions_in_bam(
-            promoter_reads, [region,], nthreads)[(chrm, strand)]
-    polya_jns = None if polya_reads == None else \
-        files.junctions.load_junctions_in_bam(
-            polya_reads, [region,], nthreads)[(chrm, strand)]
-    filtered_junctions = defaultdict(int)
-    
-    # filter junctions by counts on the oppsotie strand
-    anti_strand_cnts = defaultdict(int)
-    for jn, cnt, entropy in anti_strand_rnaseq_junctions:
-        anti_strand_cnts[jn] = cnt
-    
-    # filter junctions by shared donor/acceptor site counts
-    jn_starts = defaultdict( int )
-    jn_stops = defaultdict( int )
-    for (start, stop), cnt, entropy in rnaseq_junctions:
-        jn_starts[start] = max( jn_starts[start], cnt )
-        jn_stops[stop] = max( jn_stops[stop], cnt )
-        
-    # filter junctions by overlapping groups of the same length
-    jns_grouped_by_lens = defaultdict(list)
-    for (start, stop), cnt, entropy in rnaseq_junctions:
-        jns_grouped_by_lens[stop-start+1].append( 
-            ((start, stop), cnt, entropy))
-        
-    jn_grps = []
-    jn_grp_map = {}
-    for jn_len, jns in jns_grouped_by_lens.iteritems():
-        prev_jn = None
-        for jn, cnt, entropy in sorted(jns):
-            if ( prev_jn == None or 
-                jn[0] - prev_jn[0] > config.MAX_JN_OFFSET_FILTER):
-                jn_grp_map[jn] = len(jn_grps)
-                jn_grps.append(cnt)
-            else:
-                jn_grp_map[jn] = len(jn_grps) - 1
-                jn_grps[-1] = max(jn_grps[-1], cnt)
-            prev_jn = jn
-    
-    for (start, stop), cnt, entropy in rnaseq_junctions:
-        if entropy < config.MIN_ENTROPY: continue
-        
-        val = beta.ppf(0.01, cnt+1, jn_starts[start]+1)
-        if val < config.NOISE_JN_FILTER_FRAC: continue
-        val = beta.ppf(0.01, cnt+1, jn_stops[stop]+1)
-        if val < config.NOISE_JN_FILTER_FRAC: continue
-        val = beta.ppf(0.01, cnt+1, jn_grps[jn_grp_map[(start, stop)]]+1)
-        if val < config.NOISE_JN_FILTER_FRAC: continue
-        if ( (cnt+1.)/(anti_strand_cnts[(start, stop)]+1) <= 1.):
-            continue
-        if stop - start + 1 > config.MAX_INTRON_SIZE: continue
-        filtered_junctions[(start, stop)] = cnt
-
-    # add in the cage and polya reads, for connectivity. We 
-    # don't filter these. 
-    for connectivity_jns in (promoter_jns, polya_jns):
-        if connectivity_jns == None: continue
-        for jn, cnt, entropy in connectivity_jns:
-            filtered_junctions[jn] += cnt
-        del connectivity_jns
-    
-    return filtered_junctions    
-
-
-
 def find_cage_peak_bins_in_gene( gene, cage_reads, rnaseq_reads ):
     rnaseq_cov = find_coverage_in_gene( gene, rnaseq_reads )
     cage_cov = find_coverage_in_gene(gene, cage_reads)
@@ -866,7 +781,7 @@ def merge_tes_exons(tes_exons):
 
 def find_transcribed_fragments_covering_region(
         segment_graph, segment_bnds, segment_bnd_labels, 
-        segment_index, max_frag_len):
+        segment_index, max_frag_len, use_genome_coords=False):
     # first find transcripts before this segment
     def seg_len(i): 
         return segment_bnds[i+1]-segment_bnds[i]
@@ -917,12 +832,13 @@ def find_transcribed_fragments_covering_region(
     transcripts = []
     for bp in complete_before_paths:
         for ap in complete_after_paths:
-            before_trim_len = max(0, sum(seg_len(i) for i in bp) - max_frag_len)
-            after_trim_len = max(0, sum(seg_len(i) for i in ap) - max_frag_len)
             segments = bp + [segment_index,] + ap
-            segments = build_genome_segments_from_path(segments)
-            segments[0][0] = segments[0][0] + before_trim_len
-            segments[-1][1] = segments[-1][1] - after_trim_len
+            if use_genome_coords:
+                before_trim_len = max(0, sum(seg_len(i) for i in bp) - max_frag_len)
+                after_trim_len = max(0, sum(seg_len(i) for i in ap) - max_frag_len)
+                segments = build_genome_segments_from_path(segments)
+                segments[0][0] = segments[0][0] + before_trim_len
+                segments[-1][1] = segments[-1][1] - after_trim_len
             transcripts.append( segments )
     return transcripts
 
@@ -1035,6 +951,41 @@ def extract_jns_and_paired_reads_in_gene(gene, reads):
         (plus_jns, minus_jns) if gene.strand == '+' else (minus_jns, plus_jns)) 
     return paired_reads, jns, opp_strand_jns
 
+""" Some code that I dont htink I want, but am not sure yet
+
+    # calculate the expected counts for each read type
+    exon_lens = segment_bnds[1:] - segment_bnds[:-1]
+    full_frag_subbin_cnts = defaultdict(list)
+    for fl_dist_key, read_len in fldists_and_rls:        
+        for fragment_bin in f_matrix.iter_possible_fragment_bins_for_splice_graph( 
+                splice_graph, segment_bnds, fl_dists[fl_dist_key]):
+            se_bins, pe_bins = f_matrix.find_short_read_bins_from_fragment_bin(
+                fragment_bin, exon_lens, read_len, 1 )
+            full_frag_subbin_cnts[(fl_dist_key, read_len, tuple(fragment_bin))] = []
+            for pe_bin in pe_bins:
+                exp_frag_cnt = f_matrix.estimate_num_paired_reads_from_bin( 
+                    pe_bin, fragment_bin, exon_lens,
+                    fl_dists[fl_dist_key], read_len ) 
+                if exp_frag_cnt > 0:
+                    full_frag_subbin_cnts[(fl_dist_key, read_len, tuple(fragment_bin))].append((pe_bin, exp_frag_cnt))
+    
+    # build all of the possible transcripts, grouped by elements that we are interested in
+    max_fl = max(fl_dist.fl_max for fl_dist in fl_dists.values())
+    all_transcripts = set()
+    segment_transcripts_map = {}
+    for segment_index in splice_graph.nodes():
+        transcripts = find_transcribed_fragments_covering_region(
+            splice_graph, segment_bnds, segment_bnd_labels, segment_index, max_fl)
+        segment_transcripts_map[segment_index] = transcripts
+        for t in transcripts: all_transcripts.add(frozenset(t))
+    
+    
+    # build the design matrix data for each transcript
+    for transcript in all_transcripts:
+        full_frag_bins = [bin for bin in full_frag_subbin_cnts if all(i in transcript for i in bin)]
+        print transcript, full_frag_bins
+"""
+
 def find_exon_segments_and_introns_in_gene( 
         gene, 
         rnaseq_reads, tss_reads, tes_reads,
@@ -1126,28 +1077,106 @@ def find_exon_segments_and_introns_in_gene(
         assert segment_bnds[stop_i] == stop+1
         jn_edges.append((start_i, stop_i))
         splice_graph.add_edge(start_i, stop_i)
-
-    # build the possible bins    
-    fldists_and_rls = set()
-    for rd_key, mappings in paired_rnaseq_reads:
-        fldists_and_rls.add(tuple(mappings[0][2:4]))
     
+    # fidn the marginal read length/ fragmnet length distribution
+    read_groups_and_rls = defaultdict(float)
+    for rd_key, mappings in paired_rnaseq_reads:
+        for mapping in mappings:
+            RG = mapping[2]
+            # we assume all of the read lengths are identical
+            rd_len = mapping[4].read_len
+            read_groups_and_rls[(RG, rd_len)] += mapping[-1]
+    read_groups_and_rls = dict(read_groups_and_rls)
+    total_cnt = sum(read_groups_and_rls.values())
+    for key, val in list(read_groups_and_rls.iteritems()):
+        read_groups_and_rls[key] = val/float(total_cnt)
+    max_fl = max(fl_dist.fl_max for fl_dist in fl_dists.values())
+    fl_dists_and_read_lens = [
+        (RG, fl_dists[RG], read_len) for RG, read_len in read_groups_and_rls]
+    
+    # find all possible transcripts, and their association with each element
     exon_lens = segment_bnds[1:] - segment_bnds[:-1]
-    full_frag_bins = set()
-    bins_and_frag_cnts = {}
-    for fl_dist_key, read_len in fldists_and_rls:
-        for fragment_bin in f_matrix.iter_possible_fragment_bins_for_splice_graph( 
-                splice_graph, segment_bnds, fl_dists[fl_dist_key]):
-            se_bins, pe_bins = f_matrix.find_short_read_bins_from_fragment_bin(
-                fragment_bin, exon_lens, read_len, 1 )
-            full_frag_bins.add(tuple(fragment_bin))
-            for pe_bin in pe_bins:
-                exp_frag_cnt = f_matrix.estimate_num_paired_reads_from_bin( 
-                    pe_bin, fragment_bin, exon_lens,
-                    fl_dists[fl_dist_key], read_len ) 
-                if exp_frag_cnt:
-                    bins_and_frag_cnts[pe_bin] = exp_frag_cnt
-        
+    all_transcripts = set()
+    segment_transcripts_map = {}
+    for segment_index in splice_graph.nodes():
+        transcripts = find_transcribed_fragments_covering_region(
+            splice_graph, segment_bnds, segment_bnd_labels, segment_index, max_fl)
+        segment_transcripts_map[(segment_index,)] = transcripts
+        all_transcripts.update(tuple(t) for t in transcripts)
+    
+    # add in the splice elements
+    for splice in splice_graph.edges():
+        # find transcripts that contain this splice
+        segment_transcripts_map[splice] = [
+            t for t in segment_transcripts_map[(splice[0],)] if splice[1] in t]
+
+    # pre-calculate the expected and observed counts
+    binned_reads = f_matrix.bin_rnaseq_reads( 
+        rnaseq_reads, gene.chrm, gene.strand, segment_bnds, include_read_type=False)
+    expected_cnts = f_matrix.calc_expected_cnts(segment_bnds, all_transcripts, fl_dists_and_read_lens)
+
+    segment_bins, jn_bins = [], []
+    for element, transcripts in segment_transcripts_map.iteritems():
+        # find the normalized, expected counts for this element
+        exp_bin_cnts_in_segment = defaultdict(lambda: numpy.zeros(len(transcripts), dtype=float))
+        effective_t_lens = numpy.zeros(len(transcripts), dtype=float)
+        for i, transcript in enumerate(transcripts):
+            for (rl, RG, pe_bin), frag_cnts in expected_cnts[tuple(transcript)].iteritems():
+                # skip bins that don't overlap the desired element
+                if any(x not in chain(*pe_bin) for x in element): continue
+                weighted_num_distinct_frags = read_groups_and_rls[(RG, rl)]*float(frag_cnts)
+                effective_t_lens[i] += weighted_num_distinct_frags
+                exp_bin_cnts_in_segment[pe_bin][i] += weighted_num_distinct_frags
+        exp_a, obs_a, zero = f_matrix.build_expected_and_observed_arrays(
+            exp_bin_cnts_in_segment, binned_reads)
+        exp_a, obs_a = f_matrix.cluster_rows(exp_a, obs_a)
+        t_freqs = frequency_estimation.estimate_transcript_frequencies(obs_a, exp_a)
+        cnt_frac_lb = beta.ppf(0.01, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1e-6)
+        # we use a beta to make sure that this lies between the bounds
+        cnt_frac_mle = beta.ppf(0.50, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1e-6)
+        cnt_frac_ub = beta.ppf(0.99, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1e-6)
+        fpkm_lb, fpkm, fpkm_ub = 1e6*numpy.array(
+            [cnt_frac_lb, cnt_frac_mle, cnt_frac_ub])*(
+            t_freqs/(effective_t_lens/1000.)).sum()
+
+        if len(element) == 1:
+            start, stop = segment_bnds[element[0]], segment_bnds[element[0]+1]-1
+            left_labels = segment_bnd_labels[start]
+            right_labels = segment_bnd_labels[stop+1]
+            bin = SegmentBin( start, stop, left_labels, right_labels,
+                              type=None,
+                              fpkm_lb=fpkm_lb, fpkm=fpkm, fpkm_ub=fpkm_ub )
+            segment_bins.append(bin)
+        else:
+            start, stop = segment_bnds[element[0]]+1, segment_bnds[element[0]+1]-2
+            bin = SegmentBin( start, stop,
+                              'D_JN' if gene.strand == '+' else 'R_JN',
+                              'R_JN' if gene.strand == '-' else 'D_JN',
+                              type='INTRON',
+                              fpkm_lb=fpkm_lb, fpkm=fpkm, fpkm_ub=fpkm_ub )
+            jn_bins.append(bin)
+
+    
+    return segment_bins, jn_bins
+
+    #expected_cnts = dict(izip(
+    #        all_transcripts,
+    #        f_matrix.calc_expected_cnts(segment_bnds, all_transcripts, fl_dists_and_read_lens)))
+
+    print binned_reads
+    assert False
+
+    
+    expected_rnaseq_cnts = f_matrix.calc_expected_cnts( 
+        exon_boundaries, transcripts_non_overlapping_exon_indices, 
+        fl_dists_and_read_lens)
+
+    
+    binned_reads = f_matrix.bin_rnaseq_reads( 
+        rnaseq_reads, gene.chrm, gene.strand, segment_bnds)
+    print binned_reads
+    assert False
+    
     consistent_fragments = []    
     for nodes in jn_edges + [(i,) for i in splice_graph.nodes()]:
         print nodes, [bin for bin in full_frag_bins if 
@@ -1164,12 +1193,20 @@ def find_exon_segments_and_introns_in_gene(
     #print single_end_bins
     #print paired_end_bins
     
+    """
+        for (fl_dist_key, read_len), marginal_prb in fldists_and_rls.iteritems():        
+            for transcript in (tuple(t) for t in transcripts):
+                key = (transcript, fl_dist_key, read_len)
+                # if we've already found the bins for this transcript, there's nothing else to do
+                if key not in expected_bins:
+                    full_fr_bins, pe_bins, se_bins = f_matrix.find_possible_read_bins_for_transcript(
+                        transcript, exon_lens, fl_dists[fl_dist_key], read_len, min_num_mappable_bases=1)
+                    expected_bins[key] = pe_bins
+    """
     assert False
     #print paired_rnaseq_reads
     #assert False
     # estimate jn expression
-    binned_reads = f_matrix.bin_rnaseq_reads( 
-        rnaseq_reads, gene.chrm, gene.strand, segment_bnds)
 
     print paired_rnaseq_reads[0]
     print segment_bnds
