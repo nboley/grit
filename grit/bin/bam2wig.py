@@ -212,9 +212,8 @@ def main():
         assert not reverse_read_strand
     elif assay == 'rampage':
         reads = RAMPAGEReads( reads_fname, "rb" )
-        reads.init(reverse_read_strand=True)
+        reads.init(reverse_read_strand=False)
         stranded = True
-        assert not reverse_read_strand
     elif assay == 'polya':
         reads = PolyAReads( reads_fname, "rb" )
         reads.init(reverse_read_strand=reverse_read_strand, pairs_are_opp_strand=True)
