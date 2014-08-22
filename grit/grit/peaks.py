@@ -21,15 +21,12 @@ from call_peaks_support_fns import calc_moments
 
 from scipy.optimize import fmin_l_bfgs_b as minimize
 
-NTHREADS = 1
 BACKGROUND_FRACTION = 0.01
 MIN_NOISE_FRAC = 0.05
 MIN_PEAK_SIZE = 5
 MIN_EMPTY_REGION_SIZE = 1
 
 MAX_NUM_ITERATIONS = 25
-
-fix_chrm_name = False
 
 VERBOSE = False
 DEBUG_VERBOSE = False
@@ -41,10 +38,10 @@ SPLIT_TYPE = 'optimal'
 N_REPS = 1
 if SPLIT_TYPE == 'random': assert N_REPS > 1
 
-MIN_MERGE_SIZE = 30
-MIN_REL_MERGE_SIZE=1.0
-TRIM_FRACTION = 0.01
-MAX_EXP_FRACTION = 0.01
+MIN_MERGE_SIZE = None
+MIN_REL_MERGE_SIZE = None
+TRIM_FRACTION = None
+MAX_EXP_FRACTION = None
 
 def write_bedgraph_from_array(array, region, ofprefix):
     """
