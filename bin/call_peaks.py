@@ -112,9 +112,9 @@ def parse_arguments():
     parser.add_argument( '--ucsc', default=False, action='store_true', 
                          help='Format the contig names to work with the UCSC genome browser.')
 
-    parser.add_argument( '--min-merge-distance', default=30, type=int,
+    parser.add_argument( '--min-merge-distance', default=10, type=int,
                          help='The distance in basepairs under whihc peaks will be merged .')
-    parser.add_argument( '--min-relative-merge-distance', default=1.0, type=float,
+    parser.add_argument( '--min-relative-merge-distance', default=0.5, type=float,
                          help='The distance as a fraction of a peak size under which peaks will be merged .')
     parser.add_argument( '--trim-fraction', default=0.01, type=float,
                          help='The fraction of reads that will be trimmed from merged reads.')
