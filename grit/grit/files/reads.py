@@ -181,8 +181,10 @@ def extract_jns_and_reads_in_region((chrm, strand, r_start, r_stop), reads):
     for read, rd_strand in reads.iter_reads_and_strand(
             chrm, r_start, r_stop+1):
         for jn in junctions.iter_jns_in_read(read):
-            # skip jns whose start does not overlap this region
-            if jn[0] < r_start or jn[0] > r_stop: continue
+            # skip jns whose start does not overlap this region, we subtract one
+            # because the start refers to the first covered intron base, and 
+            # we are talking about covered regions
+            if jn[0]-1 < r_start or jn[0]-1 > r_stop: continue
             jn_reads[rd_strand][jn] += 1
         # if this is an anti-strand read, then we only care about the jns
         if strand != '.' and rd_strand != strand: continue
