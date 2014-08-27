@@ -66,7 +66,7 @@ def process_genes(
                          max(0, gene.start-1000), gene.stop+1000)
         region = dict(zip(('chrm', 'strand', 'start', 'stop'), 
                           region_tuple))
-        called_peaks = peaks.call_peaks(
+        called_peaks = peaks.estimate_read_cov_and_call_peaks(
             region, promoter_reads, 'promoter', rnaseq_reads)
         ofp = ofp_p if region['strand'] == '+' else ofp_m
         write_bedgraph(region['chrm'], called_peaks, ofp)

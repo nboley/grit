@@ -9,6 +9,8 @@ import numpy.random
 from scipy.special import gammaln, gamma, cbrt
 import scipy.stats
 
+from itertools import chain
+
 try: import grit
 except ImportError: sys.path.insert(0, "/home/nboley/grit/grit/")
 
@@ -38,10 +40,10 @@ SPLIT_TYPE = 'optimal'
 N_REPS = 1
 if SPLIT_TYPE == 'random': assert N_REPS > 1
 
-MIN_MERGE_SIZE = None
-MIN_REL_MERGE_SIZE = None
-TRIM_FRACTION = None
-MAX_EXP_FRACTION = None
+MIN_MERGE_SIZE = 10
+MIN_REL_MERGE_SIZE = 0.5
+TRIM_FRACTION = 0.01
+MAX_EXP_FRACTION = 0.01
 
 def write_bedgraph_from_array(array, region, ofprefix):
     """
@@ -93,14 +95,7 @@ def build_false_signal(rnaseq_reads, signal_type):
     signal_cov = (1-BACKGROUND_FRACTION)*signal_cov+(
         n_rnaseq_reads*BACKGROUND_FRACTION)/len(signal_cov)
 
-def build_control(rnaseq_reads, region, control_type, smooth_win_len):
-    cov = rnaseq_reads.build_read_coverage_array(**region)
-    n_rnaseq_reads = cov.sum()
-    # add the uniform background
-    #cov = (1-BACKGROUND_FRACTION)*cov+(
-    #    n_rnaseq_reads*BACKGROUND_FRACTION)/len(cov)
-    #return (cov + 1e-12)/(cov.sum() + 1e-12*len(cov))
-    
+def build_control(rnaseq_reads, region, control_type, smooth_win_len=SMOOTH_WIN_LEN):
     assert control_type in ('5p', '3p')
     # get the read start coverage
     cov = numpy.zeros(region['stop']-region['start']+1, dtype=float)
@@ -116,7 +111,6 @@ def build_control(rnaseq_reads, region, control_type, smooth_win_len):
     # add the uniform background
     cov = (1-BACKGROUND_FRACTION)*cov+(
         n_rnaseq_reads*BACKGROUND_FRACTION)/len(cov)
-
     
     # get the region segment boundaries
     region_tuple = (region['chrm'], region['strand'], region['start'], region['stop'])
@@ -137,6 +131,40 @@ def build_control(rnaseq_reads, region, control_type, smooth_win_len):
             cov[start:stop] = segment_signal.mean()
         else:    
             cov[start:stop] = numpy.convolve(
+                window,segment_signal,mode='same')
+    #cov[cov < min_signal] = min_signal
+    return (cov + 1e-12)/(cov.sum() + 1e-12*len(cov))
+
+def build_control_in_gene(gene, paired_rnaseq_reads, bndries, 
+                          control_type, smooth_win_len=SMOOTH_WIN_LEN):
+    assert control_type in ('5p', '3p')
+    # get the read start coverage
+    cov = numpy.zeros(gene.stop-gene.start+1, dtype=float)
+    for rd_key, mappings in paired_rnaseq_reads:
+        for mapping in mappings:
+            poss = chain(chain(*mapping[4].cov_regions), 
+                         chain(*mapping[4].cov_regions))
+            if control_type == '3p':
+                pos = max(poss)
+            else:
+                pos = min(poss)
+            if pos < gene.start or pos > gene.stop: continue
+            cov[pos-gene.start] += mapping[-1]
+    
+    n_rnaseq_reads = len(paired_rnaseq_reads)
+    # add the uniform background
+    cov = (1-BACKGROUND_FRACTION)*cov+(
+        n_rnaseq_reads*BACKGROUND_FRACTION)/len(cov)
+    
+    # smooth the signal in each segment
+    min_signal = n_rnaseq_reads*BACKGROUND_FRACTION/len(cov)
+    window = numpy.ones(smooth_win_len, dtype=float)/smooth_win_len
+    for start, stop in zip(bndries[:-1], bndries[1:]):
+        segment_signal = cov[start-gene.start:stop-gene.start+1]
+        if stop - start <= smooth_win_len:
+            cov[start-gene.start:stop-gene.start+1] = segment_signal.mean()
+        else:    
+            cov[start-gene.start:stop-gene.start+1] = numpy.convolve(
                 window,segment_signal,mode='same')
     #cov[cov < min_signal] = min_signal
     return (cov + 1e-12)/(cov.sum() + 1e-12*len(cov))
@@ -377,8 +405,9 @@ def merge_adjacent_intervals(
         prev_stop = stop
     return merged_intervals
 
-def call_peaks(region, signal_reads, reads_type, 
-               rnaseq_reads, alpha=0.01):
+def estimate_read_cov_and_call_peaks(
+        region, signal_reads, reads_type, 
+        rnaseq_reads, alpha=0.01):
     assert reads_type in ('promoter', 'polya')
     reads_type = '5p' if reads_type == 'promoter' else '3p'
     if region['strand'] == '-': 
@@ -394,7 +423,9 @@ def call_peaks(region, signal_reads, reads_type,
     
     if DEBUG_VERBOSE:
         config.log_statement("Finished building control coverage array")
-    
+
+def call_peaks( signal_cov, original_control_cov,
+                reads_type, alpha=0.01):
     signal = numpy.ones(len(signal_cov))
     for k in xrange(N_REPS):
         noise_frac = 1.0
@@ -463,8 +494,8 @@ def call_peaks(region, signal_reads, reads_type,
         try: trim_stop = numpy.flatnonzero(
                 cov_cumsum >= int((1.0-TRIM_FRACTION)*total_cov)).min()
         except: trim_stop=stop-start+1
-        new_peaks.append((trim_start+start+region['start'], 
-                          trim_stop+start+region['start'],
+        new_peaks.append((trim_start+start, 
+                          trim_stop+start,
                           cov_region[trim_start:trim_stop+1].sum()))
 
     exp_filtered_peaks = []

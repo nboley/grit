@@ -32,6 +32,8 @@ from files.bed import create_bed_line
 from files.gtf import parse_gtf_line, load_gtf
 from files.reads import extract_jns_and_reads_in_region
 
+from peaks import call_peaks, build_control_in_gene
+
 from elements import find_jn_connected_exons
 
 from frag_len import FlDist
@@ -489,7 +491,10 @@ class GeneElements(object):
 
 def find_cage_peak_bins_in_gene( gene, cage_reads, rnaseq_reads ):
     rnaseq_cov = find_coverage_in_gene( gene, rnaseq_reads )
+    print rnaseq_cov
     cage_cov = find_coverage_in_gene(gene, cage_reads)
+    print cage_cov
+    assert False
     # threshold the CAGE data. We assume that the CAGE data is a mixture of 
     # reads taken from actually capped transcripts, and random transcribed 
     # regions, or RNA seq covered regions. We zero out any bases where we
@@ -869,17 +874,26 @@ def extract_jns_and_paired_reads_in_gene(gene, reads):
 
 def find_exon_segments_and_introns_in_gene( 
         gene, 
-        rnaseq_reads, tss_reads, tes_reads,
-        tss_regions=[], ref_jns=[], tes_regions=[] ):
+        rnaseq_reads, tss_reads, tes_reads, ref_elements ):
     assert isinstance( gene, GeneElements )
     config.log_statement( 
         "Extracting reads and jns in Chrm %s Strand %s Pos %i-%i" %
         (gene.chrm, gene.strand, gene.start, gene.stop) )
     
+    # initialize the cage peaks with the reference provided set
+    tss_bins = [ Bin(pk_start, pk_stop, 
+                     "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK")
+                 for pk_start, pk_stop in ref_elements['promoter'] ]
+    
+    # initialize the polya peaks with the reference provided set
+    tes_bins = [ Bin( pk_start, pk_stop, 
+                      "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA")
+                 for pk_start, pk_stop in ref_elements['polya'] ]
+    
     # build and pair rnaseq reads, and extract junctions
     paired_rnaseq_reads, jns, opp_strand_jns = extract_jns_and_paired_reads_in_gene(
         gene, rnaseq_reads)
-    jns = filter_jns(jns, opp_strand_jns, set(ref_jns))
+    jns = filter_jns(jns, opp_strand_jns, set(ref_elements['introns']))
     # add in connectivity junctions
     for distal_reads in (tss_reads, tes_reads):
         if distal_reads == None: continue
@@ -890,7 +904,7 @@ def find_exon_segments_and_introns_in_gene(
             jns[jn] += 0
     
     # add in reference junctions
-    for jn in ref_jns: jns[jn] += 0
+    for jn in ref_elements['introns']: jns[jn] += 0
         
     config.log_statement( 
         "Building exon segments in Chrm %s Strand %s Pos %i-%i" %
@@ -916,6 +930,21 @@ def find_exon_segments_and_introns_in_gene(
         segment_bnds.add(stop+1)
         segment_bnd_labels[stop+1].add('R_JN' if gene.strand == '+' else 'D_JN')
     
+    if tss_reads != None:
+        control_cov = build_control_in_gene(
+            gene, paired_rnaseq_reads, sorted(segment_bnds), 
+            '5p' if gene.strand == '+' else '3p')
+        signal_cov = find_coverage_in_gene( gene, tss_reads )
+        tss_peaks = call_peaks( signal_cov, control_cov,
+                                '5p' if gene.strand == '+' else '3p')
+        print tss_peaks
+        assert False
+    
+    if tes_reads != None:
+        tes_bins.extend( 
+            find_polya_peak_bins_in_gene( 
+                gene, polya_reads, rnaseq_reads ) )
+
     for tss_bin in tss_regions:
         tss_start = tss_bin.start if gene.strand == '+' else tss_bin.stop + 1
         segment_bnds.add(tss_start)
@@ -1117,9 +1146,9 @@ def build_exons_from_exon_segments(gene, exon_segments, max_min_expression):
     
     return exons
 
-def find_exons_and_process_data(gene, contig_lens, ofp,
-                                ref_elements, ref_elements_to_include,
-                                rnaseq_reads, cage_reads, polya_reads):
+def find_exons_in_gene( gene, contig_lens, ofp,
+                        ref_elements, ref_elements_to_include,
+                        rnaseq_reads, cage_reads, polya_reads):
     # extract the reference elements that we want to add in
     gene_ref_elements = defaultdict(list)
     for key, vals in ref_elements[(gene.chrm, gene.strand)].iteritems():
@@ -1133,28 +1162,11 @@ def find_exons_and_process_data(gene, contig_lens, ofp,
     config.log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" %
                    (gene.chrm, gene.strand, gene.start, gene.stop) )
     
-    # initialize the cage peaks with the reference provided set
-    tss_bins = [ #Bins( gene.chrm, gene.strand, (
-            Bin(pk_start, pk_stop, 
-                "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK")
-            for pk_start, pk_stop in ref_elements['promoter'] ]
-    if cage_reads != None:
-        tss_bins.extend(find_cage_peak_bins_in_gene(gene, cage_reads, rnaseq_reads))
-    
-    # initialize the polya peaks with the reference provided set
-    tes_bins = [ #Bins( gene.chrm, gene.strand, (
-       Bin( pk_start, pk_stop, "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA")
-        for pk_start, pk_stop in gene_ref_elements['polya'] ]
-    if polya_reads != None:
-        tes_bins.extend( find_polya_peak_bins_in_gene( 
-                gene, polya_reads, rnaseq_reads ) )
-    
-    exon_segments, introns = find_exon_segments_and_introns_in_gene(
+    # gene_ref_elements['intron']
+    exon_segments, introns, tss_bins, tes_bins = find_exon_segments_and_introns_in_gene(
         gene, 
         rnaseq_reads, cage_reads, polya_reads, 
-        tss_bins, 
-        gene_ref_elements['intron'],
-        tes_bins )
+        ref_elements )
     gene.element_segments.extend(chain(introns, exon_segments, tss_bins, tes_bins))
     
     # build exons, and add them to the gene
@@ -1221,12 +1233,12 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
 
         # find the exons and genes
         try:
-            rv = find_exons_and_process_data(gene, contig_lens, ofp,
-                                             ref_elements, ref_elements_to_include,
-                                             rnaseq_reads, cage_reads, polya_reads)
+            rv = find_exons_in_gene(gene, contig_lens, ofp,
+                                    ref_elements, ref_elements_to_include,
+                                    rnaseq_reads, cage_reads, polya_reads)
         except Exception, inst:
             config.log_statement( 
-                "Uncaught exception in find_exons_and_process_data", log=True )
+                "Uncaught exception in find_exons_in_gene", log=True )
             config.log_statement( traceback.format_exc(), log=True, display=False )
             rv = None
         
