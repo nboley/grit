@@ -914,9 +914,10 @@ def find_exon_segments_and_introns_in_gene(
                  for pk_start, pk_stop in ref_elements['polya'] ]
     
     # build and pair rnaseq reads, and extract junctions
-    paired_rnaseq_reads, jns, opp_strand_jns = extract_jns_and_paired_reads_in_gene(
-        gene, rnaseq_reads)
-    jns = filter_jns(jns, opp_strand_jns, set(ref_elements['introns']))
+    (paired_rnaseq_reads, observed_jns, opp_strand_jns 
+     ) = extract_jns_and_paired_reads_in_gene(gene, rnaseq_reads)
+        
+    jns = filter_jns(observed_jns, opp_strand_jns, set(ref_elements['introns']))
     # add in connectivity junctions
     for distal_reads in (tss_reads, tes_reads):
         if distal_reads == None: continue
@@ -927,7 +928,7 @@ def find_exon_segments_and_introns_in_gene(
             jns[jn] += 0
     
     # add in reference junctions
-    for jn in ref_elements['introns']: jns[jn] += 0
+    for jn in ref_elements['introns']: jns[jn] += observed_jns[jn]
         
     config.log_statement( 
         "Building exon segments in Chrm %s Strand %s Pos %i-%i" %
@@ -1022,32 +1023,19 @@ def find_exon_segments_and_introns_in_gene(
         assert segment_bnds[stop_i] == stop+1
         jn_edges.append((start_i, stop_i))
         splice_graph.add_edge(start_i, stop_i)
-    
-    # fidn the marginal read length/ fragmnet length distribution
-    read_groups_and_rls = defaultdict(float)
-    for rd_key, mappings in paired_rnaseq_reads:
-        for mapping in mappings:
-            RG = mapping[2]
-            # we assume all of the read lengths are identical
-            rd_len = mapping[4].read_len
-            read_groups_and_rls[(RG, rd_len)] += mapping[-1]
-    read_groups_and_rls = dict(read_groups_and_rls)
-    total_cnt = sum(read_groups_and_rls.values())
-    for key, val in list(read_groups_and_rls.iteritems()):
-        read_groups_and_rls[key] = val/float(total_cnt)
-    max_fl = max(fl_dist.fl_max for fl_dist in fl_dists.values())
-    fl_dists_and_read_lens = [
-        (RG, fl_dists[RG], read_len) for RG, read_len in read_groups_and_rls]
-    
+        
     # find all possible transcripts, and their association with each element
     exon_lens = segment_bnds[1:] - segment_bnds[:-1]
-    all_transcripts = set()
+    max_fl = max(fl_dist.fl_max for (fl_dist, prb) in fl_dists.values())
+    transcripts = set()
     segment_transcripts_map = {}
     for segment_index in splice_graph.nodes():
-        transcripts = find_transcribed_fragments_covering_region(
-            splice_graph, segment_bnds, segment_bnd_labels, segment_index, max_fl)
+        segment_transcripts = find_transcribed_fragments_covering_region(
+            splice_graph, segment_bnds, segment_bnd_labels, 
+            segment_index, max_fl)
         segment_transcripts_map[(segment_index,)] = transcripts
-        all_transcripts.update(tuple(t) for t in transcripts)
+        transcripts.update(tuple(t) for t in segment_transcripts)
+    transcripts = sorted(transcripts)
     
     def bin_contains_element(bin, element):
         try: 
@@ -1067,14 +1055,21 @@ def find_exon_segments_and_introns_in_gene(
     
     # pre-calculate the expected and observed counts
     binned_reads = f_matrix.bin_rnaseq_reads( 
-        rnaseq_reads, gene.chrm, gene.strand, segment_bnds, include_read_type=False)
-    expected_cnts = f_matrix.calc_expected_cnts(
-        segment_bnds, all_transcripts, fl_dists_and_read_lens)
+        rnaseq_reads, gene.chrm, gene.strand, segment_bnds, 
+        include_read_type=False)
+
+    weighted_expected_cnts = defaultdict(lambda: defaultdict(float))
+    for (rg, (r1_len,r2_len)), (fl_dist, marginal_frac) in fl_dists.iteritems():
+        for tr, bin_cnts in f_matrix.calc_expected_cnts( 
+                segment_bnds, transcripts, fl_dist, r1_len, r2_len).iteritems():
+            for bin, cnt in bin_cnts.iteritems():
+                weighted_expected_cnts[tr][bin] += cnt*marginal_frac
     
-    find_widest_path(splice_graph, binned_reads)
+    #find_widest_path(splice_graph, binned_reads)
     
     segment_bins, jn_bins = [], []
-    for j, (element, transcripts) in enumerate(segment_transcripts_map.iteritems()):
+    for j, (element, transcripts) in enumerate(
+            segment_transcripts_map.iteritems()):
         if config.VERBOSE:
             config.log_statement( 
                 "Estimating element expression for segment %i/%i in Chrm %s Strand %s Pos %i-%i" %
@@ -1086,28 +1081,31 @@ def find_exon_segments_and_introns_in_gene(
             lambda: numpy.zeros(len(transcripts), dtype=float))
         effective_t_lens = numpy.zeros(len(transcripts), dtype=float)
         for i, transcript in enumerate(transcripts):
-            for (rl, RG, pe_bin), frag_cnts in expected_cnts[
-                    tuple(transcript)].iteritems():
+            for pe_bin, weighted_n_distinct_frags in weighted_expected_cnts[
+                    transcript].iteritems():
                 # skip bins that don't overlap the desired element
-                if not any(bin_contains_element(bin, element) for bin in pe_bin): 
+                if not any(bin_contains_element(bin,element) for bin in pe_bin):
                     continue
-                weighted_num_distinct_frags = read_groups_and_rls[
-                    (RG, rl)]*float(frag_cnts)
-                effective_t_lens[i] += weighted_num_distinct_frags
-                exp_bin_cnts_in_segment[pe_bin][i] += weighted_num_distinct_frags
+                effective_t_lens[i] += weighted_n_distinct_frags
+                exp_bin_cnts_in_segment[pe_bin][i] += weighted_n_distinct_frags
+        
         exp_a, obs_a, zero = f_matrix.build_expected_and_observed_arrays(
             exp_bin_cnts_in_segment, binned_reads)
         exp_a, obs_a = f_matrix.cluster_rows(exp_a, obs_a)
-        try: t_freqs = frequency_estimation.estimate_transcript_frequencies(obs_a, exp_a)
+        try: 
+            t_freqs = frequency_estimation.estimate_transcript_frequencies(
+                obs_a, exp_a)
         except frequency_estimation.TooFewReadsError: 
             t_freqs = numpy.ones(len(transcripts), dtype=float)/len(transcripts)
         cnt_frac_lb = beta.ppf(
-            0.01, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1e-6)
+            0.01/max(1,len(segment_bins)), obs_a.sum()+1e-6, 
+            read_counts.RNASeq-obs_a.sum()+1e-6)
         # we use a beta to make sure that this lies between the bounds
         cnt_frac_mle = beta.ppf(
             0.50, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1e-6)
         cnt_frac_ub = beta.ppf(
-            0.99, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1e-6)
+            1-0.01/max(1,len(segment_bins)), obs_a.sum()+1e-6, 
+            read_counts.RNASeq-obs_a.sum()+1e-6)
         fpkm_lb, fpkm, fpkm_ub = 1e6*numpy.array(
             [cnt_frac_lb, cnt_frac_mle, cnt_frac_ub])*(
             t_freqs/(effective_t_lens/1000.)).sum()
@@ -1129,9 +1127,6 @@ def find_exon_segments_and_introns_in_gene(
             jn_bins.append(bin)
 
     segment_bins.sort(key=lambda x:x.start)
-    print segment_bins
-    print jn_bins
-    assert False
     return segment_bins, jn_bins, tss_regions, tes_regions
 
 def determine_exon_type(left_label, right_label):
@@ -1155,12 +1150,14 @@ def build_exons_from_exon_segments(gene, exon_segments, max_min_expression):
     if gene.strand == '-':
         exon_segments = reverse_strand(
             sorted(exon_segments, key=lambda x:x.start), gene.stop)
+    else:
+        exon_segments = sorted(exon_segments, key=lambda x:x.start)
     
     EXON_START_LABELS = ('TSS', 'R_JN')
     EXON_STOP_LABELS = ('TES', 'D_JN')
     
     # find all of the exon start bins
-    exons = [] #Bins(exon_segments.chrm, exon_segments.strand)
+    exons = []
     for i in xrange(len(exon_segments)):
         # if this is not allowed to be the start of an exon
         start_segment = exon_segments[i]
@@ -1174,7 +1171,6 @@ def build_exons_from_exon_segments(gene, exon_segments, max_min_expression):
                     break
                 
                 for stop_label in stop_segment.right_labels:
-                    print start_label, stop_label
                     if stop_label not in EXON_STOP_LABELS:
                         continue
                     fpkm = min(segment.fpkm for segment in exon_segments[i:j+1])
@@ -1339,13 +1335,15 @@ def find_transcribed_regions_and_jns_in_segment(
             '-': numpy.zeros(reg_len, dtype=float) }
     jn_reads = {'+': defaultdict(int), '-': defaultdict(int)}
     num_unique_reads = [0.0, 0.0, 0.0]
-    fragment_lengths =  defaultdict(int)
+    fragment_lengths =  defaultdict(lambda: defaultdict(int))
+    
     read_mates = {}
     for reads_i,reads in enumerate((promoter_reads, rnaseq_reads, polya_reads)):
         if reads == None: continue
 
         ( p1_rds, p2_rds, r_plus_jns, r_minus_jns 
-          ) = extract_jns_and_reads_in_region((contig, '.', r_start, r_stop), reads)
+          ) = extract_jns_and_reads_in_region(
+            (contig, '.', r_start, r_stop), reads)
         for jn, cnt in r_plus_jns.iteritems(): 
             jn_reads['+'][jn] += cnt 
         for jn, cnt in r_minus_jns.iteritems(): 
@@ -1366,13 +1364,24 @@ def find_transcribed_regions_and_jns_in_segment(
         
         # update the fragment length dist
         if reads == rnaseq_reads:
-            for qname, read1_data in p1_rds.iteritems():
-                if len(read1_data) != 1 or len(read1_data[0].cov_regions) > 1: continue
-                try: read2_data = p2_rds[qname]
+            for qname, r1_data in p1_rds.iteritems():
+                # if there are multiple mappings, or the read isn't paired,
+                # don't use this for fragment length estimation
+                if len(r1_data) != 1 or len(r1_data[0].cov_regions) > 1: 
+                    continue
+                try: r2_data = p2_rds[qname]
                 except KeyError: continue
-                if len(read2_data) != 1 or len(read2_data[0].cov_regions) > 1: continue
-                frag_len = calc_frag_len_from_read_data(read1_data[0], read2_data[0])
-                fragment_lengths[frag_len] += read1_data[0].map_prb
+                if len(r2_data) != 1 or len(r2_data[0].cov_regions) > 1: 
+                    continue
+                # estimate the fragment length, and update the read lengths
+                assert r1_data[0].map_prb == 1.0
+                assert r2_data[0].map_prb == 1.0
+                assert r1_data[0].read_grp == r2_data[0].read_grp
+                fl_key = ( r1_data[0].read_grp, 
+                           (r1_data[0].read_len, r2_data[0].read_len))
+                # we add 1 because we know that this read is unique
+                frag_len = calc_frag_len_from_read_data(r1_data[0], r2_data[0])
+                fragment_lengths[fl_key][frag_len] += 1.0
     
     # add pseudo coverage for annotated jns. This is so that the clustering
     # algorithm knows which gene segments to join if a jn falls outside of 
@@ -1477,10 +1486,12 @@ def find_segments_and_jns_worker(
                 segment, rnaseq_reads, promoter_reads, polya_reads, 
                 ref_elements, ref_elements_to_include) 
         with lock:
-            for length, count in r_frag_lens.iteritems():
-                if length not in frag_lens:
-                    frag_lens[length] = 0
-                frag_lens[length] += count
+            for (rd_key, rls), fls in r_frag_lens.iteritems():
+                for fl, cnt in fls.iteritems():
+                    if (rd_key, rls) not in frag_lens:
+                        frag_lens[(rd_key, rls, fl)] = cnt
+                    else:
+                        frag_lens[(rd_key, rls, fl)] += cnt
             transcribed_regions[(segment[0], '+')].extend([
                 (start+segment[1], stop+segment[1])
                 for start, stop in r_transcribed_regions['+']])
@@ -1564,6 +1575,28 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
       
     return gene_bndry_bins  
 
+def build_fl_dists_from_fls_dict(frag_lens):
+    # the return fragment length dists
+    fl_dists = {}
+    
+    # group fragment lengths by readkey and read lengths. We don't
+    # do this earlier because nested manager dictionaries are 
+    # inefficient, and the accumulation is in the worker threads
+    grpd_frag_lens = defaultdict(list)
+    for (rd_grp, rd_len, fl), cnt in frag_lens.iteritems():
+        grpd_frag_lens[(rd_grp, rd_len)].append((fl, cnt))
+    for (rd_grp, rd_len), fls_and_cnts in grpd_frag_lens.iteritems():
+        min_fl = min(fl for fl, cnt in fls_and_cnts)
+        max_fl = max(fl for fl, cnt in fls_and_cnts)
+        fl_density = numpy.zeros(max_fl - min_fl + 1)
+        for fl, cnt in fls_and_cnts:
+            fl_density[fl-min_fl] += cnt
+        fl_dists[(rd_grp, rd_len)] = [
+            FlDist(min_fl, max_fl, fl_density/fl_density.sum()),
+            fl_density.sum()]
+    total_sum = sum(x[1] for x in fl_dists.values())
+    for key in fl_dists: fl_dists[key][1] /= total_sum
+    return fl_dists
 
 def find_all_gene_segments( contig_lens,
                             rnaseq_reads, promoter_reads, polya_reads,
@@ -1661,16 +1694,8 @@ def find_all_gene_segments( contig_lens,
         filtered_jns[(contig, '-')] = filter_jns(minus_jns, plus_jns)
     
     # build the fragment length distribution
-    frag_lens = dict(frag_lens)
-    min_fl = int(min(frag_lens.keys()))
-    max_fl = int(max(frag_lens.keys()))
-    fl_density = numpy.zeros(max_fl - min_fl + 1)
-    for fl, cnt in frag_lens.iteritems():
-        fl_density[fl-min_fl] += cnt
-    fl_density = fl_density/fl_density.sum()
     global fl_dists
-    fl_dists = {'mean': FlDist(min_fl, max_fl, fl_density)}
-
+    fl_dists = build_fl_dists_from_fls_dict(dict(frag_lens))
     # we are down with the manager
     manager.shutdown()
     

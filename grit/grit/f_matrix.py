@@ -406,9 +406,13 @@ def estimate_num_paired_reads_from_bin(
     density = do()
     return float( density )
 
-def calc_expected_cnts( exon_boundaries, transcripts, fl_dists_and_read_lens, \
+def calc_expected_cnts( exon_boundaries, transcripts, fl_dist, 
+                        r1_len, r2_len,
                         max_num_unmappable_bases=MAX_NUM_UNMAPPABLE_BASES,
                         max_memory_usage=3.5 ):
+    assert r1_len == r2_len, "Paired reads must have the same lengths"
+    read_len = r1_len
+    
     # store all counts, and count vectors. Indexed by ( 
     # read_group, read_len, bin )
     cached_f_mat_entries = {}
@@ -419,33 +423,37 @@ def calc_expected_cnts( exon_boundaries, transcripts, fl_dists_and_read_lens, \
                       izip(exon_boundaries[:-1], exon_boundaries[1:])])
     
     # for each candidate trasncript
-    for read_group, fl_dist, read_len in fl_dists_and_read_lens:
-        for transcript_index, nonoverlapping_indices in enumerate(transcripts):
-            if (len(exon_boundaries)*len(transcripts)*8.)/(1024**3) > max_memory_usage:
-                raise MemoryError, \
-                    "Building the design matrix has exceeded the maximum allowed memory "
-            f_mat_entries[nonoverlapping_indices] = {}
-            # find all of the possible read bins for transcript given this 
-            # fl_dist and read length
-            ( full, pair, single 
-                ) = find_possible_read_bins_for_transcript( 
-                nonoverlapping_indices, nonoverlapping_exon_lens, fl_dist, 
-                read_len, min_num_mappable_bases=1 )
-            
-            # add the expected counts for paired reads
-            for full_bin, paired_bins in pair.iteritems():
-                for bin in paired_bins:
-                    key = (read_len, read_group, full_bin, bin)
-                    if key in cached_f_mat_entries:
-                        pseudo_cnt = cached_f_mat_entries[ key ]
-                    else:
-                        pseudo_cnt = estimate_num_paired_reads_from_bin(
-                            bin, full_bin, 
-                            nonoverlapping_exon_lens, fl_dist,
-                            read_len, max_num_unmappable_bases )
+    for transcript_index, nonoverlapping_indices in enumerate(transcripts):
+        if (len(exon_boundaries)*len(transcripts)*8.)/(1024**3) > max_memory_usage:
+            raise MemoryError, \
+                "Building the design matrix has exceeded the maximum allowed memory "
+        f_mat_entries[nonoverlapping_indices] = {}
+        # find all of the possible read bins for transcript given this 
+        # fl_dist and read length
+        ( full, pair, single 
+            ) = find_possible_read_bins_for_transcript( 
+            nonoverlapping_indices, nonoverlapping_exon_lens, fl_dist, 
+            read_len, min_num_mappable_bases=1 )
 
-                        cached_f_mat_entries[ key ] = pseudo_cnt
-                    f_mat_entries[nonoverlapping_indices][(read_len, read_group, bin)] = pseudo_cnt
+        # add the expected counts for paired reads
+        for full_bin, paired_bins in pair.iteritems():
+            for bin in paired_bins:
+                # we can only re-use cached full_bin/bin combos
+                # because it's possible for the middle of a fragment
+                # to skip a region in one transcript, and be spliced
+                # out in another transcript
+                key = (full_bin, bin)
+                if key in cached_f_mat_entries:
+                    pseudo_cnt = cached_f_mat_entries[ key ]
+                else:
+                    pseudo_cnt = estimate_num_paired_reads_from_bin(
+                        bin, full_bin, 
+                        nonoverlapping_exon_lens, fl_dist,
+                        read_len, max_num_unmappable_bases )
+
+                    cached_f_mat_entries[ key ] = pseudo_cnt
+                if pseudo_cnt > 0:
+                    f_mat_entries[nonoverlapping_indices][bin] = pseudo_cnt
     
     return f_mat_entries
 
@@ -516,12 +524,12 @@ def build_expected_and_observed_arrays(
     observed_mat = numpy.array( observed_mat, dtype=numpy.int )
     return expected_mat, observed_mat, unobservable_transcripts
 
-def build_expected_and_observed_rnaseq_counts( gene, reads, fl_dists, filter_bin=None ):    
+def build_expected_and_observed_rnaseq_counts(gene, reads, fl_dists):
     # find the set of non-overlapping exons, and convert the transcripts to 
     # lists of these non-overlapping indices. All of the f_matrix code uses
     # this representation.     
     exon_boundaries = numpy.array(gene.find_nonoverlapping_boundaries())
-    transcripts_non_overlapping_exon_indices = list(build_nonoverlapping_indices( 
+    transcripts_non_overlapping_exon_indices =list(build_nonoverlapping_indices(
             gene.transcripts, exon_boundaries ))
     
     binned_reads = bin_rnaseq_reads( 
@@ -538,10 +546,12 @@ def build_expected_and_observed_rnaseq_counts( gene, reads, fl_dists, filter_bin
     print exon_boundaries
     print observed_cnts.values()
     """
-    
-    expected_cnts = calc_expected_cnts( 
-        exon_boundaries, transcripts_non_overlapping_exon_indices, 
-        fl_dists_and_read_lens)
+    for (rg, (r1_len,r2_len)), (fl_dist, marginal_frac) in fl_dists.iteritems():
+        expected_cnts[(rg, (r1_len, r2_len))
+                      ] = marginal_frac*calc_expected_cnts( 
+            exon_boundaries, transcripts_non_overlapping_exon_indices, 
+            fl_dist, r1_len, r2_len)
+        
     return expected_cnts, observed_cnts
 
 def build_expected_and_observed_transcript_bndry_counts( 
