@@ -872,6 +872,29 @@ def extract_jns_and_paired_reads_in_gene(gene, reads):
         (plus_jns, minus_jns) if gene.strand == '+' else (minus_jns, plus_jns)) 
     return paired_reads, jns, opp_strand_jns
 
+def find_widest_path(splice_graph, binned_reads, segment_bnds, tss_regions, tes_regions, ):
+    bndry_cross_cnts = defaultdict(float)
+    for (rd1, rd2), cnt in binned_reads.iteritems():
+        bndry_crosses = set()
+        for rd in (rd1, rd2):
+            for bndry in izip(rd[:-1], rd[1:]):
+                bndry_crosses.add(bndry)
+        for bndry in bndry_crosses:
+            bndry_cross_cnts[bndry] += cnt
+
+    flow_graph = nx.DiGraph()
+    flow_graph.add_nodes_from(splice_graph.nodes())
+    for (start, stop), cnt in bndry_cross_cnts.iteritems():
+        flow_graph.add_edge(start, stop, capacity=cnt)
+    segment_bnds_list= segment_bnds.tolist()
+    tss_indices = sorted(segment_bnds_list.index(tss.start) for tss in tss_regions)
+    tes_indices = sorted(segment_bnds_list.index(tes.stop+1) for tes in tes_regions)
+    for tss_i in tss_indices:
+        for tes_i in tes_indices:
+            if tss_i >= tes_i: continue
+            print tss_i, tes_i
+    assert False
+
 def find_exon_segments_and_introns_in_gene( 
         gene, 
         rnaseq_reads, tss_reads, tes_reads, ref_elements ):
@@ -881,12 +904,12 @@ def find_exon_segments_and_introns_in_gene(
         (gene.chrm, gene.strand, gene.start, gene.stop) )
     
     # initialize the cage peaks with the reference provided set
-    tss_bins = [ Bin(pk_start, pk_stop, 
+    tss_regions = [ Bin(pk_start, pk_stop, 
                      "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK")
                  for pk_start, pk_stop in ref_elements['promoter'] ]
     
     # initialize the polya peaks with the reference provided set
-    tes_bins = [ Bin( pk_start, pk_stop, 
+    tes_regions = [ Bin( pk_start, pk_stop, 
                       "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA")
                  for pk_start, pk_stop in ref_elements['polya'] ]
     
@@ -935,23 +958,37 @@ def find_exon_segments_and_introns_in_gene(
             gene, paired_rnaseq_reads, sorted(segment_bnds), 
             '5p' if gene.strand == '+' else '3p')
         signal_cov = find_coverage_in_gene( gene, tss_reads )
-        tss_peaks = call_peaks( signal_cov, control_cov,
-                                '5p' if gene.strand == '+' else '3p')
-        print tss_peaks
-        assert False
+        for pk_start, pk_stop, cnt in call_peaks( signal_cov, control_cov,
+                                                  '5p' if gene.strand == '+' else '3p'):
+            tss_regions.append(SegmentBin(
+                gene.start+pk_start, gene.start+pk_stop-1, 
+                "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK",
+                1e6*beta.ppf(0.01, cnt+1e-6, read_counts.Promoters+1e-6),
+                1e6*beta.ppf(0.50, cnt+1e-6, read_counts.Promoters+1e-6),
+                1e6*beta.ppf(0.99, cnt+1e-6, read_counts.Promoters+1e-6) ))
     
-    if tes_reads != None:
-        tes_bins.extend( 
-            find_polya_peak_bins_in_gene( 
-                gene, polya_reads, rnaseq_reads ) )
-
     for tss_bin in tss_regions:
         tss_start = tss_bin.start if gene.strand == '+' else tss_bin.stop + 1
         segment_bnds.add(tss_start)
         segment_bnd_labels[tss_start].add('TSS')
-
+        
+    
+    if tes_reads != None:
+        control_cov = build_control_in_gene(
+            gene, paired_rnaseq_reads, sorted(segment_bnds), 
+            '3p' if gene.strand == '+' else '5p')
+        signal_cov = find_coverage_in_gene( gene, tes_reads )
+        for pk_start, pk_stop, cnt in call_peaks( signal_cov, control_cov,
+                                                  '3p' if gene.strand == '+' else '5p'):
+            tes_regions.append(SegmentBin(
+                gene.start+pk_start, gene.start+pk_stop-1, 
+                "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA",
+                1e6*beta.ppf(0.01, cnt+1e-6, read_counts.Polya+1e-6),
+                1e6*beta.ppf(0.50, cnt+1e-6, read_counts.Polya+1e-6),
+                1e6*beta.ppf(0.99, cnt+1e-6, read_counts.Polya+1e-6) ))
+    
     for tes_bin in tes_regions:
-        tes_start = tes_bin.stop + 1 if gene.strand == '+' else tes_bin.start
+        tes_start = tes_bin.stop+1 if gene.strand == '+' else tes_bin.start
         segment_bnds.add(tes_start)
         segment_bnd_labels[tes_start].add('TES')
     
@@ -1034,6 +1071,8 @@ def find_exon_segments_and_introns_in_gene(
     expected_cnts = f_matrix.calc_expected_cnts(
         segment_bnds, all_transcripts, fl_dists_and_read_lens)
     
+    find_widest_path(splice_graph, binned_reads)
+    
     segment_bins, jn_bins = [], []
     for j, (element, transcripts) in enumerate(segment_transcripts_map.iteritems()):
         if config.VERBOSE:
@@ -1090,7 +1129,10 @@ def find_exon_segments_and_introns_in_gene(
             jn_bins.append(bin)
 
     segment_bins.sort(key=lambda x:x.start)
-    return segment_bins, jn_bins
+    print segment_bins
+    print jn_bins
+    assert False
+    return segment_bins, jn_bins, tss_regions, tes_regions
 
 def determine_exon_type(left_label, right_label):
     if left_label == 'TSS':
