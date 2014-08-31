@@ -1033,9 +1033,10 @@ def find_exon_segments_and_introns_in_gene(
         segment_transcripts = find_transcribed_fragments_covering_region(
             splice_graph, segment_bnds, segment_bnd_labels, 
             segment_index, max_fl)
-        segment_transcripts_map[(segment_index,)] = transcripts
-        transcripts.update(tuple(t) for t in segment_transcripts)
-    transcripts = sorted(transcripts)
+        segment_transcripts = [tuple(t) for t in segment_transcripts]
+        segment_transcripts_map[(segment_index,)] = segment_transcripts
+        transcripts.update(segment_transcripts)
+    all_transcripts = sorted(transcripts)
     
     def bin_contains_element(bin, element):
         try: 
@@ -1076,9 +1077,10 @@ def find_exon_segments_and_introns_in_gene(
                 (j, len(segment_transcripts_map), 
                  gene.chrm, gene.strand, gene.start, gene.stop) )
 
-        # find the normalized, expected counts for this element
+        # find the normalized, expected fragment counts for this element
         exp_bin_cnts_in_segment = defaultdict(
             lambda: numpy.zeros(len(transcripts), dtype=float))
+        obs_bin_cnts_in_segment = defaultdict(int)
         effective_t_lens = numpy.zeros(len(transcripts), dtype=float)
         for i, transcript in enumerate(transcripts):
             for pe_bin, weighted_n_distinct_frags in weighted_expected_cnts[
@@ -1088,34 +1090,57 @@ def find_exon_segments_and_introns_in_gene(
                     continue
                 effective_t_lens[i] += weighted_n_distinct_frags
                 exp_bin_cnts_in_segment[pe_bin][i] += weighted_n_distinct_frags
+                if (pe_bin not in obs_bin_cnts_in_segment 
+                         and pe_bin in binned_reads):
+                    obs_bin_cnts_in_segment[pe_bin] = binned_reads[pe_bin]
+
+        """ Code for degugging the element counts
+        print element
+        all_bins = sorted(set(chain(*transcripts)))
+        print [(x, exon_lens[x]) for x in all_bins ]
+        print [(x, segment_bnd_labels[segment_bnds[x]], segment_bnd_labels[segment_bnds[x+1]])
+               for x in all_bins]
+        for t, e_len in zip(transcripts, effective_t_lens):
+            print t, e_len
+            print ( t, e_len, exon_lens[element] + max_fl - 1, 
+                    exon_lens[element] - max_fl + 1 + 2*max_fl - 2 )
+            print sorted(weighted_expected_cnts[t].iteritems())
+            print
+        raw_input()
+        """
         
-        exp_a, obs_a, zero = f_matrix.build_expected_and_observed_arrays(
-            exp_bin_cnts_in_segment, binned_reads)
-        exp_a, obs_a = f_matrix.cluster_rows(exp_a, obs_a)
-        try: 
-            t_freqs = frequency_estimation.estimate_transcript_frequencies(
-                obs_a, exp_a)
-        except frequency_estimation.TooFewReadsError: 
-            t_freqs = numpy.ones(len(transcripts), dtype=float)/len(transcripts)
-        cnt_frac_lb = beta.ppf(
-            0.01/max(1,len(segment_bins)), obs_a.sum()+1e-6, 
-            read_counts.RNASeq-obs_a.sum()+1e-6)
-        # we use a beta to make sure that this lies between the bounds
-        cnt_frac_mle = beta.ppf(
-            0.50, obs_a.sum()+1e-6, read_counts.RNASeq-obs_a.sum()+1e-6)
-        cnt_frac_ub = beta.ppf(
-            1-0.01/max(1,len(segment_bins)), obs_a.sum()+1e-6, 
-            read_counts.RNASeq-obs_a.sum()+1e-6)
-        fpkm_lb, fpkm, fpkm_ub = 1e6*numpy.array(
-            [cnt_frac_lb, cnt_frac_mle, cnt_frac_ub])*(
-            t_freqs/(effective_t_lens/1000.)).sum()
+        # if all of the transcript fragments have the same length, we are done
+        # all equally likely so we can estimate the element frequencies directly
+        # from the bin counts
+        if all(x == effective_t_lens[0] for x in effective_t_lens):
+            mean_t_len = effective_t_lens[0]
+        # otherwise we need to estimate the transcript frequencies
+        else:
+            exp_a, obs_a, zero = f_matrix.build_expected_and_observed_arrays(
+                exp_bin_cnts_in_segment, obs_bin_cnts_in_segment)
+            exp_a, obs_a = f_matrix.cluster_rows(exp_a, obs_a)
+            try: 
+                t_freqs = frequency_estimation.estimate_transcript_frequencies(
+                    obs_a, exp_a)
+                mean_t_len = (t_freqs*effective_t_lens).sum()
+            except frequency_estimation.TooFewReadsError: 
+                mean_t_len = effective_t_lens.mean()
+        
+        n_reads_in_segment = float(sum(obs_bin_cnts_in_segment.values()))
+        quantiles = [0.01/max(1,len(segment_bins)), 
+                     0.5, 
+                     1-0.01/max(1,len(segment_bins))]
+        fpkms = 1e6*(1000./mean_t_len)*beta.ppf(
+            quantiles, 
+            n_reads_in_segment+1e-6, 
+            read_counts.RNASeq-n_reads_in_segment+1e-6)
         if len(element) == 1:
             start, stop = segment_bnds[element[0]], segment_bnds[element[0]+1]-1
             left_labels = segment_bnd_labels[start]
             right_labels = segment_bnd_labels[stop+1]
             bin = SegmentBin( start, stop, left_labels, right_labels,
                               type=None,
-                              fpkm_lb=fpkm_lb, fpkm=fpkm, fpkm_ub=fpkm_ub )
+                              fpkm_lb=fpkms[0], fpkm=fpkms[1], fpkm_ub=fpkms[2])
             segment_bins.append(bin)
         else:
             start, stop = segment_bnds[element[0]+1], segment_bnds[element[1]]-1
@@ -1123,7 +1148,7 @@ def find_exon_segments_and_introns_in_gene(
                               'D_JN' if gene.strand == '+' else 'R_JN',
                               'R_JN' if gene.strand == '-' else 'D_JN',
                               type='INTRON',
-                              fpkm_lb=fpkm_lb, fpkm=fpkm, fpkm_ub=fpkm_ub )
+                              fpkm_lb=fpkms[0], fpkm=fpkms[1], fpkm_ub=fpkms[2])
             jn_bins.append(bin)
 
     segment_bins.sort(key=lambda x:x.start)
