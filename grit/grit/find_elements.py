@@ -895,7 +895,7 @@ def find_widest_path(splice_graph, binned_reads, segment_bnds, tss_regions, tes_
             print tss_i, tes_i
     assert False
 
-def find_exon_segments_and_introns_in_gene( 
+def build_and_quantify_nonoverlapping_transcript_elements_in_gene( 
         gene, 
         rnaseq_reads, tss_reads, tes_reads, ref_elements ):
     assert isinstance( gene, GeneElements )
@@ -959,20 +959,15 @@ def find_exon_segments_and_introns_in_gene(
             gene, paired_rnaseq_reads, sorted(segment_bnds), 
             '5p' if gene.strand == '+' else '3p')
         signal_cov = find_coverage_in_gene( gene, tss_reads )
-        for pk_start, pk_stop, cnt in call_peaks( signal_cov, control_cov,
-                                                  '5p' if gene.strand == '+' else '3p'):
+        for pk_start, pk_stop, cnt in call_peaks( 
+                signal_cov, control_cov,
+                '5p' if gene.strand == '+' else '3p'):
             tss_regions.append(SegmentBin(
                 gene.start+pk_start, gene.start+pk_stop-1, 
                 "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK",
                 1e6*beta.ppf(0.01, cnt+1e-6, read_counts.Promoters+1e-6),
                 1e6*beta.ppf(0.50, cnt+1e-6, read_counts.Promoters+1e-6),
                 1e6*beta.ppf(0.99, cnt+1e-6, read_counts.Promoters+1e-6) ))
-    
-    for tss_bin in tss_regions:
-        tss_start = tss_bin.start if gene.strand == '+' else tss_bin.stop + 1
-        segment_bnds.add(tss_start)
-        segment_bnd_labels[tss_start].add('TSS')
-        
     
     if tes_reads != None:
         control_cov = build_control_in_gene(
@@ -987,6 +982,12 @@ def find_exon_segments_and_introns_in_gene(
                 1e6*beta.ppf(0.01, cnt+1e-6, read_counts.Polya+1e-6),
                 1e6*beta.ppf(0.50, cnt+1e-6, read_counts.Polya+1e-6),
                 1e6*beta.ppf(0.99, cnt+1e-6, read_counts.Polya+1e-6) ))
+    
+    
+    for tss_bin in tss_regions:
+        tss_start = tss_bin.start if gene.strand == '+' else tss_bin.stop + 1
+        segment_bnds.add(tss_start)
+        segment_bnd_labels[tss_start].add('TSS')
     
     for tes_bin in tes_regions:
         tes_start = tes_bin.stop+1 if gene.strand == '+' else tes_bin.start
@@ -1006,11 +1007,12 @@ def find_exon_segments_and_introns_in_gene(
         if empty_stop: in_empty_region = False
         if in_empty_region:
             empty_segments.add(index)
-    
-    segment_bnds = numpy.array(sorted(segment_bnds))
+
     # build the exon segment connectivity graph
+    segment_bnds = numpy.array(sorted(segment_bnds))
     splice_graph = nx.DiGraph()
-    splice_graph.add_nodes_from(xrange(0, len(segment_bnds)-1))
+    splice_graph.add_nodes_from(
+        x for x in xrange(0, len(segment_bnds)-1) if x not in empty_segments)
     for i in xrange(len(segment_bnds)-1-1):
         if i not in empty_segments and i+1 not in empty_segments:
             splice_graph.add_edge(i, i+1)
@@ -1027,6 +1029,7 @@ def find_exon_segments_and_introns_in_gene(
     # find all possible transcripts, and their association with each element
     exon_lens = segment_bnds[1:] - segment_bnds[:-1]
     max_fl = max(fl_dist.fl_max for (fl_dist, prb) in fl_dists.values())
+    min_fl = min(fl_dist.fl_min for (fl_dist, prb) in fl_dists.values())
     transcripts = set()
     segment_transcripts_map = {}
     for segment_index in splice_graph.nodes():
@@ -1065,9 +1068,7 @@ def find_exon_segments_and_introns_in_gene(
                 segment_bnds, transcripts, fl_dist, r1_len, r2_len).iteritems():
             for bin, cnt in bin_cnts.iteritems():
                 weighted_expected_cnts[tr][bin] += cnt*marginal_frac
-    
-    #find_widest_path(splice_graph, binned_reads)
-    
+        
     segment_bins, jn_bins = [], []
     for j, (element, transcripts) in enumerate(
             segment_transcripts_map.iteritems()):
@@ -1094,6 +1095,10 @@ def find_exon_segments_and_introns_in_gene(
                          and pe_bin in binned_reads):
                     obs_bin_cnts_in_segment[pe_bin] = binned_reads[pe_bin]
 
+        if len(element) == 1:
+            for t, e_len in zip(transcripts, effective_t_lens):
+                assert ( e_len <= exon_lens[element[0]] + min_fl 
+                         - f_matrix.MIN_NUM_MAPPABLE_BASES )
         """ Code for degugging the element counts
         print element
         all_bins = sorted(set(chain(*transcripts)))
@@ -1127,9 +1132,7 @@ def find_exon_segments_and_introns_in_gene(
                 mean_t_len = effective_t_lens.mean()
         
         n_reads_in_segment = float(sum(obs_bin_cnts_in_segment.values()))
-        quantiles = [0.01/max(1,len(segment_bins)), 
-                     0.5, 
-                     1-0.01/max(1,len(segment_bins))]
+        quantiles = [0.01, 0.5, 1-.01]
         fpkms = 1e6*(1000./mean_t_len)*beta.ppf(
             quantiles, 
             n_reads_in_segment+1e-6, 
@@ -1150,7 +1153,7 @@ def find_exon_segments_and_introns_in_gene(
                               type='INTRON',
                               fpkm_lb=fpkms[0], fpkm=fpkms[1], fpkm_ub=fpkms[2])
             jn_bins.append(bin)
-
+        
     segment_bins.sort(key=lambda x:x.start)
     return segment_bins, jn_bins, tss_regions, tes_regions
 
@@ -1226,11 +1229,11 @@ def find_exons_in_gene( gene, contig_lens, ofp,
                    (gene.chrm, gene.strand, gene.start, gene.stop) )
     
     # gene_ref_elements['intron']
-    exon_segments, introns, tss_bins, tes_bins = find_exon_segments_and_introns_in_gene(
-        gene, 
-        rnaseq_reads, cage_reads, polya_reads, 
-        ref_elements )
-    gene.element_segments.extend(chain(introns, exon_segments, tss_bins, tes_bins))
+    ( exon_segments, introns, tss_bins, tes_bins 
+      ) = build_and_quantify_nonoverlapping_transcript_elements_in_gene(
+        gene, rnaseq_reads, cage_reads, polya_reads, ref_elements )
+    gene.element_segments.extend(
+        chain(introns, exon_segments, tss_bins, tes_bins))
     
     # build exons, and add them to the gene
     min_max_exon_expression = max(
@@ -1241,9 +1244,10 @@ def find_exons_in_gene( gene, contig_lens, ofp,
     
     # introns are both elements and element segments
     gene.elements.extend(
-        intron for intron in introns if intron.fpkm_ub > min_max_exon_expression)
+        intron for intron in introns 
+        if intron.fpkm_ub > min_max_exon_expression)
 
-    # merge in the reference elements
+    # merge in the reference exons
     for tss_exon in gene_ref_elements['tss_exon']:
         gene.elements.append( Bin(tss_exon[0], tss_exon[1], 
                                   "REF_TSS_EXON_START", "REF_TSS_EXON_STOP",
