@@ -317,7 +317,13 @@ class SegmentBin(Bin):
         self.fpkm_lb = fpkm_lb
         self.fpkm = fpkm
         self.fpkm_ub = fpkm_ub
-        
+    
+    def set_expression(self, fpkm_lb, fpkm, fpkm_ub):
+        self.fpkm_lb = fpkm_lb
+        self.fpkm = fpkm
+        self.fpkm_ub = fpkm_ub
+        return self
+    
     def __repr__( self ):
         type_str =  ( 
             "(%s-%s)" % ( ",".join(self.left_labels), 
@@ -353,6 +359,9 @@ def reverse_strand(bins_iter, contig_len):
     for bin in reversed(bins_iter):
         rev_bins.append( bin.reverse_strand( contig_len ) )
     return rev_bins
+
+class SpliceGraph(nx.DiGraph):
+    pass
 
 class GeneElements(object):
     def __init__( self, chrm, strand  ):
@@ -677,7 +686,7 @@ def extract_jns_and_paired_reads_in_gene(gene, reads):
         (plus_jns, minus_jns) if gene.strand == '+' else (minus_jns, plus_jns)) 
     return paired_reads, jns, opp_strand_jns
 
-def find_widest_path(splice_graph, binned_reads, segment_bnds, tss_regions, tes_regions, ):
+def find_widest_path(splice_graph, binned_reads, segment_bnds, tss_regions, tes_regions):
     bndry_cross_cnts = defaultdict(float)
     for (rd1, rd2), cnt in binned_reads.iteritems():
         bndry_crosses = set()
@@ -700,7 +709,7 @@ def find_widest_path(splice_graph, binned_reads, segment_bnds, tss_regions, tes_
             print tss_i, tes_i
     assert False
 
-def build_and_quantify_nonoverlapping_transcript_elements_in_gene( 
+def build_splice_graph_and_binned_reads_in_gene( 
         gene, 
         rnaseq_reads, tss_reads, tes_reads, ref_elements ):
     assert isinstance( gene, GeneElements )
@@ -788,16 +797,20 @@ def build_and_quantify_nonoverlapping_transcript_elements_in_gene(
                 1e6*beta.ppf(0.50, cnt+1e-6, read_counts.Polya+1e-6),
                 1e6*beta.ppf(0.99, cnt+1e-6, read_counts.Polya+1e-6) ))
     
+
+    splice_graph = SpliceGraph()
     
     for tss_bin in tss_regions:
         tss_start = tss_bin.start if gene.strand == '+' else tss_bin.stop + 1
         segment_bnds.add(tss_start)
         segment_bnd_labels[tss_start].add('TSS')
+        splice_graph.add_node(tss_bin, type='TSS', bin=tss_bin)
     
     for tes_bin in tes_regions:
         tes_start = tes_bin.stop+1 if gene.strand == '+' else tes_bin.start
         segment_bnds.add(tes_start)
         segment_bnd_labels[tes_start].add('TES')
+        splice_graph.add_node(tes_bin, type='TES', bin=tes_bin)
     
     # remove boundaries that fall inside of empty regions
     empty_segments = set()
@@ -815,12 +828,18 @@ def build_and_quantify_nonoverlapping_transcript_elements_in_gene(
 
     # build the exon segment connectivity graph
     segment_bnds = numpy.array(sorted(segment_bnds))
-    splice_graph = nx.DiGraph()
-    splice_graph.add_nodes_from(
-        x for x in xrange(0, len(segment_bnds)-1) if x not in empty_segments)
+    
+    for element_i in (x for x in xrange(0, len(segment_bnds)-1) 
+                      if x not in empty_segments):
+        start, stop = segment_bnds[element_i], segment_bnds[element_i+1]-1
+        left_labels = segment_bnd_labels[start]
+        right_labels = segment_bnd_labels[stop+1]
+        bin = SegmentBin( start, stop, left_labels, right_labels, type=None)
+        splice_graph.add_node(element_i, bin=bin)
+    
     for i in xrange(len(segment_bnds)-1-1):
         if i not in empty_segments and i+1 not in empty_segments:
-            splice_graph.add_edge(i, i+1)
+            splice_graph.add_edge(i, i+1, type='adjacent', bin=None)
     
     jn_edges = []
     for (start, stop) in jns:
@@ -828,9 +847,26 @@ def build_and_quantify_nonoverlapping_transcript_elements_in_gene(
         assert segment_bnds[start_i+1] == start
         stop_i = segment_bnds.searchsorted(stop+1)-1+1
         assert segment_bnds[stop_i] == stop+1
-        jn_edges.append((start_i, stop_i))
-        splice_graph.add_edge(start_i, stop_i)
-        
+
+        bin = SegmentBin( start, stop,
+                          'D_JN' if gene.strand == '+' else 'R_JN',
+                          'R_JN' if gene.strand == '-' else 'D_JN',
+                          type='INTRON' )
+        splice_graph.add_edge(start_i, stop_i, type='splice', bin=bin)
+
+    # pre-calculate the expected and observed counts
+    binned_reads = f_matrix.bin_rnaseq_reads( 
+        rnaseq_reads, gene.chrm, gene.strand, segment_bnds, 
+        include_read_type=False)
+
+    return splice_graph, binned_reads
+
+def quantify_segment_expression(splice_graph, binned_reads):
+    segment_bnds = set()
+    for segment_i, data in splice_graph.nodes(data=True):
+        segment_i, data['bin']
+    assert False
+    
     # find all possible transcripts, and their association with each element
     exon_lens = segment_bnds[1:] - segment_bnds[:-1]
     max_fl = max(fl_dist.fl_max for (fl_dist, prb) in fl_dists.values())
@@ -862,11 +898,6 @@ def build_and_quantify_nonoverlapping_transcript_elements_in_gene(
             t for t in segment_transcripts_map[(splice[0],)] 
             if bin_contains_element(t, splice)]
     
-    # pre-calculate the expected and observed counts
-    binned_reads = f_matrix.bin_rnaseq_reads( 
-        rnaseq_reads, gene.chrm, gene.strand, segment_bnds, 
-        include_read_type=False)
-
     weighted_expected_cnts = defaultdict(lambda: defaultdict(float))
     for (rg, (r1_len,r2_len)), (fl_dist, marginal_frac) in fl_dists.iteritems():
         for tr, bin_cnts in f_matrix.calc_expected_cnts( 
@@ -879,7 +910,8 @@ def build_and_quantify_nonoverlapping_transcript_elements_in_gene(
             segment_transcripts_map.iteritems()):
         if config.VERBOSE:
             config.log_statement( 
-                "Estimating element expression for segment %i/%i in Chrm %s Strand %s Pos %i-%i" %
+                "Estimating element expression for segment "
+                + "%i/%i in Chrm %s Strand %s Pos %i-%i" %
                 (j, len(segment_transcripts_map), 
                  gene.chrm, gene.strand, gene.start, gene.stop) )
 
@@ -908,7 +940,8 @@ def build_and_quantify_nonoverlapping_transcript_elements_in_gene(
         print element
         all_bins = sorted(set(chain(*transcripts)))
         print [(x, exon_lens[x]) for x in all_bins ]
-        print [(x, segment_bnd_labels[segment_bnds[x]], segment_bnd_labels[segment_bnds[x+1]])
+        print [(x, segment_bnd_labels[segment_bnds[x]], 
+                   segment_bnd_labels[segment_bnds[x+1]])
                for x in all_bins]
         for t, e_len in zip(transcripts, effective_t_lens):
             print t, e_len
@@ -1032,6 +1065,14 @@ def find_exons_in_gene( gene, contig_lens, ofp,
 
     config.log_statement( "Finding Exons in Chrm %s Strand %s Pos %i-%i" %
                    (gene.chrm, gene.strand, gene.start, gene.stop) )
+    
+    # build the transcribed segment splice graph, and bin observe rnasseq reads 
+    # based upon this splice graph in this gene.
+    splice_graph, binned_reads = build_splice_graph_and_binned_reads_in_gene(
+        gene, rnaseq_reads, cage_reads, polya_reads, ref_elements )
+    
+    quantify_segment_expression(splice_graph, binned_reads)
+    assert False
     
     # gene_ref_elements['intron']
     ( exon_segments, introns, tss_bins, tes_bins 
