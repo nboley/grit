@@ -686,7 +686,7 @@ def extract_jns_and_paired_reads_in_gene(gene, reads):
         (plus_jns, minus_jns) if gene.strand == '+' else (minus_jns, plus_jns)) 
     return paired_reads, jns, opp_strand_jns
 
-def find_widest_path(splice_graph, binned_reads, segment_bnds, tss_regions, tes_regions):
+def find_widest_path(splice_graph):
     bndry_cross_cnts = defaultdict(float)
     for (rd1, rd2), cnt in binned_reads.iteritems():
         bndry_crosses = set()
@@ -835,7 +835,7 @@ def build_splice_graph_and_binned_reads_in_gene(
         left_labels = segment_bnd_labels[start]
         right_labels = segment_bnd_labels[stop+1]
         bin = SegmentBin( start, stop, left_labels, right_labels, type=None)
-        splice_graph.add_node(element_i, bin=bin)
+        splice_graph.add_node(element_i, type='segment', bin=bin)
     
     for i in xrange(len(segment_bnds)-1-1):
         if i not in empty_segments and i+1 not in empty_segments:
@@ -858,14 +858,22 @@ def build_splice_graph_and_binned_reads_in_gene(
     binned_reads = f_matrix.bin_rnaseq_reads( 
         rnaseq_reads, gene.chrm, gene.strand, segment_bnds, 
         include_read_type=False)
-
     return splice_graph, binned_reads
 
-def quantify_segment_expression(splice_graph, binned_reads):
+def quantify_segment_expression(gene, splice_graph, binned_reads):
+    segment_nodes = {}
     segment_bnds = set()
-    for segment_i, data in splice_graph.nodes(data=True):
-        segment_i, data['bin']
-    assert False
+    segment_bnd_labels = defaultdict(set)
+    for segment_i, data in sorted(splice_graph.nodes(data=True)):
+        if data['type'] != 'segment': continue
+        segment_bin = data['bin']
+        segment_nodes[segment_i] = segment_bin
+        segment_bnds.add(segment_bin.start)
+        segment_bnd_labels[segment_bin.start].update(segment_bin.left_labels)
+        segment_bnds.add(segment_bin.stop+1)
+        segment_bnd_labels[segment_bin.stop+1].update(segment_bin.right_labels)
+    segment_bnds = numpy.array(sorted(segment_bnds))
+    segment_bnd_labels = dict(segment_bnd_labels)
     
     # find all possible transcripts, and their association with each element
     exon_lens = segment_bnds[1:] - segment_bnds[:-1]
@@ -873,7 +881,8 @@ def quantify_segment_expression(splice_graph, binned_reads):
     min_fl = min(fl_dist.fl_min for (fl_dist, prb) in fl_dists.values())
     transcripts = set()
     segment_transcripts_map = {}
-    for segment_index in splice_graph.nodes():
+    for segment_index, data in splice_graph.nodes(data=True):
+        if data['type'] != 'segment': continue        
         segment_transcripts = find_transcribed_fragments_covering_region(
             splice_graph, segment_bnds, segment_bnd_labels, 
             segment_index, max_fl)
@@ -892,11 +901,12 @@ def quantify_segment_expression(splice_graph, binned_reads):
         return False
     
     # add in the splice elements
-    for splice in jn_edges:
+    for start_i, stop_i, data in splice_graph.edges(data=True):
+        if data['type'] != 'splice': continue
         # find transcripts that contain this splice
-        segment_transcripts_map[splice] = [
-            t for t in segment_transcripts_map[(splice[0],)] 
-            if bin_contains_element(t, splice)]
+        segment_transcripts_map[(start_i, stop_i)] = [
+            t for t in segment_transcripts_map[(start_i,)]
+            if bin_contains_element(t, (start_i, stop_i))]
     
     weighted_expected_cnts = defaultdict(lambda: defaultdict(float))
     for (rg, (r1_len,r2_len)), (fl_dist, marginal_frac) in fl_dists.iteritems():
@@ -976,6 +986,8 @@ def quantify_segment_expression(splice_graph, binned_reads):
             n_reads_in_segment+1e-6, 
             read_counts.RNASeq-n_reads_in_segment+1e-6)
         if len(element) == 1:
+            segment_nodes[element[0]].set_expression(*fpkms)
+            """
             start, stop = segment_bnds[element[0]], segment_bnds[element[0]+1]-1
             left_labels = segment_bnd_labels[start]
             right_labels = segment_bnd_labels[stop+1]
@@ -983,7 +995,10 @@ def quantify_segment_expression(splice_graph, binned_reads):
                               type=None,
                               fpkm_lb=fpkms[0], fpkm=fpkms[1], fpkm_ub=fpkms[2])
             segment_bins.append(bin)
+            """
         else:
+            splice_graph[element[0]][element[1]]['bin'].set_expression(*fpkms)
+            """
             start, stop = segment_bnds[element[0]+1], segment_bnds[element[1]]-1
             bin = SegmentBin( start, stop,
                               'D_JN' if gene.strand == '+' else 'R_JN',
@@ -991,9 +1006,9 @@ def quantify_segment_expression(splice_graph, binned_reads):
                               type='INTRON',
                               fpkm_lb=fpkms[0], fpkm=fpkms[1], fpkm_ub=fpkms[2])
             jn_bins.append(bin)
-        
-    segment_bins.sort(key=lambda x:x.start)
-    return segment_bins, jn_bins, tss_regions, tes_regions
+            """
+    
+    return splice_graph
 
 def determine_exon_type(left_label, right_label):
     if left_label == 'TSS':
@@ -1071,20 +1086,10 @@ def find_exons_in_gene( gene, contig_lens, ofp,
     splice_graph, binned_reads = build_splice_graph_and_binned_reads_in_gene(
         gene, rnaseq_reads, cage_reads, polya_reads, ref_elements )
     
-    quantify_segment_expression(splice_graph, binned_reads)
-    assert False
-    
-    # gene_ref_elements['intron']
-    ( exon_segments, introns, tss_bins, tes_bins 
-      ) = build_and_quantify_nonoverlapping_transcript_elements_in_gene(
-        gene, rnaseq_reads, cage_reads, polya_reads, ref_elements )
-    gene.element_segments.extend(
-        chain(introns, exon_segments, tss_bins, tes_bins))
+    splice_graph = quantify_segment_expression(gene, splice_graph, binned_reads)
     
     # build exons, and add them to the gene
-    min_max_exon_expression = max(
-        config.MIN_EXON_FPKM, 
-        max(x.fpkm_lb for x in chain(exon_segments, introns))/config.MAX_EXPRESISON_RATIO)
+    min_max_exon_expression = find_widest_path(splice_graph)
     gene.elements.extend(build_exons_from_exon_segments(
             gene, exon_segments, min_max_exon_expression))
     
