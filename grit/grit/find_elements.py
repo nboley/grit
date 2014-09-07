@@ -429,7 +429,7 @@ class GeneElements(object):
     def stop(self):
         return max( x.stop for x in self.regions )
 
-    def write_elements_bed( self, ofp ):
+    def write_elements_bed( self, ofp, max_min_fpkm=1e-6 ):
         feature_mapping = { 
             'GENE': 'gene',
             'CAGE_PEAK': 'promoter',
@@ -471,8 +471,7 @@ class GeneElements(object):
                                     use_thick_lines=True,
                                     blocks=[(x.start, x.stop) for x in self.regions])
         ofp.write( bed_line + "\n"  )
-
-        max_min_fpkm = max( x.fpkm_lb for x in self.element_segments )
+        
         for element in self.elements:
             region = ( chrm, self.strand, element.start, element.stop)
 
@@ -680,6 +679,7 @@ def find_transcribed_fragments_covering_region(
     for bp in complete_before_paths:
         for ap in complete_after_paths:
             segments = bp + [segment_id,] + ap
+            assert segments == sorted(segments)
             if use_genome_coords:
                 before_trim_len = max(
                     0, sum(genes_graph.node[i]['node'].length() 
@@ -719,30 +719,31 @@ def extract_jns_and_paired_reads_in_gene(gene, reads):
     return paired_reads, jns, opp_strand_jns
 
 def find_widest_path(splice_graph):
-    start_nodes = [ node for node in splice_graph ]
-    print start_nodes
-    assert False
-    bndry_cross_cnts = defaultdict(float)
-    for (rd1, rd2), cnt in binned_reads.iteritems():
-        bndry_crosses = set()
-        for rd in (rd1, rd2):
-            for bndry in izip(rd[:-1], rd[1:]):
-                bndry_crosses.add(bndry)
-        for bndry in bndry_crosses:
-            bndry_cross_cnts[bndry] += cnt
-
-    flow_graph = nx.DiGraph()
-    flow_graph.add_nodes_from(splice_graph.nodes())
-    for (start, stop), cnt in bndry_cross_cnts.iteritems():
-        flow_graph.add_edge(start, stop, capacity=cnt)
-    segment_bnds_list= segment_bnds.tolist()
-    tss_indices = sorted(segment_bnds_list.index(tss.start) for tss in tss_regions)
-    tes_indices = sorted(segment_bnds_list.index(tes.stop+1) for tes in tes_regions)
-    for tss_i in tss_indices:
-        for tes_i in tes_indices:
-            if tss_i >= tes_i: continue
-            print tss_i, tes_i
-    assert False
+    curr_paths = [ [[node,], data['bin'].fpkm_lb] 
+                  for node, data in splice_graph.nodes(data=True)
+                  if data['type'] == 'TSS']
+    max_path = None
+    max_min_fpkm = 0
+    while len(curr_paths) > 0:
+        # find a path to check
+        curr_path, curr_fpkm = curr_paths.pop()
+        # if the paths fpkm is less than the maximum,
+        # then there is no need to consider anything else
+        if curr_fpkm < max_min_fpkm: continue
+        # otherwise, build new paths and update the fpkms
+        for successor in splice_graph.successors(curr_path[-1]):
+            bin = splice_graph.node[successor]['bin']
+            new_path = curr_path + [successor,]
+            new_fpkm = min(bin.fpkm_lb, curr_fpkm)
+            if new_fpkm < max_min_fpkm: continue
+            if bin.type == 'POLYA': 
+                max_path = new_path
+                max_min_fpkm = new_fpkm
+            else:
+                curr_paths.append((new_path, new_fpkm))
+        curr_paths.sort(key=lambda x:x[1], reverse=True)
+    
+    return max_path, max_min_fpkm
 
 def build_splice_graph_and_binned_reads_in_gene( 
         gene, 
@@ -873,7 +874,10 @@ def build_splice_graph_and_binned_reads_in_gene(
     
     for i in xrange(len(segment_bnds)-1-1):
         if i not in empty_segments and i+1 not in empty_segments:
-            splice_graph.add_edge(i, i+1, type='adjacent', bin=None)
+            if gene.strand == '+':
+                splice_graph.add_edge(i, i+1, type='adjacent', bin=None)
+            else:
+                splice_graph.add_edge(i+1, i, type='adjacent', bin=None)
     
     jn_edges = []
     for (start, stop) in jns:
@@ -882,12 +886,13 @@ def build_splice_graph_and_binned_reads_in_gene(
         stop_i = segment_bnds.searchsorted(stop+1)-1+1
         assert segment_bnds[stop_i] == stop+1
 
-        bin = SegmentBin( start, stop,
-                          'D_JN' if gene.strand == '+' else 'R_JN',
-                          'R_JN' if gene.strand == '-' else 'D_JN',
-                          type='INTRON' )
-        splice_graph.add_edge(start_i, stop_i, type='splice', bin=bin)
-
+        if gene.strand == '+':
+            bin = SegmentBin( start, stop, 'D_JN', 'R_JN', type='INTRON')
+            splice_graph.add_edge(start_i, stop_i, type='splice', bin=bin)
+        else:
+            bin = SegmentBin( start, stop, 'R_JN', 'D_JN', type='INTRON')
+            splice_graph.add_edge(stop_i, start_i, type='splice', bin=bin)
+    
     for i, (tss_bin, tss_segments) in enumerate(tss_segment_map.iteritems()):
         node_id = "TSS_%i" % i
         splice_graph.add_node( node_id, type='TSS', bin=tss_bin)
@@ -1079,12 +1084,13 @@ def determine_exon_type(left_label, right_label):
     assert left_label == 'R_JN' and right_label == 'D_JN'
     return 'EXON'
 
-def build_exons_from_exon_segments(gene, exon_segments, max_min_expression):
+def build_exons_from_exon_segments(gene, splice_graph, max_min_expression):
+    exon_segments = [ data['bin']
+                      for node_id, data in splice_graph.nodes(data=True)
+                      if data['type'] == 'segment' ]
     if gene.strand == '-':
-        exon_segments = reverse_strand(
-            sorted(exon_segments, key=lambda x:x.start), gene.stop)
-    else:
-        exon_segments = sorted(exon_segments, key=lambda x:x.start)
+        exon_segments = reverse_strand(exon_segments, gene.stop)
+    exon_segments = sorted(exon_segments, key=lambda x:x.start)
     
     EXON_START_LABELS = ('TSS', 'R_JN')
     EXON_STOP_LABELS = ('TES', 'D_JN')
@@ -1141,14 +1147,22 @@ def find_exons_in_gene( gene, contig_lens, ofp,
     splice_graph = quantify_segment_expression(gene, splice_graph, binned_reads)
     
     # build exons, and add them to the gene
-    min_max_exon_expression = find_widest_path(splice_graph)
-    gene.elements.extend(build_exons_from_exon_segments(
-            gene, exon_segments, min_max_exon_expression))
+    min_max_exp_t, min_max_exp = find_widest_path(splice_graph)
+
+    exons = build_exons_from_exon_segments(gene, splice_graph, min_max_exp)
+    gene.elements.extend(exons)
     
     # introns are both elements and element segments
     gene.elements.extend(
-        intron for intron in introns 
-        if intron.fpkm_ub > min_max_exon_expression)
+        data['bin'] for n1, n2, data in splice_graph.edges(data=True)
+        if data['type'] == 'splice'
+        and data['bin'].fpkm_ub > min_max_exp)
+
+    # add T*S's
+    gene.elements.extend(
+        data['bin'] for node_id, data in splice_graph.nodes(data=True)
+        if data['type'] in ('TSS', 'TES')
+        and data['bin'].fpkm_ub > min_max_exp)
 
     # merge in the reference exons
     for tss_exon in gene_ref_elements['tss_exon']:
@@ -1161,7 +1175,7 @@ def find_exons_in_gene( gene, contig_lens, ofp,
                                   "TES_EXON") )
     
     # add the gene bin
-    gene.write_elements_bed(ofp)
+    gene.write_elements_bed(ofp, min_max_exp)
     
     config.log_statement( "FINISHED Finding Exons in Chrm %s Strand %s Pos %i-%i" %
                    (gene.chrm, gene.strand, gene.start, gene.stop) )
