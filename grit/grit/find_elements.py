@@ -218,7 +218,10 @@ class Bin(object):
             (kwargs['left_labels'], kwargs['right_labels'] 
              ) = (kwargs['right_labels'], kwargs['left_labels'])
         return type(self)(**kwargs)
-
+    
+    def length(self):
+        return self.stop - self.start + 1
+    
     def mean_cov( self, cov_array ):
         return numpy.median(cov_array[self.start:self.stop+1])
         return cov_array[self.start:self.stop].mean()
@@ -334,6 +337,27 @@ class SegmentBin(Bin):
         if self.fpkm != None:
             rv += ":%.2f-%.2f TPM" % (self.fpkm_lb, self.fpkm_ub)
         return rv
+
+class TranscriptBoundaryBin(SegmentBin):
+    def __init__(self, start, stop, left_labels, right_labels,
+                 type, cnts):
+        assert type in ('CAGE_PEAK', 'POLYA')
+        SegmentBin.__init__(
+            self, start=start, stop=stop, 
+            left_labels=left_labels, right_labels=right_labels,
+            type=type)
+        self.cnts = cnts
+    
+    def set_tpm(self):
+        total_cnt = ( read_counts.Promoters 
+                      if self.type == 'CAGE_PEAK' 
+                      else read_counts.Polya )
+        SegmentBin.set_expression(
+            self, 
+            1e6*beta.ppf(0.01, self.cnts.sum()+1e-6, total_cnt+1e-6),
+            1e6*beta.ppf(0.50, self.cnts.sum()+1e-6, total_cnt+1e-6),
+            1e6*beta.ppf(0.99, self.cnts.sum()+1e-6, total_cnt+1e-6))
+        return self
 
 class  TranscriptElement( Bin ):
     def __init__( self, start, stop, type, fpkm):
@@ -599,41 +623,44 @@ def merge_tes_exons(tes_exons):
 
 
 def find_transcribed_fragments_covering_region(
-        segment_graph, segment_bnds, segment_bnd_labels, 
-        segment_index, max_frag_len, use_genome_coords=False):
-    # first find transcripts before this segment
-    def seg_len(i): 
-        return segment_bnds[i+1]-segment_bnds[i]
+        segment_graph, segment_id,
+        max_frag_len, use_genome_coords=False):
+    if use_genome_coords:
+        raise NotImplemented, "This code path probably doesn't work anymore, it hasn't been updated since this method was changed to use the splice graph directly"
     
     def build_neighbor_paths(side):
         assert side in ('BEFORE', 'AFTER')
         complete_paths = []
-        partial_paths = [([segment_index,], 0),]
+        partial_paths = [([segment_id,], 0),]
         while len(partial_paths) > 0:
             curr_path, curr_path_len = partial_paths.pop()
             if side == 'BEFORE':
-                neighbors = list(segment_graph.predecessors(curr_path[0]))
+                neighbors = list(
+                    segment_graph.predecessors(curr_path[0]))
             else:
-                neighbors = list(segment_graph.successors(curr_path[-1]))
-            
+                neighbors = list(
+                    segment_graph.successors(curr_path[-1]))
             if len(neighbors) == 0: 
                 complete_paths.append((curr_path, curr_path_len))
             else:
-                for child in neighbors:                    
+                for child in neighbors:
+                    if segment_graph.node[child]['type'] in ('TSS', 'TES'):
+                        complete_paths.append((curr_path, curr_path_len))
+                        continue
+                    assert segment_graph.node[child]['type'] == 'segment'
+                    
                     if side == 'BEFORE':
                         new_path = [child,] + curr_path
                     else:
                         new_path = curr_path + [child,]
-
-                    # if we have hit a tss then add this complete path
-                    if segment_bnd_labels[segment_bnds[child]] in ('TSS','TES'):
-                        complete_paths.append(new_path)
                     
-                    new_path_len = seg_len(child) + curr_path_len
+                    new_path_len = ( 
+                        segment_graph.node[child]['bin'].length()+curr_path_len)
                     if new_path_len >= max_frag_len:
                         complete_paths.append((new_path, new_path_len))
                     else:
                         partial_paths.append((new_path, new_path_len))
+        
         if side == 'BEFORE': return [x[:-1] for x, x_len in complete_paths]
         else: return [x[1:] for x, x_len in complete_paths]
     
@@ -643,7 +670,8 @@ def find_transcribed_fragments_covering_region(
             max_merge_distance=0)
         coords = []
         for start, stop in merged_intervals:
-            coords.append([segment_bnds[start], segment_bnds[stop+1]-1])
+            coords.append([genes_graph.node[start]['bin'].start,
+                           genes_graph.node[stop+1]['bin'].stop,])
         return coords
         
     complete_before_paths = build_neighbor_paths('BEFORE')
@@ -651,10 +679,14 @@ def find_transcribed_fragments_covering_region(
     transcripts = []
     for bp in complete_before_paths:
         for ap in complete_after_paths:
-            segments = bp + [segment_index,] + ap
+            segments = bp + [segment_id,] + ap
             if use_genome_coords:
-                before_trim_len = max(0, sum(seg_len(i) for i in bp) - max_frag_len)
-                after_trim_len = max(0, sum(seg_len(i) for i in ap) - max_frag_len)
+                before_trim_len = max(
+                    0, sum(genes_graph.node[i]['node'].length() 
+                           for i in bp) - max_frag_len)
+                after_trim_len = max(
+                    0, sum(genes_graph.node[i]['node'].length() 
+                           for i in ap) - max_frag_len)
                 segments = build_genome_segments_from_path(segments)
                 segments[0][0] = segments[0][0] + before_trim_len
                 segments[-1][1] = segments[-1][1] - after_trim_len
@@ -687,6 +719,9 @@ def extract_jns_and_paired_reads_in_gene(gene, reads):
     return paired_reads, jns, opp_strand_jns
 
 def find_widest_path(splice_graph):
+    start_nodes = [ node for node in splice_graph ]
+    print start_nodes
+    assert False
     bndry_cross_cnts = defaultdict(float)
     for (rd1, rd2), cnt in binned_reads.iteritems():
         bndry_crosses = set()
@@ -773,44 +808,43 @@ def build_splice_graph_and_binned_reads_in_gene(
             gene, paired_rnaseq_reads, sorted(segment_bnds), 
             '5p' if gene.strand == '+' else '3p')
         signal_cov = find_coverage_in_gene( gene, tss_reads )
-        for pk_start, pk_stop, cnt in call_peaks( 
+        for pk_start, pk_stop, peak_cov in call_peaks( 
                 signal_cov, control_cov,
                 '5p' if gene.strand == '+' else '3p'):
-            tss_regions.append(SegmentBin(
+            tss_regions.append(TranscriptBoundaryBin(
                 gene.start+pk_start, gene.start+pk_stop-1, 
                 "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK",
-                1e6*beta.ppf(0.01, cnt+1e-6, read_counts.Promoters+1e-6),
-                1e6*beta.ppf(0.50, cnt+1e-6, read_counts.Promoters+1e-6),
-                1e6*beta.ppf(0.99, cnt+1e-6, read_counts.Promoters+1e-6) ))
+                peak_cov
+                ).set_tpm())
     
     if tes_reads != None:
         control_cov = build_control_in_gene(
             gene, paired_rnaseq_reads, sorted(segment_bnds), 
             '3p' if gene.strand == '+' else '5p')
         signal_cov = find_coverage_in_gene( gene, tes_reads )
-        for pk_start, pk_stop, cnt in call_peaks( signal_cov, control_cov,
-                                                  '3p' if gene.strand == '+' else '5p'):
-            tes_regions.append(SegmentBin(
+        for pk_start, pk_stop, peak_cov in call_peaks( 
+                signal_cov, control_cov,
+                '3p' if gene.strand == '+' else '5p'):
+            tes_regions.append(TranscriptBoundaryBin(
                 gene.start+pk_start, gene.start+pk_stop-1, 
                 "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA",
-                1e6*beta.ppf(0.01, cnt+1e-6, read_counts.Polya+1e-6),
-                1e6*beta.ppf(0.50, cnt+1e-6, read_counts.Polya+1e-6),
-                1e6*beta.ppf(0.99, cnt+1e-6, read_counts.Polya+1e-6) ))
+                peak_cov,
+                ).set_tpm())
     
-
     splice_graph = SpliceGraph()
-    
+    tss_segment_map = {}
     for tss_bin in tss_regions:
         tss_start = tss_bin.start if gene.strand == '+' else tss_bin.stop + 1
         segment_bnds.add(tss_start)
         segment_bnd_labels[tss_start].add('TSS')
-        splice_graph.add_node(tss_bin, type='TSS', bin=tss_bin)
-    
+        tss_segment_map[tss_bin] = [tss_start,]
+
+    tes_segment_map = defaultdict(list)    
     for tes_bin in tes_regions:
         tes_start = tes_bin.stop+1 if gene.strand == '+' else tes_bin.start
         segment_bnds.add(tes_start)
         segment_bnd_labels[tes_start].add('TES')
-        splice_graph.add_node(tes_bin, type='TES', bin=tes_bin)
+        tes_segment_map[tes_bin] = [tes_start,]
     
     # remove boundaries that fall inside of empty regions
     empty_segments = set()
@@ -854,40 +888,40 @@ def build_splice_graph_and_binned_reads_in_gene(
                           type='INTRON' )
         splice_graph.add_edge(start_i, stop_i, type='splice', bin=bin)
 
+    for i, (tss_bin, tss_segments) in enumerate(tss_segment_map.iteritems()):
+        node_id = "TSS_%i" % i
+        splice_graph.add_node( node_id, type='TSS', bin=tss_bin)
+        for tss_start in tss_segments:
+            bin_i = segment_bnds.searchsorted(tss_start)
+            assert segment_bnds[bin_i] == tss_start
+            splice_graph.add_edge(node_id, bin_i, type='tss', bin=None)
+    
+    for i, (tes_bin, tes_segments) in enumerate(tes_segment_map.iteritems()):
+        node_id = "TES_%i"% i
+        splice_graph.add_node( node_id, type='TES', bin=tes_bin)
+        for tes_start in tes_segments:
+            bin_i = segment_bnds.searchsorted(tes_start)
+            assert segment_bnds[bin_i] == tes_start
+            splice_graph.add_edge(bin_i, node_id, type='tes', bin=None)
+    
     # pre-calculate the expected and observed counts
     binned_reads = f_matrix.bin_rnaseq_reads( 
         rnaseq_reads, gene.chrm, gene.strand, segment_bnds, 
         include_read_type=False)
     return splice_graph, binned_reads
 
-def quantify_segment_expression(gene, splice_graph, binned_reads):
-    segment_nodes = {}
-    segment_bnds = set()
-    segment_bnd_labels = defaultdict(set)
-    for segment_i, data in sorted(splice_graph.nodes(data=True)):
-        if data['type'] != 'segment': continue
-        segment_bin = data['bin']
-        segment_nodes[segment_i] = segment_bin
-        segment_bnds.add(segment_bin.start)
-        segment_bnd_labels[segment_bin.start].update(segment_bin.left_labels)
-        segment_bnds.add(segment_bin.stop+1)
-        segment_bnd_labels[segment_bin.stop+1].update(segment_bin.right_labels)
-    segment_bnds = numpy.array(sorted(segment_bnds))
-    segment_bnd_labels = dict(segment_bnd_labels)
-    
+def quantify_segment_expression(gene, splice_graph, binned_reads):    
     # find all possible transcripts, and their association with each element
-    exon_lens = segment_bnds[1:] - segment_bnds[:-1]
     max_fl = max(fl_dist.fl_max for (fl_dist, prb) in fl_dists.values())
     min_fl = min(fl_dist.fl_min for (fl_dist, prb) in fl_dists.values())
     transcripts = set()
     segment_transcripts_map = {}
-    for segment_index, data in splice_graph.nodes(data=True):
+    for segment_id, data in splice_graph.nodes(data=True):
         if data['type'] != 'segment': continue        
         segment_transcripts = find_transcribed_fragments_covering_region(
-            splice_graph, segment_bnds, segment_bnd_labels, 
-            segment_index, max_fl)
+            splice_graph, segment_id, max_fl)
         segment_transcripts = [tuple(t) for t in segment_transcripts]
-        segment_transcripts_map[(segment_index,)] = segment_transcripts
+        segment_transcripts_map[(segment_id,)] = segment_transcripts
         transcripts.update(segment_transcripts)
     all_transcripts = sorted(transcripts)
     
@@ -907,6 +941,24 @@ def quantify_segment_expression(gene, splice_graph, binned_reads):
         segment_transcripts_map[(start_i, stop_i)] = [
             t for t in segment_transcripts_map[(start_i,)]
             if bin_contains_element(t, (start_i, stop_i))]
+    
+    # build the old segment bnd, label style list. We need this for read binning
+    # and expected fragment count calculations - this should probably be done
+    # in the splice graph class, TODO
+    segment_nodes = {}
+    segment_bnds = set()
+    segment_bnd_labels = defaultdict(set)
+    for segment_i, data in sorted(splice_graph.nodes(data=True)):
+        if data['type'] != 'segment': continue
+        segment_bin = data['bin']
+        segment_nodes[segment_i] = segment_bin
+        segment_bnds.add(segment_bin.start)
+        segment_bnd_labels[segment_bin.start].update(segment_bin.left_labels)
+        segment_bnds.add(segment_bin.stop+1)
+        segment_bnd_labels[segment_bin.stop+1].update(segment_bin.right_labels)
+    segment_bnds = numpy.array(sorted(segment_bnds))
+    segment_bnd_labels = dict(segment_bnd_labels)
+    exon_lens = segment_bnds[1:] - segment_bnds[:-1]
     
     weighted_expected_cnts = defaultdict(lambda: defaultdict(float))
     for (rg, (r1_len,r2_len)), (fl_dist, marginal_frac) in fl_dists.iteritems():
