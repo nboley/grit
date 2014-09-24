@@ -40,7 +40,7 @@ def populate_cvg_array_for_contig(
             write_array_to_opstream( 
                 ofp, buffer_array, block_index*BUFFER_SIZE, 
                 chrm, chrm_length, strand)
-        
+
         ofp.seek(0)
         merged_ofp.write( ofp.read() )
     
@@ -251,8 +251,9 @@ def main():
     # write the bedgraph header information
     if not build_bigwig:
         for key, fp in ofps.iteritems():
-            strand_str = "" if key == None else {'+': '.plus', '-': '.minus'}[key]
-            fp.write( "track name=%s.%s type=bedGraph\n" \
+            strand_str = "" if key == None else {
+                '+': '.plus', '-': '.minus'}[key]
+            fp.write( "track name=%s%s type=bedGraph\n" \
                           % ( os.path.basename(op_prefix), strand_str ) )
     
     
