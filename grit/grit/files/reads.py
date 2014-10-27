@@ -499,7 +499,7 @@ class Reads( pysam.Samfile ):
 
     def iter_reads( self, chrm, strand, start=None, stop=None ):
         for read, rd_strand in self.iter_reads_and_strand( chrm, start, stop  ):
-            if rd_strand == strand:
+            if strand == None or rd_strand == strand:
                 yield read        
         return
 

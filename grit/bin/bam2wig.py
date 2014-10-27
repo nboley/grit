@@ -40,7 +40,7 @@ def populate_cvg_array_for_contig(
             write_array_to_opstream( 
                 ofp, buffer_array, block_index*BUFFER_SIZE, 
                 chrm, chrm_length, strand)
-        
+
         ofp.seek(0)
         merged_ofp.write( ofp.read() )
     
@@ -101,7 +101,9 @@ def generate_wiggle(reads, ofps, num_threads=1, contig=None ):
             continue
         for strand in strands:
             ofp = ofps[strand]
+            assert (ofp, reads, chrm, chrm_length, strand ) not in all_args
             all_args.append((ofp, reads, chrm, chrm_length, strand ))
+    
     if num_threads == 1:
         for args in reversed(all_args):
             populate_cvg_array_for_contig( *args )
@@ -138,6 +140,7 @@ def parse_arguments():
                          choices=allowed_assays, help='The assay type')
     parser.add_argument( '--bigwig', '-b', default=False, action='store_true', 
                          help='Build a bigwig instead of bedgraph.')
+
     parser.add_argument( '--ucsc', default=False, action='store_true', 
                          help='Format the contig names to work with the UCSC genome browser.')
     
@@ -149,7 +152,9 @@ def parse_arguments():
     parser.add_argument( '--region', 
         help='Only use the specified region ( currently only accepts a contig name ).')
     parser.add_argument( '--reverse-read-strand', '-r', default=False, action='store_true',
-        help='Whether or not to reverse the strand of the read ( only sensible for RNAseq reads ). default: False')
+        help='Whether or not to reverse the strand of the read. default: False')
+    parser.add_argument( '--unstranded', default=False, action='store_true', 
+                         help='Merge both data strands. (only sensible for RNAseq reads)')
     parser.add_argument( '--read-filter', default=None, choices=['1','2'],
         help='Filter paired end reads to only accept this read pair (ie uses the is_read1 pysam attribute)')
 
@@ -180,7 +185,7 @@ def parse_arguments():
             del fname_data[-1]
         args.out_fname_prefix = ".".join(fname_data)
     
-    return ( args.assay, args.mapped_reads_fname, args.out_fname_prefix, 
+    return ( args.assay, not args.unstranded, args.mapped_reads_fname, args.out_fname_prefix, 
              args.bigwig, args.reverse_read_strand, read_filter, 
              args.region, args.threads )
         
@@ -201,7 +206,7 @@ def build_bigwig_from_bedgraph(bedgraph_fp, chrm_sizes_file, op_fname):
     return
 
 def main():
-    ( assay, reads_fname, op_prefix, build_bigwig, 
+    ( assay, stranded, reads_fname, op_prefix, build_bigwig, 
       reverse_read_strand, read_filter, region, num_threads) = parse_arguments()
     
     # initialize the assay specific options
@@ -222,7 +227,6 @@ def main():
         reads = RNAseqReads( reads_fname, "rb" )
         # the read strand reversal is done later, so set this to False
         reads.init(reverse_read_strand=reverse_read_strand)
-        stranded = reads.reads_are_stranded
     else:
         raise ValueError, "Unrecognized assay: '%s'" % assay
     
@@ -247,8 +251,9 @@ def main():
     # write the bedgraph header information
     if not build_bigwig:
         for key, fp in ofps.iteritems():
-            strand_str = "" if key == None else {'+': '.plus', '-': '.minus'}[key]
-            fp.write( "track name=%s.%s type=bedGraph\n" \
+            strand_str = "" if key == None else {
+                '+': '.plus', '-': '.minus'}[key]
+            fp.write( "track name=%s%s type=bedGraph\n" \
                           % ( os.path.basename(op_prefix), strand_str ) )
     
     
