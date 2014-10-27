@@ -161,8 +161,11 @@ def build_control_in_gene(gene, paired_rnaseq_reads, bndries,
     window = numpy.ones(smooth_win_len, dtype=float)/smooth_win_len
     for start, stop in zip(bndries[:-1], bndries[1:]):
         segment_signal = cov[start-gene.start:stop-gene.start+1]
-        if stop - start <= smooth_win_len:
-            cov[start-gene.start:stop-gene.start+1] = segment_signal.mean()
+        region_len = stop - start + 1
+        region_cnt = segment_signal.sum()
+        if ( region_cnt/region_len < 1./smooth_win_len 
+             or region_len <= smooth_win_len ):
+            cov[start-gene.start:stop-gene.start+1] = region_cnt/region_len
         else:    
             cov[start-gene.start:stop-gene.start+1] = numpy.convolve(
                 window,segment_signal,mode='same')
