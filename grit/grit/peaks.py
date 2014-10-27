@@ -418,11 +418,13 @@ def estimate_read_cov_and_call_peaks(
         config.log_statement("Finished building signal coverage array")
     #signal_cov = build_false_signal(rnaseq_reads, '5p')
     
-    original_control_cov = build_control(
+    control_cov = build_control(
         rnaseq_reads, region, reads_type, SMOOTH_WIN_LEN)
     
     if DEBUG_VERBOSE:
         config.log_statement("Finished building control coverage array")
+
+    return call_peaks(signal_cov, control_cov, reads_type, alpha)
 
 def call_peaks( signal_cov, original_control_cov,
                 reads_type, alpha=0.01):
