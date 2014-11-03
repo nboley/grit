@@ -1455,9 +1455,10 @@ def find_segments_and_jns_worker(
     return
 
 def load_gene_bndry_bins( genes, contig, strand, contig_len ):  
-    config.log_statement( 
-        "Loading gene boundaries from annotated genes in %s:%s" % (  
-            contig, strand) )  
+    if config.VERBOSE:
+        config.log_statement( 
+            "Loading gene boundaries from annotated genes in %s:%s" % (  
+                contig, strand) )  
   
     ## find the gene regions in this contig. Note that these  
     ## may be overlapping  
@@ -1514,8 +1515,9 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
     # build gene objects with the intervals  
     gene_bndry_bins = []  
     for start, stop in merged_gene_intervals:  
-        gene_bin = GeneElements( contig, strand, [  
-                Bin(start, stop, 'GENE', 'GENE', 'GENE'),] )  
+        gene_bin = GeneElements( contig, strand )
+        gene_bin.regions.append(  
+            SegmentBin(start, stop, ["ESTART",], ["ESTOP",], "GENE"))
         gene_bndry_bins.append( gene_bin )  
       
     config.log_statement( "" )  
