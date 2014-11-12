@@ -25,7 +25,9 @@ from scipy.optimize import fmin_l_bfgs_b as minimize
 
 BACKGROUND_FRACTION = 0.01
 MIN_NOISE_FRAC = 0.05
+MIN_RD_CNT = 5
 MIN_PEAK_SIZE = 5
+MAX_PEAK_SIZE = 500
 MIN_EMPTY_REGION_SIZE = 1
 
 MAX_NUM_ITERATIONS = 25
@@ -398,7 +400,8 @@ def merge_adjacent_intervals(
             max_abs_merge_distance, 
             max_merge_fraction*(stop-start),
             max_merge_fraction*(merged_intervals[-1][1]-merged_intervals[-1][0]))
-        if start - max_merge_distance - 1 <= prev_stop:
+        if ( start - max_merge_distance - 1 <= prev_stop
+             and stop - start + 1 < MAX_PEAK_SIZE ):
             merged_intervals[-1][1] = stop
         else:
             merged_intervals.append([start, stop])
@@ -503,6 +506,10 @@ def call_peaks( signal_cov, original_control_cov,
     exp_filtered_peaks = []
     max_peak_cnt = float(max(cnt for start, stop, cnt in new_peaks))
     for start, stop, cnt in new_peaks:
-        if cnt >= MIN_PEAK_SIZE and cnt/max_peak_cnt > MAX_EXP_FRACTION: 
+        length = stop - start + 1
+        if (cnt >= MIN_RD_CNT
+            and length >= MIN_PEAK_SIZE
+            and length <= MAX_PEAK_SIZE
+            and cnt/max_peak_cnt > MAX_EXP_FRACTION ): 
             exp_filtered_peaks.append((start, stop, cnt))
     return exp_filtered_peaks
