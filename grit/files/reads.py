@@ -89,13 +89,19 @@ def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000,
     
     num_good_reads = 0
     num_observed_reads = 0
-    for read in bam_obj:
+    for read in bam_obj: 
         num_observed_reads += 1
         if num_observed_reads > max_num_reads_to_check:
             break
         
         if read.is_paired and read.mate_is_unmapped:
             continue
+        
+        try: map_prb = read.opt('XP')
+        except KeyError: 
+            try: map_prb = 1./read.opt('NH')
+            except KeyError: map_prb = 1.
+        if map_prb < 0.99: continue
         
         if not read.is_paired:
             paired_cnts['no_mate'] += 1        
