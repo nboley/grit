@@ -67,7 +67,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description='Call peaks from a RAMPAGE/CAGE experiment and matching RNASeq.')
 
-    parser.add_argument( '--reference', type=file, required=True,
+    parser.add_argument( '--reference', type=file, 
         help='GTF file containing genes to extract gene boundaries from.')
     
     parser.add_argument( '--rnaseq-reads', type=argparse.FileType('rb'), 
@@ -115,22 +115,33 @@ def parse_arguments():
 
         
     args = parser.parse_args()
-    config.VERBOSE = args.verbose
-    config.FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
+
     config.NTHREADS = args.threads
+
+    config.VERBOSE = args.verbose
+    if config.VERBOSE:
+        from grit.lib.logging import Logger
+        log_ofstream = open( "log.txt", "a" )
+        log_statement = Logger(
+            nthreads=config.NTHREADS,
+            use_ncurses=True,
+            log_ofstream=log_ofstream)
+        config.log_statement = log_statement
+
+    config.FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
     
     peaks.MIN_MERGE_SIZE = args.min_merge_distance
     peaks.MIN_REL_MERGE_SIZE = args.min_relative_merge_distance
     
     peaks.TRIM_FRACTION = args.trim_fraction
     peaks.MAX_EXP_FRACTION = args.exp_filter_fraction
-    ref_genes = load_gtf(args.reference)
+    ref_genes = load_gtf(args.reference) if args.reference != None else None
 
     RefElementsToInclude = namedtuple(
         'RefElementsToInclude', 
         ['genes', 'junctions', 'TSS', 'TES', 'promoters', 'polya_sites'])
     ref_elements_to_include = RefElementsToInclude(
-        True, False, False, False, False, False )
+        (ref_genes != None), False, False, False, False, False )
     
     if args.cage_reads != None:
         assert args.rampage_reads == None, "Can not use RAMPAGE and CAGE reads"
@@ -180,8 +191,8 @@ def main():
             contig_lens, 
             rnaseq_reads, promoter_reads, None,
             ref_genes, ref_elements_to_include, 
-            region_to_use=("20", (0, 62000000)) )
-
+            region_to_use=None)
+        
         queue = multiprocessing.Queue()
         for gene in gene_segments:
             queue.put(gene)
@@ -204,4 +215,7 @@ def main():
     return
 
 if __name__ == '__main__':
-    main()
+    try: main()
+    finally: 
+        try:config.log_statement.close()
+        except: pass
