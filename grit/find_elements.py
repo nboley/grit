@@ -1404,7 +1404,10 @@ def split_genome_into_segments(contig_lens, region_to_use,
     segment_length = max(min_segment_length, 
                          int(total_length/float(config.NTHREADS*1000)))
     segments = []
-    for contig, contig_length in contig_lens.iteritems():
+    # sort by shorter contigs, so that the short contigs (e.g. mitochondrial)
+    # whcih usually take longer to finish are started first
+    for contig, contig_length in sorted(
+            contig_lens.iteritems(), key=lambda x:x[1]):
         if region_to_use != None and r_chrm != contig: 
             continue
         for start in xrange(0, contig_length, segment_length):
