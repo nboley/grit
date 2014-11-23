@@ -1,8 +1,13 @@
 import numpy
 import networkx as nx
 
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from itertools import izip, chain
+
+RefElementsToInclude = namedtuple(
+    'RefElementsToInclude', 
+    ['genes', 'junctions', 'TSS', 'TES', 'promoters', 'polya_sites', 'exons'])
+
 
 def convert_elements_to_arrays(all_elements):
     # convert into array

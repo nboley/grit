@@ -23,6 +23,8 @@ import grit.frag_len
 from grit.merge import (
     group_overlapping_genes, reduce_gene_clustered_transcripts )
 
+import grit.elements import RefElementsToInclude
+
 import grit.config as config
 
 ControlFileEntry = namedtuple('ControlFileEntry', [
@@ -360,16 +362,16 @@ def load_ref_elements_to_include(args):
         raise ValueError, "--reference must be set if --use-reference-promoters is set"
     if None == args.reference and args.use_reference_polyas:
         raise ValueError, "--reference must be set if --use-reference-polyas is set"
-    RefElementsToInclude = namedtuple(
-        'RefElementsToInclude', 
-        ['genes', 'junctions', 'TSS', 'TES', 'promoters', 'polya_sites'])
+    if None == args.reference and args.use_reference_exons:
+        raise ValueError, "--reference must be set if --use-reference-exons is set"
     return RefElementsToInclude( args.use_reference_genes, 
                                  ( args.use_reference_junctions 
                                    or args.only_use_reference_junctions),
                                  args.use_reference_tss_exons, 
                                  args.use_reference_tes_exons,
                                  args.use_reference_promoters,
-                                 args.use_reference_polyas )
+                                 args.use_reference_polyas,
+                                 args.use_reference_exons ) 
 
 def parse_arguments():
     import argparse
@@ -429,6 +431,9 @@ def parse_arguments():
     parser.add_argument( '--only-use-reference-junctions', 
                          default=False, action='store_true',
         help='Dont identify novel junctions.')
+    parser.add_argument( '--use-reference-exons', 
+                         default=False, action='store_true',
+        help='Include exons taken from the reference annotation.')
     parser.add_argument( '--use-reference-tss-exons', 
                          default=False, action='store_true',
         help='Use TSS\'s taken from the reference annotation.')

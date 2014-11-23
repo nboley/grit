@@ -488,8 +488,9 @@ class Reads( pysam.Samfile ):
         # return an empty iterator
         except KeyError:
             return ()
-        return pysam.Samfile.fetch( *args, **kwargs )
-
+        return ( rd for rd in pysam.Samfile.fetch( *args, **kwargs )
+                 if not rd.is_duplicate )
+    
     def is_indexed( self ):
         return True
     
@@ -585,6 +586,7 @@ class RNAseqReads(Reads):
         
         if pairs_are_opp_strand == None:
             pairs_are_opp_strand = (not read_pairs_are_on_same_strand( self ))
+        
         if reverse_read_strand == None:
             reverse_read_strand = Reads.determine_reverse_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'internal_exon',
