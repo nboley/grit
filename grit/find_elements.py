@@ -363,6 +363,15 @@ class GeneElements(object):
         self.element_segments = []
         self.elements = []
 
+    def find_coverage(self, reads):
+        cov = numpy.zeros(self.stop-self.start+1, dtype=float)
+        for x in self.regions:
+            seg_cov = reads.build_read_coverage_array( 
+                self.chrm, self.strand, x.start, x.stop )
+            cov[x.start-self.start:x.stop-self.start+1] = seg_cov
+        #if gene.strand == '-': cov = cov[::-1]
+        return cov
+    
     def base_is_in_gene(self, pos):
         return all( r.start <= pos <= r.stop for r in self.regions )
     
@@ -439,7 +448,8 @@ class GeneElements(object):
                                     blocks=[(x.start, x.stop) for x in self.regions])
         ofp.write( bed_line + "\n"  )
 
-        max_min_fpkm = max( x.fpkm_lb for x in self.element_segments )
+        try: max_min_fpkm = max( x.fpkm_lb for x in self.element_segments )
+        except: max_min_fpkm = 1000
         for element in self.elements:
             region = ( chrm, self.strand, element.start, element.stop)
 
@@ -490,9 +500,9 @@ class GeneElements(object):
         return
 
 def find_cage_peak_bins_in_gene( gene, cage_reads, rnaseq_reads ):
-    rnaseq_cov = find_coverage_in_gene( gene, rnaseq_reads )
+    rnaseq_cov = gene.find_coverage( rnaseq_reads )
     print rnaseq_cov
-    cage_cov = find_coverage_in_gene(gene, cage_reads)
+    cage_cov = gene.find_coverage( cage_reads)
     print cage_cov
     assert False
     # threshold the CAGE data. We assume that the CAGE data is a mixture of 
@@ -529,7 +539,7 @@ def find_cage_peak_bins_in_gene( gene, cage_reads, rnaseq_reads ):
     return cage_peak_bins
 
 def find_polya_peak_bins_in_gene( gene, polya_reads, rnaseq_reads ):
-    polya_cov = find_coverage_in_gene(gene, polya_reads)
+    polya_cov = gene.find_coverage(polya_reads)
     
     # threshold the polya data. We assume that the polya data is a mixture of 
     # reads taken from actually capped transcripts, and random transcribed 
@@ -696,15 +706,6 @@ def estimate_peak_expression(peaks, peak_cov, rnaseq_cov, peak_type):
         peak.tpm_lb = 1e6*beta.ppf(0.01, cnt+1, total_read_cnts)/total_read_cnts
     
     return peaks
-
-def find_coverage_in_gene(gene, reads):
-    cov = numpy.zeros(gene.stop-gene.start+1, dtype=float)
-    for x in gene.regions:
-        seg_cov = reads.build_read_coverage_array( 
-            gene.chrm, gene.strand, x.start, x.stop )
-        cov[x.start-gene.start:x.stop-gene.start+1] = seg_cov
-    #if gene.strand == '-': cov = cov[::-1]
-    return cov
 
 def iter_retained_intron_connected_exons(
         left_exons, right_exons, retained_introns,
@@ -934,7 +935,7 @@ def find_exon_segments_and_introns_in_gene(
         control_cov = build_control_in_gene(
             gene, paired_rnaseq_reads, sorted(segment_bnds), 
             '5p' if gene.strand == '+' else '3p')
-        signal_cov = find_coverage_in_gene( gene, tss_reads )
+        signal_cov = gene.find_coverage( tss_reads )
         tss_peaks = call_peaks( signal_cov, control_cov,
                                 '5p' if gene.strand == '+' else '3p')
         print tss_peaks
@@ -1278,6 +1279,8 @@ def extract_reference_elements(genes, ref_elements_to_include):
             add_elements('tss_exon')
         if ref_elements_to_include.TES:
             add_elements('tes_exon')
+        if ref_elements_to_include.TES:
+            add_elements('exon')
     
     for contig_strand, elements in ref_elements.iteritems():
         for element_type, val in elements.iteritems():
@@ -1303,7 +1306,8 @@ def find_transcribed_regions_and_jns_in_segment(
         if reads == None: continue
 
         ( p1_rds, p2_rds, r_plus_jns, r_minus_jns 
-          ) = extract_jns_and_reads_in_region((contig, '.', r_start, r_stop), reads)
+          ) = extract_jns_and_reads_in_region(
+              (contig, '.', r_start, r_stop), reads)
         for jn, cnt in r_plus_jns.iteritems(): 
             jn_reads['+'][jn] += cnt 
         for jn, cnt in r_minus_jns.iteritems(): 
@@ -1321,20 +1325,27 @@ def find_transcribed_regions_and_jns_in_segment(
                     # if start - r_start > reg_len: continue
                     cov[read_data.strand][
                         max(0, start-r_start):max(0, stop-r_start+1)] += 1
-        
         # update the fragment length dist
         if reads == rnaseq_reads:
             for qname, read1_data in p1_rds.iteritems():
-                if len(read1_data) != 1 or len(read1_data[0].cov_regions) > 1: continue
+                if (len(read1_data) != 1 
+                    or len(read1_data[0].cov_regions) > 1
+                    or read1_data[0].map_prb < 0.95): 
+                    continue
                 try: read2_data = p2_rds[qname]
                 except KeyError: continue
-                if len(read2_data) != 1 or len(read2_data[0].cov_regions) > 1: continue
-                frag_len = calc_frag_len_from_read_data(read1_data[0], read2_data[0])
+                if (len(read2_data) != 1 
+                    or len(read2_data[0].cov_regions) > 1
+                    or read2_data[0].map_prb < 0.95): 
+                    continue
+                frag_len = calc_frag_len_from_read_data(
+                    read1_data[0], read2_data[0])
                 fragment_lengths[frag_len] += read1_data[0].map_prb
     
     # add pseudo coverage for annotated jns. This is so that the clustering
     # algorithm knows which gene segments to join if a jn falls outside of 
     # a region with observed transcription
+    # we also add pseudo coverage for other elements to provide connectivity
     if ref_elements != None and len(ref_elements_to_include) > 0:
         ref_jns = []
         for strand in "+-":
@@ -1345,6 +1356,7 @@ def find_transcribed_regions_and_jns_in_segment(
                 if element_type == 'intron':
                     ref_jns.append((strand, start-r_start, stop-r_start))
                     jn_reads[strand][(start,stop)] += 0
+                # add in exons
                 elif element_type in ref_elements_to_include:
                     cov[strand][
                         max(0,start-r_start):max(0, stop-r_start+1)] += 1
@@ -1568,6 +1580,8 @@ def find_all_gene_segments( contig_lens,
         ref_element_types_to_include.add('promoter')
     if ref_elements_to_include.polya_sites: 
         ref_element_types_to_include.add('polya')
+    if ref_elements_to_include.exons: 
+        ref_element_types_to_include.add('exon')
     
     pids = []
     for i in xrange(config.NTHREADS):
@@ -1619,7 +1633,6 @@ def find_all_gene_segments( contig_lens,
         for jn, cnt in jns[(contig, '+')]: plus_jns[jn] += cnt
         minus_jns = defaultdict(int)
         for jn, cnt in jns[(contig, '-')]: minus_jns[jn] += cnt
-            
         filtered_jns[(contig, '+')] = filter_jns(plus_jns, minus_jns)
         filtered_jns[(contig, '-')] = filter_jns(minus_jns, plus_jns)
     
