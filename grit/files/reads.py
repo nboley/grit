@@ -207,11 +207,19 @@ def extract_jns_and_reads_in_region((chrm, strand, r_start, r_stop), reads):
         # -probability that the read originated in this location
         # if we can't find it, assume that it's uniform over alternate
         # mappings. If we can't find that, then assume that it's unique
-        try: map_prb = read.opt('XP')
-        except KeyError: 
+        map_prb = None
+        try: 
+            map_prb = read.opt('XP')
+            if not isinstance(map_prb, float):
+                map_prb = None
+        except KeyError:
+            pass
+        if map_prb == None:
             try: map_prb = 1./read.opt('NH')
-            except KeyError: map_prb = 1.
+            except KeyError: pass
 
+        if map_prb == None: map_prb = 1.0
+        
         # store the read data - we will join them later
         read_data = ReadData(rd_strand, read_len, read_grp, map_prb, cov_regions)
         if read.is_read1: pair1_reads[read.qname].append(read_data)
