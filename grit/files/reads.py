@@ -82,7 +82,7 @@ def get_read_group( r1, r2 ):
         return None
 
 
-def get_rd_posterior_prb(rd):
+def get_rd_posterior_prb(read):
     # try to use the (statmap) posterior probability XP tag
     try: 
         map_prb = float(read.opt('XP'))
