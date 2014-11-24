@@ -23,7 +23,7 @@ import grit.frag_len
 from grit.merge import (
     group_overlapping_genes, reduce_gene_clustered_transcripts )
 
-import grit.elements import RefElementsToInclude
+from grit.elements import RefElementsToInclude
 
 import grit.config as config
 
