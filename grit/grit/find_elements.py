@@ -6,7 +6,7 @@ import traceback
 import shutil
 
 import numpy
-from scipy.stats import beta
+from scipy.stats import beta, binom
 
 from collections import defaultdict, namedtuple
 from itertools import chain, izip
@@ -162,7 +162,45 @@ def find_transcribed_regions( cov, thresh=1e-6 ):
         transcribed_regions.pop()
     else:
         transcribed_regions[-1].append(len(cov)-1)
+
     return transcribed_regions
+    
+    """
+    # code to try and merge low signal segments, but I think that 
+    # this is the wrong appraoch. I should be merging introns that 
+    # could have all come from a uniform distribution
+    if len(transcribed_regions) == 0: return []
+    
+    # n distinct 
+    seg_graph = nx.Graph()  
+    seg_graph.add_nodes_from(xrange(len(transcribed_regions)))  
+    y = cov[1:] - cov[:-1]
+    y[y<0] = 0
+    cnt_data = [ (numpy.count_nonzero(y[start:stop+1]) + 1, 
+                  start, stop)
+                 for start, stop in transcribed_regions]
+    #if cnt_data[0][1] > 0:
+    #    cnt_data.insert(0, (1, 0, cnt_data[0][1]-1))
+    #if cnt_data[-1][-1] < len(cov):
+    #    cnt_data.append((1, cnt_data[-1][-1]+1, len(cov)-1))
+    
+    for i, (nz, start, stop) in enumerate(cnt_data[1:]):
+        prev_nz, p_start, p_stop = cnt_data[i]
+        old_cnt = p_stop - p_start + 1
+        new_cnt = stop - p_start + 1
+        merged_p = float(prev_nz + nz)/(stop - p_start + 1)
+        if ( start - p_stop < 10000
+             and nz < binom.ppf(1-1e-6, p=merged_p, n=new_cnt)
+             and prev_nz < binom.ppf(1-0.5/len(cnt_data), 
+                                     p=merged_p, n=old_cnt) ):
+            seg_graph.add_edge(i, i+1)
+
+    merged_regions = []
+    for regions in nx.connected_components(seg_graph):
+        merged_regions.append((cnt_data[min(regions)][1], 
+                               cnt_data[max(regions)][2]))
+    return merged_regions
+    """
 
 def merge_adjacent_intervals(
         intervals, max_merge_distance=None):
@@ -397,6 +435,15 @@ class GeneElements(object):
         self.element_segments = []
         self.elements = []
 
+    def find_coverage(self, reads):
+        cov = numpy.zeros(self.stop-self.start+1, dtype=float)
+        for x in self.regions:
+            seg_cov = reads.build_read_coverage_array( 
+                self.chrm, self.strand, x.start, x.stop )
+            cov[x.start-self.start:x.stop-self.start+1] = seg_cov
+        #if gene.strand == '-': cov = cov[::-1]
+        return cov
+    
     def base_is_in_gene(self, pos):
         return all( r.start <= pos <= r.stop for r in self.regions )
     
@@ -477,8 +524,10 @@ class GeneElements(object):
                                     use_thick_lines=True,
                                     blocks=[(x.start, x.stop) for x in self.regions])
         ofp.write( bed_line + "\n"  )
-        max_min_fpkm = max(1e-1, max(bin.fpkm for bin in self.elements)) \
-                       if len(self.elements) > 0 else 0
+        try: max_min_fpkm = max(1e-1, max(bin.fpkm for bin in self.elements)) \
+           if len(self.elements) > 0 else 0
+        except:  max_min_fpkm = 1000
+        
         for element in self.elements:
             region = ( chrm, self.strand, element.start, element.stop)
 
@@ -530,6 +579,201 @@ class GeneElements(object):
         
         return
 
+def find_cage_peak_bins_in_gene( gene, cage_reads, rnaseq_reads ):
+    rnaseq_cov = gene.find_coverage( rnaseq_reads )
+    print rnaseq_cov
+    cage_cov = gene.find_coverage( cage_reads)
+    print cage_cov
+    assert False
+    # threshold the CAGE data. We assume that the CAGE data is a mixture of 
+    # reads taken from actually capped transcripts, and random transcribed 
+    # regions, or RNA seq covered regions. We zero out any bases where we
+    # can't reject the null hypothesis that the observed CAGE reads all derive 
+    # from the background, at alpha = 0.001. 
+    rnaseq_cov = numpy.array( rnaseq_cov+1-1e-6, dtype=int)
+    max_val = rnaseq_cov.max()
+    thresholds = config.TOTAL_MAPPED_READS*beta.ppf( 
+        config.CAGE_FILTER_ALPHA, 
+        numpy.arange(max_val+1)+1, 
+        numpy.zeros(max_val+1)+(config.TOTAL_MAPPED_READS+1) 
+    )
+    max_scores = thresholds[ rnaseq_cov ]
+    cage_cov[ cage_cov < max_scores ] = 0    
+    
+    raw_peaks = find_peaks( cage_cov, window_len=config.CAGE_PEAK_WIN_SIZE, 
+                            min_score=config.MIN_NUM_CAGE_TAGS,
+                            max_score_frac=config.MAX_CAGE_FRAC,
+                            max_num_peaks=100)
+    
+    cage_peak_bins = [] #Bins( gene.chrm, gene.strand )
+    for pk_start, pk_stop in raw_peaks:
+        cnt = float(cage_cov[pk_start:pk_stop+1].sum())
+        bin = SegmentBin(
+            gene.start+pk_start, gene.start+pk_stop, 
+            "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK",
+            1e6*beta.ppf(0.01, cnt+1e-6, read_counts.Promoters+1e-6),
+            1e6*beta.ppf(0.50, cnt+1e-6, read_counts.Promoters+1e-6),
+            1e6*beta.ppf(0.99, cnt+1e-6, read_counts.Promoters+1e-6) )
+        cage_peak_bins.append(bin)
+    
+    return cage_peak_bins
+
+def find_polya_peak_bins_in_gene( gene, polya_reads, rnaseq_reads ):
+    polya_cov = gene.find_coverage(polya_reads)
+    
+    # threshold the polya data. We assume that the polya data is a mixture of 
+    # reads taken from actually capped transcripts, and random transcribed 
+    # regions, or RNA seq covered regions. We zero out any bases where we
+    # can't reject the null hypothesis that the observed polya reads all derive 
+    # from the background, at alpha = 0.001. 
+    """
+    rnaseq_cov = find_coverage_in_gene( gene, rnaseq_reads )
+    rnaseq_cov = numpy.array( rnaseq_cov+1-1e-6, dtype=int)
+    max_val = rnaseq_cov.max()
+    thresholds = TOTAL_MAPPED_READS*beta.ppf( 
+        0.1, 
+        numpy.arange(max_val+1)+1, 
+        numpy.zeros(max_val+1)+(TOTAL_MAPPED_READS+1) 
+    )
+    max_scores = thresholds[ rnaseq_cov ]
+    polya_cov[ polya_cov < max_scores ] = 0    
+    """
+    
+    raw_peaks = find_peaks( polya_cov, window_len=30, 
+                            min_score=config.MIN_NUM_POLYA_TAGS,
+                            max_score_frac=0.05,
+                            max_num_peaks=100)
+    polya_sites = [] #Bins( gene.chrm, gene.strand )
+    if len( raw_peaks ) == 0:
+        return polya_sites
+    
+    for pk_start, pk_stop in raw_peaks:
+        cnt = float(polya_cov[pk_start:pk_stop+1].sum())
+        bin = SegmentBin(
+            gene.start+pk_start, gene.start+pk_stop, 
+            "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA",
+            1e6*beta.ppf(0.01, cnt+1e-6, read_counts.Polya+1e-6),
+            1e6*beta.ppf(0.50, cnt+1e-6, read_counts.Polya+1e-6),
+            1e6*beta.ppf(0.99, cnt+1e-6, read_counts.Polya+1e-6) )
+        polya_sites.append(bin)
+    
+    return polya_sites
+
+def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):    
+    def overlaps_prev_peak( new_loc ):
+        for start, stop in peaks:
+            if not( new_loc > stop or new_loc + window_len < start ):
+                return True
+        return False
+    
+    # merge the peaks
+    def grow_peak( start, stop, grow_size=
+                   max(1, window_len/4), min_grow_ratio=config.MAX_CAGE_FRAC ):
+        # grow a peak at most max_num_peaks times
+        max_mean_signal = cov[start:stop+1].mean()
+        for i in xrange(max_num_peaks):
+            curr_signal = cov[start:stop+1].sum()
+            if curr_signal < min_score:
+                return ( start, stop )
+            
+            downstream_sig = float(cov[max(0, start-grow_size):start].sum())/grow_size
+            upstream_sig = float(cov[stop+1:stop+1+grow_size].sum())/grow_size
+            
+            # if neither passes the threshold, then return the current peak
+            if max(upstream_sig, downstream_sig) \
+                    < min_grow_ratio*curr_signal/float(stop-start+1): 
+                return (start, stop)
+            
+            # if the expansion isn't greater than the min ratio, then return
+            if max(upstream_sig,downstream_sig) < \
+                    config.MAX_CAGE_FRAC*max_mean_signal:
+                return (start, stop)
+            
+            # otherwise, we know one does
+            if upstream_sig > downstream_sig:
+                stop += grow_size
+            else:
+                start = max(0, start - grow_size )
+        
+        if config.VERBOSE:
+            config.log_statement( 
+                "Warning: reached max peak iteration at %i-%i ( signal %.2f )"
+                    % (start, stop, cov[start:stop+1].sum() ) )
+        return (start, stop )
+    
+    peaks = []
+    peak_scores = []
+    cumsum_cvg_array = (
+        numpy.append(0, numpy.cumsum( cov )) )
+    scores = cumsum_cvg_array[window_len:] - cumsum_cvg_array[:-window_len]
+    indices = numpy.argsort( scores )
+    min_score = max( min_score, config.MAX_CAGE_FRAC*scores[ indices[-1] ] )
+    for index in reversed(indices):
+        if not overlaps_prev_peak( index ):
+            score = scores[ index ]
+            new_peak = grow_peak( index, index + window_len )
+            # if we are below the minimum score, then we are done
+            if score < min_score:
+                break
+            
+            # if we have observed peaks, and the ratio between the highest
+            # and the lowest is sufficeintly high, we are done
+            if len( peak_scores ) > 0:
+                if float(score)/peak_scores[0] < max_score_frac:
+                    break
+                        
+            peaks.append( new_peak ) 
+            peak_scores.append( score )
+    
+    if len( peaks ) == 0:
+        return []
+    
+    # merge cage peaks together
+    def merge_peaks( peaks_and_scores ):
+        peaks_and_scores = sorted( list(x) for x in peaks_and_scores )
+        peak, score = peaks_and_scores.pop()
+        new_peaks = [peak,]
+        new_scores = [score,]
+        while len(peaks_and_scores) >  0:
+            last_peak = new_peaks[-1]
+            peak, score = peaks_and_scores.pop()
+            new_peak = (min(peak[0], last_peak[0]), max(peak[1], last_peak[1]))
+            if (new_peak[1] - new_peak[0]) <= 1.5*( 
+                    last_peak[1] - last_peak[0] + peak[1] - peak[0] ):
+                new_peaks[-1] = new_peak
+                new_scores[-1] += score
+            else:
+                new_peaks.append( peak )
+                new_scores.append( score )
+        
+        return zip( new_peaks, new_scores )
+    
+    peaks_and_scores = sorted( zip(peaks, peak_scores) )
+    
+    for i in xrange( 99 ):
+        if i == 100: assert False
+        old_len = len( peaks_and_scores )
+        peaks_and_scores = merge_peaks( peaks_and_scores )
+        if len( peaks_and_scores ) == old_len: break
+    
+        
+    new_peaks_and_scores = []
+    for peak, score in peaks_and_scores:
+        peak_scores = cov[peak[0]:peak[1]+1]
+        max_score = peak_scores.max()
+        good_indices = (peak_scores >= max_score*config.MAX_CAGE_FRAC).nonzero()[0]
+        new_peak = [
+                peak[0] + int(good_indices.min()), 
+                peak[0] + int(good_indices.max())  ]
+        new_score = float(cov[new_peak[0]:new_peak[1]+1].sum())
+        new_peaks_and_scores.append( (new_peak, new_score) )
+    
+    peaks_and_scores = sorted( new_peaks_and_scores )
+    max_score = max( s for p, s in peaks_and_scores )
+    return [ pk for pk, score in peaks_and_scores \
+                 if score >= config.MAX_CAGE_FRAC*max_score
+                 and score > min_score ]
+
 def estimate_peak_expression(peaks, peak_cov, rnaseq_cov, peak_type):
     assert peak_type in ('TSS', 'TES')
     total_read_cnts = ( 
@@ -543,14 +787,29 @@ def estimate_peak_expression(peaks, peak_cov, rnaseq_cov, peak_type):
     
     return peaks
 
-def find_coverage_in_gene(gene, reads):
-    cov = numpy.zeros(gene.stop-gene.start+1, dtype=float)
-    for x in gene.regions:
-        seg_cov = reads.build_read_coverage_array( 
-            gene.chrm, gene.strand, x.start, x.stop )
-        cov[x.start-gene.start:x.stop-gene.start+1] = seg_cov
-    #if gene.strand == '-': cov = cov[::-1]
-    return cov
+def iter_retained_intron_connected_exons(
+        left_exons, right_exons, retained_introns,
+        max_num_exons=None):
+    graph = nx.DiGraph()
+    left_exons = sorted((x.start, x.stop) for x in left_exons)
+    right_exons = sorted((x.start, x.stop) for x in right_exons)
+
+    graph.add_nodes_from(chain(left_exons, right_exons))
+    retained_jns = [ (x.start+1, x.stop-1) for x in retained_introns ]
+    edges = find_jn_connected_exons(set(chain(left_exons, right_exons)), 
+                                    retained_jns, '+')
+    graph.add_edges_from( (start, stop) for jn, start, stop in edges )    
+    cntr = 0
+    for left in left_exons:
+        for right in right_exons:
+            if left[1] > right[0]: continue
+            for x in nx.all_simple_paths(
+                    graph, left, right, max_num_exons-cntr+1):
+                cntr += 1
+                if max_num_exons != None and cntr > max_num_exons:
+                    raise ValueError, "Too many retained introns"
+                yield (x[0][0], x[-1][1])
+    return
 
 def merge_tss_exons(tss_exons):
     grpd_exons = defaultdict(list)
@@ -803,7 +1062,8 @@ def build_splice_graph_and_binned_reads_in_gene(
         control_cov = build_control_in_gene(
             gene, paired_rnaseq_reads, sorted(segment_bnds), 
             '5p' if gene.strand == '+' else '3p')
-        signal_cov = find_coverage_in_gene( gene, tss_reads )
+
+        signal_cov = gene.find_coverage( tss_reads )
         for pk_start, pk_stop, peak_cov in call_peaks( 
                 signal_cov, control_cov,
                 '5p' if gene.strand == '+' else '3p'):
@@ -1273,6 +1533,8 @@ def extract_reference_elements(genes, ref_elements_to_include):
             add_elements('tss_exon')
         if ref_elements_to_include.TES:
             add_elements('tes_exon')
+        if ref_elements_to_include.TES:
+            add_elements('exon')
     
     for contig_strand, elements in ref_elements.iteritems():
         for element_type, val in elements.iteritems():
@@ -1300,7 +1562,8 @@ def find_transcribed_regions_and_jns_in_segment(
 
         ( p1_rds, p2_rds, r_plus_jns, r_minus_jns 
           ) = extract_jns_and_reads_in_region(
-            (contig, '.', r_start, r_stop), reads)
+              (contig, '.', r_start, r_stop), reads)
+
         for jn, cnt in r_plus_jns.iteritems(): 
             jn_reads['+'][jn] += cnt 
         for jn, cnt in r_minus_jns.iteritems(): 
@@ -1318,7 +1581,6 @@ def find_transcribed_regions_and_jns_in_segment(
                     # if start - r_start > reg_len: continue
                     cov[read_data.strand][
                         max(0, start-r_start):max(0, stop-r_start+1)] += 1
-        
         # update the fragment length dist
         if reads == rnaseq_reads:
             for qname, r1_data in p1_rds.iteritems():
@@ -1339,10 +1601,28 @@ def find_transcribed_regions_and_jns_in_segment(
                 # we add 1 because we know that this read is unique
                 frag_len = calc_frag_len_from_read_data(r1_data[0], r2_data[0])
                 fragment_lengths[fl_key][frag_len] += 1.0
+            """XXX This is MASTER - better?
+            Wasnt sure how to merge this
+            for qname, read1_data in p1_rds.iteritems():
+                if (len(read1_data) != 1 
+                    or len(read1_data[0].cov_regions) > 1
+                    or read1_data[0].map_prb < 0.95): 
+                    continue
+                try: read2_data = p2_rds[qname]
+                except KeyError: continue
+                if (len(read2_data) != 1 
+                    or len(read2_data[0].cov_regions) > 1
+                    or read2_data[0].map_prb < 0.95): 
+                    continue
+                frag_len = calc_frag_len_from_read_data(
+                    read1_data[0], read2_data[0])
+                fragment_lengths[frag_len] += read1_data[0].map_prb
+            """
     
     # add pseudo coverage for annotated jns. This is so that the clustering
     # algorithm knows which gene segments to join if a jn falls outside of 
     # a region with observed transcription
+    # we also add pseudo coverage for other elements to provide connectivity
     if ref_elements != None and len(ref_elements_to_include) > 0:
         ref_jns = []
         for strand in "+-":
@@ -1353,6 +1633,7 @@ def find_transcribed_regions_and_jns_in_segment(
                 if element_type == 'intron':
                     ref_jns.append((strand, start-r_start, stop-r_start))
                     jn_reads[strand][(start,stop)] += 0
+                # add in exons
                 elif element_type in ref_elements_to_include:
                     cov[strand][
                         max(0,start-r_start):max(0, stop-r_start+1)] += 1
@@ -1412,7 +1693,10 @@ def split_genome_into_segments(contig_lens, region_to_use,
     segment_length = max(min_segment_length, 
                          int(total_length/float(config.NTHREADS*1000)))
     segments = []
-    for contig, contig_length in contig_lens.iteritems():
+    # sort by shorter contigs, so that the short contigs (e.g. mitochondrial)
+    # whcih usually take longer to finish are started first
+    for contig, contig_length in sorted(
+            contig_lens.iteritems(), key=lambda x:x[1]):
         if region_to_use != None and r_chrm != contig: 
             continue
         for start in xrange(0, contig_length, segment_length):
@@ -1465,9 +1749,10 @@ def find_segments_and_jns_worker(
     return
 
 def load_gene_bndry_bins( genes, contig, strand, contig_len ):  
-    config.log_statement( 
-        "Loading gene boundaries from annotated genes in %s:%s" % (  
-            contig, strand) )  
+    if config.VERBOSE:
+        config.log_statement( 
+            "Loading gene boundaries from annotated genes in %s:%s" % (  
+                contig, strand) )  
   
     ## find the gene regions in this contig. Note that these  
     ## may be overlapping  
@@ -1586,6 +1871,8 @@ def find_all_gene_segments( contig_lens,
         ref_element_types_to_include.add('promoter')
     if ref_elements_to_include.polya_sites: 
         ref_element_types_to_include.add('polya')
+    if ref_elements_to_include.exons: 
+        ref_element_types_to_include.add('exon')
     
     pids = []
     for i in xrange(config.NTHREADS):
@@ -1631,17 +1918,25 @@ def find_all_gene_segments( contig_lens,
     transcribed_regions = merged_transcribed_regions
     
     config.log_statement("Filtering junctions")    
-    filtered_jns = {}
+    filtered_jns = defaultdict(dict)
     for contig in contig_lens.keys():
         plus_jns = defaultdict(int)
         for jn, cnt in jns[(contig, '+')]: plus_jns[jn] += cnt
         minus_jns = defaultdict(int)
         for jn, cnt in jns[(contig, '-')]: minus_jns[jn] += cnt
-            
         filtered_jns[(contig, '+')] = filter_jns(plus_jns, minus_jns)
         filtered_jns[(contig, '-')] = filter_jns(minus_jns, plus_jns)
     
     # build the fragment length distribution
+    frag_lens = dict(frag_lens)
+    min_fl = max(config.MIN_FRAGMENT_LENGTH, int(min(frag_lens.keys())))
+    max_fl = min(config.MAX_FRAGMENT_LENGTH, int(max(frag_lens.keys())))
+    fl_density = numpy.zeros(max_fl - min_fl + 1)
+    for fl, cnt in frag_lens.iteritems():
+        if fl < min_fl or fl > max_fl: continue
+        fl_density[fl-min_fl] += cnt
+    fl_density = fl_density/fl_density.sum()
+
     global fl_dists
     fl_dists = build_fl_dists_from_fls_dict(dict(frag_lens))
     # we are down with the manager

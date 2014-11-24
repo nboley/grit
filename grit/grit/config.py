@@ -6,7 +6,7 @@ VERSION = "1.1.3-dev"
 
 # the maximum number of transcripts to produce quantification estimates for
 MAX_NUM_TRANSCRIPTS_TO_QUANTIFY = 1000
-# the maximum number of candidate transcripts to build in a particular gene locus
+# thxe maximum number of candidate transcripts to build in a particular gene locus
 MAX_NUM_CANDIDATE_TRANSCRIPTS = 50000
 
 CB_SIG_LEVEL = 0.025
@@ -43,15 +43,15 @@ MAX_GENE_EXPANSION = 1000
 NOISE_JN_FILTER_FRAC = 0.01
 MAX_JN_OFFSET_FILTER = 15
 
+MAX_FRAGMENT_LENGTH = 1000
+MIN_FRAGMENT_LENGTH = 75
+
 ONLY_USE_REFERENCE_JUNCTIONS = False
 MIN_EXON_FPKM = 1
 MAX_EXPRESSION_RATIO = 10
 BUILD_MODELS_WITH_RETAINED_INTRONS = False
 
-CAGE_PEAK_WIN_SIZE = 15
-CAGE_FILTER_ALPHA = 0.05
 MIN_NUM_CAGE_TAGS = 5
-MAX_CAGE_FRAC = 0.05
 NUM_TSS_BASES_TO_SKIP = 200
 
 MIN_NUM_POLYA_TAGS = 2

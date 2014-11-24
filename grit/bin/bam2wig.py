@@ -127,7 +127,7 @@ def generate_wiggle(reads, ofps, num_threads=1, contig=None ):
     return
 
 def parse_arguments():
-    allowed_assays = ['cage', 'rampage', 'rnaseq', 'polya']
+    allowed_assays = ['cage', 'rampage', 'rnaseq', 'polya', 'atacseq']
     
     import argparse
     parser = argparse.ArgumentParser(
@@ -221,12 +221,18 @@ def main():
         stranded = True
     elif assay == 'polya':
         reads = PolyAReads( reads_fname, "rb" )
-        reads.init(reverse_read_strand=reverse_read_strand, pairs_are_opp_strand=True)
+        reads.init(reverse_read_strand=reverse_read_strand, 
+                   pairs_are_opp_strand=True)
         stranded = True
     elif assay == 'rnaseq':
         reads = RNAseqReads( reads_fname, "rb" )
         # the read strand reversal is done later, so set this to False
         reads.init(reverse_read_strand=reverse_read_strand)
+    elif assay == 'atacseq':
+        reads = RNAseqReads( reads_fname, "rb" )
+        # the read strand reversal is done later, so set this to False
+        reads.init(reverse_read_strand=reverse_read_strand, 
+                   pairs_are_opp_strand=True)
     else:
         raise ValueError, "Unrecognized assay: '%s'" % assay
     

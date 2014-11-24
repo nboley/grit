@@ -115,13 +115,15 @@ class Gene( object ):
                     'promoter': set(),
                     'single_exon_gene': set(),
                     'tes_exon': set(),
-                    'tss_exon': set() }
+                    'tss_exon': set(),
+                    'exon': set() }
         elements['gene'].add( (self.start, self.stop) )
         for t in self.transcripts:
             if len( t.exons ) == 1:
                 elements['single_exon_gene'].add(
                     (t.exons[0][0], t.exons[0][1]))
             else:
+                elements['exon'].update(t.exons)
                 tss_exon = t.exons[0] if t.strand == '+' else t.exons[-1]
                 elements['tss_exon'].add(tss_exon)
                 promoter = t.find_promoter()

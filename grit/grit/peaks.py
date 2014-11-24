@@ -23,27 +23,34 @@ from call_peaks_support_fns import calc_moments
 
 from scipy.optimize import fmin_l_bfgs_b as minimize
 
-BACKGROUND_FRACTION = 0.01
-MIN_NOISE_FRAC = 0.05
+""" Tuneable config options - should be set by caller
+MIN_RD_CNT = 5
 MIN_PEAK_SIZE = 5
-MIN_EMPTY_REGION_SIZE = 1
+MAX_PEAK_SIZE = 500
 
-MAX_NUM_ITERATIONS = 25
+TRIM_FRACTION = 0.01
+MAX_EXP_SUM_FRACTION = 0.05
+MAX_EXP_MEAN_CVG_FRACTION = MAX_EXP_SUM_FRACTION/10
+"""
 
 VERBOSE = False
 DEBUG_VERBOSE = False
 
+MIN_EMPTY_REGION_SIZE = 1
+BACKGROUND_FRACTION = 0.01
+MIN_NOISE_FRAC = 0.05
 SMOOTH_WIN_LEN = 10
-PEAK_THRESHOLD = 1.0
-SPLIT_TYPE = 'optimal'
-#SPLIT_TYPE = 'random'
+SPLIT_TYPE = 'optimal' # 'random' other option
+
+MAX_NUM_ITERATIONS = 25
 N_REPS = 1
 if SPLIT_TYPE == 'random': assert N_REPS > 1
 
 MIN_MERGE_SIZE = 10
 MIN_REL_MERGE_SIZE = 0.5
 TRIM_FRACTION = 0.01
-MAX_EXP_FRACTION = 0.01
+MAX_EXP_SUM_FRACTION = 0.05
+MAX_EXP_MEAN_CVG_FRACTION = None
 
 def write_bedgraph_from_array(array, region, ofprefix):
     """
@@ -133,6 +140,24 @@ def build_control(rnaseq_reads, region, control_type, smooth_win_len=SMOOTH_WIN_
             cov[start:stop] = numpy.convolve(
                 window,segment_signal,mode='same')
     #cov[cov < min_signal] = min_signal
+    return (cov + 1e-12)/(cov.sum() + 1e-12*len(cov))
+
+def build_control_in_gene_regions(
+        gene, rnaseq_reads, control_type, smooth_win_len=SMOOTH_WIN_LEN):
+    assert control_type in ('5p', '3p')
+    # get the read start coverage
+    cov = numpy.zeros(gene.stop-gene.start+1, dtype=float)
+    window = numpy.ones(smooth_win_len, dtype=float)/smooth_win_len
+    for x in gene.regions:
+        seg_cov = rnaseq_reads.build_read_coverage_array( 
+            gene.chrm, gene.strand, x.start, x.stop )
+        if len(seg_cov) <= smooth_win_len:
+            seg_cov = seg_cov.mean()
+        else:    
+            seg_cov = numpy.convolve(
+                window, seg_cov, mode='same')
+        cov[x.start-gene.start:x.stop-gene.start+1] = seg_cov
+
     return (cov + 1e-12)/(cov.sum() + 1e-12*len(cov))
 
 def build_control_in_gene(gene, paired_rnaseq_reads, bndries, 
@@ -401,12 +426,33 @@ def merge_adjacent_intervals(
             max_abs_merge_distance, 
             max_merge_fraction*(stop-start),
             max_merge_fraction*(merged_intervals[-1][1]-merged_intervals[-1][0]))
-        if start - max_merge_distance - 1 <= prev_stop:
+        if ( start - max_merge_distance - 1 <= prev_stop
+             and stop - start + 1 < MAX_PEAK_SIZE ):
             merged_intervals[-1][1] = stop
         else:
             merged_intervals.append([start, stop])
         prev_stop = stop
     return merged_intervals
+
+def estimate_read_and_control_cov_in_gene(
+        gene, signal_reads, reads_type, 
+        rnaseq_reads, alpha=0.01):
+    assert reads_type in ('promoter', 'polya')
+    reads_type = '5p' if reads_type == 'promoter' else '3p'
+    if gene.strand == '-': 
+        reads_type = {'3p':'5p', '5p':'3p'}[reads_type]
+    
+    signal_cov = gene.find_coverage(signal_reads)    
+    if DEBUG_VERBOSE:
+        config.log_statement("Finished building signal coverage array")
+    #signal_cov = build_false_signal(rnaseq_reads, '5p')
+    
+    control_cov = build_control_in_gene_regions(
+        gene, rnaseq_reads, reads_type, SMOOTH_WIN_LEN)
+    if DEBUG_VERBOSE:
+        config.log_statement("Finished building control coverage array")
+    
+    return signal_cov, control_cov
 
 def estimate_read_cov_and_call_peaks(
         region, signal_reads, reads_type, 
@@ -421,11 +467,14 @@ def estimate_read_cov_and_call_peaks(
         config.log_statement("Finished building signal coverage array")
     #signal_cov = build_false_signal(rnaseq_reads, '5p')
     
-    original_control_cov = build_control(
+    control_cov = build_control(
         rnaseq_reads, region, reads_type, SMOOTH_WIN_LEN)
-    
+    print control_cov.sum(), len(control_cov), region
+    return None
     if DEBUG_VERBOSE:
         config.log_statement("Finished building control coverage array")
+
+    return call_peaks(signal_cov, control_cov, reads_type, alpha)
 
 def call_peaks( signal_cov, original_control_cov,
                 reads_type, alpha=0.01):
@@ -502,9 +551,17 @@ def call_peaks( signal_cov, original_control_cov,
                           cov_region[trim_start:trim_stop+1]))
 
     exp_filtered_peaks = []
-    max_peak_cnt = float(max(cov.sum() for start, stop, cov in new_peaks))
-    for start, stop, cov in new_peaks:
-        cnt = float(cov.sum())
-        if cnt >= MIN_PEAK_SIZE and cnt/max_peak_cnt > MAX_EXP_FRACTION: 
-            exp_filtered_peaks.append((start, stop, cov))
+    max_peak_cnt = float(max(cnt for start, stop, cnt in new_peaks))
+    max_peak_mean_cnt = float(max(cnt/float(stop-start+1) 
+                                  for start, stop, cnt in new_peaks))
+    for start, stop, cnt in new_peaks:
+        length = stop - start + 1
+        if (cnt >= MIN_RD_CNT
+            and length >= MIN_PEAK_SIZE
+            and length <= MAX_PEAK_SIZE
+            and cnt/max_peak_cnt > MAX_EXP_SUM_FRACTION 
+            and (cnt/float(length))/max_peak_mean_cnt 
+                > MAX_EXP_MEAN_CVG_FRACTION ): 
+            exp_filtered_peaks.append((start, stop, cnt))
+
     return exp_filtered_peaks

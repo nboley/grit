@@ -1,6 +1,8 @@
 import os, sys
 import cPickle
 
+from collections import namedtuple
+
 try: import grit
 except ImportError: sys.path.insert(0, "/home/nboley/grit/grit/")
 
@@ -8,50 +10,37 @@ from grit.lib.multiprocessing_utils import ProcessSafeOPStream
 from grit import config
 
 from grit.files.reads import (
-    CAGEReads, RAMPAGEReads, RNAseqReads, PolyAReads, fix_chrm_name_for_ucsc)
+    CAGEReads, RAMPAGEReads, RNAseqReads, PolyAReads, 
+    get_contigs_and_lens, fix_chrm_name_for_ucsc, clean_chr_name)
 from grit.files.gtf import load_gtf
+from grit.find_elements import find_all_gene_segments, get_contigs_and_lens, load_gene_bndry_bins
+from grit.elements import RefElementsToInclude
 
 from grit import peaks
 
 import multiprocessing
 import Queue
 
-def write_bedgraph_from_array(array, region, ofprefix):
+def shift_and_write_narrow_peak(region, peaks, ofp):
     """
-    track name=CAGE.pan..plus type=bedGraph
-    chr4    89932   89933   4.00
-    chr4    89955   89956   2.00
-    chr4    89958   89959   2.00
+    track name=CAGE.pan type=narrowPeak
+    chr4    89932   89933   .    0    +    2    -1    -1    -1
    """
-    chrm = region['chrm']
     if config.FIX_CHRM_NAMES_FOR_UCSC: 
-        chrm = config.fix_chrm_name_for_ucsc(chrm)
-    start = region['start']
-    ofname = "%s.%s.bedgraph" % (
-        ofprefix, {'+': 'plus', '-': 'minus'}[region['strand']])
-    with open(ofname, 'w') as ofp:
-        print >> ofp, "track name=%s type=bedGraph" % ofname
-        for i, val in enumerate(array):
-            if val < 1e-6: continue
-            print >> ofp, "\t".join(
-                (chrm, str(start+i), str(start+i+1), "%.2f" % val))
-    return
-
-def write_bedgraph(chrm, peaks, ofp):
-    """
-    track name=CAGE.pan..plus type=bedGraph
-    chr4    89932   89933   4.00
-    chr4    89955   89956   2.00
-    chr4    89958   89959   2.00
-   """
-    if config.FIX_CHRM_NAMES_FOR_UCSC: chrm = fix_chrm_name_for_ucsc(chrm)
+        chrm = fix_chrm_name_for_ucsc(region['chrm'])
+    else:
+        chrm = region['chrm']
     for start, stop, value in peaks:
         ofp.write( "\t".join(
-                (chrm, str(start), str(stop+1), "%.2f" % value)) + "\n")
+                 ( chrm, str(region['start'] + start), 
+                   str(region['start'] + stop + 1), 
+                   ".", "1000", region['strand'], 
+                   "%e" % value, 
+                   "-1", "-1", "-1")) + "\n")
     return
 
 def process_genes(
-        genes_queue, promoter_reads, rnaseq_reads, ofp_p, ofp_m):
+        genes_queue, promoter_reads, rnaseq_reads, ofp):
     promoter_reads.reload()
     rnaseq_reads.reload()
     num_genes = genes_queue.qsize()
@@ -61,15 +50,17 @@ def process_genes(
         
         if config.VERBOSE: config.log_statement(
                 "Processing %s (%i\tremain)" % (
-                    gene.id.ljust(30), genes_queue.qsize()))
-        region_tuple = ( gene.chrm, gene.strand, 
-                         max(0, gene.start-1000), gene.stop+1000)
-        region = dict(zip(('chrm', 'strand', 'start', 'stop'), 
-                          region_tuple))
-        called_peaks = peaks.estimate_read_cov_and_call_peaks(
-            region, promoter_reads, 'promoter', rnaseq_reads)
-        ofp = ofp_p if region['strand'] == '+' else ofp_m
-        write_bedgraph(region['chrm'], called_peaks, ofp)
+                    str(gene).ljust(30), genes_queue.qsize()))
+        
+        signal_cov, control_cov = peaks.estimate_read_and_control_cov_in_gene(
+            gene, promoter_reads, 'promoter', rnaseq_reads )
+
+        called_peaks = peaks.call_peaks(
+            signal_cov, control_cov, 'promoter', alpha=0.01)
+        
+        region = {'chrm': gene.chrm, 'strand':gene.strand, 
+                  'start':gene.start, 'stop':gene.stop}
+        shift_and_write_narrow_peak(region, called_peaks, ofp)
 
     return
 
@@ -80,8 +71,11 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description='Call peaks from a RAMPAGE/CAGE experiment and matching RNASeq.')
 
-    parser.add_argument( '--reference', type=file, required=True,
-        help='GTF file containing genes to extract gene boundaries from.')
+    parser.add_argument( '--reference', type=file, 
+        help='GTF file containing transcripts to extract reference elements to use.')
+    parser.add_argument( '--use-reference-genes', 
+                         default=False, action='store_true', 
+        help='Use reference gene boundaries.')
     
     parser.add_argument( '--rnaseq-reads', type=argparse.FileType('rb'), 
         help='BAM file containing mapped RNAseq reads.')
@@ -106,39 +100,77 @@ def parse_arguments():
                          default='auto',
         help="If 'forward' then the first read in a pair that maps to the genome without being reverse complemented are assumed to be on the '+' strand. default: auto")
     
-    parser.add_argument( '--out-fname-prefix', '-o', default="peaks",
-                         help='Output files will be named (out-fname-prefix).STRAND.bed')
+    parser.add_argument( '--outfname', '-o', 
+                         help='Output file name. (default stdout)')
     
     parser.add_argument( '--ucsc', default=False, action='store_true', 
                          help='Format the contig names to work with the UCSC genome browser.')
+    parser.add_argument( '--region', 
+        help='Only use the specified region (contig_name:start-stop).')
 
-    parser.add_argument( '--min-merge-distance', default=10, type=int,
+    parser.add_argument( '--min-merge-distance', default=50, type=int,
                          help='The distance in basepairs under whihc peaks will be merged .')
     parser.add_argument( '--min-relative-merge-distance', default=0.5, type=float,
                          help='The distance as a fraction of a peak size under which peaks will be merged .')
     parser.add_argument( '--trim-fraction', default=0.01, type=float,
                          help='The fraction of reads that will be trimmed from merged reads.')
-    parser.add_argument( '--exp-filter-fraction', default=0.01, type=float,
+    parser.add_argument( '--exp-filter-fraction', default=0.10, type=float,
                          help='Peaks with a relative expression fraction under this amount will be filtered.')
         
     parser.add_argument( '--verbose', '-v', default=False, action='store_true', 
                          help='Whether or not to print status information.')
     parser.add_argument( '--threads', '-t', default=1, type=int,
                          help='The number of threads to run.')
-
-        
+    
     args = parser.parse_args()
-    config.VERBOSE = args.verbose
-    config.FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
+    
     config.NTHREADS = args.threads
+
+    config.VERBOSE = args.verbose
+    if config.VERBOSE:
+        assert args.outfname != None, "--outfname must be set if --verbose is set"
+        from grit.lib.logging import Logger
+        log_ofstream = open( "log.txt", "a" )
+        log_statement = Logger(
+            nthreads=config.NTHREADS,
+            use_ncurses=True,
+            log_ofstream=log_ofstream)
+        config.log_statement = log_statement
+
+    config.FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
     
     peaks.MIN_MERGE_SIZE = args.min_merge_distance
     peaks.MIN_REL_MERGE_SIZE = args.min_relative_merge_distance
+
+    peaks.MIN_RD_CNT = 5
+    peaks.MIN_PEAK_SIZE = 5
+    peaks.MAX_PEAK_SIZE = 500
     
     peaks.TRIM_FRACTION = args.trim_fraction
-    peaks.MAX_EXP_FRACTION = args.exp_filter_fraction
+    peaks.MAX_EXP_SUM_FRACTION = args.exp_filter_fraction
+    peaks.MAX_EXP_MEAN_CVG_FRACTION = peaks.MAX_EXP_SUM_FRACTION/10
     
-    ref_genes = load_gtf(args.reference)
+    if args.reference != None:
+        if config.VERBOSE:
+            log_statement("Loading reference genes")
+        ref_genes = load_gtf(args.reference) 
+        if args.use_reference_genes:
+            ref_elements_to_include = RefElementsToInclude(
+                True, False, False, False, False, False, exons=False )
+        else:
+            ref_elements_to_include = RefElementsToInclude(
+                False, True, False, False, False, False, exons=True )
+    else:
+        assert args.use_reference_genes == False, \
+            "You must set --reference to --use-reference-genes"
+        ref_genes = None
+        ref_elements_to_include = RefElementsToInclude(
+            False, False, False, False, False, False, False )
+    
+    if args.region != None:
+        region_data = args.region.strip().split(":")
+        args.region = ( clean_chr_name(region_data[0]), 
+                        [int(x) for x in region_data[1].split("-")])
     
     if args.cage_reads != None:
         assert args.rampage_reads == None, "Can not use RAMPAGE and CAGE reads"
@@ -162,35 +194,66 @@ def parse_arguments():
         args.rnaseq_read_type]
     rnaseq_reads = RNAseqReads(args.rnaseq_reads.name, "rb").init(
         reverse_read_strand=rev_reads, ref_genes=ref_genes)
+
+    output_stream = ( open(args.outfname, "w") 
+                      if args.outfname != None
+                      else sys.stdout )
     
-    return ref_genes, promoter_reads, rnaseq_reads, args.out_fname_prefix
+    return ( ref_genes, ref_elements_to_include, 
+             promoter_reads, rnaseq_reads, 
+             output_stream, args.region )
 
 def main():
-    genes, promoter_reads, rnaseq_reads, ofprefix = parse_arguments()
-    
-    ofp_p = ProcessSafeOPStream(open("%s.plus.bedgraph" % ofprefix, 'w'))
-    print >> ofp_p, "track name=%s.plus type=bedGraph" % ofprefix
-    ofp_m = ProcessSafeOPStream(open("%s.minus.bedgraph" % ofprefix, 'w'))
-    print >> ofp_m, "track name=%s.minus type=bedGraph" % ofprefix
+    ( ref_genes, ref_elements_to_include, 
+      promoter_reads, rnaseq_reads, 
+      output_stream, region_to_use
+      ) = parse_arguments()
+    try:
+        ofp = ProcessSafeOPStream(output_stream)
+        track_name = ( 
+            "peaks" if output_stream == sys.stdout else output_stream.name )
+        print >> ofp, "track name=%s type=narrowPeak" % track_name
 
-    queue = multiprocessing.Queue()
-    for gene in genes:
-        queue.put(gene)
+        contigs, contig_lens = get_contigs_and_lens( 
+            [promoter_reads, rnaseq_reads] )
+        contig_lens = dict((ctg, ctg_len)
+                           for ctg, ctg_len in zip(contigs, contig_lens)
+                           if ctg not in ('M',) 
+                           and not ctg.startswith('Un'))
         
-    args = [queue, promoter_reads, rnaseq_reads, ofp_p, ofp_m]
-    ps = []
-    for i in xrange(config.NTHREADS):
-        p = multiprocessing.Process(target=process_genes, args=args)
-        p.daemon=True
-        p.start()
-        ps.append(p)
+        gene_segments = find_all_gene_segments( 
+            contig_lens, 
+            rnaseq_reads, promoter_reads, None,
+            ref_genes, ref_elements_to_include, 
+            region_to_use=region_to_use)
+                
+        with open("genes.bed", "w") as genes_ofp:
+            for gene in gene_segments:
+                gene.write_elements_bed(genes_ofp)
         
-    for p in ps: p.join()
+        queue = multiprocessing.Queue()
+        for gene in gene_segments:
+            queue.put(gene)
 
-    ofp_p.close()
-    ofp_m.close()
+        args = [queue, promoter_reads, rnaseq_reads, ofp]
+        if config.NTHREADS == 1:
+            process_genes(*args)
+        else:
+            ps = []
+            for i in xrange(config.NTHREADS):
+                p = multiprocessing.Process(target=process_genes, args=args)
+                p.daemon=True
+                p.start()
+                ps.append(p)
+            for p in ps: p.join()
+    finally:
+        if output_stream != sys.stdout:
+            ofp.close()
     
     return
 
 if __name__ == '__main__':
-    main()
+    try: main()
+    finally: 
+        try:config.log_statement.close()
+        except: pass

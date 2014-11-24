@@ -82,6 +82,30 @@ def get_read_group( r1, r2 ):
         return None
 
 
+def get_rd_posterior_prb(rd):
+    # try to use the (statmap) posterior probability XP tag
+    try: 
+        map_prb = float(read.opt('XP'))
+        # if this could be a posterior proability return it
+        if 0.0 <= map_prb <= 1.:
+            return map_prb
+    # if this doesn't exist
+    except KeyError: 
+        pass
+    # or it isn't a float
+    except ValueError:
+        pass
+    
+    # if we don't have a proper posterior probability, then
+    # 1/number of mappings
+    try: 
+        map_prb = 1./read.opt('NH')
+    except KeyError: 
+        pass
+
+    # if we have nothing, assume that it's just 1.
+    return 1.0
+
 def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000, 
                                    max_num_reads_to_check=100000 ):
     # keep track of which fractiona re on the sam strand
@@ -89,13 +113,16 @@ def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000,
     
     num_good_reads = 0
     num_observed_reads = 0
-    for read in bam_obj:
+    for read in bam_obj: 
         num_observed_reads += 1
         if num_observed_reads > max_num_reads_to_check:
             break
         
         if read.is_paired and read.mate_is_unmapped:
             continue
+        
+        map_prb = get_rd_posterior_prb(read)
+        if map_prb < 0.99: continue
         
         if not read.is_paired:
             paired_cnts['no_mate'] += 1        
@@ -201,11 +228,8 @@ def extract_jns_and_reads_in_region((chrm, strand, r_start, r_stop), reads):
         # -probability that the read originated in this location
         # if we can't find it, assume that it's uniform over alternate
         # mappings. If we can't find that, then assume that it's unique
-        try: map_prb = read.opt('XP')
-        except KeyError: 
-            try: map_prb = 1./read.opt('NH')
-            except KeyError: map_prb = 1.
-
+        map_prb = get_rd_posterior_prb(read)
+        
         # store the read data - we will join them later
         read_data = ReadData(rd_strand, read_len, read_grp, map_prb, cov_regions)
         if read.is_read1: pair1_reads[read.qname].append(read_data)
@@ -482,8 +506,9 @@ class Reads( pysam.Samfile ):
         # return an empty iterator
         except KeyError:
             return ()
-        return pysam.Samfile.fetch( *args, **kwargs )
-
+        return ( rd for rd in pysam.Samfile.fetch( *args, **kwargs )
+                 if not rd.is_duplicate )
+    
     def is_indexed( self ):
         return True
     
@@ -579,6 +604,7 @@ class RNAseqReads(Reads):
         
         if pairs_are_opp_strand == None:
             pairs_are_opp_strand = (not read_pairs_are_on_same_strand( self ))
+        
         if reverse_read_strand == None:
             reverse_read_strand = Reads.determine_reverse_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'internal_exon',
@@ -655,13 +681,7 @@ class CAGEReads(Reads):
             if peak_pos < start or peak_pos > stop:
                 continue
             
-            # get the posterior mapping probability, if it exists
-            cnt = 1.
-            for tag, value in rd.tags:
-                if tag == 'XP' and isinstance(value, float):
-                    cnt = value
-                    break
-            cvg[peak_pos-start] += cnt
+            cvg[peak_pos-start] += get_rd_posterior_prb(rd)
         return cvg
 
 class RAMPAGEReads(Reads):
@@ -719,13 +739,7 @@ class RAMPAGEReads(Reads):
                 peak_pos = min(rd.pos, rd.aend-1)
             if peak_pos < start or peak_pos > stop:
                 continue
-            # get the posterior mapping probability, if it exists
-            cnt = 1.
-            for tag, value in rd.tags:
-                if tag == 'XP' and isinstance(value, float):
-                    cnt = value
-                    break
-            cvg[peak_pos-start] += cnt
+            cvg[peak_pos-start] += get_rd_posterior_prb(rd)
         
         return cvg
 
@@ -784,11 +798,7 @@ class PolyAReads(Reads):
             # skip sites that aren't within the requested range
             if strand != rd_strand: continue
             if pos < start or pos > stop: continue
-
-            # find the statmap posterior probability, if available
-            res = [ val for key, val in rd.tags if key == 'XP' ]
-            post_prb = 1.0 if len(res) == 0 else res[0]
             
-            cvg[pos-start] += post_prb
+            cvg[pos-start] += get_rd_posterior_prb(rd)
         
         return cvg
