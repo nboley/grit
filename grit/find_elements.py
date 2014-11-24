@@ -6,7 +6,7 @@ import traceback
 import shutil
 
 import numpy
-from scipy.stats import beta
+from scipy.stats import beta, binom
 
 from collections import defaultdict, namedtuple
 from itertools import chain, izip
@@ -162,7 +162,45 @@ def find_transcribed_regions( cov, thresh=1e-6 ):
         transcribed_regions.pop()
     else:
         transcribed_regions[-1].append(len(cov)-1)
+
     return transcribed_regions
+    
+    """
+    # code to try and merge low signal segments, but I think that 
+    # this is the wrong appraoch. I should be merging introns that 
+    # could have all come from a uniform distribution
+    if len(transcribed_regions) == 0: return []
+    
+    # n distinct 
+    seg_graph = nx.Graph()  
+    seg_graph.add_nodes_from(xrange(len(transcribed_regions)))  
+    y = cov[1:] - cov[:-1]
+    y[y<0] = 0
+    cnt_data = [ (numpy.count_nonzero(y[start:stop+1]) + 1, 
+                  start, stop)
+                 for start, stop in transcribed_regions]
+    #if cnt_data[0][1] > 0:
+    #    cnt_data.insert(0, (1, 0, cnt_data[0][1]-1))
+    #if cnt_data[-1][-1] < len(cov):
+    #    cnt_data.append((1, cnt_data[-1][-1]+1, len(cov)-1))
+    
+    for i, (nz, start, stop) in enumerate(cnt_data[1:]):
+        prev_nz, p_start, p_stop = cnt_data[i]
+        old_cnt = p_stop - p_start + 1
+        new_cnt = stop - p_start + 1
+        merged_p = float(prev_nz + nz)/(stop - p_start + 1)
+        if ( start - p_stop < 10000
+             and nz < binom.ppf(1-1e-6, p=merged_p, n=new_cnt)
+             and prev_nz < binom.ppf(1-0.5/len(cnt_data), 
+                                     p=merged_p, n=old_cnt) ):
+            seg_graph.add_edge(i, i+1)
+
+    merged_regions = []
+    for regions in nx.connected_components(seg_graph):
+        merged_regions.append((cnt_data[min(regions)][1], 
+                               cnt_data[max(regions)][2]))
+    return merged_regions
+    """
 
 def merge_adjacent_intervals(
         intervals, max_merge_distance=None):
