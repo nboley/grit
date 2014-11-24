@@ -1,108 +1,183 @@
-README for the ModEncode Drosophila Transcriptome v2. 
+GRIT - A tool for the integrative analysis of RNA-seq type assays. 
 
-Additional questions can be directed to Nathan Boley 
-( nboley@berkeley.edu )
+################################################################################
+Install: 
+################################################################################
 
-Annotation files:
+Build Dependencies:
+  c compiler
+  python headers
+  cython
 
-1) Celniker_Drosophila_Annotation_20120616_1428.gtf.gz:
-Contains all transcripts in gtf format. Coding regions are 
-represented by the CDS element type. Exon and CDS lines with
-the same transcript_id field correspond to the same transcript. 
-So, to find all of the exons associated with mgn000001.a, run
+Runtime Dependencies:
+  scipy 
+  networkx 
+  pysam
 
-grep mgn000001.a Celniker_Drosophila_Annotation_20120616_1428.gtf 
+In a debian based system, running 
 
-at a unix shell. The transcript and gene naming conventions are 
-described at the bottom of the README.
+(sudo) apt-get install gcc python-dev cython python-scipy python-networkx
+and then 
+(sudo) easy_install pysam
 
-2) Celniker_Drosophila_Annotation_20120616_1428.gene.gtf.gz:
-Contains gene bounds in GFF2 format. This information can be
-extracted directly from the transcripts file. 
+should install all of the dependencies. 
 
-3) Celniker_Drosophila_Annotation_20120616_1428.trancript_bnds.gff.gz
-Contains transcript bounds in GFF2 format. This information can be
-extracted directly from the transcripts file.
+INSTALLATION:
 
-4) Celniker_Drosophila_Annotation_20120616_1428.tss.gtf.gz:
-Transcription start sites in GFF2. Locations included in this list
-were either verified experimentally with CAGE signal or a full
-length cDNA. 
+-Method 1: easy_install
 
-5) Celniker_Drosophila_Annotation_20120616_1428.tes.gtf:
-Transcription end sites in GFF2. Locations included in this list
-were discovered from RNAseq data or a poly(a) read spanning cDNAs.
+Run: (sudo) easy_install GRIT-1.1.0.tar.gz
 
-6) Celniker_Drosophila_Annotation_20120616_1428_jn.gff.gz:
-Contains discovered intron regions in GFF2. The start and stop fields 
-indicate the 1 based, inclusive, start and stop coordinates for each 
-intron. The initial set of junctions were produced from the merged set
-of tophat mapped RNAseq data. Potential junctions reads were 
-then filtered according to the following rules:
+This should install the dependencies, the grit python module, and the grit 
+script (run_grit.py). However, installing them through your distributions 
+package manager is preferred whenever possible.
 
-a) Canonical  Junctions
-Information score >= 2.0 in 2 distinct samples
-b) Non-Canonical Junctions
-Information score >= 2.5 in 2 distinct samples
-c) Canonical Junctions Wrong Strand
-Same as non-canonical and needed to have greater than 1% of the 
-frequency of the corresponding canonical junction.
+-Method 2: setup.py
 
-Finally, junctions that merged two genes were filtered
-for uniqueness. 
+1) unzip the package (tar -zxvf GRIT-VERSION.tar.gz)
+2) move into the unzipped directory (cd GRIT-VERSION/)
+3) run the setup script ((sudo) python setup.py install)
 
-The information score calculation  is described in "The developmental 
-transcriptome of Drosophila melanogaster" ( Graveley et. al. )
+-Method 3: packages
 
-Expression Scores:
-
-1) Celniker_Drosophila_Annotation_20120616_1428_gene_expression.csv:
-Contains the total number of bases that overlaps at least one exon in 
-the gene in the left most column. Each column corresponds to a single 
-sample type, which is listed in the first row.
-
-2) Celniker_Drosophila_Annotation_20120616_1428_exon_expression.csv:
-Contains the total number of bases that overlaps the exon given by the 
-region string in the left most column. The region strings take the form
-"chromosome:strand:start_1_based_inclusive-stop_1_based_inclusive". Each 
-additional column corresponds to a sample type, given in the first row.
-If multiple exons overlap the same region, we distribute reads between 
-them to maximize the read uniformity within an exon. The method is 
-detailed in GRIT in estimate_exon_expression.py. 
-
-3) Celniker_Drosophila_Annotation_20120616_1428_jn_expression.csv:
-Contains the total number of junction reads that span the intron described by
-the region string in the left most column. The region string format is
-Chromosome:strand:start_1_based_inclusive-stop_1_based_inclusive. Each 
-additional column corresponds with a sample type listed in the first row.
-
-Naming Convention:
-
-Transcripts names were chosen in an attempt to preserve the Flybase naming 
-scheme whenever possible. We used the following procedure:
-
-1) Matching Transcripts
-    Must share the same introns as at least one flybase transcript. 
-    - Use the flybase transcript and gene names
-    - If there are multiple transcripts that match the flybase
-      transcript, then give following transcripts FBNAME.a, 
-      FBNAME.b, etc.
-
-2) Overlapping Transcripts
-    Must share a jn boundary or overlap a flybase gene
-    - Use FBGENE_NAME for the gene name, and FBGENE_NAME.a, 
-      FBGENE_NAME.b, etc. for the transcript names.
-
-3) Novel Transcripts
-    - name genes mgnXXXXX, and transcripts mgnXXXXX.a, mgnXXXXX.b, etc.
-      where XXXXX is a five digit number.
-
-Ensembl Name Mappings:
-
-Were prepared by the Gerstein lab and are available for download at:
-
-http://archive.gersteinlab.org/proj/orthologs/Orthologs/Mapping/flybase.ensembl.idmapping
+Making debian, ubuntu, and redhat packages is on my TODO, but I haven't. 
+If these would be useful, please feel free to send me an email and I'll
+move it up the priority list.
 
 
 
+################################################################################
+Tutorial: 
+################################################################################
 
+There is a tutorial, with data, available on grit-bio.org.
+
+################################################################################
+Introduction:
+################################################################################
+
+GRIT is designed to use RNA-seq, TES (e.g. poly(A) seq), and TSS (
+e.g. CAGE, RAMPAGE) data to build and quantify full length transcript
+models. When all of these data sources are not available, GRIT can be 
+run by providing a candidate set of TES or TSS sites. In addition, GRIT
+can merge in reference junctions, and gene boundaries. GRIT can also
+be run in quantification mode, where it uses a provided GTF file and 
+just estimates transcript expression.
+
+In addition, GRIT only works with stranded and paired RNA-seq data. 
+Although it could be modified to work with either, we feel that these
+data sources are becoming obsolute.
+
+
+################################################################################
+Simple Example:
+################################################################################
+
+(to try this, download and unzip 
+    http://grit-bio.org/GRIT_example.tar.gz ) 
+
+The simplest possible GRIT run is:
+
+run_grit.py --rnaseq-reads AdMatedF_Ecl_20days_Heads.biorep1.rnaseq.chr4.bam  \
+            --cage-reads AdMatedF_Ecl_20days_Heads.biorep1.cage.chr4.bam \
+            --polya-reads AdMatedF_Ecl_20days_Heads.biorep2.passeq.chr4.bam \
+            --reference flybase-r5.45.chr4.gtf
+
+Note that the reference is required to determine the read strands. The following
+would produce identical results:
+
+run_grit.py --rnaseq-reads AdMatedF_Ecl_20days_Heads.biorep1.rnaseq.chr4.bam  \
+            --rnaseq-read-type backward \
+            --cage-reads AdMatedF_Ecl_20days_Heads.biorep1.cage.chr4.bam \
+            --cage-read-type backward \
+            --polya-reads AdMatedF_Ecl_20days_Heads.biorep2.passeq.chr4.bam \
+            --polya-read-type forward
+
+It is only possible to use a single bam for each data type when using command 
+line options, and there is no notion of a replicate. However, GRIT also accepts
+a control file, which allows for substantial flexibility.
+
+Output:
+
+This will output 3 data files:
+
+discovered.elements.bed
+discovered.transcripts.gtf
+discovered.expression.csv
+
+which contain the transcript elements (e..g exons and promoters), the 
+transcripts, and transcript level expression estimates. 
+
+Additional options:
+
+Typically, one would run the above with:
+--ucsc    : formats the .bed and .gtf files so that they can be loaded into the
+            ucsc genome browser
+--threads : specifies to use this many concurrent processes
+--fasta   : a fasta file, which allows GRIT to run an ORF finder on the 
+            discovered transcripts
+
+In addition, for samples with relatively low read coverage, it can be useful to 
+include reference elements. Our experience is that junctions are relatively well
+annotated, so using --reference with --use-reference-junctions can help to 
+improve gene connectivity, and because the reference junctions are assigned 
+a count of zero during quantification, won't bias the expression estimates.
+
+We would not recommend using reference TSS and TES's unless there are no other 
+options. We have found them to be of much lower quality than other transcript
+elements. Instead, looking for publically avbailable CAGE and poly(A)-site-seq
+data in a matching tissue or cell line seems to perform better (in human, FANTOM
+and Merck poly(A) data are good resources. In fly, modENCODE has all the data 
+types).
+
+################################################################################
+Control File Example:
+################################################################################
+
+Instead of the above commands, we could also run:
+
+run_grit.py --control AdMatedF_Ecl_20days_Heads.control.txt
+
+Here's an example control file.
+
+# comment line
+# *'s indicate merged
+#sample_type            rep_id  assay   paired  stranded  read_type  filename
+
+AdMatedF_20days_Heads   rep1    rnaseq  true    true      auto       AdMatedF_Ecl_20days_Heads.biorep1.rnaseq.chr4.bam 
+AdMatedF_20days_Heads   rep2    rnaseq  true    true      auto       AdMatedF_Ecl_20days_Heads.biorep2.rnaseq.chr4.bam
+AdMatedF_20days_Heads   *       cage    false   true      auto       AdMatedF_Ecl_20days_Heads.biorep1.cage.chr4.bam
+AdMatedF_20days_Heads   *       polya   false   true      auto       AdMatedF_Ecl_20days_Heads.biorep2.passeq.chr4.bam
+
+sample_type - a unique identifier for the biological sample type. 
+rep_id      - a unique identifier for the replicate
+
+Data from the same sample type is merged for building elements (e.g. junction
+discovery, exon building, etc.) but transcripts are quantified on individual 
+replicates. A '*' as a rep_id indicates that the data should be used for all
+replicates for that sample type. 
+
+If multiple bam files with the same sample_type and rep_id are provided, they 
+will be merged. So, for instance, if you have an RNAseq experiment where one 
+has a read_type of forward, and one has a read_type of backward, then they 
+should each be provided a line with different read types.
+
+Again, in practice we would probably run:
+
+run_grit.py --control AdMatedF_Ecl_20days_Heads.control.txt --verbose --ucsc \
+            -t 16 --reference flybase-r5.45.chr4.gtf --use-refernce-junctions \
+            --fasta dm_rel_5.fa
+
+################################################################################
+Command Line Options:
+################################################################################
+
+Run 'run_grit.py --help' for a complete list. They should be well described.
+
+################################################################################
+Questions/bug reports:
+################################################################################
+
+Please direct questions and bug reports to the mailing list (
+http://groups.google.com/group/grit-bio ). I'll try to respond promptly to 
+bug reports, so please do not hesitate to contact me with questions. 

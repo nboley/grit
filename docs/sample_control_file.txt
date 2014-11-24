@@ -1,0 +1,8 @@
+# comment line
+# *'s indicate merged
+#sample_type                  rep_id        assay      paired    stranded   read_type  filename
+
+AdMixedMF_Ecl_4days_Carcass   544_BS281     rnaseq     true      true       forward    /home/nboley/methods_paper_rv3/mhc/annotation/AdMixedMF_Ecl_4days_Carcass/AdMixedMF_Ecl_4days_Carcass.544_BS281.bam 
+AdMixedMF_Ecl_4days_Carcass   545_BS282     rnaseq     true      true       forward    /home/nboley/methods_paper_rv3/mhc/annotation/AdMixedMF_Ecl_4days_Carcass/AdMixedMF_Ecl_4days_Carcass.545_BS282.bam 
+AdMixedMF_Ecl_4days_Carcass   *             cage       false     true       backward   /home/nboley/methods_paper_rv3/mhc/annotation/AdMixedMF_Ecl_4days_Carcass/CAGE_MixMF_4d_carcass_544_cage_BS281.sorted.withjn.bam
+AdMixedMF_Ecl_4days_Carcass   *             polya      false     true       backward   /home/nboley/methods_paper_rv3/mhc/annotation/AdMixedMF_Ecl_4days_Carcass/8893_ATGTCA_L006.bam
