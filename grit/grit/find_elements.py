@@ -1676,11 +1676,11 @@ def find_all_gene_segments( contig_lens,
     
     # build the fragment length distribution
     frag_lens = dict(frag_lens)
-    min_fl = int(min(frag_lens.keys()))
-    max_fl = min(1000, int(max(frag_lens.keys())))
+    min_fl = max(config.MIN_FRAGMENT_LENGTH, int(min(frag_lens.keys())))
+    max_fl = min(config.MAX_FRAGMENT_LENGTH, int(max(frag_lens.keys())))
     fl_density = numpy.zeros(max_fl - min_fl + 1)
     for fl, cnt in frag_lens.iteritems():
-        if fl > max_fl: continue
+        if fl < min_fl or fl > max_fl: continue
         fl_density[fl-min_fl] += cnt
     fl_density = fl_density/fl_density.sum()
     global fl_dists
