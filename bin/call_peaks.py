@@ -100,7 +100,7 @@ def parse_arguments():
                          default='auto',
         help="If 'forward' then the first read in a pair that maps to the genome without being reverse complemented are assumed to be on the '+' strand. default: auto")
     
-    parser.add_argument( '--out-fname', '-o', 
+    parser.add_argument( '--outfname', '-o', 
                          help='Output file name. (default stdout)')
     
     parser.add_argument( '--ucsc', default=False, action='store_true', 
@@ -128,6 +128,7 @@ def parse_arguments():
 
     config.VERBOSE = args.verbose
     if config.VERBOSE:
+        assert args.outfname != None, "--outfname must be set if --verbose is set"
         from grit.lib.logging import Logger
         log_ofstream = open( "log.txt", "a" )
         log_statement = Logger(
@@ -194,8 +195,8 @@ def parse_arguments():
     rnaseq_reads = RNAseqReads(args.rnaseq_reads.name, "rb").init(
         reverse_read_strand=rev_reads, ref_genes=ref_genes)
 
-    output_stream = ( open(args.out_fname, "w") 
-                      if args.out_fname != None
+    output_stream = ( open(args.outfname, "w") 
+                      if args.outfname != None
                       else sys.stdout )
     
     return ( ref_genes, ref_elements_to_include, 
