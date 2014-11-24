@@ -162,8 +162,9 @@ def parse_arguments():
     else:
         assert args.use_reference_genes == False, \
             "You must set --reference to --use-reference-genes"
+        ref_genes = None
         ref_elements_to_include = RefElementsToInclude(
-            False, False, False, False, False, False, FAlse )
+            False, False, False, False, False, False, False )
     
     if args.region != None:
         region_data = args.region.strip().split(":")
@@ -214,7 +215,10 @@ def main():
 
         contigs, contig_lens = get_contigs_and_lens( 
             [promoter_reads, rnaseq_reads] )
-        contig_lens = dict(zip(contigs, contig_lens))
+        contig_lens = dict((ctg, ctg_len)
+                           for ctg, ctg_len in zip(contigs, contig_lens)
+                           if ctg not in ('M',) 
+                           and not ctg.startswith('Un'))
         
         gene_segments = find_all_gene_segments( 
             contig_lens, 
