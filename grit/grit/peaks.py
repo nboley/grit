@@ -548,7 +548,7 @@ def call_peaks( signal_cov, original_control_cov,
         except: trim_stop=stop-start+1
         new_peaks.append((trim_start+start, 
                           trim_stop+start,
-                          cov_region[trim_start:trim_stop+1]))
+                          cov_region[trim_start:trim_stop+1].sum()))
 
     exp_filtered_peaks = []
     max_peak_cnt = float(max(cnt for start, stop, cnt in new_peaks))

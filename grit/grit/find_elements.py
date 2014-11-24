@@ -627,7 +627,7 @@ def find_polya_peak_bins_in_gene( gene, polya_reads, rnaseq_reads ):
     # can't reject the null hypothesis that the observed polya reads all derive 
     # from the background, at alpha = 0.001. 
     """
-    rnaseq_cov = find_coverage_in_gene( gene, rnaseq_reads )
+    rnaseq_cov = gene.find_coverage( rnaseq_reads )
     rnaseq_cov = numpy.array( rnaseq_cov+1-1e-6, dtype=int)
     max_val = rnaseq_cov.max()
     thresholds = TOTAL_MAPPED_READS*beta.ppf( 
@@ -1077,7 +1077,7 @@ def build_splice_graph_and_binned_reads_in_gene(
         control_cov = build_control_in_gene(
             gene, paired_rnaseq_reads, sorted(segment_bnds), 
             '3p' if gene.strand == '+' else '5p')
-        signal_cov = find_coverage_in_gene( gene, tes_reads )
+        signal_cov = gene.find_coverage( tes_reads )
         for pk_start, pk_stop, peak_cov in call_peaks( 
                 signal_cov, control_cov,
                 '3p' if gene.strand == '+' else '5p'):
@@ -1929,8 +1929,10 @@ def find_all_gene_segments( contig_lens,
     
     # build the fragment length distribution
     frag_lens = dict(frag_lens)
-    min_fl = max(config.MIN_FRAGMENT_LENGTH, int(min(frag_lens.keys())))
-    max_fl = min(config.MAX_FRAGMENT_LENGTH, int(max(frag_lens.keys())))
+    min_fl = max(config.MIN_FRAGMENT_LENGTH, 
+                 int(min(x[2] for x in frag_lens.keys())))
+    max_fl = min(config.MAX_FRAGMENT_LENGTH, 
+                 int(max(x[2] for x in frag_lens.keys())))
     fl_density = numpy.zeros(max_fl - min_fl + 1)
     for fl, cnt in frag_lens.iteritems():
         if fl < min_fl or fl > max_fl: continue
