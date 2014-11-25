@@ -46,12 +46,6 @@ MAX_NUM_ITERATIONS = 25
 N_REPS = 1
 if SPLIT_TYPE == 'random': assert N_REPS > 1
 
-MIN_MERGE_SIZE = 10
-MIN_REL_MERGE_SIZE = 0.5
-TRIM_FRACTION = 0.01
-MAX_EXP_SUM_FRACTION = 0.05
-MAX_EXP_MEAN_CVG_FRACTION = None
-
 def write_bedgraph_from_array(array, region, ofprefix):
     """
     track name=CAGE.pan..plus type=bedGraph
@@ -199,9 +193,10 @@ def build_control_in_gene(gene, paired_rnaseq_reads, bndries,
 
 
 class TestSignificance(object):
-    def __init__(self, signal_cov, control_cov, noise_frac):
+    def __init__(self, signal_cov, control_cov, noise_frac, min_peak_size):
         self.noise_n = int(noise_frac*sum(signal_cov)) + 1
         self.signal_n = sum(signal_cov)
+        self.min_peak_size = min_peak_size
         
         #### initialize the array that we will use to pick 
         #### the split base(s)
@@ -267,8 +262,8 @@ class TestSignificance(object):
         """Returns a closed,open interval of bases to split. 
 
         """
-        r_start += MIN_PEAK_SIZE
-        r_stop -= MIN_PEAK_SIZE
+        r_start += self.min_peak_size
+        r_stop -= self.min_peak_size
         assert r_stop >= r_start
         if SPLIT_TYPE == 'random':
             rv = random.randint(r_start, r_stop)
@@ -303,9 +298,11 @@ class TestSignificance(object):
         rv = random.choice(min_indices[0]) + r_start
         return rv, rv
 
-def find_noise_regions(signal_cov, control_cov, noise_frac, alpha):
+def find_noise_regions(signal_cov, control_cov, 
+                       noise_frac, alpha, min_peak_size):
     alpha = alpha/(2*len(signal_cov))
-    is_significant = TestSignificance(signal_cov, control_cov, noise_frac)
+    is_significant = TestSignificance(
+        signal_cov, control_cov, noise_frac, min_peak_size)
     noise_regions = []
     if signal_cov.sum() == 0:
         return [(0, len(signal_cov)),]
@@ -331,7 +328,7 @@ def find_noise_regions(signal_cov, control_cov, noise_frac, alpha):
         (start, stop), level = regions_to_split.pop(0)
         # if this region is too small, then it's already significant
         # and so there is nothing to do 
-        if stop - start < 2*MIN_PEAK_SIZE: continue
+        if stop - start < 2*min_peak_size: continue
         
         # build the sub regions, and test them for significance
         left_bnd, right_bnd = is_significant.find_split_bases(start, stop)
@@ -361,7 +358,7 @@ def find_noise_regions(signal_cov, control_cov, noise_frac, alpha):
     
     return sorted(noise_regions)
 
-def estimate_noise_frac(noise_regions, signal_cov, control_cov):    
+def estimate_noise_frac(noise_regions, signal_cov, control_cov, min_noise_frac):
     noise_cnt = sum(signal_cov[start:stop].sum() 
                     for start, stop in noise_regions )
     control_cnt = sum(control_cov[start:stop].sum() 
@@ -372,7 +369,7 @@ def estimate_noise_frac(noise_regions, signal_cov, control_cov):
     # because this is a MOM estimate, it can lay out of the domain.
     # however, this should only occur in insignificant genes
     rv = min(1., expected_noise_cnt/(signal_cnt+1e-6))
-    return max(MIN_NOISE_FRAC, rv)
+    return max(min_noise_frac, rv)
 
 def update_control_cov_for_five_prime_bias(
         noise_regions, noise_frac, 
@@ -416,7 +413,7 @@ def update_control_cov_for_five_prime_bias(
     return reg_coef, calc_new_ps(reg_coef, numpy.arange(max_pos), control_cov)
 
 def merge_adjacent_intervals(
-        intervals, max_abs_merge_distance, max_merge_fraction):
+        intervals, max_abs_merge_distance, max_merge_fraction, max_peak_size):
     if len(intervals) == 0: return []
     intervals.sort()
     merged_intervals = [list(intervals[0]),]
@@ -427,7 +424,7 @@ def merge_adjacent_intervals(
             max_merge_fraction*(stop-start),
             max_merge_fraction*(merged_intervals[-1][1]-merged_intervals[-1][0]))
         if ( start - max_merge_distance - 1 <= prev_stop
-             and stop - start + 1 < MAX_PEAK_SIZE ):
+             and stop - start + 1 < max_peak_size ):
             merged_intervals[-1][1] = stop
         else:
             merged_intervals.append([start, stop])
@@ -454,30 +451,13 @@ def estimate_read_and_control_cov_in_gene(
     
     return signal_cov, control_cov
 
-def estimate_read_cov_and_call_peaks(
-        region, signal_reads, reads_type, 
-        rnaseq_reads, alpha=0.01):
-    assert reads_type in ('promoter', 'polya')
-    reads_type = '5p' if reads_type == 'promoter' else '3p'
-    if region['strand'] == '-': 
-        reads_type = {'3p':'5p', '5p':'3p'}[reads_type]
-    
-    signal_cov = signal_reads.build_read_coverage_array(**region)    
-    if DEBUG_VERBOSE:
-        config.log_statement("Finished building signal coverage array")
-    #signal_cov = build_false_signal(rnaseq_reads, '5p')
-    
-    control_cov = build_control(
-        rnaseq_reads, region, reads_type, SMOOTH_WIN_LEN)
-    print control_cov.sum(), len(control_cov), region
-    return None
-    if DEBUG_VERBOSE:
-        config.log_statement("Finished building control coverage array")
-
-    return call_peaks(signal_cov, control_cov, reads_type, alpha)
-
-def call_peaks( signal_cov, original_control_cov,
-                reads_type, alpha=0.01):
+def call_peaks( signal_cov, original_control_cov, reads_type,
+                alpha, min_noise_frac, 
+                min_merge_size, min_rel_merge_size,
+                min_rd_cnt,
+                trim_fraction,
+                min_peak_size, max_peak_size,
+                max_exp_sum_fraction, max_exp_mean_cvg_fraction):
     signal = numpy.ones(len(signal_cov))
     for k in xrange(N_REPS):
         noise_frac = 1.0
@@ -495,9 +475,9 @@ def call_peaks( signal_cov, original_control_cov,
                         i+1, noise_frac*100, reg_coef))
             noise_regions = find_noise_regions(
                 signal_cov, control_cov, 
-                noise_frac, alpha=alpha )
+                noise_frac, alpha=alpha, min_peak_size=min_peak_size )
             new_noise_frac = estimate_noise_frac(
-                noise_regions, signal_cov, control_cov)
+                noise_regions, signal_cov, control_cov, min_noise_frac)
             new_reg_coef, control_cov = \
                 update_control_cov_for_five_prime_bias(
                     noise_regions, noise_frac, 
@@ -529,39 +509,41 @@ def call_peaks( signal_cov, original_control_cov,
     peaks.append((curr_start, curr_stop))
     while True:
         new_peaks = merge_adjacent_intervals(
-            peaks, MIN_MERGE_SIZE, MIN_REL_MERGE_SIZE)
+            peaks, min_merge_size, min_rel_merge_size, max_peak_size)
         if len(new_peaks) == len(peaks):
             peaks = new_peaks
             break
         else:
             peaks = new_peaks
-    
+
+    # trim peaks
     new_peaks = []
     for start, stop in peaks:
         cov_region = signal_cov[start:stop+1]
         total_cov = cov_region.sum()
         cov_cumsum = cov_region.cumsum()-cov_region[0]
         trim_start = numpy.flatnonzero(
-            cov_cumsum <= int(TRIM_FRACTION*total_cov)).max()
+            cov_cumsum <= int(trim_fraction*total_cov)).max()
         try: trim_stop = numpy.flatnonzero(
-                cov_cumsum >= int((1.0-TRIM_FRACTION)*total_cov)).min()
+                cov_cumsum >= int((1.0-trim_fraction)*total_cov)).min()
         except: trim_stop=stop-start+1
         new_peaks.append((trim_start+start, 
                           trim_stop+start,
                           cov_region[trim_start:trim_stop+1].sum()))
 
+    # fitler peaks
     exp_filtered_peaks = []
     max_peak_cnt = float(max(cnt for start, stop, cnt in new_peaks))
     max_peak_mean_cnt = float(max(cnt/float(stop-start+1) 
                                   for start, stop, cnt in new_peaks))
     for start, stop, cnt in new_peaks:
         length = stop - start + 1
-        if (cnt >= MIN_RD_CNT
-            and length >= MIN_PEAK_SIZE
-            and length <= MAX_PEAK_SIZE
-            and cnt/max_peak_cnt > MAX_EXP_SUM_FRACTION 
+        if (cnt >= min_rd_cnt
+            and length >= min_peak_size
+            and length <= max_peak_size
+            and cnt/max_peak_cnt > max_exp_sum_fraction
             and (cnt/float(length))/max_peak_mean_cnt 
-                > MAX_EXP_MEAN_CVG_FRACTION ): 
+                > max_exp_mean_cvg_fraction ): 
             exp_filtered_peaks.append((start, stop, cnt))
 
     return exp_filtered_peaks

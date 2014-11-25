@@ -1095,7 +1095,8 @@ def build_splice_graph_and_binned_reads_in_gene(
         signal_cov = gene.find_coverage( tss_reads )
         for pk_start, pk_stop, peak_cov in call_peaks( 
                 signal_cov, control_cov,
-                '5p' if gene.strand == '+' else '3p'):
+                '5p' if gene.strand == '+' else '3p',
+                **config.TSS_call_peaks_tuning_params):
             tss_regions.append(TranscriptBoundaryBin(
                 gene.start+pk_start, gene.start+pk_stop-1, 
                 "CAGE_PEAK_START", "CAGE_PEAK_STOP", "CAGE_PEAK",
@@ -1109,7 +1110,8 @@ def build_splice_graph_and_binned_reads_in_gene(
         signal_cov = gene.find_coverage( tes_reads )
         for pk_start, pk_stop, peak_cov in call_peaks( 
                 signal_cov, control_cov,
-                '3p' if gene.strand == '+' else '5p'):
+                '3p' if gene.strand == '+' else '5p',
+                **config.TES_call_peaks_tuning_params):
             tes_regions.append(TranscriptBoundaryBin(
                 gene.start+pk_start, gene.start+pk_stop-1, 
                 "POLYA_PEAK_START", "POLYA_PEAK_STOP", "POLYA",

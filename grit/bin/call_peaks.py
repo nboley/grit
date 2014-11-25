@@ -40,7 +40,8 @@ def shift_and_write_narrow_peak(region, peaks, ofp):
     return
 
 def process_genes(
-        genes_queue, promoter_reads, rnaseq_reads, ofp):
+        genes_queue, promoter_reads, rnaseq_reads, ofp,
+        call_peaks_tuning_params):
     promoter_reads.reload()
     rnaseq_reads.reload()
     num_genes = genes_queue.qsize()
@@ -56,7 +57,7 @@ def process_genes(
             gene, promoter_reads, 'promoter', rnaseq_reads )
 
         called_peaks = peaks.call_peaks(
-            signal_cov, control_cov, 'promoter', alpha=0.01)
+            signal_cov, control_cov, 'promoter', **call_peaks_tuning_params)
         
         region = {'chrm': gene.chrm, 'strand':gene.strand, 
                   'start':gene.start, 'stop':gene.stop}
@@ -102,6 +103,8 @@ def parse_arguments():
     
     parser.add_argument( '--outfname', '-o', 
                          help='Output file name. (default stdout)')
+    parser.add_argument( '--gene-regions-ofname', 
+                         help='Output bed file name to write gene regions to. (default: do not save gene regions)')
     
     parser.add_argument( '--ucsc', default=False, action='store_true', 
                          help='Format the contig names to work with the UCSC genome browser.')
@@ -138,17 +141,19 @@ def parse_arguments():
         config.log_statement = log_statement
 
     config.FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
-    
-    peaks.MIN_MERGE_SIZE = args.min_merge_distance
-    peaks.MIN_REL_MERGE_SIZE = args.min_relative_merge_distance
 
-    peaks.MIN_RD_CNT = 5
-    peaks.MIN_PEAK_SIZE = 5
-    peaks.MAX_PEAK_SIZE = 500
-    
-    peaks.TRIM_FRACTION = args.trim_fraction
-    peaks.MAX_EXP_SUM_FRACTION = args.exp_filter_fraction
-    peaks.MAX_EXP_MEAN_CVG_FRACTION = peaks.MAX_EXP_SUM_FRACTION/10
+    call_peaks_tuning_params = {
+        'alpha': 1e-2, 
+        'min_noise_frac': 0.01, 
+        'min_merge_size': args.min_merge_distance, 
+        'min_rel_merge_size': args.min_relative_merge_distance,
+        'min_rd_cnt': 5,
+        'min_peak_size': 5, 
+        'max_peak_size': 1000,
+        'trim_fraction': args.trim_fraction,
+        'max_exp_sum_fraction': args.exp_filter_fraction, 
+        'max_exp_mean_cvg_fraction': args.exp_filter_fraction/10
+    }
     
     if args.reference != None:
         if config.VERBOSE:
@@ -201,12 +206,17 @@ def parse_arguments():
     
     return ( ref_genes, ref_elements_to_include, 
              promoter_reads, rnaseq_reads, 
-             output_stream, args.region )
+             output_stream, 
+             args.gene_regions_ofname,
+             args.region,
+             call_peaks_tuning_params )
 
 def main():
     ( ref_genes, ref_elements_to_include, 
       promoter_reads, rnaseq_reads, 
-      output_stream, region_to_use
+      output_stream, gene_regions_ofname,
+      region_to_use,
+      call_peaks_tuning_params
       ) = parse_arguments()
     try:
         ofp = ProcessSafeOPStream(output_stream)
@@ -220,22 +230,35 @@ def main():
                            for ctg, ctg_len in zip(contigs, contig_lens)
                            if ctg not in ('M',) 
                            and not ctg.startswith('Un'))
-        
-        gene_segments = find_all_gene_segments( 
-            contig_lens, 
-            rnaseq_reads, promoter_reads, None,
-            ref_genes, ref_elements_to_include, 
-            region_to_use=region_to_use)
-                
-        with open("genes.bed", "w") as genes_ofp:
-            for gene in gene_segments:
-                gene.write_elements_bed(genes_ofp)
+
+        # if we are supposed to use the annotation genes
+        gene_segments = []
+        if ref_elements_to_include.genes == True:
+            for contig, contig_len in contig_lens.iteritems():
+                for strand in '+-':
+                    contig_gene_bndry_bins = load_gene_bndry_bins(
+                        ref_genes, contig, strand, contig_len)
+                    gene_segments.extend( contig_gene_bndry_bins )
+        else:
+            gene_segments = find_all_gene_segments( 
+                contig_lens, 
+                rnaseq_reads, promoter_reads, None,
+                ref_genes, ref_elements_to_include, 
+                region_to_use=region_to_use)
+
+        if gene_regions_ofname != None:
+            with open(gene_regions_ofname, "w") as genes_ofp:
+                print >> genes_ofp, "track name={} type=bed".format(
+                    gene_regions_ofname)
+                for gene in gene_segments:
+                    gene.write_elements_bed(genes_ofp)
         
         queue = multiprocessing.Queue()
         for gene in gene_segments:
             queue.put(gene)
 
-        args = [queue, promoter_reads, rnaseq_reads, ofp]
+        args = [queue, promoter_reads, rnaseq_reads, ofp, 
+                call_peaks_tuning_params]
         if config.NTHREADS == 1:
             process_genes(*args)
         else:

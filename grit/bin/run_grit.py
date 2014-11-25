@@ -526,16 +526,31 @@ def parse_arguments():
     config.TES_EXON_MERGE_DISTANCE = \
         args.TES_exon_merge_distance
 
-    grit.peaks.MIN_MERGE_SIZE = 50
-    grit.peaks.MIN_REL_MERGE_SIZE = 0.5
+    config.TSS_call_peaks_tuning_params = {
+        'alpha': 1e-2, 
+        'min_noise_frac': 0.01, 
+        'min_merge_size': 50,
+        'min_rel_merge_size': 0.5,
+        'min_rd_cnt': 5,
+        'min_peak_size': 3, 
+        'max_peak_size': 1000,
+        'trim_fraction': 0.01,
+        'max_exp_sum_fraction': 0.05,
+        'max_exp_mean_cvg_fraction': 0.05/10
+    }
 
-    grit.peaks.MIN_RD_CNT = 2
-    grit.peaks.MIN_PEAK_SIZE = 10
-    grit.peaks.MAX_PEAK_SIZE = 500
-    
-    grit.peaks.TRIM_FRACTION = 0.01
-    grit.peaks.MAX_EXP_SUM_FRACTION = 0.05
-    grit.peaks.MAX_EXP_MEAN_CVG_FRACTION = 0 #grit.peaks.MAX_EXP_SUM_FRACTION/10
+    config.TES_call_peaks_tuning_params = {
+        'alpha': 1e-2, 
+        'min_noise_frac': 0.01, 
+        'min_merge_size': 50,
+        'min_rel_merge_size': 0.5,
+        'min_rd_cnt': 2,
+        'min_peak_size': 1,
+        'max_peak_size': 1000,
+        'trim_fraction': 0.01,
+        'max_exp_sum_fraction': 0.05,
+        'max_exp_mean_cvg_fraction': 0.05/10
+    }
 
     config.VERBOSE = args.verbose
     
