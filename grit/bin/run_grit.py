@@ -529,13 +529,13 @@ def parse_arguments():
     grit.peaks.MIN_MERGE_SIZE = 50
     grit.peaks.MIN_REL_MERGE_SIZE = 0.5
 
-    grit.peaks.MIN_RD_CNT = 5
-    grit.peaks.MIN_PEAK_SIZE = 5
+    grit.peaks.MIN_RD_CNT = 2
+    grit.peaks.MIN_PEAK_SIZE = 10
     grit.peaks.MAX_PEAK_SIZE = 500
     
     grit.peaks.TRIM_FRACTION = 0.01
     grit.peaks.MAX_EXP_SUM_FRACTION = 0.05
-    grit.peaks.MAX_EXP_MEAN_CVG_FRACTION = grit.peaks.MAX_EXP_SUM_FRACTION/10
+    grit.peaks.MAX_EXP_MEAN_CVG_FRACTION = 0 #grit.peaks.MAX_EXP_SUM_FRACTION/10
 
     config.VERBOSE = args.verbose
     

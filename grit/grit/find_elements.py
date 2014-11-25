@@ -345,7 +345,8 @@ class Bin(object):
 class SegmentBin(Bin):
     def __init__(self, start, stop, left_labels, right_labels,
                  type=None, 
-                 fpkm_lb=None, fpkm=None, fpkm_ub=None ):
+                 fpkm_lb=None, fpkm=None, fpkm_ub=None,
+                 cnt=None):
         self.start = start
         self.stop = stop
         assert stop - start >= 0
@@ -358,6 +359,8 @@ class SegmentBin(Bin):
         self.fpkm_lb = fpkm_lb
         self.fpkm = fpkm
         self.fpkm_ub = fpkm_ub
+        
+        self.cnt = cnt
     
     def set_expression(self, fpkm_lb, fpkm, fpkm_ub):
         assert not any (math.isnan(x) for x in (fpkm_lb, fpkm, fpkm_ub))
@@ -536,11 +539,12 @@ class GeneElements(object):
             element_type = element.type
             if element_type == None: 
                 element_type = 'UNKNOWN'
+                continue
             
             try: fpkm = element.fpkm_ub
             except: fpkm = element.fpkm
             score = min(1000, int(1000*fpkm/max_min_fpkm))
-
+            score = 1000
             grp_id = element_type + "_%s_%s_%i_%i" % region
 
             # also, add 1 to stop because beds are open-closed ( which means no net 
@@ -963,14 +967,32 @@ def extract_jns_and_paired_reads_in_gene(gene, reads):
     return paired_reads, jns, opp_strand_jns
 
 def find_widest_path(splice_graph):
-    curr_paths = [ [[node,], data['bin'].fpkm_lb] 
+    return None, 0
+    try: 
+        tss_max = max(data['bin'].fpkm_lb
+                      for node, data in splice_graph.nodes(data=True)
+                      if data['type'] == 'TSS')
+    except:
+        tss_max = 0
+    try:
+        tes_max = max(data['bin'].fpkm_lb
+                      for node, data in splice_graph.nodes(data=True)
+                      if data['type'] == 'TES')
+    except:
+        tes_max = 0
+    return None, max(tss_max, tss_max)
+
+    splice_graph = copy(splice_graph)
+    assert nx.is_directed_acyclic_graph(splice_graph)
+    config.log_statement("Finding widest path")
+    curr_paths = [ [[node,], data['bin'].fpkm, data['bin'].fpkm] 
                   for node, data in splice_graph.nodes(data=True)
                   if data['type'] == 'TSS']
     max_path = None
-    max_min_fpkm = 0
+    max_min_fpkm = min( x[1] for x in curr_paths )/10. if len(curr_paths) > 0 else 0
     while len(curr_paths) > 0:
         # find a path to check
-        curr_path, curr_fpkm = curr_paths.pop()
+        curr_path, curr_fpkm, prev_fpkm = curr_paths.pop()
         # if the paths fpkm is less than the maximum,
         # then there is no need to consider anything else
         if curr_fpkm < max_min_fpkm: continue
@@ -983,20 +1005,27 @@ def find_widest_path(splice_graph):
             if max_min_fpkm < curr_fpkm:
                 max_path = curr_path
                 max_min_fpkm = curr_fpkm
+
+        config.log_statement("%i paths in queue (%e, %e, %i, %i)" % (
+            len(curr_paths), max_min_fpkm, prev_fpkm, 
+            len(successors), len([x for x, data in splice_graph.nodes(data=True)
+                                  if data['bin'].fpkm > max_min_fpkm])))
             
         # otherwise, build new paths and update the fpkms            
         for successor in successors:
             bin = splice_graph.node[successor]['bin']
             new_path = curr_path + [successor,]
             new_fpkm = min(bin.fpkm, curr_fpkm)
-            if new_fpkm < max_min_fpkm: continue
+            if new_fpkm < max_min_fpkm: 
+                splice_graph.remove_node(successor)
+                continue
             if bin.type == 'POLYA':
                 if new_fpkm > max_min_fpkm:
                     max_path = new_path
                     max_min_fpkm = new_fpkm
             else:
-                curr_paths.append((new_path, new_fpkm))
-        curr_paths.sort(key=lambda x:x[1], reverse=True)
+                curr_paths.append((new_path, new_fpkm, bin.fpkm))
+        curr_paths.sort(key=lambda x:len(x[0]))
     return max_path, max_min_fpkm
 
 def build_splice_graph_and_binned_reads_in_gene( 
@@ -1137,7 +1166,7 @@ def build_splice_graph_and_binned_reads_in_gene(
                 splice_graph.add_edge(i+1, i, type='adjacent', bin=None)
 
     jn_edges = []
-    for (start, stop) in jns:
+    for (start, stop), cnt in jns.iteritems():
         start_i = segment_bnds.searchsorted(start)-1
         assert segment_bnds[start_i+1] == start
         stop_i = segment_bnds.searchsorted(stop+1)-1+1
@@ -1147,10 +1176,10 @@ def build_splice_graph_and_binned_reads_in_gene(
         if stop_i == splice_graph.number_of_nodes(): continue
         assert stop_i in splice_graph, str((stop_i, splice_graph.nodes(data=True)))
         if gene.strand == '+':
-            bin = SegmentBin( start, stop, 'D_JN', 'R_JN', type='INTRON')
+            bin = SegmentBin( start, stop, 'D_JN', 'R_JN', type='INTRON', cnt=cnt)
             splice_graph.add_edge(start_i, stop_i, type='splice', bin=bin)
         else:
-            bin = SegmentBin( start, stop, 'R_JN', 'D_JN', type='INTRON')
+            bin = SegmentBin( start, stop, 'R_JN', 'D_JN', type='INTRON', cnt=cnt)
             splice_graph.add_edge(stop_i, start_i, type='splice', bin=bin)
 
     for i, (tss_bin, tss_segments) in enumerate(tss_segment_map.iteritems()):
@@ -1171,6 +1200,12 @@ def build_splice_graph_and_binned_reads_in_gene(
             if gene.strand == '+': bin_i -= 1
             splice_graph.add_edge(bin_i, node_id, type='tes', bin=None)
     
+    return splice_graph, None
+    
+    config.log_statement( 
+        "Binning reads in Chrm %s Strand %s Pos %i-%i" %
+        (gene.chrm, gene.strand, gene.start, gene.stop) )
+    
     # pre-calculate the expected and observed counts
     binned_reads = f_matrix.bin_rnaseq_reads( 
         rnaseq_reads, gene.chrm, gene.strand, segment_bnds, 
@@ -1178,7 +1213,49 @@ def build_splice_graph_and_binned_reads_in_gene(
     
     return splice_graph, binned_reads
 
+def fast_quantify_segment_expression(gene, splice_graph, 
+                                     rnaseq_reads, cage_reads, polya_reads):    
+    config.log_statement( 
+        "FAST Quantifying segment expression in Chrm %s Strand %s Pos %i-%i" %
+        (gene.chrm, gene.strand, gene.start, gene.stop) )
+
+    quantiles = [0.01, 0.5, 1-.01]
+    avg_read_len = 0
+    for (rg, (r1_len,r2_len)), (fl_dist, marginal_frac) in fl_dists.iteritems():
+        avg_read_len += marginal_frac*(r1_len + r2_len)/2
+    
+    rnaseq_cov = gene.find_coverage(rnaseq_reads)
+    for element_i, data in splice_graph.nodes(data=True):
+        #element = splice_graph.nodes(element_i)
+        element = splice_graph.node[element_i]
+        if element['type'] != 'segment': continue
+        coverage = rnaseq_cov[element['bin'].start-gene.start
+                              :element['bin'].stop-gene.start+1]
+        n_reads_in_segment = 0 if len(coverage) == 0 else numpy.median(coverage)
+        fpkms = 1e6*(1000./element['bin'].length())*beta.ppf(
+            quantiles, 
+            n_reads_in_segment+1e-6, 
+            read_counts.RNASeq-n_reads_in_segment+1e-6)
+        element['bin'].set_expression(*fpkms)
+
+    for start, stop, data in splice_graph.edges(data=True):
+        if data['type'] != 'splice': continue
+        n_reads_in_segment = float(data['bin'].cnt)
+        effective_len = float(max(
+            1, avg_read_len - 2*config.MIN_INTRON_FLANKING_SIZE))
+        fpkms = 1e6*(1000./effective_len)*beta.ppf(
+            quantiles, 
+            n_reads_in_segment+1e-6, 
+            read_counts.RNASeq-n_reads_in_segment+1e-6)
+        data['bin'].set_expression(*fpkms)
+
+    return splice_graph
+
 def quantify_segment_expression(gene, splice_graph, binned_reads):    
+    config.log_statement( 
+        "Quantifying segment expression in Chrm %s Strand %s Pos %i-%i" %
+        (gene.chrm, gene.strand, gene.start, gene.stop) )
+
     # find all possible transcripts, and their association with each element
     max_fl = max(fl_dist.fl_max for (fl_dist, prb) in fl_dists.values())
     min_fl = min(fl_dist.fl_min for (fl_dist, prb) in fl_dists.values())
@@ -1247,6 +1324,10 @@ def quantify_segment_expression(gene, splice_graph, binned_reads):
     segment_bins, jn_bins = [], []
     for j, (element, transcripts) in enumerate(
             segment_transcripts_map.iteritems()):
+        print element, transcripts
+        continue
+    assert False
+    if True:
         if config.VERBOSE:
             config.log_statement( 
                 "Estimating element expression for segment "
@@ -1343,6 +1424,10 @@ def determine_exon_type(left_label, right_label):
     return 'EXON'
 
 def build_exons_from_exon_segments(gene, splice_graph, max_min_expression):
+    config.log_statement( 
+        "Building Exons from Segments in Chrm %s Strand %s Pos %i-%i" %
+        (gene.chrm, gene.strand, gene.start, gene.stop) )
+
     exon_segments = [ data['bin']
                       for node_id, data in splice_graph.nodes(data=True)
                       if data['type'] == 'segment' ]
@@ -1361,9 +1446,14 @@ def build_exons_from_exon_segments(gene, splice_graph, max_min_expression):
         for start_label in start_segment.left_labels:
             if start_label not in EXON_START_LABELS:
                 continue
-            
+
             for j in xrange(i, len(exon_segments)):
                 stop_segment = exon_segments[j]
+
+                #if ( start_label == 'D_JN'
+                #     and 'R_JN' in stop_segment.right_labels ):
+                #    break
+                
                 local_max_min_expression = max_min_expression
                 if j+i < len(exon_segments):
                     local_max_min_expression = max(
@@ -1385,6 +1475,7 @@ def build_exons_from_exon_segments(gene, splice_graph, max_min_expression):
                         determine_exon_type(start_label, stop_label),
                         fpkm)
                     exons.append(exon_bin)
+            
     if gene.strand == '-':
         exons = reverse_strand(exons, gene.stop)
     
@@ -1410,7 +1501,9 @@ def find_exons_in_gene( gene, contig_lens, ofp,
     # based upon this splice graph in this gene.
     splice_graph, binned_reads = build_splice_graph_and_binned_reads_in_gene(
         gene, rnaseq_reads, cage_reads, polya_reads, ref_elements )
-    splice_graph = quantify_segment_expression(gene, splice_graph, binned_reads)
+    splice_graph = fast_quantify_segment_expression(
+        gene, splice_graph, rnaseq_reads, cage_reads, polya_reads)
+    #splice_graph = quantify_segment_expression(gene, splice_graph, binned_reads)
     # build exons, and add them to the gene
     min_max_exp_t, max_element_exp = find_widest_path(splice_graph)
     min_max_exp = max(
@@ -2008,8 +2101,16 @@ def find_exons( contig_lens, gene_bndry_bins, ofp,
         genes_queue = manager.list()
     else:
         genes_queue = []
-     
+
     genes_queue.extend( gene_bndry_bins )
+    """
+    for ref_gene in ref_genes:
+        gene = GeneElements(ref_gene.chrm, ref_gene.strand)
+        gene.regions.append(
+            SegmentBin(ref_gene.start, ref_gene.stop, 
+                       ["ESTART",], ["ESTOP",], "GENE"))
+        genes_queue.append(gene)
+    """
     args = [ (genes_queue, genes_queue_lock, threads_are_running), 
              ofp, contig_lens, ref_elements, ref_elements_to_include,
              rnaseq_reads, cage_reads, polya_reads  ]
