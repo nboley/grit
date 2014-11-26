@@ -14,6 +14,8 @@ from itertools import chain
 try: import grit
 except ImportError: sys.path.insert(0, "/home/nboley/grit/grit/")
 
+import config
+
 import files.junctions
 import grit.files.reads
 from grit.lib.multiprocessing_utils import ProcessSafeOPStream
@@ -452,6 +454,7 @@ def estimate_read_and_control_cov_in_gene(
     return signal_cov, control_cov
 
 def call_peaks( signal_cov, original_control_cov, reads_type,
+                gene,
                 alpha, min_noise_frac, 
                 min_merge_size, min_rel_merge_size,
                 min_rd_cnt,
@@ -468,8 +471,12 @@ def call_peaks( signal_cov, original_control_cov, reads_type,
                 signal_cov, original_control_cov, reads_type)
         for i in xrange(MAX_NUM_ITERATIONS):
             if DEBUG_VERBOSE: 
+                region = {'chrm': gene.chrm, 'strand': gene.strand, 
+                          'start': gene.start, 'stop': gene.stop}
                 write_bedgraph_from_array(
                     1000*control_cov, region, "control.%i"%i)
+                write_bedgraph_from_array(
+                    signal_cov, region, "signal.%i"%i)
                 config.log_statement(
                     "Iter %i: Noise Frac %.2f%%\tReg Coef: %s" % (
                         i+1, noise_frac*100, reg_coef))

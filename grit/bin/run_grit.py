@@ -316,7 +316,9 @@ class Samples(object):
                 rev_reads = {'forward':False, 'backward':True, 'auto': None}[
                     data.read_type]
                 reads = PolyAReads(data.filename)
-                reads.init(reverse_read_strand=rev_reads, ref_genes=self.ref_genes)
+                reads.init(pairs_are_opp_strand=True,
+                           reverse_read_strand=rev_reads, 
+                           ref_genes=self.ref_genes)
                 self.mapped_reads_cache[data.filename] = reads
             all_reads.append(reads)
         

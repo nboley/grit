@@ -14,6 +14,7 @@ from itertools import chain
 
 import config
 from elements import iter_nonoverlapping_exons
+from files.gtf import GenomicInterval
 
 import os
 
@@ -46,8 +47,8 @@ class FlDist( object ):
             assert type( fl_max ) == int
             assert len( fl_density ) == ( fl_max - fl_min + 1 )
         except:
-            print fl_min, fl_max
             print fl_density
+            print fl_min, fl_max
             raise
         
         self.fl_min = fl_min
@@ -470,7 +471,7 @@ def find_frag_len( rd1, rd2 ):
     
 
 def find_fragments_in_exon( reads, exon ):
-    fragment_sizes = []
+    fragment_sizes = defaultdict(int)
     
     # calculate the length of the exon
     exon_len = exon.stop - exon.start + 1
@@ -489,10 +490,9 @@ def find_fragments_in_exon( reads, exon ):
         # get read group from tags
         # put all frags w/o a read group into mean read group
         try:
-            read_group = [ val for key, val in read1.tags if key == 'RG' ][0]
+            read_group = read1.opt('RG')
         except IndexError:
             read_group = 'mean'
-        read_group = 'mean'
         
         strand = '-' if read1.is_reverse else '+'
         
@@ -500,25 +500,13 @@ def find_fragments_in_exon( reads, exon ):
         if frag_len == None:
             continue
         
-        key = ( read_group, strand, exon_len )
-        fragment_sizes.append( ( key, frag_len ) )
+        key = ( read_group, read1.inferred_length, frag_len )
+        fragment_sizes[key] += 1
         
         cnt += 1
         if cnt > MAX_NUM_FRAGMENTS_PER_EXON:
             break
         
-    return fragment_sizes
-
-def find_fragments( reads, exons ):
-    fragment_sizes = []
-    for exon_i, exon in enumerate(exons):
-        if (exon.stop - exon.start + 1) < MIN_EXON_LENGTH:
-            continue
-        
-        fragment_sizes.extend( find_fragments_in_exon( reads, exon ) )
-        if len( fragment_sizes ) > MAX_NUM_FRAGMENTS:
-            break
-    
     return fragment_sizes
 
 
@@ -596,12 +584,10 @@ def parse_arguments():
     return args.gff, args.bam, args.outfname, args.analyze
 
 def build_fl_dists( elements, reads ):
-    from files.gtf import GenomicInterval
-    
     def iter_good_exons():
         num = 0
         for (chrm, strand), exons in sorted( elements.iteritems()):
-            for start,stop in iter_nonoverlapping_exons(exons['internal_exon']):
+            for start,stop in iter_nonoverlapping_exons(exons):
                 num += 1
                 yield GenomicInterval(chrm, strand, start, stop)
             if config.DEBUG_VERBOSE: 
@@ -617,6 +603,21 @@ def build_fl_dists( elements, reads ):
     #if False and None != fragments and  None != analyze_pdf_fname:
     #    analyze_fl_dists( fragments, analyze_pdf_fname )
     return fl_dists
+
+def find_fls_from_annotation( annotation, reads ):
+    tot_cnt = 0
+    frag_lens = defaultdict(int)
+    for gene in annotation:
+        if len(gene.transcripts) > 1: continue
+        for start, stop in gene.transcripts[0].exons:
+            region = GenomicInterval(gene.chrm, gene.strand, start, stop) 
+            for (rg, rd_len, fl), cnt in find_fragments_in_exon(
+                    reads, region).items():
+                frag_lens[(rg, rd_len, fl)] += cnt
+                tot_cnt += cnt
+            if tot_cnt > 10000: 
+                return frag_lens
+    return frag_lens
 
 def main():
     gff_fp, bam_fn, ofname, analyze = parse_arguments()

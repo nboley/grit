@@ -36,7 +36,7 @@ from peaks import call_peaks, build_control_in_gene
 
 from elements import find_jn_connected_exons
 
-from frag_len import FlDist
+from frag_len import FlDist, find_fls_from_annotation
 
 from transcript import Transcript, Gene
 import f_matrix     
@@ -391,7 +391,7 @@ class TranscriptBoundaryBin(SegmentBin):
         self.cnts = cnts
     
     def set_tpm(self):
-        total_cnt = ( read_counts.Promoters 
+        total_cnt = ( read_counts.Promoters
                       if self.type == 'CAGE_PEAK' 
                       else read_counts.Polya )
         SegmentBin.set_expression(
@@ -1096,6 +1096,7 @@ def build_splice_graph_and_binned_reads_in_gene(
         for pk_start, pk_stop, peak_cov in call_peaks( 
                 signal_cov, control_cov,
                 '5p' if gene.strand == '+' else '3p',
+                gene,
                 **config.TSS_call_peaks_tuning_params):
             tss_regions.append(TranscriptBoundaryBin(
                 gene.start+pk_start, gene.start+pk_stop-1, 
@@ -1111,6 +1112,7 @@ def build_splice_graph_and_binned_reads_in_gene(
         for pk_start, pk_stop, peak_cov in call_peaks( 
                 signal_cov, control_cov,
                 '3p' if gene.strand == '+' else '5p',
+                gene,
                 **config.TES_call_peaks_tuning_params):
             tes_regions.append(TranscriptBoundaryBin(
                 gene.start+pk_start, gene.start+pk_stop-1, 
@@ -1784,6 +1786,8 @@ def split_genome_into_segments(contig_lens, region_to_use,
     """
     if region_to_use != None:
         r_chrm, (r_start, r_stop) = region_to_use
+    else:
+        r_chrm, r_start, r_stop = None, 0, 1000000000000
     total_length = sum(contig_lens.values())
     segment_length = max(min_segment_length, 
                          int(total_length/float(config.NTHREADS*1000)))
@@ -1794,11 +1798,7 @@ def split_genome_into_segments(contig_lens, region_to_use,
             contig_lens.iteritems(), key=lambda x:x[1]):
         if region_to_use != None and r_chrm != contig: 
             continue
-        for start in xrange(0, contig_length, segment_length):
-            if region_to_use != None and r_stop < start: 
-                continue
-            if region_to_use != None and r_start > start+segment_length: 
-                continue
+        for start in xrange(r_start, min(r_stop,contig_length), segment_length):
             segments.append(
                 (contig, start, 
                  min(contig_length, start+segment_length-1)))
@@ -1849,68 +1849,46 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
             "Loading gene boundaries from annotated genes in %s:%s" % (  
                 contig, strand) )  
   
-    ## find the gene regions in this contig. Note that these  
-    ## may be overlapping  
-    gene_intervals = []  
-    for gene in genes:  
+    regions_graph = nx.Graph()
+    for gene in genes:
         if gene.chrm != contig: continue  
-        if gene.strand != strand: continue  
-        gene_intervals.append((gene.start, gene.stop))  
-    if len(gene_intervals) == 0: return []  
-      
-    ## merge overlapping genes regions by building a graph with nodes  
-    ## of all gene regions, and edges with all overlapping genes   
-  
-    # first, find the edges by probing into the sorted intervals  
-    gene_intervals.sort()  
-    gene_starts = numpy.array([interval[0] for interval in gene_intervals])  
-    overlapping_genes = []  
-    for gene_index, (start, stop) in enumerate(gene_intervals):  
-        start_i = numpy.searchsorted(gene_starts, start)  
-        # start looping over potentially overlapping intervals  
-        for i, gene_interval in enumerate(gene_intervals[start_i:]):  
-            # if we have surpassed all potentially overlapping intervals,  
-            # then we don't need to go any further  
-            if gene_interval[0] > stop: break  
-            # if the intervals overlap ( I dont think I need this test, but  
-            # it's cheap and this could be an insidious bug )  
-            if not (stop < gene_interval[0] or start > gene_interval[1] ):  
-                overlapping_genes.append( (int(gene_index), int(i+start_i)) )  
-      
-    # buld the graph, find the connected components, and build   
-    # the set of merged intervals  
-    genes_graph = nx.Graph()  
-    genes_graph.add_nodes_from(xrange(len(gene_starts)))  
-    genes_graph.add_edges_from(overlapping_genes)  
-    merged_gene_intervals = []  
-    for genes in nx.connected_components(genes_graph):  
-        start = min( gene_intervals[i][0] for i in genes )  
-        stop = max( gene_intervals[i][1] for i in genes )  
-        merged_gene_intervals.append( [start, stop] )  
-      
-    # expand the gene boundaries to their maximum amount such that the genes   
-    # aren't overlapping. This is to allow for gene ends that lie outside of   
-    # the previously annotated boundaries  
-    merged_gene_intervals.sort()  
-    for i in xrange(0,len(merged_gene_intervals)-1):  
-        mid = (merged_gene_intervals[i][1]+merged_gene_intervals[i+1][0])/2  
-        merged_gene_intervals[i][1] = int(mid)-1  
-        merged_gene_intervals[i+1][0] = int(mid)+1      
-    merged_gene_intervals[0][0] = max(   
-        1, merged_gene_intervals[0][0]-config.MAX_GENE_EXPANSION)  
-    merged_gene_intervals[-1][1] = min(   
-        contig_len-1, merged_gene_intervals[-1][1]+config.MAX_GENE_EXPANSION)  
-      
+        if gene.strand != strand: continue
+        regions = [tuple(x) for x in gene.find_transcribed_regions()]
+        regions_graph.add_nodes_from(regions)
+        regions_graph.add_edges_from(izip(regions[:-1], regions[1:]))
+
+    # group overlapping regions
+    all_regions = sorted(regions_graph.nodes())
+    if len(all_regions) == 0: return []  
+
+    grpd_regions = [[],]
+    curr_start, curr_stop = all_regions[0]
+    for x in all_regions:
+        if x[0] < curr_stop:
+            curr_stop = max(x[1], curr_stop)
+            grpd_regions[-1].append(x)
+        else:
+            curr_start, curr_stop = x
+            grpd_regions.append([x,])
+    # add edges for overlapping regions
+    for grp in grpd_regions:
+        regions_graph.add_edges_from(izip(grp[:-1], grp[1:]))
+
     # build gene objects with the intervals  
     gene_bndry_bins = []  
-    for start, stop in merged_gene_intervals:  
+    for regions_cluster in nx.connected_components(regions_graph):
         gene_bin = GeneElements( contig, strand )
-        gene_bin.regions.append(
-            SegmentBin(start, stop, ["ESTART",], ["ESTOP",], "GENE"))
+        regions = sorted(files.gtf.flatten(regions_cluster))
+        for start, stop in regions:
+            gene_bin.regions.append(
+                SegmentBin(start, stop, ["ESTART",], ["ESTOP",], "GENE"))
         gene_bndry_bins.append( gene_bin )  
+
+    # XXX TODO expand gene boundaries
+    # actually, it's probably better just to go through discovery
+    
+    return gene_bndry_bins
       
-    config.log_statement( "" )  
-    return gene_bndry_bins  
 
 def build_fl_dists_from_fls_dict(frag_lens):
     # the return fragment length dists
@@ -1921,10 +1899,12 @@ def build_fl_dists_from_fls_dict(frag_lens):
     # inefficient, and the accumulation is in the worker threads
     grpd_frag_lens = defaultdict(list)
     for (rd_grp, rd_len, fl), cnt in frag_lens.iteritems():
+        if fl < config.MIN_FRAGMENT_LENGTH or fl > config.MAX_FRAGMENT_LENGTH:
+            continue
         grpd_frag_lens[(rd_grp, rd_len)].append((fl, cnt))
     for (rd_grp, rd_len), fls_and_cnts in grpd_frag_lens.iteritems():
-        min_fl = min(fl for fl, cnt in fls_and_cnts)
-        max_fl = max(fl for fl, cnt in fls_and_cnts if fl < 800)
+        min_fl = int(min(fl for fl, cnt in fls_and_cnts))
+        max_fl = int(max(fl for fl, cnt in fls_and_cnts))
         fl_density = numpy.zeros(max_fl - min_fl + 1)
         for fl, cnt in fls_and_cnts:
             if fl > max_fl: continue
@@ -1967,6 +1947,10 @@ def find_all_gene_segments( contig_lens,
     if ref_elements_to_include.polya_sites: 
         ref_element_types_to_include.add('polya')
     if ref_elements_to_include.exons: 
+        ref_element_types_to_include.add('exon')
+    # to give full gene connectivity
+    if ref_elements_to_include.genes:
+        ref_element_types_to_include.add('intron')
         ref_element_types_to_include.add('exon')
     
     pids = []
@@ -2022,20 +2006,8 @@ def find_all_gene_segments( contig_lens,
         filtered_jns[(contig, '+')] = filter_jns(plus_jns, minus_jns)
         filtered_jns[(contig, '-')] = filter_jns(minus_jns, plus_jns)
     
-    # build the fragment length distribution
-    frag_lens = dict(frag_lens)
-    min_fl = max(config.MIN_FRAGMENT_LENGTH, 
-                 int(min(x[2] for x in frag_lens.keys())))
-    max_fl = min(config.MAX_FRAGMENT_LENGTH, 
-                 int(max(x[2] for x in frag_lens.keys())))
-    fl_density = numpy.zeros(max_fl - min_fl + 1)
-    for fl, cnt in frag_lens.iteritems():
-        if fl < min_fl or fl > max_fl: continue
-        fl_density[fl-min_fl] += cnt
-    fl_density = fl_density/fl_density.sum()
-
-    global fl_dists
     fl_dists = build_fl_dists_from_fls_dict(dict(frag_lens))
+    
     # we are down with the manager
     manager.shutdown()
     
@@ -2044,18 +2016,6 @@ def find_all_gene_segments( contig_lens,
             for jn in gene.extract_elements()['intron']:
                 if jn not in filtered_jns[(gene.chrm, gene.strand)]:
                     filtered_jns[(gene.chrm, gene.strand)][jn] = 0
-
-    """
-    # if we are supposed to use the annotation genes
-    if ref_elements_to_include.genes == True:
-        gene_bndry_bins = []
-        for contig, contig_len in contig_lens.iteritems():
-            for strand in '+-':
-                contig_gene_bndry_bins = load_gene_bndry_bins(
-                    ref_genes, contig, strand, contig_len)
-                gene_bndry_bins.extend( contig_gene_bndry_bins )
-        return gene_bndry_bins
-    """
     
     config.log_statement("Clustering gene segments")    
     # build bins for all of the genes and junctions, converting them to 1-based
@@ -2084,7 +2044,7 @@ def find_all_gene_segments( contig_lens,
                     continue
                 new_genes.append(new_gene)
     
-    return new_genes
+    return new_genes, fl_dists
 
 def find_exons( contig_lens, gene_bndry_bins, ofp,
                 rnaseq_reads, cage_reads, polya_reads,
@@ -2162,11 +2122,30 @@ def find_elements( promoter_reads, rnaseq_reads, polya_reads,
         
         # load the reference elements
         config.log_statement("Finding gene segments")
-        gene_segments = find_all_gene_segments( 
+
+        # if we are supposed to use the annotation genes
+        global fl_dists
+        gene_segments, fl_dists = find_all_gene_segments( 
             contig_lens, 
             rnaseq_reads, promoter_reads, polya_reads,
             ref_genes, ref_elements_to_include, 
             region_to_use=region_to_use )
+
+        """
+        # extract reference elements. This doesnt work for a few reasons,
+        # so we merge in reference genes by setting exon and jn refernce
+        # elements to True
+        if ref_elements_to_include.genes == True:
+            gene_segments = []
+            for contig, contig_len in contig_lens.iteritems():
+                for strand in '+-':
+                    contig_gene_bndry_bins = load_gene_bndry_bins(
+                        ref_genes, contig, strand, contig_len)
+                    gene_segments.extend( contig_gene_bndry_bins )
+            fl_dists = build_fl_dists_from_fls_dict(
+                find_fls_from_annotation(ref_genes, rnaseq_reads))
+        """
+        
         # sort genes from longest to shortest. This should help improve the 
         # multicore performance
         gene_segments.sort( key=lambda x: x.stop-x.start, reverse=True )

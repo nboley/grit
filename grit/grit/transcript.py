@@ -94,7 +94,7 @@ class Gene( object ):
         for transcript in self.transcripts:
             exons.update( transcript.exons )
         
-        return flatten( sorted( exons ) )
+        return files.gtf.flatten( sorted( exons ) )
     
     def calc_bpkm(self, read_cov):
         base_cov, length = 0.0, 0

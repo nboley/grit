@@ -40,9 +40,9 @@ def shift_and_write_narrow_peak(region, peaks, ofp):
     return
 
 def process_genes(
-        genes_queue, promoter_reads, rnaseq_reads, ofp,
+        genes_queue, distal_reads, rnaseq_reads, ofp,
         call_peaks_tuning_params):
-    promoter_reads.reload()
+    distal_reads.reload()
     rnaseq_reads.reload()
     num_genes = genes_queue.qsize()
     while True:
@@ -52,12 +52,16 @@ def process_genes(
         if config.VERBOSE: config.log_statement(
                 "Processing %s (%i\tremain)" % (
                     str(gene).ljust(30), genes_queue.qsize()))
-        
+
+        reads_type = ('polya' 
+                      if isinstance(distal_reads, PolyAReads) 
+                      else 'promoter')
         signal_cov, control_cov = peaks.estimate_read_and_control_cov_in_gene(
-            gene, promoter_reads, 'promoter', rnaseq_reads )
+            gene, distal_reads, reads_type, rnaseq_reads )
 
         called_peaks = peaks.call_peaks(
-            signal_cov, control_cov, 'promoter', **call_peaks_tuning_params)
+            signal_cov, control_cov, reads_type, gene, 
+            **call_peaks_tuning_params)
         
         region = {'chrm': gene.chrm, 'strand':gene.strand, 
                   'start':gene.start, 'stop':gene.stop}
@@ -97,6 +101,13 @@ def parse_arguments():
     parser.add_argument( '--rampage-reads', type=argparse.FileType('rb'),
         help='BAM file containing mapped rampage reads.')
     parser.add_argument( '--rampage-read-type', 
+                         choices=["forward", "backward", "auto"],
+                         default='auto',
+        help="If 'forward' then the first read in a pair that maps to the genome without being reverse complemented are assumed to be on the '+' strand. default: auto")
+
+    parser.add_argument( '--passeq-reads', type=argparse.FileType('rb'),
+        help='BAM file containing mapped PASSeq reads.')
+    parser.add_argument( '--passeq-read-type', 
                          choices=["forward", "backward", "auto"],
                          default='auto',
         help="If 'forward' then the first read in a pair that maps to the genome without being reverse complemented are assumed to be on the '+' strand. default: auto")
@@ -178,22 +189,35 @@ def parse_arguments():
                         [int(x) for x in region_data[1].split("-")])
     
     if args.cage_reads != None:
-        assert args.rampage_reads == None, "Can not use RAMPAGE and CAGE reads"
+        assert args.rampage_reads == None and args.passeq_reads == None, \
+            "Can not use RAMPAGE with CAGE or PASSeq reads"
         if config.VERBOSE: config.log_statement( "Loading %s" % args.cage_reads.name )
         rev_reads = {'forward':False, 'backward':True, 'auto': None}[
             args.cage_read_type]
-        promoter_reads = CAGEReads(args.cage_reads.name, "rb").init(
+        distal_reads = CAGEReads(args.cage_reads.name, "rb").init(
             reverse_read_strand=rev_reads, ref_genes=ref_genes)
     elif args.rampage_reads != None:
-        assert args.cage_reads == None, "Can not use RAMPAGE and CAGE reads"
+        assert args.cage_reads == None and args.passeq_reads == None, \
+            "Can not use CAGE with RAMPAGE/PASSeq reads"
         if config.VERBOSE: 
             config.log_statement( "Loading %s" % args.rampage_reads.name )
         rev_reads = {'forward':False, 'backward':True, 'auto': None}[
             args.rampage_read_type]
-        promoter_reads = RAMPAGEReads(args.rampage_reads.name, "rb").init(
+        distal_reads = RAMPAGEReads(args.rampage_reads.name, "rb").init(
             reverse_read_strand=rev_reads, ref_genes=ref_genes)
+    elif args.passeq_reads != None:
+        assert args.cage_reads == None and args.rampage_reads == None, \
+            "Can not use PASSeq with CAGE/RAMPAGE reads"
+        if config.VERBOSE: 
+            config.log_statement( "Loading %s" % args.passeq_reads.name )
+        rev_reads = {'forward':False, 'backward':True, 'auto': None}[
+            args.passeq_read_type]
+        distal_reads = PolyAReads(args.passeq_reads.name, "rb").init(
+            reverse_read_strand=rev_reads, 
+            pairs_are_opp_strand=True,
+            ref_genes=ref_genes)
     else:
-        assert False, "RAMPAGE or CAGE reads must be set"
+        assert False, "RAMPAGE or CAGE or PASSeq reads must be set"
 
     rev_reads = {'forward':False, 'backward':True, 'auto': None}[
         args.rnaseq_read_type]
@@ -205,7 +229,7 @@ def parse_arguments():
                       else sys.stdout )
     
     return ( ref_genes, ref_elements_to_include, 
-             promoter_reads, rnaseq_reads, 
+             distal_reads, rnaseq_reads, 
              output_stream, 
              args.gene_regions_ofname,
              args.region,
@@ -213,7 +237,7 @@ def parse_arguments():
 
 def main():
     ( ref_genes, ref_elements_to_include, 
-      promoter_reads, rnaseq_reads, 
+      distal_reads, rnaseq_reads, 
       output_stream, gene_regions_ofname,
       region_to_use,
       call_peaks_tuning_params
@@ -225,12 +249,12 @@ def main():
         print >> ofp, "track name=%s type=narrowPeak" % track_name
 
         contigs, contig_lens = get_contigs_and_lens( 
-            [promoter_reads, rnaseq_reads] )
+            [distal_reads, rnaseq_reads] )
         contig_lens = dict((ctg, ctg_len)
                            for ctg, ctg_len in zip(contigs, contig_lens)
                            if ctg not in ('M',) 
                            and not ctg.startswith('Un'))
-
+        
         # if we are supposed to use the annotation genes
         gene_segments = []
         if ref_elements_to_include.genes == True:
@@ -242,7 +266,14 @@ def main():
         else:
             gene_segments = find_all_gene_segments( 
                 contig_lens, 
-                rnaseq_reads, promoter_reads, None,
+                rnaseq_reads, 
+                (distal_reads 
+                 if isinstance(distal_reads, RAMPAGEReads)
+                 or isinstance(distal_reads, CAGEReads) 
+                 else None ),
+                (distal_reads 
+                 if isinstance(distal_reads, PolyAReads)
+                 else None ),
                 ref_genes, ref_elements_to_include, 
                 region_to_use=region_to_use)
 
@@ -257,7 +288,7 @@ def main():
         for gene in gene_segments:
             queue.put(gene)
 
-        args = [queue, promoter_reads, rnaseq_reads, ofp, 
+        args = [queue, distal_reads, rnaseq_reads, ofp, 
                 call_peaks_tuning_params]
         if config.NTHREADS == 1:
             process_genes(*args)
