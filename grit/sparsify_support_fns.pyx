@@ -1,3 +1,5 @@
+USELESS_GLOBAL_VAR='I need to do this so that cython creates a c_init function'
+
 import numpy as np
 cimport numpy as np
 

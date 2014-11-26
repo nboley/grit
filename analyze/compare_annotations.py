@@ -5,9 +5,8 @@ import sys, os
 from collections import defaultdict
 from itertools import izip
 
-sys.path.append( os.path.join( os.path.dirname(__file__), 
-                               '..', 'file_types', 'fast_gtf_parser' ) )
-import gtf
+sys.path.insert(0, "/home/nboley/grit/grit/")
+from grit.files.gtf import load_gtf
 
 VERBOSE = True
 
@@ -15,6 +14,8 @@ FIND_BEST_CONTAIN_MATCH = False
 FIND_BEST_JN_MATCH = False
 
 DO_PROFILE = False
+
+MAX_GENE_BNDRY_DISTANCE = None
 
 def build_test_data():
     """Build test data sets for unit tests
@@ -67,17 +68,11 @@ def cluster_overlapping_genes( genes_groups ):
     grpd_boundaries = defaultdict( list )
     
     for source_id, genes in enumerate(genes_groups):
-        for gene_id, chrm, strand,  min_loc, max_loc, transcripts in genes:
-            try:
-                assert min_loc >= 0
-            except:
-                print gene_id, chrm, strand,  min_loc, max_loc
-                print transcripts
-                raise
-            
-            genes_mapping[ ( source_id, gene_id ) ] = transcripts
-            grpd_boundaries[ (chrm, strand) ].append(
-                ( (min_loc, max_loc), (source_id, gene_id) ))
+        for gene in genes:
+            assert gene.start >= 0
+            genes_mapping[ ( source_id, gene.id ) ] = gene.transcripts
+            grpd_boundaries[ (gene.chrm, gene.strand) ].append(
+                ( (gene.start, gene.stop), (source_id, gene.id) ))
     
     # group all of the genes by overlapping intervals
     clustered_bndries = {}
@@ -114,32 +109,38 @@ def cluster_overlapping_genes( genes_groups ):
 def build_element_stats( ref_genes, t_genes, output_stats ):
     def build_exon_and_intron_sets( genes ):
         internal_exons = set()
-        tss_exons = set()
-        tes_exons = set()
+        tss_exons = defaultdict(set)
+        tes_exons = defaultdict(set)
         all_introns = set()
         single_exon_genes = set()
-        for gene_id, chrm, strand,  min_loc, max_loc, transcripts in genes:
-            for trans in transcripts:
-                # skip single exon genes
+        for gene in genes:
+            for trans in gene.transcripts:
+                # single exon genes
                 if len( trans.exons ) == 1: 
-                    single_exon_genes.add( trans.exons[0] )
+                    single_exon_genes.add(
+                        (gene.chrm, gene.strand, trans.exons[0]))
                     continue
                 
-                for exon in trans.exons:
-                    internal_exons.add( ( chrm, strand, exon ) )
+                for exon in trans.exons[1:-1]:
+                    internal_exons.add( ( gene.chrm, gene.strand, exon ) )
                 
                 # add the boundary exons
-                if strand == '+':
-                    tss_exons.add( ( chrm, strand, trans.exons[0][1] ) )
-                    tes_exons.add( ( chrm, strand, trans.exons[-1][0] ) )
+                if gene.strand == '+':
+                    tss_exons[(gene.chrm, gene.strand, trans.exons[0][1])
+                              ].add(trans.exons[-1][0])
+                    tes_exons[(gene.chrm, gene.strand, trans.exons[-1][0])
+                               ].add(trans.exons[0][1])
                 else:
-                    tss_exons.add( ( chrm, strand, trans.exons[-1][0] ) )
-                    tes_exons.add( ( chrm, strand, trans.exons[0][1] ) )
+                    tss_exons[(gene.chrm, gene.strand, trans.exons[-1][0])
+                               ].add(trans.exons[0][1])
+                    tes_exons[(gene.chrm, gene.strand, trans.exons[0][1])
+                              ].add(trans.exons[-1][0])
                 
                 for intron in trans.introns:
-                    all_introns.add( ( chrm, strand, intron ) )
+                    all_introns.add( ( gene.chrm, gene.strand, intron ) )
         
-        return internal_exons, tss_exons, tes_exons, all_introns, single_exon_genes
+        return ( internal_exons, tss_exons, tes_exons, 
+                 all_introns, single_exon_genes )
     
     
     r_int_exons, r_tss_exons, r_tes_exons, r_introns, r_se_genes = \
@@ -150,39 +151,63 @@ def build_element_stats( ref_genes, t_genes, output_stats ):
     
     # get overlap for each category
     int_e_overlap = float( len( r_int_exons.intersection( t_int_exons ) ) )
-    tss_e_overlap = float( len( r_tss_exons.intersection( t_tss_exons ) ) )
-    tes_e_overlap = float( len( r_tes_exons.intersection( t_tes_exons ) ) )
     intron_overlap = float( len( r_introns.intersection( t_introns ) ) )
     
+    tss_e_overlap = 0.0
+    for key, r_ext_bases in r_tss_exons.iteritems():
+        for r_ext_base in r_ext_bases:
+            for t_ext_base in t_tss_exons[key]:
+                if abs(r_ext_base - t_ext_base) < MAX_GENE_BNDRY_DISTANCE:
+                    tss_e_overlap += 1.
+                    break
+
+    tes_e_overlap = 0.0
+    for key, r_ext_bases in r_tes_exons.iteritems():
+        for r_ext_base in r_ext_bases:
+            for t_ext_base in t_tes_exons[key]:
+                if abs(r_ext_base - t_ext_base) < MAX_GENE_BNDRY_DISTANCE:
+                    tes_e_overlap += 1.
+                    break
+        
     se_overlap = 0
     for r_se_gene in r_se_genes:
         for t_se_gene in t_se_genes:
-            if t_se_gene[0] - 50 < r_se_gene[0] \
-                    and t_se_gene[1] + 50 > r_se_gene[1]:
+            if ( t_se_gene[2][0] - MAX_GENE_BNDRY_DISTANCE 
+                 < r_se_gene[2][0] ) and ( 
+                t_se_gene[2][1] + MAX_GENE_BNDRY_DISTANCE > r_se_gene[2][1]):
                 se_overlap += 1.0
                 break
     
     # get total number of exons
     num_r_exons = sum( map( len, (r_int_exons, r_tss_exons, r_tes_exons) ) ) 
     num_t_exons = sum( map( len, (t_int_exons, t_tss_exons, t_tes_exons) ) )
-    
-    output_stats.add_recovery_stat( \
-        'Exon', num_r_exons, num_t_exons, 0 )
+    exon_overlap = tss_e_overlap + int_e_overlap + tes_e_overlap
+    output_stats.add_recovery_stat( 
+        'Exon', num_r_exons, num_t_exons, exon_overlap, exon_overlap )
 
-    output_stats.add_recovery_stat( \
-        'Internal Exon', len(r_int_exons), len(t_int_exons), int_e_overlap )
+    output_stats.add_recovery_stat( 
+        'Internal Exon', len(r_int_exons), len(t_int_exons), 
+        int_e_overlap, int_e_overlap )
 
-    output_stats.add_recovery_stat( \
-        'TSS Exon', len(r_tss_exons), len(t_tss_exons), tss_e_overlap )
+    output_stats.add_recovery_stat( 
+        'TSS Exon', 
+        sum( len(x) for x in r_tss_exons.itervalues()), 
+        sum( len(x) for x in t_tss_exons.itervalues()), 
+        tss_e_overlap, tss_e_overlap )
 
-    output_stats.add_recovery_stat( \
-        'TES Exon', len(r_tes_exons), len(t_tes_exons), tes_e_overlap )
+    output_stats.add_recovery_stat(
+        'TES Exon', 
+        sum( len(x) for x in r_tes_exons.itervalues()), 
+        sum( len(x) for x in t_tes_exons.itervalues()), 
+        tes_e_overlap, tes_e_overlap )
 
-    output_stats.add_recovery_stat( \
-        'Intron', len(r_introns), len(t_introns), intron_overlap )
+    output_stats.add_recovery_stat( 
+        'Intron', len(r_introns), len(t_introns), 
+        intron_overlap, intron_overlap)
 
-    output_stats.add_recovery_stat( \
-        'Single Exon Transcripts', len(r_se_genes), len(t_se_genes), se_overlap )
+    output_stats.add_recovery_stat( 
+        'Single Exon Transcripts', len(r_se_genes), len(t_se_genes), 
+        se_overlap, se_overlap)
     
     return
 
@@ -197,56 +222,58 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
         for g_name, t_name, trans in grp:
             # store single exon genes seperately. For now, se_trans are included
             # in the numbers. May want to process further in the future
-            if len( trans.exons ) > 2:
-                full_transcripts[ tuple( trans.exons[1:-1] ) ].append( \
-                    ( g_name, t_name ) )
-            else:
-                bndries_tup = tuple(trans.exons)
-                if bndries_tup in se_transcripts:
-                    if VERBOSE:
-                        print >> sys.stderr, "WARNING: found a single exon " \
-                            + "transcript that is identical to another single " \
-                            + "exon transcript.\n\t",
-                        print t_name + ' = ' + \
-                            se_transcripts[bndries_tup][1]
-                else:
+            full_transcripts[ 
+                (trans.chrm, trans.strand, trans.introns) ].append(
+                ( g_name, t_name, trans.start, trans.stop ) )
+
+            if len(trans.introns) == 1:
+                bndries_tup = (trans.chrm, trans.strand, tuple(trans.exons))
+                if bndries_tup not in se_transcripts:
                     # possibly store in a bx python intervals object for overlap
                     # searching  in the future
-                    se_transcripts[ bndries_tup ] = ( g_name, t_name )
+                    se_transcripts[ bndries_tup ] = ( 
+                        g_name, t_name, trans.start, trans.stop )
             
             # for each intron, add a pointer from the first intron
             # to the remainder of the transcript. This is because, if
             # we observe that the first intron is in here, we just need to 
             # check the rest matches to verify that its a 'contains' match
-            if build_maps or build_maps_stats:
-                for i_index, intron in \
-                        enumerate( izip( trans.exons[1::2], trans.exons[2::2] )):
-                    n_skipped_introns = i_index
-                    contains_map[ intron ].append(
-                        ( g_name, t_name, n_skipped_introns,
-                          trans.exons[ i_index*2+1: ] ) )
-                    introns_map[ intron ].append( ( g_name, t_name ) )
+            for i_index, intron in enumerate(trans.introns):
+                n_skipped_introns = i_index
+                contains_map[(trans.chrm, trans.strand, intron)].append(
+                    ( g_name, t_name, n_skipped_introns, intron) )
+                introns_map[(trans.chrm, trans.strand, intron)].append( 
+                    ( g_name, t_name ) )
         
         return ( full_transcripts, se_transcripts,
                  contains_map, introns_map )
-    
+
     def cnt_trans_overlap( ref_full_trans, t_full_trans ):
         """Quickly calculate the number of exact matches
         """
-        matched_cnt = 0
-        for exons, transcripts in ref_full_trans.iteritems():
-            if exons in t_full_trans:
-                # add the number of transcripts with this internal structure
-                #matched_cnt += len( transcripts )
-                matched_cnt += min( len( transcripts ), \
-                                    len( t_full_trans[exons] ) )
+        observed_ref_trans = set()
+        num_ref_trans = 0
+        num_novel_trans = 0
+        matched_novel_cnt = 0
+        for introns, transcripts in t_full_trans.iteritems():
+            num_novel_trans += len(transcripts)
+            # add the number of transcripts with this internal structure
+            for novel_t in transcripts:
+                for ref_t in ref_full_trans[introns]:
+                    start_diff, stop_diff = (
+                        abs(novel_t[2]-ref_t[2]), abs(novel_t[3]-ref_t[3]) )
+                    if max(start_diff, stop_diff) < MAX_GENE_BNDRY_DISTANCE:
+                        observed_ref_trans.add( ref_t )
+                        matched_novel_cnt += 1
+                        break
+                
+        # calculate the total number of novel trancripts
+        num_t_trans = sum( len(i) for i in t_full_trans.itervalues() )
+        num_ref_trans = sum( len(i) for i in ref_full_trans.itervalues() )
         
-        # calcualte the total numebr of transcripts for the ref and t groups.
-        ref_trans_tot = sum( len(i) for i in ref_full_trans.itervalues() )
-        t_trans_tot = sum( len(i) for i in t_full_trans.itervalues() )
-        
-        return matched_cnt, ref_trans_tot, t_trans_tot
-        
+        return ( len(observed_ref_trans), matched_novel_cnt,
+                 num_ref_trans, num_t_trans )
+    
     def build_map_lines_and_class_counts( left_full, right_full, 
                                           right_contained, right_introns):
         map_lines = [] if build_maps else None
@@ -261,7 +288,7 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
                 class_counts[class_cd] += len(transcripts )
             
             if build_maps:
-                for g_name, t_name in transcripts:
+                for g_name, t_name, start, stop in transcripts:
                     map_lines.append( 
                         '\t'.join( ( g_name, t_name, class_cd, 
                                      o_g_name, o_t_name)))
@@ -333,32 +360,42 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
         
         
         # loop through exons and find the best match class
-        for exons, transcripts in left_full.iteritems():
-            # first, check to see if there is an exact match
-            if exons in right_full:
-                e_g_id, e_t_id = right_full[ exons ][0]
-                add_map_lines( transcripts, "=", e_g_id, e_t_id )
-                continue
+        # left_full corresponds to the trnasripts that we 
+        # want to find matches for. The total count of map lines
+        # shoul;d be equal to this
+        for introns, transcripts in left_full.iteritems():
+            for left_t in transcripts:
+                match = None
+                for right_t in right_full[introns]:
+                    start_diff, stop_diff = (
+                        abs(left_t[2]-right_t[2]),abs(left_t[3]-right_t[3]))
+                    if max(start_diff, stop_diff) < MAX_GENE_BNDRY_DISTANCE:
+                        match = right_t
+                        break
+                if match != None:
+                    add_map_lines([left_t,], "=", match[0], match[1])
+                else:
+                    # if we didn't find any better match, then add "u" class
+                    add_map_lines( [left_t,], "u", "-", "-" )
             
+            """
             # if there is a contains match then add it
-            contains_match_index = get_contains_match( exons )
+            contains_match_index = get_contains_match( introns )
             if contains_match_index != None:
-                c_g_id = right_contained[exons[:2]][contains_match_index][0]
-                c_t_id = right_contained[exons[:2]][contains_match_index][1]
+                c_g_id = right_contained[introns[:2]][contains_match_index][0]
+                c_t_id = right_contained[introns[:2]][contains_match_index][1]
                 
                 add_map_lines( transcripts, "c", c_g_id, c_t_id )
                 continue
             
             # if there is an intron match add it
-            intron_match = get_intron_match( exons )
+            intron_match = get_intron_match( introns )
             if intron_match != None:
                 i_g_name, i_t_name = intron_match
                 add_map_lines( transcripts, "j", i_g_name, i_t_name )
                 continue
-            
-            # if we didn't find any better match, then add "u" class
-            add_map_lines( transcripts, "u", "-", "-" )
-        
+            """
+                
         return map_lines, class_counts
     
     # produce structures to calculate match classes
@@ -368,7 +405,7 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
         = build_introns_dict( t_grp )
     
     # count transcripts and overlaps
-    trans_overlap_cnt, r_trans_tot, t_trans_tot = \
+    num_matched_novel, num_matched_ref, r_trans_tot, t_trans_tot = \
         cnt_trans_overlap( r_full_trans, t_full_trans )    
     
     # get map lines of class counts if requested
@@ -381,7 +418,8 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
         r_map, r_class_cnts, t_map, t_class_cnts = None, None, None, None
     
     # pack counts
-    trans_counts = ( r_trans_tot, t_trans_tot, trans_overlap_cnt )
+    trans_counts = ( 
+        r_trans_tot, t_trans_tot, num_matched_novel, num_matched_ref )
     class_counts = ( r_class_cnts, t_class_cnts )
     
     return r_map, t_map, trans_counts, class_counts
@@ -389,12 +427,12 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
 def calc_trans_cnts( all_trans_cnts, build_maps_stats, output_stats ):
     # initialize total transcript counts
     r_trans_tot, t_trans_tot, r_se_trans_tot, t_se_trans_tot = 0, 0, 0, 0
-    trans_overlap, se_trans_overlap = 0, 0
+    r_trans_overlap, t_trans_overlap, se_trans_overlap = 0, 0, 0
     # initialize class count dicts
-    r_class_cnts = { '=':0, 'c':0, 'j':0, 'u':0 } \
-        if build_maps_stats else None
-    t_class_cnts = { '=':0, 'c':0, 'j':0, 'u':0 } \
-        if build_maps_stats else None
+    r_class_cnts = ( { '=':0, 'c':0, 'j':0, 'u':0 } 
+                     if build_maps_stats else None )
+    t_class_cnts = ( { '=':0, 'c':0, 'j':0, 'u':0 } 
+                     if build_maps_stats else None )
     
     def update_class_cnts( tot_class_cnts, new_class_cnts ):
         for class_cd, cnt in new_class_cnts.iteritems():
@@ -405,15 +443,17 @@ def calc_trans_cnts( all_trans_cnts, build_maps_stats, output_stats ):
     for grp_trans_cnts, grp_class_cnts in all_trans_cnts:
         r_trans_tot += grp_trans_cnts[0]
         t_trans_tot += grp_trans_cnts[1]
-        trans_overlap += grp_trans_cnts[2]
+        r_trans_overlap += grp_trans_cnts[2]
+        t_trans_overlap += grp_trans_cnts[3]
         # if suppress_maps_stats then grp_class_cnts == None
         if build_maps_stats:
             r_class_cnts = update_class_cnts( r_class_cnts, grp_class_cnts[0] )
             t_class_cnts = update_class_cnts( t_class_cnts, grp_class_cnts[1] )
 
     
-    output_stats.add_recovery_stat( \
-        "Transcript", r_trans_tot, t_trans_tot, trans_overlap )
+    output_stats.add_recovery_stat( 
+        "Transcript", r_trans_tot, t_trans_tot, 
+        r_trans_overlap, t_trans_overlap )
     
     class_cnts = ( r_class_cnts, t_class_cnts )
     
@@ -456,14 +496,9 @@ class OutputStats( dict ):
         self.gtf_fname = gtf_fname
         self._recovery_stat_names = []
     
-    def add_recovery_stat( self, name, ref_cnt, t_cnt, inter_cnt ):
-        try:
-            assert inter_cnt <= ref_cnt and inter_cnt <= t_cnt
-        except:
-            print inter_cnt, ref_cnt, t_cnt
-            raise
-        
-        self[name] = ( ref_cnt, t_cnt, inter_cnt )
+    def add_recovery_stat( self, name, ref_cnt, t_cnt, 
+                           ref_inter_cnt, novel_inter_cnt ):
+        self[name] = ( ref_cnt, t_cnt, ref_inter_cnt, novel_inter_cnt )
         self._recovery_stat_names.append( name )
         
     def __str__( self ):
@@ -473,24 +508,23 @@ class OutputStats( dict ):
         lines.append( "Reference:".ljust(18) + self.ref_fname )
         lines.append( "Novel Annotation:".ljust(18) + self.gtf_fname )
 
-        lines.append( "".ljust(25) + "Recall".ljust(12) + "Precision".ljust(12)\
-                      + "Intersect".ljust(12) \
+        lines.append( "".ljust(25) + "Recall".ljust(12) + "Precision".ljust(12)
+                      + "Ref Inter".ljust(12) 
+                      + "Novel Inter".ljust(12) 
                       + "Ref Cnt".ljust(12) + "Novel Cnt".ljust(12) )
 
         
         for stat_name in self._recovery_stat_names:
-            r_cnt, t_cnt, ov_cnt = self[ stat_name ]
+            r_cnt, t_cnt, r_ov_cnt, t_ov_cnt = self[ stat_name ]
             lines.append( stat_name.ljust(25) + \
-                          ("%.3f" % (float(ov_cnt)/(r_cnt+1e-6))).ljust(12) +
-                          ("%.3f" % (float(ov_cnt)/(t_cnt+1e-6))).ljust(12) +
-                          ("%i" % ov_cnt).ljust(12) +
+                          ("%.3f" % (float(r_ov_cnt)/(r_cnt+1e-6))).ljust(12) +
+                          ("%.3f" % (float(t_ov_cnt)/(t_cnt+1e-6))).ljust(12) +
+                          ("%i" % r_ov_cnt).ljust(12) +
+                          ("%i" % t_ov_cnt).ljust(12) +
                           ("%i" % r_cnt).ljust(12) +
                           ("%i" % t_cnt).ljust(12) )
-
-       
+        
         return '\n'.join( lines )
-
-        pass
 
 def make_class_cnts_string( class_counts, ref_fname, gtf_fname ):
     # if suppress_maps_stats then class_counts will be None and 
@@ -521,8 +555,9 @@ def compare( ref_fname, gtf_fname, build_maps, build_maps_stats,
     """Compare refernce to another 'gtf' annotation by element types
     """
     # load the gtf files
-    ref_genes, t_genes = gtf.load_gtfs( (ref_fname, gtf_fname), num_threads )
-    
+    ref_genes = load_gtf(ref_fname)
+    t_genes = load_gtf(gtf_fname)
+                 
     output_stats = OutputStats( ref_fname, gtf_fname )
     
     # get recall and prceision stats for all types of exons and introns
@@ -575,6 +610,10 @@ def parse_arguments():
     parser.add_argument(
         "reference", type=str,
         help='Reference GTF file. (i.e. Flybase')
+    parser.add_argument(
+        '--max-gene-bndry-distance', default=50, type=int,
+        help='Transript boundaries considered identical if they are within +- --max-gene-bndry-distance bases')
+
     
     parser.add_argument(
         '--only-build-stats', default=False, action='store_true', 
@@ -612,12 +651,14 @@ def parse_arguments():
     
     global VERBOSE
     VERBOSE = args.verbose
-    gtf.VERBOSE = VERBOSE
     
     global FIND_BEST_CONTAIN_MATCH 
     global FIND_BEST_JN_MATCH
     FIND_BEST_CONTAIN_MATCH = args.best_contains_match
     FIND_BEST_JN_MATCH = args.best_junctions_match
+    
+    global MAX_GENE_BNDRY_DISTANCE
+    MAX_GENE_BNDRY_DISTANCE = args.max_gene_bndry_distance
     
     # only produce stats is just short for outputing only the 
     # recall and precision for the annotations

@@ -6,7 +6,7 @@ from itertools import chain
 import sqlite3
 import cPickle as pickle
 
-sys.path.insert(0, "/home/nboley/grit/grit/")
+sys.path.insert(0, "/home/nboley/grit/")
 
 from grit.files.gtf import load_gtf
 from grit.files.reads import (
@@ -16,6 +16,7 @@ from grit.files.reads import (
 
 from grit.lib.logging import Logger
 
+import grit.peaks
 import grit.find_elements
 import grit.build_transcripts
 import grit.estimate_transcript_expression
@@ -23,7 +24,7 @@ import grit.frag_len
 from grit.merge import (
     group_overlapping_genes, reduce_gene_clustered_transcripts )
 
-import grit.elements import RefElementsToInclude
+from grit.elements import RefElementsToInclude
 
 import grit.config as config
 
@@ -315,7 +316,9 @@ class Samples(object):
                 rev_reads = {'forward':False, 'backward':True, 'auto': None}[
                     data.read_type]
                 reads = PolyAReads(data.filename)
-                reads.init(reverse_read_strand=rev_reads, ref_genes=self.ref_genes)
+                reads.init(pairs_are_opp_strand=True,
+                           reverse_read_strand=rev_reads, 
+                           ref_genes=self.ref_genes)
                 self.mapped_reads_cache[data.filename] = reads
             all_reads.append(reads)
         
@@ -525,6 +528,32 @@ def parse_arguments():
     config.TES_EXON_MERGE_DISTANCE = \
         args.TES_exon_merge_distance
 
+    config.TSS_call_peaks_tuning_params = {
+        'alpha': 1e-2, 
+        'min_noise_frac': 0.01, 
+        'min_merge_size': 50,
+        'min_rel_merge_size': 0.5,
+        'min_rd_cnt': 5,
+        'min_peak_size': 3, 
+        'max_peak_size': 1000,
+        'trim_fraction': 0.01,
+        'max_exp_sum_fraction': 0.05,
+        'max_exp_mean_cvg_fraction': 0.05/10
+    }
+
+    config.TES_call_peaks_tuning_params = {
+        'alpha': 1e-2, 
+        'min_noise_frac': 0.01, 
+        'min_merge_size': 50,
+        'min_rel_merge_size': 0.5,
+        'min_rd_cnt': 2,
+        'min_peak_size': 1,
+        'max_peak_size': 1000,
+        'trim_fraction': 0.01,
+        'max_exp_sum_fraction': 0.05,
+        'max_exp_mean_cvg_fraction': 0.05/10
+    }
+
     config.VERBOSE = args.verbose
     
     config.DEBUG_VERBOSE = args.debug_verbose
@@ -585,9 +614,14 @@ def parse_arguments():
     config.log_statement = log_statement
     
     if args.region != None:
-        region_data = args.region.strip().split(":")
-        args.region = ( clean_chr_name(region_data[0]), 
-                        [int(x) for x in region_data[1].split("-")])
+        # if this is jsut a contig name
+        if ":" not in args.region:
+            args.region = (clean_chr_name(args.region), (0, 1e100))
+        else:
+            region_data = args.region.strip().split(":")
+            args.region = ( 
+                clean_chr_name(region_data[0]), 
+                [int(x.replace(",", "")) for x in region_data[1].split("-")])
     
     args.ref_elements_to_include = load_ref_elements_to_include(args)
     return args
