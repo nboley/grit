@@ -243,9 +243,9 @@ class TestSignificance(object):
         if sig_cnt > self.noise_n: return True
         
         mean = -(self.null_means_cumsum[stop] 
-                 - self.null_means_cumsum[start])
+                 - self.null_means_cumsum[start] + 1)
         variance = ( self.null_variances_cumsum[stop] 
-                     - self.null_variances_cumsum[start] )
+                     - self.null_variances_cumsum[start] + 1)
         
         scale = variance/mean
         shape = mean/scale

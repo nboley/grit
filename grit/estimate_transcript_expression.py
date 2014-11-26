@@ -195,7 +195,8 @@ def calc_fpkm( gene, fl_dists, freqs, num_reads_in_bam):
     assert len(gene.transcripts) == len(freqs)
 
     num_reads_in_bam = num_reads_in_bam[1]    
-    fl_dist = fl_dists['mean']
+    # XXX
+    fl_dist = fl_dists.values()[0]
     
     def calc_effective_length_and_scale_factor(t):
         length = sum( e[1] - e[0] + 1 for e in t.exons ) 
@@ -665,7 +666,7 @@ def write_data_to_tracking_file(data, fl_dists, ofp):
 
 def quantify_transcript_expression(
     promoter_reads, rnaseq_reads, polya_reads,
-    pickled_gene_fnames, fl_dists,
+    pickled_gene_fnames, 
     ofname, sample_type=None, rep_id=None ):
     """Build transcripts
     """
@@ -681,7 +682,7 @@ def quantify_transcript_expression(
     data = SharedData(pickled_gene_fnames)
     if config.VERBOSE: config.log_statement( 
         "Building design matrices" )
-    build_design_matrices( data, fl_dists,
+    build_design_matrices( data, rnaseq_reads.fl_dists,
                            (rnaseq_reads, promoter_reads, polya_reads))
     
     if config.VERBOSE: config.log_statement( 
@@ -712,7 +713,7 @@ def quantify_transcript_expression(
         "Writing output data to tracking file" )
 
     expression_ofp = ThreadSafeFile(ofname, "w")
-    write_data_to_tracking_file(data, fl_dists, expression_ofp)    
+    write_data_to_tracking_file(data, rnaseq_reads.fl_dists, expression_ofp)    
     expression_ofp.close()
     
     return

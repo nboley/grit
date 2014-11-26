@@ -344,6 +344,9 @@ class MergedReads( object ):
             raise ValueError, "All read objects must be the same type"
         
         self.references, self.lengths = get_contigs_and_lens( self._reads )
+
+        self.fl_dists = None
+        self.num_reads = None
         
         return
     
@@ -395,8 +398,10 @@ class MergedReads( object ):
         return cvg
 
     def reload( self ):
-        new_reads = [ reads.reload() for reads in self._reads ]
-        return MergedReads( new_reads )
+        new_reads = MergedReads([ reads.reload() for reads in self._reads ])
+        new_reads.fl_dists = self.fl_dists
+        new_reads.num_reads = self.num_reads
+        return new_reads
 
 class TranscriptMappedReads( pysam.Samfile ):
     pass
@@ -478,6 +483,9 @@ class Reads( pysam.Samfile ):
         
         self.reverse_read_strand = reverse_read_strand        
         self.RRR = reverse_read_strand
+        
+        self.fl_dists = None
+        self.num_reads = None
         
         try:
             self.fetch( self.references[0], 10000 )
@@ -591,6 +599,8 @@ class Reads( pysam.Samfile ):
         #self.close()
         reads = type(self)(fname)
         reads.init(**self._init_kwargs)
+        reads.fl_dists = self.fl_dists
+        reads.num_reads = self.num_reads
         return reads
 
 class RNAseqReads(Reads):    

@@ -11,6 +11,8 @@ from collections import defaultdict, namedtuple
 
 import multiprocessing
 
+from scipy.stats import beta, binom
+
 # skip circular import problems
 try: from reads import get_strand, get_contigs_and_lens
 except ImportError: pass
@@ -19,6 +21,32 @@ from grit import config
 
 CONSENSUS_PLUS = 'GTAG'
 CONSENSUS_MINUS = 'CTAC'
+
+def filter_jns(jns, antistrand_jns, whitelist=set()):
+    filtered_junctions = defaultdict(int)
+    jn_starts = defaultdict( int )
+    jn_stops = defaultdict( int )
+    for (start, stop), cnt in jns.iteritems():
+        jn_starts[start] = max( jn_starts[start], cnt )
+        jn_stops[stop] = max( jn_stops[stop], cnt )
+
+    for (start, stop), cnt in jns.iteritems():
+        if (start, stop) not in whitelist:
+            val = beta.ppf(0.01, cnt+1, jn_starts[start]+1)
+            if val < config.NOISE_JN_FILTER_FRAC: continue
+            val = beta.ppf(0.01, cnt+1, jn_stops[stop]+1)
+            if val < config.NOISE_JN_FILTER_FRAC: continue
+            #val = beta.ppf(0.01, cnt+1, jn_grps[jn_grp_map[(start, stop)]]+1)
+            #if val < config.NOISE_JN_FILTER_FRAC: continue
+            try: 
+                if ( (cnt+1.)/(antistrand_jns[(start, stop)]+1) <= 1.):
+                    continue
+            except KeyError: 
+                pass
+            if stop - start + 1 > config.MAX_INTRON_SIZE: continue
+        filtered_junctions[(start, stop)] = cnt
+    
+    return filtered_junctions
 
 def get_jn_type( chrm, upstrm_intron_pos, dnstrm_intron_pos, 
                  fasta, jn_strand="UNKNOWN" ):

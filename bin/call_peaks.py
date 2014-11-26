@@ -13,7 +13,7 @@ from grit.files.reads import (
     CAGEReads, RAMPAGEReads, RNAseqReads, PolyAReads, 
     get_contigs_and_lens, fix_chrm_name_for_ucsc, clean_chr_name)
 from grit.files.gtf import load_gtf
-from grit.find_elements import find_all_gene_segments, get_contigs_and_lens, load_gene_bndry_bins
+from grit.genes import find_all_gene_segments, get_contigs_and_lens, load_gene_bndry_bins
 from grit.elements import RefElementsToInclude
 
 from grit import peaks
@@ -264,8 +264,7 @@ def main():
                         ref_genes, contig, strand, contig_len)
                     gene_segments.extend( contig_gene_bndry_bins )
         else:
-            gene_segments = find_all_gene_segments( 
-                contig_lens, 
+            gene_segments, fl_dists, read_counts = find_all_gene_segments( 
                 rnaseq_reads, 
                 (distal_reads 
                  if isinstance(distal_reads, RAMPAGEReads)

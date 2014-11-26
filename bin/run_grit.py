@@ -18,6 +18,7 @@ from grit.lib.logging import Logger
 
 import grit.peaks
 import grit.find_elements
+import grit.genes
 import grit.build_transcripts
 import grit.estimate_transcript_expression
 import grit.frag_len
@@ -640,10 +641,27 @@ class discover_elements(dict):
         try: 
             ofp = open(elements_fname)
         except IOError:
+            (gene_segments, fl_dists, read_counts 
+             ) = grit.genes.find_all_gene_segments( 
+                 rnaseq_reads, promoter_reads, polya_reads,
+                 self.sample_data.ref_genes, 
+                 self.args.ref_elements_to_include, 
+                region_to_use=self.args.region )
+            
+            # set the fl dists, and read counts
+            rnaseq_reads.fl_dists = fl_dists
+            
+            for read_counts, reads in zip(
+                    read_counts, 
+                    (promoter_reads, rnaseq_reads, polya_reads)):
+                if reads != None:
+                    reads.num_reads = read_counts.value
+            
             grit.find_elements.find_elements(
                 promoter_reads, rnaseq_reads, polya_reads,
                 elements_fname, self.sample_data.ref_genes, 
                 self.args.ref_elements_to_include, 
+                gene_segments, 
                 region_to_use=self.args.region)
             ofp = open(elements_fname)
         else:
@@ -706,7 +724,6 @@ def main():
     
     # build transcripts for each sample
     sample_type_and_pickled_gene_fnames = []
-    fl_dists = []
     for sample_type, (elements_fp, gtf_fp) in elements.iteritems():
         # if we are only building elements, then we still need to 
         # loop through the samples because they are built lazily, 
@@ -761,23 +778,11 @@ def main():
             # so initialize this to none
             if len(rep_ids) == 0: rep_ids = [None,]
             for rep_id in rep_ids:
-                (promoter_reads, rnaseq_reads, polya_reads) = sample_data.get_reads(
-                    sample_type, rep_id, 
-                    verify_args=False, include_merged=False)
-
-                fldist_fname = "%s.%s.fldists" % (sample_type, rep_id)
-                try: 
-                    with open(fldist_fname) as fp:
-                        config.log_statement("Loading fldists")
-                        fl_dists = pickle.load(fp)
-                except IOError:
-                    config.log_statement(
-                        "Estimating fragment length distribution", log=True)
-                    fl_dists = grit.frag_len.build_fl_dists(
-                        gene_elements, rnaseq_reads)
-                    with open(fldist_fname, "w") as ofp:
-                        pickle.dump(fl_dists, ofp)
-
+                (promoter_reads, rnaseq_reads, polya_reads
+                    ) = sample_data.get_reads(
+                        sample_type, rep_id, 
+                        verify_args=False, include_merged=False)
+    
     if args.only_build_elements:
         return
     
@@ -819,15 +824,9 @@ def main():
             else:
                 exp_ofname = "%s.%s.expression_tracking" % (sample_type, rep_id)
             
-
-            fldist_fname = "%s.%s.fldists" % (sample_type, rep_id)
-            with open(fldist_fname) as fp:
-                config.log_statement("Loading fldists")
-                fl_dists = pickle.load(fp)
-            
             grit.estimate_transcript_expression.quantify_transcript_expression(
                 promoter_reads, rnaseq_reads, polya_reads,
-                merged_gene_pickled_fnames, fl_dists, exp_ofname, 
+                merged_gene_pickled_fnames, exp_ofname, 
                 sample_type=sample_type, rep_id=rep_id )
     
 if __name__ == '__main__':
