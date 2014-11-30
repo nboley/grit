@@ -155,7 +155,7 @@ def parse_arguments():
 
     call_peaks_tuning_params = {
         'alpha': 1e-2, 
-        'min_noise_frac': 0.01, 
+        'min_noise_frac': 0.05, 
         'min_merge_size': args.min_merge_distance, 
         'min_rel_merge_size': args.min_relative_merge_distance,
         'min_rd_cnt': 5,
