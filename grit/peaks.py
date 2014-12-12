@@ -529,15 +529,20 @@ def call_peaks( signal_cov, original_control_cov, reads_type,
         cov_region = signal_cov[start:stop+1]
         total_cov = cov_region.sum()
         cov_cumsum = cov_region.cumsum()-cov_region[0]
-        trim_start = numpy.flatnonzero(
-            cov_cumsum <= int(trim_fraction*total_cov)).max()
+        try: trim_start = numpy.flatnonzero(
+                cov_cumsum < int(trim_fraction*total_cov)).max()
+        except:
+            trim_start = 0
         try: trim_stop = numpy.flatnonzero(
-                cov_cumsum >= int((1.0-trim_fraction)*total_cov)).min()
-        except: trim_stop=stop-start+1
+                cov_cumsum > int((1.0-trim_fraction)*total_cov)).min()
+        except: trim_stop=len(cov_region)-1
+        while cov_region[trim_start] == 0:
+            trim_start += 1
+        while cov_region[trim_stop] == 0:
+            trim_stop -= 1
         new_peaks.append((trim_start+start, 
                           trim_stop+start,
                           cov_region[trim_start:trim_stop+1].sum()))
-
     # fitler peaks
     exp_filtered_peaks = []
     max_peak_cnt = float(max(cnt for start, stop, cnt in new_peaks))

@@ -21,7 +21,7 @@ from grit import peaks
 import multiprocessing
 import Queue
 
-def shift_and_write_narrow_peak(region, peaks, ofp):
+def shift_and_write_narrow_peak(region, peaks, signal_cov, ofp):
     """
     track name=CAGE.pan type=narrowPeak
     chr4    89932   89933   .    0    +    2    -1    -1    -1
@@ -38,6 +38,48 @@ def shift_and_write_narrow_peak(region, peaks, ofp):
                    "%e" % value, 
                    "-1", "-1", "-1")) + "\n")
     return
+
+def shift_and_write_gff(region, peaks, signal_cov, ofp):
+    """
+    track name=$NAME type=gff
+    chr1    GRIT  TSS    11869   14409   .       +       .       \
+        gene_id "ENSG00000223972.5"; gene_name "DDX11L1"; peak_cov "1,1,...0,3;"
+   """
+    if config.FIX_CHRM_NAMES_FOR_UCSC: 
+        chrm = fix_chrm_name_for_ucsc(region['chrm'])
+    else:
+        chrm = region['chrm']
+    format_str = '{contig}\tGRIT\tTSS\t{start}\t{stop}\t{score}\t{strand}\t.\t'
+    format_str += 'gene_id "{gene_id}"; gene_name "{gene_name}"; '
+    format_str += 'tss_id "{tss_id}"; peak_cov "{peak_cov}";'
+    gene_id = "{}_{}_{}_{}".format(
+        chrm, region['start'], region['stop'], region['strand'])
+    gene_name = gene_id
+
+    for tss_i, (rel_start, rel_stop, value) in enumerate(peaks):
+        start = region['start'] + rel_start
+        stop = region['start'] + rel_stop + 1
+        tss_id = "TSS_%i" % (tss_i + 1)
+        peak_cov = signal_cov[rel_start:rel_stop+1]
+        assert peak_cov[0] != 0
+        assert peak_cov[-1] != 0
+        ofp.write(format_str.format(
+            contig=chrm,
+            start=start,
+            stop=stop,
+            score=int(value),
+            strand=region['strand'],
+            gene_id = gene_id,
+            gene_name = gene_name,
+            tss_id = tss_id,
+            peak_cov = ",".join(("%i" % x for x in peak_cov))
+                                 
+        ) + "\n")
+    
+    return
+
+def shift_and_write(region, peaks, signal_cov, ofp):
+    assert False
 
 def process_genes(
         genes_queue, distal_reads, rnaseq_reads, ofp,
@@ -62,10 +104,10 @@ def process_genes(
         called_peaks = peaks.call_peaks(
             signal_cov, control_cov, reads_type, gene, 
             **call_peaks_tuning_params)
-        
+
         region = {'chrm': gene.chrm, 'strand':gene.strand, 
                   'start':gene.start, 'stop':gene.stop}
-        shift_and_write_narrow_peak(region, called_peaks, ofp)
+        shift_and_write_gff(region, called_peaks, signal_cov, ofp)
 
     return
 
@@ -114,6 +156,9 @@ def parse_arguments():
     
     parser.add_argument( '--outfname', '-o', 
                          help='Output file name. (default stdout)')
+    parser.add_argument( '--outfname-type', default="gff",
+                         choices=["narrowPeak", "gff"],
+                         help='Output filename type. (default gff)')
     parser.add_argument( '--gene-regions-ofname', 
                          help='Output bed file name to write gene regions to. (default: do not save gene regions)')
     
@@ -141,16 +186,16 @@ def parse_arguments():
     config.NTHREADS = args.threads
 
     config.VERBOSE = args.verbose
-    if config.VERBOSE:
-        assert args.outfname != None, "--outfname must be set if --verbose is set"
-        from grit.lib.logging import Logger
-        log_ofstream = open( "log.txt", "a" )
-        log_statement = Logger(
-            nthreads=config.NTHREADS,
-            use_ncurses=True,
-            log_ofstream=log_ofstream)
-        config.log_statement = log_statement
-
+    
+    #assert args.outfname != None, "--outfname must be set if --verbose is set"
+    from grit.lib.logging import Logger
+    log_ofstream = open( "log.txt", "a" )
+    log_statement = Logger(
+        nthreads=config.NTHREADS,
+        use_ncurses=config.VERBOSE,
+        log_ofstream=log_ofstream)
+    config.log_statement = log_statement
+        
     config.FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
 
     call_peaks_tuning_params = {
@@ -224,9 +269,24 @@ def parse_arguments():
     rnaseq_reads = RNAseqReads(args.rnaseq_reads.name, "rb").init(
         reverse_read_strand=rev_reads, ref_genes=ref_genes)
 
-    output_stream = ( open(args.outfname, "w") 
-                      if args.outfname != None
-                      else sys.stdout )
+
+    output_stream = ProcessSafeOPStream( open(args.outfname, "w") 
+                                         if args.outfname != None
+                                         else sys.stdout )
+    track_name = ( 
+        "peaks" if args.outfname == None else output_stream.name )
+    
+    global shift_and_write
+    if args.outfname_type == "narrowPeak":
+        shift_and_write = shift_and_write_narrow_peak
+    elif args.outfname_type ==  "gff":
+        shift_and_write = shift_and_write_gff
+    else:
+        assert False, "Unrecognized outfname_type '%s'" % args.outfname_type
+    
+    print >> output_stream, "track name=%s type=%s" % (
+        track_name, args.outfname_type)
+
     
     return ( ref_genes, ref_elements_to_include, 
              distal_reads, rnaseq_reads, 
@@ -243,11 +303,6 @@ def main():
       call_peaks_tuning_params
       ) = parse_arguments()
     try:
-        ofp = ProcessSafeOPStream(output_stream)
-        track_name = ( 
-            "peaks" if output_stream == sys.stdout else output_stream.name )
-        print >> ofp, "track name=%s type=narrowPeak" % track_name
-
         contigs, contig_lens = get_contigs_and_lens( 
             [distal_reads, rnaseq_reads] )
         contig_lens = dict((ctg, ctg_len)
@@ -278,8 +333,6 @@ def main():
 
         if gene_regions_ofname != None:
             with open(gene_regions_ofname, "w") as genes_ofp:
-                print >> genes_ofp, "track name={} type=bed".format(
-                    gene_regions_ofname)
                 for gene in gene_segments:
                     gene.write_elements_bed(genes_ofp)
         
@@ -287,7 +340,7 @@ def main():
         for gene in gene_segments:
             queue.put(gene)
 
-        args = [queue, distal_reads, rnaseq_reads, ofp, 
+        args = [queue, distal_reads, rnaseq_reads, output_stream, 
                 call_peaks_tuning_params]
         if config.NTHREADS == 1:
             process_genes(*args)
@@ -301,7 +354,7 @@ def main():
             for p in ps: p.join()
     finally:
         if output_stream != sys.stdout:
-            ofp.close()
+            output_stream.close()
     
     return
 
