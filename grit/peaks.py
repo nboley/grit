@@ -536,9 +536,9 @@ def call_peaks( signal_cov, original_control_cov, reads_type,
         try: trim_stop = numpy.flatnonzero(
                 cov_cumsum > int((1.0-trim_fraction)*total_cov)).min()
         except: trim_stop=len(cov_region)-1
-        while cov_region[trim_start] == 0:
+        while trim_start < len(cov_region) and cov_region[trim_start] == 0:
             trim_start += 1
-        while cov_region[trim_stop] == 0:
+        while trim_stop >= trim_start and cov_region[trim_stop] == 0:
             trim_stop -= 1
         new_peaks.append((trim_start+start, 
                           trim_stop+start,
