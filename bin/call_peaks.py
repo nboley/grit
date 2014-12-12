@@ -306,9 +306,7 @@ def main():
         contigs, contig_lens = get_contigs_and_lens( 
             [distal_reads, rnaseq_reads] )
         contig_lens = dict((ctg, ctg_len)
-                           for ctg, ctg_len in zip(contigs, contig_lens)
-                           if ctg not in ('M',) 
-                           and not ctg.startswith('Un'))
+                           for ctg, ctg_len in zip(contigs, contig_lens))
         
         # if we are supposed to use the annotation genes
         gene_segments = []
