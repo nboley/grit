@@ -6,8 +6,6 @@ from itertools import chain
 import sqlite3
 import cPickle as pickle
 
-sys.path.insert(0, "/home/nboley/grit/")
-
 from grit.files.gtf import load_gtf
 from grit.files.reads import (
     MergedReads, clean_chr_name,

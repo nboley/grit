@@ -3,9 +3,6 @@ import cPickle
 
 from collections import namedtuple
 
-try: import grit
-except ImportError: sys.path.insert(0, "/home/nboley/grit/")
-
 from grit.lib.multiprocessing_utils import ProcessSafeOPStream
 from grit import config
 

@@ -10,10 +10,11 @@ else: USE_CYTHON = True
 # if we have cython, then build the pyx file
 if USE_CYTHON:
     from Cython.Build import cythonize
-    extensions = cythonize("grit/sparsify_support_fns.pyx")
+    extensions = cythonize("grit/sparsify_support_fns.pyx", "grit/call_peaks_support_fns.pyx")
 else:
     extensions = [
-        Extension("sparsify_support_fns", ["grit/sparsify_support_fns.c", ])
+        Extension("sparsify_support_fns", ["grit/sparsify_support_fns.c", ]),
+        Extension("call_peaks_support_fns", ["grit/call_peaks_support_fns.c", ])\
     ]
 
 
@@ -25,7 +26,7 @@ config = {
     'url': 'http://grit-bio.org/',
     'download_url': 'http://grit-bio.org/git/',
     'author_email': 'npboley@gmail.com',
-    'version': '1.1.3-dev',
+    'version': '2.0.0',
     'packages': ['grit', 
                  'grit.analyze', 
                  'grit.files', 

@@ -11,17 +11,14 @@ import scipy.stats
 
 from itertools import chain
 
-try: import grit
-except ImportError: sys.path.insert(0, "/home/nboley/grit/grit/")
-
 import config
 
-import files.junctions
+import grit.files.junctions
 import grit.files.reads
 from grit.lib.multiprocessing_utils import ProcessSafeOPStream
 
 import pyximport; pyximport.install()
-from call_peaks_support_fns import calc_moments
+from grit.call_peaks_support_fns import calc_moments
 
 from scipy.optimize import fmin_l_bfgs_b as minimize
 

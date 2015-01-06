@@ -22,10 +22,8 @@ import frag_len
 from itertools import product, izip, chain
 from collections import defaultdict
 
-sys.path.insert(0, "/home/nboley/grit/grit/")
-
-from files.reads import ( iter_coverage_intervals_for_read, get_read_group,
-                          CAGEReads, RAMPAGEReads, PolyAReads )
+from grit.files.reads import ( iter_coverage_intervals_for_read, get_read_group,
+                               CAGEReads, RAMPAGEReads, PolyAReads )
 
 class NoObservableTranscriptsError(Exception):
     pass

@@ -2,7 +2,6 @@ import os, sys
 import cPickle as pickle
 import multiprocessing
 
-sys.path.insert(0, "/home/nboley/grit/grit/")
 from grit.merge import (
     group_overlapping_genes, 
     reduce_gene_clustered_transcripts, 
