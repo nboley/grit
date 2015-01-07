@@ -23,6 +23,9 @@ def clean_chr_name( chrm ):
     return chrm
 
 def fix_chrm_name_for_ucsc( chrm ):
+    clean_chr_name = clean_chr_name(chrm)
+    if clean_chr_name.startswith('ERCC'):
+        return clean_chr_name
     return 'chr' + clean_chr_name(chrm)
 
 def guess_strand_from_fname( fname ):
