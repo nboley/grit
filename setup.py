@@ -9,7 +9,6 @@ try:
                   ["grit/call_peaks_support_fns.pyx", ])
     ])
 except ImportError:
-    print "Can't impoirt cythion"
     extensions = [
         Extension("grit.sparsify_support_fns", 
                   ["grit/sparsify_support_fns.c", ]),
