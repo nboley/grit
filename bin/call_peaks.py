@@ -104,7 +104,7 @@ def process_genes(
 
         region = {'chrm': gene.chrm, 'strand':gene.strand, 
                   'start':gene.start, 'stop':gene.stop}
-        shift_and_write_gff(region, called_peaks, signal_cov, ofp)
+        shift_and_write(region, called_peaks, signal_cov, ofp)
 
     return
 
@@ -175,6 +175,8 @@ def parse_arguments():
         
     parser.add_argument( '--verbose', '-v', default=False, action='store_true', 
                          help='Whether or not to print status information.')
+    parser.add_argument( '--quiet', default=False, action='store_true', 
+                         help='Do not print status information.')
     parser.add_argument( '--threads', '-t', default=1, type=int,
                          help='The number of threads to run.')
     
