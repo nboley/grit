@@ -23,10 +23,10 @@ def clean_chr_name( chrm ):
     return chrm
 
 def fix_chrm_name_for_ucsc( chrm ):
-    clean_chr_name = clean_chr_name(chrm)
-    if clean_chr_name.startswith('ERCC'):
-        return clean_chr_name
-    return 'chr' + clean_chr_name(chrm)
+    cleaned_chr_name = clean_chr_name(chrm)
+    if cleaned_chr_name.startswith('ERCC'):
+        return cleaned_chr_name
+    return 'chr' + cleaned_chr_name
 
 def guess_strand_from_fname( fname ):
     if fname.lower().rfind( "plus" ) >= 0:

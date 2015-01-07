@@ -18,9 +18,11 @@ from grit import peaks
 import multiprocessing
 import Queue
 
+BED_ofp = None
+
 def shift_and_write_narrow_peak(region, peaks, signal_cov, ofp):
     """
-    track name=CAGE.pan type=narrowPeak
+    track name=$NAME type=narrowPeak
     chr4    89932   89933   .    0    +    2    -1    -1    -1
    """
     if config.FIX_CHRM_NAMES_FOR_UCSC: 
@@ -35,6 +37,24 @@ def shift_and_write_narrow_peak(region, peaks, signal_cov, ofp):
                    "%e" % value, 
                    "-1", "-1", "-1")) + "\n")
     return
+
+def shift_and_write_bed(region, peaks, signal_cov, ofp):
+    """
+    track name=$NAME type=bed
+    chr4    89932   89933   .    0    +
+    """
+    if config.FIX_CHRM_NAMES_FOR_UCSC: 
+        chrm = fix_chrm_name_for_ucsc(region['chrm'])
+    else:
+        chrm = region['chrm']
+    for start, stop, value in peaks:
+        ofp.write( "\t".join(
+                 ( chrm, str(region['start'] + start), 
+                   str(region['start'] + stop + 1), 
+                   ".", "1000", region['strand'], 
+                   "%e" % value)) + "\n")
+    return
+
 
 def shift_and_write_gff(region, peaks, signal_cov, ofp):
     """
@@ -105,7 +125,8 @@ def process_genes(
         region = {'chrm': gene.chrm, 'strand':gene.strand, 
                   'start':gene.start, 'stop':gene.stop}
         shift_and_write(region, called_peaks, signal_cov, ofp)
-
+        if BED_ofp != None:
+            shift_and_write_bed(region, called_peaks, signal_cov, BED_ofp)
     return
 
 def parse_arguments():
@@ -158,6 +179,8 @@ def parse_arguments():
                          help='Output filename type. (default gff)')
     parser.add_argument( '--gene-regions-ofname', 
                          help='Output bed file name to write gene regions to. (default: do not save gene regions)')
+    parser.add_argument( '--bed-peaks-ofname', 
+                         help='Output bed peaks filename - this file will be written is in addition to the output from --ofname.')
     
     parser.add_argument( '--ucsc', default=False, action='store_true', 
                          help='Format the contig names to work with the UCSC genome browser.')
@@ -273,7 +296,8 @@ def parse_arguments():
                                          if args.outfname != None
                                          else sys.stdout )
     track_name = ( 
-        "peaks" if args.outfname == None else output_stream.name )
+        "peaks" if args.outfname == None else output_stream.name.replace(
+            "." + args.outfname_type, "") )
     
     global shift_and_write
     if args.outfname_type == "narrowPeak":
@@ -283,8 +307,16 @@ def parse_arguments():
     else:
         assert False, "Unrecognized outfname_type '%s'" % args.outfname_type
     
-    print >> output_stream, "track name=%s type=%s" % (
-        track_name, args.outfname_type)
+    track_header = "track name=%s type=%s" % (track_name, args.outfname_type)
+    print >> output_stream, track_header
+    
+    global BED_ofp
+    if args.bed_peaks_ofname != None:
+        BED_ofp = ProcessSafeOPStream(open(args.bed_peaks_ofname, "w"))
+        track_header = "track name=%s" % track_name
+        print >> BED_ofp, track_header
+        
+    
 
     
     return ( ref_genes, ref_elements_to_include, 
