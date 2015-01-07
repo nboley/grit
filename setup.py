@@ -1,9 +1,20 @@
 from setuptools import setup, Extension, find_packages
 
-extensions = [
-    Extension("grit.sparsify_support_fns", ["grit/sparsify_support_fns.pyx", ]),
-    Extension("grit.call_peaks_support_fns", ["grit/call_peaks_support_fns.pyx", ])\
-]
+try:
+    from Cython.Setup import cythonize
+    extensions = cythonize([
+        Extension("grit.sparsify_support_fns", 
+                  ["grit/sparsify_support_fns.pyx", ]),
+        Extension("grit.call_peaks_support_fns", 
+                  ["grit/call_peaks_support_fns.pyx", ])
+    ])
+except ImportError:
+    extensions = [
+        Extension("grit.sparsify_support_fns", 
+                  ["grit/sparsify_support_fns.c", ]),
+        Extension("grit.call_peaks_support_fns", 
+                  ["grit/call_peaks_support_fns.c", ])
+    ]
 
 config = {
     'include_package_data': True,
@@ -19,8 +30,8 @@ config = {
                  'grit.files', 
                  'grit.lib', 
                  'grit.proteomics'],
-    'setup_requires': [ 'Cython', ],
-    'install_requires': [ 'scipy', 'numpy', 'Cython', 'networkx', 'pysam' ],
+    'setup_requires': [],
+    'install_requires': [ 'scipy', 'numpy', 'networkx', 'pysam' ],
     'scripts': ['./bin/run_grit.py', "./bin/call_peaks.py"],
     'name': 'GRIT'
 }
