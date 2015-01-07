@@ -3,6 +3,8 @@ import time
 import curses
 import multiprocessing
 
+import grit
+
 from grit import config
 
 MAX_REFRESH_TIME = 1e-2
@@ -30,7 +32,7 @@ def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
     log_border.border()
     log = log_border.subpad( N_LOG_ROWS, min(ncol, MAX_NCOL)-2, 1, 1)
 
-    header.addstr(0, 0, "GRIT (version %s)" % config.VERSION )
+    header.addstr(0, 0, "GRIT (version %s)" % grit.__version__ )
     
     while True:
         start_time = time.time()

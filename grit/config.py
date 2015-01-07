@@ -1,7 +1,5 @@
 import os, sys
 
-VERSION = "1.1.3-dev"
-
 # config options shared across modules
 
 # the maximum number of transcripts to produce quantification estimates for
