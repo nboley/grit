@@ -26,7 +26,7 @@ INSTALLATION:
 
 -Method 1: easy_install
 
-Run: (sudo) easy_install GRIT-1.1.0.tar.gz
+Run: (sudo) easy_install GRIT-2.0.1.tar.gz
 
 This should install the dependencies, the grit python module, and the grit 
 script (run_grit.py). However, installing them through your distributions 
@@ -78,7 +78,7 @@ Simple Example:
 
 The simplest possible GRIT run is:
 
-run_grit.py --rnaseq-reads AdMatedF_Ecl_20days_Heads.biorep1.rnaseq.chr4.bam  \
+run_grit --rnaseq-reads AdMatedF_Ecl_20days_Heads.biorep1.rnaseq.chr4.bam  \
             --cage-reads AdMatedF_Ecl_20days_Heads.biorep1.cage.chr4.bam \
             --polya-reads AdMatedF_Ecl_20days_Heads.biorep2.passeq.chr4.bam \
             --reference flybase-r5.45.chr4.gtf
@@ -86,7 +86,7 @@ run_grit.py --rnaseq-reads AdMatedF_Ecl_20days_Heads.biorep1.rnaseq.chr4.bam  \
 Note that the reference is required to determine the read strands. The following
 would produce identical results:
 
-run_grit.py --rnaseq-reads AdMatedF_Ecl_20days_Heads.biorep1.rnaseq.chr4.bam  \
+run_grit --rnaseq-reads AdMatedF_Ecl_20days_Heads.biorep1.rnaseq.chr4.bam  \
             --rnaseq-read-type backward \
             --cage-reads AdMatedF_Ecl_20days_Heads.biorep1.cage.chr4.bam \
             --cage-read-type backward \
@@ -164,7 +164,7 @@ should each be provided a line with different read types.
 
 Again, in practice we would probably run:
 
-run_grit.py --control AdMatedF_Ecl_20days_Heads.control.txt --verbose --ucsc \
+run_grit --control AdMatedF_Ecl_20days_Heads.control.txt --verbose --ucsc \
             -t 16 --reference flybase-r5.45.chr4.gtf --use-refernce-junctions \
             --fasta dm_rel_5.fa
 
@@ -172,7 +172,7 @@ run_grit.py --control AdMatedF_Ecl_20days_Heads.control.txt --verbose --ucsc \
 Command Line Options:
 ################################################################################
 
-Run 'run_grit.py --help' for a complete list. They should be well described.
+Run 'run_grit --help' for a complete list. They should be well described.
 
 ################################################################################
 Questions/bug reports:

@@ -24,7 +24,7 @@ config = {
     'url': 'http://grit-bio.org/',
     'download_url': 'http://grit-bio.org/git/',
     'author_email': 'npboley@gmail.com',
-    'version': '2.0.0',
+    'version': '2.0.1',
     'packages': ['grit', 
                  'grit.analyze', 
                  'grit.files', 
@@ -32,7 +32,7 @@ config = {
                  'grit.proteomics'],
     'setup_requires': [],
     'install_requires': [ 'scipy', 'numpy', 'networkx', 'pysam' ],
-    'scripts': ['./bin/run_grit.py', "./bin/call_peaks.py"],
+    'scripts': ['./bin/run_grit', "./bin/call_peaks"],
     'name': 'GRIT'
 }
 
