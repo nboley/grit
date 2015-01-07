@@ -17,7 +17,6 @@ import grit.files.junctions
 import grit.files.reads
 from grit.lib.multiprocessing_utils import ProcessSafeOPStream
 
-import pyximport; pyximport.install()
 from grit.call_peaks_support_fns import calc_moments
 
 from scipy.optimize import fmin_l_bfgs_b as minimize

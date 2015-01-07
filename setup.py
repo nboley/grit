@@ -1,26 +1,13 @@
-#from distutils.core import setup
-#from distutils.extension import Extension
-
 from setuptools import setup, Extension, find_packages
 
-try: import Cython
-except ImportError: USE_CYTHON = False
-else: USE_CYTHON = True
-
-# if we have cython, then build the pyx file
-if USE_CYTHON:
-    from Cython.Build import cythonize
-    extensions = cythonize("grit/sparsify_support_fns.pyx", "grit/call_peaks_support_fns.pyx")
-else:
-    extensions = [
-        Extension("sparsify_support_fns", ["grit/sparsify_support_fns.c", ]),
-        Extension("call_peaks_support_fns", ["grit/call_peaks_support_fns.c", ])\
-    ]
-
+extensions = [
+    Extension("grit.sparsify_support_fns", ["grit/sparsify_support_fns.pyx", ]),
+    Extension("grit.call_peaks_support_fns", ["grit/call_peaks_support_fns.pyx", ])\
+]
 
 config = {
     'include_package_data': True,
-    'ext_modules': extensions,
+    'ext_modules': extensions, 
     'description': 'GRIT',
     'author': 'Nathan Boley',
     'url': 'http://grit-bio.org/',
@@ -34,7 +21,7 @@ config = {
                  'grit.proteomics'],
     'setup_requires': [ 'Cython', ],
     'install_requires': [ 'scipy', 'numpy', 'Cython', 'networkx', 'pysam' ],
-    'scripts': ['./bin/run_grit.py',],
+    'scripts': ['./bin/run_grit.py', "./bin/call_peaks.py"],
     'name': 'GRIT'
 }
 
