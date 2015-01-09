@@ -54,7 +54,7 @@ def shift_and_write_bed(region, peaks, signal_cov, ofp):
         ofp.write( "\t".join(
                  ( chrm, str(region['start'] + start), 
                    str(region['start'] + stop + 1), 
-                   ".", "%i" % value, region['strand'])) + "\n")
+                   ".", "1000", region['strand'])) + "\n")
     return
 
 
