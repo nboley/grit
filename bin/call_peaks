@@ -21,6 +21,8 @@ import grit
 import multiprocessing
 import Queue
 
+curr_gene_id = multiprocessing.Value('i', 1)
+
 BED_ofp = None
 
 def shift_and_write_narrow_peak(region, peaks, signal_cov, ofp):
@@ -41,20 +43,43 @@ def shift_and_write_narrow_peak(region, peaks, signal_cov, ofp):
                    "-1", "-1", "-1")) + "\n")
     return
 
-def shift_and_write_bed(region, peaks, signal_cov, ofp):
+def shift_and_write_bed(region, peaks, signal_cov, ofp, extended=True):
     """
     track name=$NAME type=bed
+    chr4    89932   89933   .    0    +
+
+    EXTENDED
     chr4    89932   89933   .    0    +
     """
     if config.FIX_CHRM_NAMES_FOR_UCSC: 
         chrm = fix_chrm_name_for_ucsc(region['chrm'])
     else:
         chrm = region['chrm']
-    for start, stop, value in peaks:
-        ofp.write( "\t".join(
-                 ( chrm, str(region['start'] + start), 
-                   str(region['start'] + stop + 1), 
-                   ".", "1000", region['strand'])) + "\n")
+    for tss_i, (rel_start, rel_stop, value) in enumerate(peaks):
+        line_data = [ chrm, str(region['start'] + rel_start), 
+                      str(region['start'] + rel_stop + 1), 
+                      ".", "1000", region['strand'] ]
+        if extended == True:
+            score = str(value)
+
+            with curr_gene_id.get_lock():
+                gene_id = "GENE_%i" % curr_gene_id.value
+                curr_gene_id.value += 1
+            
+            gene_name = gene_id    
+            
+            tss_id = "%s_TSS_%i" % (gene_id, tss_i + 1)
+            
+            gene_region = "{}:{}:{}-{}".format(
+                chrm, region['strand'], region['start'], region['stop'])
+
+            peak_cov = ",".join(
+                "%i" % x for x in signal_cov[rel_start:rel_stop+1])
+            line_data.extend((score, gene_id, gene_name, tss_id, 
+                              gene_region, peak_cov))
+        
+        ofp.write( "\t".join(line_data) + "\n")
+                 
     return
 
 
@@ -62,23 +87,30 @@ def shift_and_write_gff(region, peaks, signal_cov, ofp):
     """
     track name=$NAME type=gff
     chr1    GRIT  TSS    11869   14409   .       +       .       \
-        gene_id "ENSG00000223972.5"; gene_name "DDX11L1"; peak_cov "1,1,...0,3;"
+        gene_id "ENSG00000223972.5"; tss_id "ENSG00000223972.5_TSS_1; \
+        gene_region "chr1:+:11869-18869"; peak_cov "1,1,...0,3;"
    """
     if config.FIX_CHRM_NAMES_FOR_UCSC: 
         chrm = fix_chrm_name_for_ucsc(region['chrm'])
     else:
         chrm = region['chrm']
     format_str = '{contig}\tGRIT\tTSS\t{start}\t{stop}\t{score}\t{strand}\t.\t'
-    format_str += 'gene_id "{gene_id}"; gene_name "{gene_name}"; '
-    format_str += 'tss_id "{tss_id}"; peak_cov "{peak_cov}";'
-    gene_id = "{}_{}_{}_{}".format(
-        chrm, region['start'], region['stop'], region['strand'])
-    gene_name = gene_id
+    format_str += 'gene_id "{gene_id}"; '
+    format_str += 'tss_id "{tss_id}"; '
+    format_str += 'gene_region "{gene_region}; '
+    format_str += 'peak_cov "{peak_cov}";'
+
+    with curr_gene_id.get_lock():
+        gene_id = "GENE_%i" % curr_gene_id.value
+        curr_gene_id.value += 1
+    
+    gene_region = "{}:{}:{}-{}".format(
+        chrm, region['strand'], region['start'], region['stop'])
 
     for tss_i, (rel_start, rel_stop, value) in enumerate(peaks):
         start = region['start'] + rel_start
         stop = region['start'] + rel_stop + 1
-        tss_id = "TSS_%i" % (tss_i + 1)
+        tss_id = "%s_TSS_%i" % (gene_id, tss_i + 1)
         peak_cov = signal_cov[rel_start:rel_stop+1]
         assert peak_cov[0] != 0
         assert peak_cov[-1] != 0
@@ -89,7 +121,7 @@ def shift_and_write_gff(region, peaks, signal_cov, ofp):
             score=int(value),
             strand=region['strand'],
             gene_id = gene_id,
-            gene_name = gene_name,
+            gene_region = gene_region,
             tss_id = tss_id,
             peak_cov = ",".join(("%i" % x for x in peak_cov))
                                  

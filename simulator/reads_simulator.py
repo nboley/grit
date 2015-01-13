@@ -520,6 +520,7 @@ def main():
         gtf_fp, fl_dist_const, 
         fl_dist_norm, full_fragment, read_len, 
         fasta_fn, qual_fn ) 
+    print "Finished loading input"
     
     """
     for gene in genes:

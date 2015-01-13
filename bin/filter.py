@@ -4,6 +4,7 @@ import re
 from collections import defaultdict, namedtuple
 
 pat = re.compile('transcript_id "(.*?)";')
+pat_gene = re.compile('gene_id "(.*?)";')
 
 ExpressionTrackingLine = namedtuple( 
     'ExpressionTrackingLine', 
@@ -138,7 +139,7 @@ def main():
         min_fpkm_lb, min_fpkm_ub, 
         intrasample_max_fpkm_ration,
         intersample_max_fpkm_ratio )
-
+    
     for line in gtf_fp:
         if line.startswith( "track" ): 
             print build_track_line(
@@ -150,8 +151,9 @@ def main():
         
         t_id = re.findall( pat, line)[0]
         if t_id not in valid_transcripts: continue
-        
-        print line,
+        gene_id = re.findall( pat_gene, line)[0]
+        fpkm = transcript_stats[gene_id][t_id][0].FPKM
+        print line.strip() + ' FPKM "%s";' % fpkm
 
 if __name__ == '__main__':
     main()
