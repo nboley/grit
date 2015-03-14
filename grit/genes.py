@@ -648,6 +648,12 @@ def find_segments_and_jns_worker(
         rnaseq_reads, promoter_reads, polya_reads,
         ref_elements, ref_elements_to_include,
         num_unique_reads):
+    rnaseq_reads = rnaseq_reads.reload()
+    if promoter_reads != None: 
+        promoter_reads = promoter_reads.reload()
+    if polya_reads != None: 
+        polya_reads = polya_reads.reload()
+    
     length_of_segments = segments.qsize()
     while True:
         segment = segments.get()

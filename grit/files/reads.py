@@ -603,7 +603,7 @@ class Reads( pysam.Samfile ):
         fl_dists = self.fl_dists
         num_reads = self.num_reads
         kw_args = self._init_kwargs
-        self.close()
+        #self.close()
         
         reads = type(self)(fname)
         reads.init(**kw_args)
