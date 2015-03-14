@@ -598,12 +598,17 @@ class Reads( pysam.Samfile ):
         return cvg
 
     def reload( self ):
+        # extract the relevant info, and close
         fname = self.filename
-        #self.close()
+        fl_dists = self.fl_dists
+        num_reads = self.num_reads
+        kw_args = self._init_kwargs
+        self.close()
+        
         reads = type(self)(fname)
-        reads.init(**self._init_kwargs)
-        reads.fl_dists = self.fl_dists
-        reads.num_reads = self.num_reads
+        reads.init(**kw_args)
+        reads.fl_dists = fl_dists
+        reads.num_reads = num_reads
         return reads
 
 class RNAseqReads(Reads):    

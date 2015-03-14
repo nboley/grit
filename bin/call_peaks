@@ -4,7 +4,7 @@ import cPickle
 
 from collections import namedtuple
 
-from grit.lib.multiprocessing_utils import ProcessSafeOPStream
+from grit.lib.multiprocessing_utils import ProcessSafeOPStream, fork_and_wait
 from grit import config
 
 from grit.files.reads import (
@@ -103,8 +103,8 @@ def shift_and_write(region, peaks, signal_cov, ofp):
 def process_genes(
         genes_queue, distal_reads, rnaseq_reads, ofp,
         call_peaks_tuning_params):
-    distal_reads.reload()
-    rnaseq_reads.reload()
+    distal_reads = distal_reads.reload()
+    rnaseq_reads = rnaseq_reads.reload()
     num_genes = genes_queue.qsize()
     while True:
         try: gene = genes_queue.get(timeout=1.0)
@@ -376,16 +376,7 @@ def main():
 
         args = [queue, distal_reads, rnaseq_reads, output_stream, 
                 call_peaks_tuning_params]
-        if config.NTHREADS == 1:
-            process_genes(*args)
-        else:
-            ps = []
-            for i in xrange(config.NTHREADS):
-                p = multiprocessing.Process(target=process_genes, args=args)
-                p.daemon=True
-                p.start()
-                ps.append(p)
-            for p in ps: p.join()
+        fork_and_wait(config.NTHREADS, process_genes, args)
     finally:
         if output_stream != sys.stdout:
             output_stream.close()

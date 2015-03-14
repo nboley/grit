@@ -1,5 +1,7 @@
-import multiprocessing
+import os
 import time
+import signal
+import multiprocessing
 
 class ThreadSafeFile( file ):
     def __init__( *args ):
@@ -54,4 +56,43 @@ class Pool(object):
                 p.join()
                 self.processes[i] = None
         
+        return
+
+def handle_interrupt_signal(signum, frame):
+    os._exit(0)
+
+def fork_and_wait(n_proc, target, args):
+    """Fork n_proc processes, run target(*args) in each, and wait to finish.
+    
+    """
+    if n_proc == 1:
+        target(*args)
+        return
+    else:
+        pids = []
+        for i in xrange(n_proc):
+            pid = os.fork()
+            if pid == 0:
+                signal.signal(signal.SIGINT, handle_interrupt_signal)
+                target(*args)
+                os._exit(0)
+            else:
+                pids.append(pid)
+        try:
+            for pid in pids: 
+                ret_pid, error_code = os.waitpid(pid, 0)
+                assert pid == ret_pid
+                if error_code != 0: 
+                    raise OSError, "Process '{pid}' returned error code '%i'".format(
+                        pid, error_code) 
+                else:
+                    pids.remove(pid)
+        except KeyboardInterrupt:
+            for pid in pids:
+                os.kill(pid, signal.SIGINT)
+            raise
+        except OSError:
+            for pid in pids:
+                os.kill(pid, SIGINT)
+            raise            
         return
