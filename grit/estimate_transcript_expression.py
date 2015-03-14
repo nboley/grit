@@ -515,9 +515,9 @@ def build_design_matrices_worker( gene_ids,
                                   data, fl_dists,
                                   (rnaseq_reads, promoter_reads, polya_reads)):
     config.log_statement("Reloading read data in subprocess")
-    if rnaseq_reads != None: rnaseq_reads.reload()
-    if promoter_reads != None: promoter_reads.reload()
-    if polya_reads != None: polya_reads.reload()
+    if rnaseq_reads != None: rnaseq_reads = rnaseq_reads.reload()
+    if promoter_reads != None: promoter_reads = promoter_reads.reload()
+    if polya_reads != None: polya_reads = polya_reads.reload()
     
     while True:
         config.log_statement("Acquiring gene to process")        

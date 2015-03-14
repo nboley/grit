@@ -27,7 +27,7 @@ def populate_cvg_array_for_contig(
     if VERBOSE: print "Starting ", chrm, strand
     
     # re-open the reads to make this multi-process safe
-    reads.reload()
+    reads = reads.reload()
     
     # open a tempory file to write this to
     with tempfile.NamedTemporaryFile(delete=True) as ofp:

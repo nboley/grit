@@ -254,7 +254,7 @@ class Samples(object):
             
             if data.filename in self.mapped_reads_cache:
                 reads = self.mapped_reads_cache[data.filename]
-                reads.reload()
+                reads = reads.reload()
             else:
                 assert data.paired == 'true', "RNASeq reads must be paired"
                 assert data.stranded == 'true', "RNASeq reads must be stranded"
@@ -290,7 +290,7 @@ class Samples(object):
         for data in elements:
             if data.filename in self.mapped_reads_cache:
                 reads = self.mapped_reads_cache[data.filename]
-                reads.reload()
+                reads = reads.reload()
             else:
                 rev_reads = {'forward':False, 'backward':True, 'auto': None}[
                     data.read_type]
@@ -309,7 +309,7 @@ class Samples(object):
                 'polya', sample_type, rep_id, include_merged=include_merged ):
             if data.filename in self.mapped_reads_cache:
                 reads = self.mapped_reads_cache[data.filename]
-                reads.reload()
+                reads = reads.reload()
             else:
                 assert data.stranded == 'true', "polya-site-seq reads must be stranded"
                 rev_reads = {'forward':False, 'backward':True, 'auto': None}[

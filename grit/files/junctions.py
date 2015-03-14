@@ -202,7 +202,7 @@ def extract_junctions_in_region( reads, chrm, strand, start=None, end=None,
                                  allow_introns_to_span_start=False,
                                  allow_introns_to_span_end=False,
                                  only_unique=False ):
-    reads.reload()
+    reads = reads.reload()
     all_junctions = defaultdict(lambda: defaultdict(int))
     for i, read in enumerate(reads.iter_reads(chrm, strand, start, end)):
         # check for uniqueness, if possible
