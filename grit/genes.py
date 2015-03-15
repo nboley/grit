@@ -888,5 +888,11 @@ def find_all_gene_segments( rnaseq_reads, promoter_reads, polya_reads,
                 if new_gene.stop-new_gene.start+1 < config.MIN_GENE_LENGTH: 
                     continue
                 new_genes.append(new_gene)
-    
-    return new_genes, fl_dists, ReadCounts(*[x for x in num_unique_reads])
+
+    try: 
+        num_unique_reads = ReadCounts(*[
+            float(x.value) for x in num_unique_reads])
+    except AttributeError:
+        num_unique_reads = ReadCounts(*num_unique_reads)
+        
+    return new_genes, fl_dists, num_unique_reads 

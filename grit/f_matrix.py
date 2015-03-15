@@ -435,6 +435,7 @@ def calc_expected_cnts( exon_boundaries, transcripts, fl_dist,
         if (len(exon_boundaries)*len(transcripts)*8.)/(1024**3) > max_memory_usage:
             raise MemoryError, \
                 "Building the design matrix has exceeded the maximum allowed memory "
+        nonoverlapping_indices = tuple(nonoverlapping_indices)
         f_mat_entries[nonoverlapping_indices] = {}
         # find all of the possible read bins for transcript given this 
         # fl_dist and read length
@@ -507,14 +508,19 @@ def build_expected_and_observed_arrays(
     observed_mat = []
     unobservable_transcripts = set()
     
-    for key, val in sorted(expected_cnts.iteritems()):
-        # skip bins with 0 expected reads
-        if sum( val) == 0:
-            continue
-        
-        expected_mat.append( val )
+    # find and sort all transcripts
+    transcripts = set()
+    for bin, transcript_cnts in sorted(expected_cnts.iteritems()):
+        for transcript in transcript_cnts:
+            transcripts.add(transcript)
+    transcripts = sorted(transcripts)
+
+    # turn the cnts into a more structured format
+    for bin, transcript_cnts in sorted(expected_cnts.iteritems()):
+        expected_cnts = [transcript_cnts[t] for t in transcripts]
+        expected_mat.append( expected_cnts )
         try:
-            observed_mat.append( observed_cnts[key] )
+            observed_mat.append( observed_cnts[bin] )
         except KeyError:
             observed_mat.append( 0 )
     
@@ -522,7 +528,6 @@ def build_expected_and_observed_arrays(
         raise ValueError, "No expected reads."
     
     expected_mat = numpy.array( expected_mat, dtype=numpy.double )
-    
     if normalize:
         nonzero_entries = expected_mat.sum(0).nonzero()[0]
         unobservable_transcripts = set(range(expected_mat.shape[1])) \
@@ -545,22 +550,22 @@ def build_expected_and_observed_rnaseq_counts(gene, reads, fl_dists):
     observed_cnts = build_observed_cnts( binned_reads, fl_dists )    
     read_groups_and_read_lens =  set( (RG, read_len) for RG, read_len, bin 
                                         in binned_reads.iterkeys() )
-    
-    fl_dists_and_read_lens = [ (RG, fl_dists[RG], read_len) for read_len, RG  
-                               in read_groups_and_read_lens ]
-
     """
     # TODO XXX
     print exon_boundaries
     print observed_cnts.values()
     """
+    expected_cnts = defaultdict(lambda: defaultdict(float))
     for (rg, (r1_len,r2_len)), (fl_dist, marginal_frac) in fl_dists.iteritems():
-        expected_cnts[(rg, (r1_len, r2_len))
-                      ] = marginal_frac*calc_expected_cnts( 
-            exon_boundaries, transcripts_non_overlapping_exon_indices, 
-            fl_dist, r1_len, r2_len)
-        
-    return expected_cnts, observed_cnts
+        for transcript, read_bins_and_vals in calc_expected_cnts( 
+                exon_boundaries, transcripts_non_overlapping_exon_indices, 
+                fl_dist, r1_len, r2_len).iteritems():
+            for read_bin, expected_bin_cnt in read_bins_and_vals.iteritems():
+                assert r1_len == r2_len
+                expected_cnts[(r1_len, rg, read_bin)][transcript] += (
+                    marginal_frac*expected_bin_cnt )
+
+    return dict(expected_cnts), observed_cnts
 
 def build_expected_and_observed_transcript_bndry_counts( 
         gene, reads, bndry_type=None ):
@@ -989,6 +994,7 @@ class DesignMatrix(object):
     def __init__(self, gene, fl_dists,
                  rnaseq_reads, five_p_reads, three_p_reads,
                  max_num_transcripts=None):
+        assert fl_dists != None
         self.array_types = []
 
         self.obs_cnt_arrays = []

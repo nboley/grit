@@ -73,7 +73,7 @@ def get_strand( read, reverse_read_strand, pairs_are_opp_strand ):
     return strand
 
 def get_read_group( r1, r2 ):        
-    return 'mean'
+    #return 'mean'
     r1_read_group = [ val for key, val in r1.tags if key == 'RG' ]
     r1_read_group = r1_read_group[0] if len( r1_read_group ) == 1 else 'mean'
     r2_read_group = [ val for key, val in r2.tags if key == 'RG' ]
@@ -348,8 +348,14 @@ class MergedReads( object ):
         
         self.references, self.lengths = get_contigs_and_lens( self._reads )
 
-        self.fl_dists = None
-        self.num_reads = None
+        all_fl_dists = [reads.fl_dists for reads in all_reads]
+        self.fl_dists = all_fl_dists[0]
+        assert all(fl_dist == self.fl_dists for fl_dist in all_fl_dists)
+
+        if all(reads.num_reads == None for reads in all_reads):
+            self.num_reads = None
+        else:
+            self.num_reads = sum(reads.num_reads for reads in all_reads)
         
         return
     

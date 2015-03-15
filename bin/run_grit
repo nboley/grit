@@ -248,20 +248,31 @@ class Samples(object):
     def _load_rnaseq_reads(self, sample_type, rep_id, include_merged):
         if config.VERBOSE: config.log_statement(
             "Initializing RNAseq reads for sample '%s'." % sample_type)
+        
+        try: 
+            with open(sample_type + ".fldist.obj") as fl_dists_fp:
+                fl_dists = pickle.load( fl_dists_fp )
+        except:
+            print "CANT OPEN %s" % sample_type + ".fldist.obj"
+            fl_dists = None
+
         all_reads = []
         for data in self.get_elements( 
                 'rnaseq', sample_type, rep_id, include_merged=include_merged):
             
-            if data.filename in self.mapped_reads_cache:
+            if False and data.filename in self.mapped_reads_cache:
                 reads = self.mapped_reads_cache[data.filename]
                 reads = reads.reload()
+                #assert reads.fl_dists != None
             else:
                 assert data.paired == 'true', "RNASeq reads must be paired"
                 assert data.stranded == 'true', "RNASeq reads must be stranded"
                 rev_reads = {'forward':False, 'backward':True, 'auto': None}[
                     data.read_type]
                 reads = RNAseqReads(data.filename)
-                reads.init(reverse_read_strand=rev_reads, ref_genes=self.ref_genes)
+                reads.init(reverse_read_strand=rev_reads, 
+                           ref_genes=self.ref_genes)
+                reads.fl_dists = fl_dists
                 self.mapped_reads_cache[data.filename] = reads
             all_reads.append(reads)
         
@@ -331,6 +342,21 @@ class Samples(object):
             sample_type, rep_id, include_merged)
         polya_reads = self._load_polya_reads(
             sample_type, rep_id, include_merged)
+
+        try: 
+            with open(sample_type + ".read_cnts.obj") as read_cnts_fp:
+                all_read_cnts = pickle.load(read_cnts_fp)
+                for read_cnts, reads in zip(
+                        all_read_cnts, 
+                        (promoter_reads, rnaseq_reads, polya_reads)):
+                    if reads != None:
+                        # XXX
+                        for rep_reads in reads:
+                            rep_reads.num_reads = read_cnts
+        except IOError:
+            print "CANT OPEN %s" % sample_type + ".read_cnts.obj"
+            pass
+        
         if verify_args:
             self.verify_args_are_sufficient( 
                 rnaseq_reads, promoter_reads, polya_reads )
@@ -639,7 +665,7 @@ class discover_elements(dict):
         try: 
             ofp = open(elements_fname)
         except IOError:
-            (gene_segments, fl_dists, read_counts 
+            (gene_segments, fl_dists, all_read_cnts 
              ) = grit.genes.find_all_gene_segments( 
                  rnaseq_reads, promoter_reads, polya_reads,
                  self.sample_data.ref_genes, 
@@ -647,13 +673,19 @@ class discover_elements(dict):
                 region_to_use=self.args.region )
             
             # set the fl dists, and read counts
+            with open(sample_type + ".fldist.obj", "w") as fl_dists_ofp:
+                pickle.dump( fl_dists, fl_dists_ofp)
             rnaseq_reads.fl_dists = fl_dists
-            
-            for read_counts, reads in zip(
-                    read_counts, 
+
+            # set the fl dists, and read counts
+            print all_read_cnts
+            with open(sample_type + ".read_cnts.obj", "w") as read_cnts_ofp:
+                pickle.dump( all_read_cnts, read_cnts_ofp)
+            for read_cnts, reads in zip(
+                    all_read_cnts, 
                     (promoter_reads, rnaseq_reads, polya_reads)):
                 if reads != None:
-                    reads.num_reads = read_counts.value
+                    reads.num_reads = read_cnts
             
             grit.find_elements.find_elements(
                 promoter_reads, rnaseq_reads, polya_reads,
@@ -815,7 +847,8 @@ def main():
             (promoter_reads, rnaseq_reads, polya_reads) = sample_data.get_reads(
                 sample_type, rep_id, 
                 verify_args=False, include_merged=False)
-            
+            assert rnaseq_reads.fl_dists != None
+
             # find what to prefix the output files with
             if rep_id == None:
                 exp_ofname = "%s.expression_tracking" % sample_type

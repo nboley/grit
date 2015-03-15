@@ -191,33 +191,40 @@ class SharedData(object):
                 'd', [-1]*n_trans)
     
 
-def calc_fpkm( gene, fl_dists, freqs, num_reads_in_bam):
-    assert len(gene.transcripts) == len(freqs)
+def calc_effective_transcript_length(t, fl_dists_and_weights):
+    t_length = sum( e[1] - e[0] + 1 for e in t.exons ) 
+    # subtract for mappability problems at junctions
+    t_length -= 0*len(t.introns)
 
-    num_reads_in_bam = num_reads_in_bam[1]    
-    # XXX
-    fl_dist = fl_dists.values()[0]
-    
-    def calc_effective_length_and_scale_factor(t):
-        length = sum( e[1] - e[0] + 1 for e in t.exons ) 
-        # subtract for mappability problems at junctions
-        length -= 0*len(t.introns)
-        if length < fl_dist.fl_min: 
-            return 0, 0
-        fl_min, fl_max = fl_dist.fl_min, min(length, fl_dist.fl_max)
+    weighted_lengths = []
+    for fl_dist, marginal_freq in fl_dists_and_weights.values():
+        fl_min, fl_max = fl_dist.fl_min, min(t_length, fl_dist.fl_max)
+        # if the transcript is shorter than the minimum fragment length,
+        # then the effective length is 0 because we can't observe it
+        if fl_dist.fl_min > t_length: 
+            weighted_lengths.append(0)
+
         allowed_fl_lens = numpy.arange(fl_min, fl_max+1)
         weights = fl_dist.fl_density[
             fl_min-fl_dist.fl_min:fl_max-fl_dist.fl_min+1]
-        sc_factor = min(20, 1./weights.sum())
         mean_fl_len = float((allowed_fl_lens*weights).sum())
-        return length - mean_fl_len, sc_factor
+        weighted_lengths.append((t_length - mean_fl_len)*marginal_freq)
+
+    return sum(weighted_lengths)
+
+
+def calc_fpkm( gene, fl_dists, freqs, num_reads_in_bam):
+    assert len(gene.transcripts) == len(freqs)
+
+    # grab the number of RNAseq reads 
+    num_reads_in_bam = num_reads_in_bam[1]
     
     fpkms = []
     for t, freq in izip( gene.transcripts, freqs ):
         if freq < 0:
             fpkm = None
         else:
-            effective_t_len, t_scale = calc_effective_length_and_scale_factor(t)
+            effective_t_len = calc_effective_transcript_length(t, fl_dists)
             if effective_t_len <= 0: 
                 fpkms.append( 0 )
                 continue
@@ -514,6 +521,7 @@ def estimate_mles( data ):
 def build_design_matrices_worker( gene_ids, 
                                   data, fl_dists,
                                   (rnaseq_reads, promoter_reads, polya_reads)):
+    assert fl_dists != None
     config.log_statement("Reloading read data in subprocess")
     if rnaseq_reads != None: rnaseq_reads = rnaseq_reads.reload()
     if promoter_reads != None: promoter_reads = promoter_reads.reload()
@@ -555,6 +563,7 @@ def build_design_matrices_worker( gene_ids,
 
 def build_design_matrices( data, fl_dists,
                            (rnaseq_reads, promoter_reads, polya_reads)):    
+    assert fl_dists != None
     gene_ids = multiprocessing.Queue()
     config.log_statement( "Populating build design matrices queue" )
     sorted_gene_ids = sorted(data.gene_ids, 
@@ -670,6 +679,8 @@ def quantify_transcript_expression(
     ofname, sample_type=None, rep_id=None ):
     """Build transcripts
     """
+    assert rnaseq_reads.fl_dists != None
+
     global SAMPLE_ID
     SAMPLE_ID=sample_type
     global REP_ID
