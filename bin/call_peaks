@@ -371,6 +371,7 @@ def main():
                     gene.write_elements_bed(genes_ofp)
         
         queue = multiprocessing.Queue()
+        queue.cancel_join_thread()
         for gene in gene_segments:
             queue.put(gene)
 
