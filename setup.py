@@ -24,7 +24,7 @@ config = {
     'url': 'http://grit-bio.org/',
     'download_url': 'http://grit-bio.org/git/',
     'author_email': 'npboley@gmail.com',
-    'version': '2.0.1',
+    'version': '2.0.2',
     'packages': ['grit', 
                  'grit.analyze', 
                  'grit.files', 
