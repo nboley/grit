@@ -23,6 +23,8 @@ import Queue
 
 BED_ofp = None
 
+strand_symbol_to_name = {'-': 'minus', '+': 'plus'}
+
 def shift_and_write_narrow_peak(region, peaks, signal_cov, ofp):
     """
     track name=$NAME type=narrowPeak
@@ -41,7 +43,8 @@ def shift_and_write_narrow_peak(region, peaks, signal_cov, ofp):
                    "-1", "-1", "-1")) + "\n")
     return
 
-def shift_and_write_bed(region, peaks, signal_cov, ofp):
+def shift_and_write_bed(
+        region, peaks, signal_cov, ofp, include_extra_fields=False):
     """
     track name=$NAME type=bed
     chr4    89932   89933   .    0    +
@@ -50,11 +53,24 @@ def shift_and_write_bed(region, peaks, signal_cov, ofp):
         chrm = fix_chrm_name_for_ucsc(region['chrm'])
     else:
         chrm = region['chrm']
-    for start, stop, value in peaks:
-        ofp.write( "\t".join(
-                 ( chrm, str(region['start'] + start), 
-                   str(region['start'] + stop + 1), 
-                   ".", "1000", region['strand'])) + "\n")
+
+    gene_id = "{}_{}_{}_{}".format(
+        chrm, strand_symbol_to_name[region['strand']], 
+        region['start'], region['stop'], )
+    gene_name = gene_id
+
+    for tss_i, (rel_start, rel_stop, value) in enumerate(peaks):
+        start = str(region['start'] + rel_start)
+        stop = str(region['start'] + rel_stop + 1)
+        score = str(int(value))
+        tss_id = "TSS_%s_pk%i" % (gene_id, tss_i + 1)
+        peak_cov = signal_cov[rel_start:rel_stop+1]
+        data = [ chrm, start, stop, ".", "1000", region['strand'] ]
+        if include_extra_fields: 
+            data.extend((score, gene_id, gene_name, tss_id, 
+                         ",".join(str(x) for x in peak_cov)))
+        ofp.write( "\t".join(data) + "\n")
+                 
     return
 
 
@@ -72,13 +88,14 @@ def shift_and_write_gff(region, peaks, signal_cov, ofp):
     format_str += 'gene_id "{gene_id}"; gene_name "{gene_name}"; '
     format_str += 'tss_id "{tss_id}"; peak_cov "{peak_cov}";'
     gene_id = "{}_{}_{}_{}".format(
-        chrm, region['start'], region['stop'], region['strand'])
+        chrm, strand_symbol_to_name[region['strand']], 
+        region['start'], region['stop'], )
     gene_name = gene_id
 
     for tss_i, (rel_start, rel_stop, value) in enumerate(peaks):
         start = region['start'] + rel_start
         stop = region['start'] + rel_stop + 1
-        tss_id = "TSS_%i" % (tss_i + 1)
+        tss_id = "TSS_%s_pk%i" % (gene_id, tss_i + 1)
         peak_cov = signal_cov[rel_start:rel_stop+1]
         assert peak_cov[0] != 0
         assert peak_cov[-1] != 0
@@ -128,7 +145,7 @@ def process_genes(
                   'start':gene.start, 'stop':gene.stop}
         shift_and_write(region, called_peaks, signal_cov, ofp)
         if BED_ofp != None:
-            shift_and_write_bed(region, called_peaks, signal_cov, BED_ofp)
+            shift_and_write_bed(region, called_peaks, signal_cov, BED_ofp, True)
     return
 
 def parse_arguments():
