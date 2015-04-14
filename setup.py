@@ -18,6 +18,8 @@ along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 from setuptools import setup, Extension, find_packages
 """
 
+from setuptools import setup, Extension
+
 try:
     from Cython.Setup import cythonize
     extensions = cythonize([
