@@ -22,9 +22,9 @@ import cPickle
 
 import math
 import random
+random.seed(0)
 
 import numpy
-import numpy.random
 from scipy.special import gammaln, gamma, cbrt
 import scipy.stats
 

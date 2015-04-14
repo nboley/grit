@@ -32,8 +32,6 @@ from itertools import izip, chain
 from collections import defaultdict, namedtuple
 import Queue
 
-import random
-
 import multiprocessing
 from multiprocessing.sharedctypes import RawArray, RawValue
 from lib.multiprocessing_utils import Pool, ThreadSafeFile
