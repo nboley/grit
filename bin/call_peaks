@@ -294,8 +294,12 @@ def parse_arguments():
     
     if args.region != None:
         region_data = args.region.strip().split(":")
-        args.region = ( clean_chr_name(region_data[0]), 
-                        [int(x) for x in region_data[1].split("-")])
+        contig = clean_chr_name(region_data[0])
+        try: 
+            start, stop = [int(x) for x in region_data[1].split("-")]
+        except IndexError:
+            start, stop = 0, 1e100
+        args.region = ( contig, (start, stop) )
     
     if args.cage_reads != None:
         assert args.rampage_reads == None and args.passeq_reads == None, \
