@@ -22,7 +22,6 @@ import cPickle
 
 import math
 import random
-random.seed(0)
 
 import numpy
 from scipy.special import gammaln, gamma, cbrt
@@ -311,8 +310,9 @@ class TestSignificance(object):
         # find the indices of the minimum value
         min_indices = (
             self.split_statistic[r_start:r_stop+1] == min_val).nonzero()
-            
-        rv = random.choice(min_indices[0]) + r_start
+
+        #rv = random.choice(min_indices[0]) + r_start            
+        rv = min_indices[0][0] + r_start
         return rv, rv
 
 def find_noise_regions(signal_cov, control_cov, 

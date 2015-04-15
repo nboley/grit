@@ -673,37 +673,50 @@ def find_segments_and_jns_worker(
     if polya_reads != None: 
         polya_reads = polya_reads.reload()
     
+    local_frag_lens = defaultdict(int)
+    local_transcribed_regions = defaultdict(list)
+    local_jns = defaultdict(list)
+    local_rd_cnts = [0.0, 0.0, 0.0]
     length_of_segments = segments.qsize()
     while True:
         segment = segments.get()
         if segment == 'FINISHED': 
             config.log_statement("")
-            return
+            break
         config.log_statement("Finding genes and jns in %s" % str(segment) )
         ( r_transcribed_regions, r_jns, r_n_unique_reads, r_frag_lens,
             ) = find_transcribed_regions_and_jns_in_segment(
                 segment, rnaseq_reads, promoter_reads, polya_reads, 
                 ref_elements, ref_elements_to_include) 
-        with lock:
-            for (rd_key, rls), fls in r_frag_lens.iteritems():
-                for fl, cnt in fls.iteritems():
-                    if (rd_key, rls) not in frag_lens:
-                        frag_lens[(rd_key, rls, fl)] = cnt
-                    else:
-                        frag_lens[(rd_key, rls, fl)] += cnt
-            transcribed_regions[(segment[0], '+')].extend([
-                (start+segment[1], stop+segment[1])
-                for start, stop in r_transcribed_regions['+']])
-            transcribed_regions[(segment[0], '-')].extend([
-                (start+segment[1], stop+segment[1])
-                for start, stop in r_transcribed_regions['-']])
 
-            jns[(segment[0], '+')].extend(r_jns['+'])
-            jns[(segment[0], '-')].extend(r_jns['-'])
-            
-            for i, val in enumerate(r_n_unique_reads):
-                num_unique_reads[i].value += val
-    
+        for (rd_key, rls), fls in r_frag_lens.iteritems():
+            for fl, cnt in fls.iteritems():
+                local_frag_lens[(rd_key, rls, fl)] += cnt
+        local_transcribed_regions[(segment[0], '+')].extend([
+            (start+segment[1], stop+segment[1])
+            for start, stop in r_transcribed_regions['+']])
+        local_transcribed_regions[(segment[0], '-')].extend([
+            (start+segment[1], stop+segment[1])
+            for start, stop in r_transcribed_regions['-']])
+
+        local_jns[(segment[0], '+')].extend(r_jns['+'])
+        local_jns[(segment[0], '-')].extend(r_jns['-'])
+
+        for i, val in enumerate(r_n_unique_reads):
+            local_rd_cnts[i] += val
+
+    # update the global data structure
+    with lock:
+        for key, cnt in local_frag_lens.iteritems():
+            if key not in frag_lens: frag_lens[key] = cnt
+            else: frag_lens[key] += cnt
+        for key, regions in local_transcribed_regions.iteritems():
+            transcribed_regions[key].extend(regions)
+        for key, vals in local_jns.iteritems():
+            jns[key].extend( vals )
+        for i, val in enumerate(local_rd_cnts):
+            num_unique_reads[i].value += val
+   
     return
 
 def load_gene_bndry_bins( genes, contig, strand, contig_len ):  
