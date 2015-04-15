@@ -869,7 +869,8 @@ def find_all_gene_segments( rnaseq_reads, promoter_reads, polya_reads,
         for jn, cnt in jns[(contig, '-')]: minus_jns[jn] += cnt
         filtered_jns[(contig, '+')] = filter_jns(plus_jns, minus_jns)
         filtered_jns[(contig, '-')] = filter_jns(minus_jns, plus_jns)
-    
+
+    config.log_statement("Building FL dist")        
     fl_dists = build_fl_dists_from_fls_dict(dict(frag_lens))
     
     # we are down with the manager
@@ -913,5 +914,7 @@ def find_all_gene_segments( rnaseq_reads, promoter_reads, polya_reads,
             float(x.value) for x in num_unique_reads])
     except AttributeError:
         num_unique_reads = ReadCounts(*num_unique_reads)
+
+    config.log_statement("")    
         
     return new_genes, fl_dists, num_unique_reads 

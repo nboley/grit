@@ -20,8 +20,6 @@ along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import os, sys
-import cPickle
-
 from collections import namedtuple
 
 from grit.lib.multiprocessing_utils import ProcessSafeOPStream, fork_and_wait
