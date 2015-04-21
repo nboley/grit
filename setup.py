@@ -19,6 +19,8 @@ from setuptools import setup, Extension, find_packages
 """
 from distutils.core import setup, Extension
 
+from setuptools import setup, Extension
+
 try:
     from Cython.Setup import cythonize
     extensions = cythonize([
@@ -43,7 +45,7 @@ config = {
     'url': 'http://grit-bio.org/',
     'download_url': 'http://grit-bio.org/git/',
     'author_email': 'npboley@gmail.com',
-    'version': '2.0.2',
+    'version': '2.0.3',
     'packages': ['grit', 
                  'grit.analyze', 
                  'grit.files', 
