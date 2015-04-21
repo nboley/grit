@@ -17,6 +17,7 @@ You should have received a copy of the GNU General Public License
 along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 from setuptools import setup, Extension, find_packages
 """
+from distutils.core import setup, Extension
 
 try:
     from Cython.Setup import cythonize
