@@ -364,7 +364,7 @@ class Samples(object):
             sample_type, rep_id, include_merged)
 
         try: 
-            with open(sample_type + ".read_cnts.obj") as read_cnts_fp:
+            with open(str(sample_type) + ".read_cnts.obj") as read_cnts_fp:
                 all_read_cnts = pickle.load(read_cnts_fp)
                 for read_cnts, reads in zip(
                         all_read_cnts, 
@@ -693,13 +693,13 @@ class discover_elements(dict):
                 region_to_use=self.args.region )
             
             # set the fl dists, and read counts
-            with open(sample_type + ".fldist.obj", "w") as fl_dists_ofp:
+            with open(str(sample_type) + ".fldist.obj", "w") as fl_dists_ofp:
                 pickle.dump( fl_dists, fl_dists_ofp)
             rnaseq_reads.fl_dists = fl_dists
 
             # set the fl dists, and read counts
             print all_read_cnts
-            with open(sample_type + ".read_cnts.obj", "w") as read_cnts_ofp:
+            with open(str(sample_type) + ".read_cnts.obj", "w") as read_cnts_ofp:
                 pickle.dump( all_read_cnts, read_cnts_ofp)
             for read_cnts, reads in zip(
                     all_read_cnts, 
