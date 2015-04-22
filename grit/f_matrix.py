@@ -749,6 +749,8 @@ def bin_rnaseq_reads( reads, chrm, strand, exon_boundaries, include_read_type=Tr
     exon_boundaries should be a numpy array that contains
     pseudo exon starts.
     """
+    if not reads.reads_are_stranded: strand = '.'
+    
     # first get the paired reads
     gene_start = int(exon_boundaries[0])
     gene_stop = int(exon_boundaries[-1])

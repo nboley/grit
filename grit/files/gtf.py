@@ -288,21 +288,31 @@ class Annotation(object):
         self._gene_locs[(gene.chrm, gene.strand)].append(gene)
 
     def iter_overlapping_genes(self, chrm, strand, start, stop):
-        for gene in self._gene_locs[(clean_chr_name(chrm), strand)]:
-            if stop < gene.start: continue
-            if start > gene.stop: continue
-            yield gene
+        if strand in '+-': strands = [strand,]
+        elif strand == '.': strands = ['+','-']
+        else: raise ValueError( "Unrecognized strand: '%s'" % strand )
+        
+        for strand in strands:
+            for gene in self._gene_locs[(clean_chr_name(chrm), strand)]:
+                if stop < gene.start: continue
+                if start > gene.stop: continue
+                yield gene
 
         return
 
     def iter_elements(self, chrm, strand, r_start, r_stop):
-        for gene in self._gene_locs[(clean_chr_name(chrm), strand)]:
-            if gene.stop < r_start: continue
-            if gene.start > r_stop: continue
-            for element_type, elements in gene.extract_elements().iteritems():
-                for start, stop in elements:
-                    if stop < r_start or start > r_stop: continue
-                    yield element_type, (start, stop)
+        if strand in '+-': strands = [strand,]
+        elif strand == '.': strands = ['+','-']
+        else: assert "Unrecognized strand: '%s' % strand"
+        
+        for strand in strands:
+            for gene in self._gene_locs[(clean_chr_name(chrm), strand)]:
+                if gene.stop < r_start: continue
+                if gene.start > r_stop: continue
+                for element_type, elements in gene.extract_elements().iteritems():
+                    for start, stop in elements:
+                        if stop < r_start or start > r_stop: continue
+                        yield element_type, (start, stop)
         
         return
 

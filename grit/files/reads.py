@@ -357,6 +357,10 @@ class MergedReads( object ):
             return "Generic"
         else:
             raise ValueError, "Unrecognized read subtype %s" % type(reads)
+
+    @property
+    def reads_are_stranded(self):
+        return all(rds.reads_are_stranded for rds in self._reads)
     
     def __init__(self, all_reads):
         self._reads = list(all_reads)
@@ -549,8 +553,11 @@ class Reads( pysam.Samfile ):
         return True
     
     def get_strand(self, read):
-        return get_strand( 
-            read, self.reverse_read_strand, self.pairs_are_opp_strand )
+        if self.reads_are_stranded:
+            return get_strand( 
+                read, self.reverse_read_strand, self.pairs_are_opp_strand )
+        else:
+            return '.'
     
     def iter_reads_and_strand( self, chrm, start=None, stop=None ):
         for read in self.fetch( chrm, start, stop  ):
@@ -560,7 +567,7 @@ class Reads( pysam.Samfile ):
 
     def iter_reads( self, chrm, strand, start=None, stop=None ):
         for read, rd_strand in self.iter_reads_and_strand( chrm, start, stop  ):
-            if strand == None or rd_strand == strand:
+            if strand == None or rd_strand == '.' or rd_strand == strand:
                 yield read        
         return
 
@@ -643,20 +650,24 @@ class RNAseqReads(Reads):
         assert self.is_indexed()
         
         assert reads_are_paired == True, "GRIT can only use paired RNAseq reads"
-        assert reads_are_stranded == True, "GRIT can only use stranded RNAseq"
+        #assert reads_are_stranded == True, "GRIT can only use stranded RNAseq"
         
-        if pairs_are_opp_strand == None:
-            pairs_are_opp_strand = (not read_pairs_are_on_same_strand( self ))
+        if reads_are_stranded: 
+            if pairs_are_opp_strand == None:
+                pairs_are_opp_strand = (not read_pairs_are_on_same_strand( self ))
         
-        if reverse_read_strand == None:
-            reverse_read_strand = Reads.determine_reverse_read_strand_param(
-                self, ref_genes, pairs_are_opp_strand, 'internal_exon',
-                100, 10 )
-            if config.VERBOSE:
-                config.log_statement(
-                    "Set reverse_read_strand to '%s' for '%s'" % (
-                        reverse_read_strand, self.filename), log=True )
-
+            if reverse_read_strand == None:
+                reverse_read_strand = Reads.determine_reverse_read_strand_param(
+                    self, ref_genes, pairs_are_opp_strand, 'internal_exon',
+                    100, 10 )
+                if config.VERBOSE:
+                    config.log_statement(
+                        "Set reverse_read_strand to '%s' for '%s'" % (
+                            reverse_read_strand, self.filename), log=True )
+        else:
+            pairs_are_opp_strand = None
+            reverse_read_strand = None
+        
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
         

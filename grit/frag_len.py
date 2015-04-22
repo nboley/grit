@@ -621,6 +621,32 @@ def build_fl_dists( elements, reads ):
     #    analyze_fl_dists( fragments, analyze_pdf_fname )
     return fl_dists
 
+def build_fl_dists_from_fls_dict(frag_lens):
+    # the return fragment length dists
+    fl_dists = {}
+    
+    # group fragment lengths by readkey and read lengths. We don't
+    # do this earlier because nested manager dictionaries are 
+    # inefficient, and the accumulation is in the worker threads
+    grpd_frag_lens = defaultdict(list)
+    for (rd_grp, rd_len, fl), cnt in frag_lens.iteritems():
+        if fl < config.MIN_FRAGMENT_LENGTH or fl > config.MAX_FRAGMENT_LENGTH:
+            continue
+        grpd_frag_lens[(rd_grp, rd_len)].append((fl, cnt))
+    for (rd_grp, rd_len), fls_and_cnts in grpd_frag_lens.iteritems():
+        min_fl = int(min(fl for fl, cnt in fls_and_cnts))
+        max_fl = int(max(fl for fl, cnt in fls_and_cnts))
+        fl_density = numpy.zeros(max_fl - min_fl + 1)
+        for fl, cnt in fls_and_cnts:
+            if fl > max_fl: continue
+            fl_density[fl-min_fl] += cnt
+        fl_dists[(rd_grp, (rd_len, rd_len))] = [
+            FlDist(min_fl, max_fl, fl_density/fl_density.sum()),
+            fl_density.sum()]
+    total_sum = sum(x[1] for x in fl_dists.values())
+    for key in fl_dists: fl_dists[key][1] /= total_sum
+    return fl_dists
+
 def find_fls_from_annotation( annotation, reads ):
     tot_cnt = 0
     frag_lens = defaultdict(int)
@@ -635,6 +661,10 @@ def find_fls_from_annotation( annotation, reads ):
             if tot_cnt > 10000: 
                 return frag_lens
     return frag_lens
+
+def build_fl_dists_from_annotation( annotation, reads ):
+    fls = find_fls_from_annotation( annotation, reads )
+    return build_fl_dists_from_fls_dict( fls )
 
 def main():
     gff_fp, bam_fn, ofname, analyze = parse_arguments()
