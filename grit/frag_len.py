@@ -508,7 +508,7 @@ def find_fragments_in_exon( reads, exon ):
         # put all frags w/o a read group into mean read group
         try:
             read_group = read1.opt('RG')
-        except IndexError:
+        except KeyError:
             read_group = 'mean'
         
         strand = '-' if read1.is_reverse else '+'
