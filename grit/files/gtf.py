@@ -26,7 +26,7 @@ from ..transcript import Gene, Transcript, GenomicInterval
     
 from reads import clean_chr_name
 from tracking import load_expression_tracking_data
-from ..config import log_statement
+from ..config import log_statement, VERBOSE
 
 import traceback
 
@@ -348,7 +348,7 @@ def load_gtf(fname_or_fp, contig=None, strand=None):
         except Exception, inst:
             log_statement( 
                 "ERROR : Could not load '%s': %s" % (gene_id, inst), log=True)
-            log_statement( traceback.format_exc(), log=True )
+            #log_statement( traceback.format_exc(), log=True )
             if DEBUG: raise
             gene = None
         

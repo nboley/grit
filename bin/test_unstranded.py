@@ -5,6 +5,9 @@ import numpy
 from collections import defaultdict
 from itertools import chain
 
+import multiprocessing
+import Queue
+
 from grit.genes import merge_adjacent_intervals
 from grit.files.gtf import load_gtf
 from grit.files.reads import RNAseqReads, MergedReads
@@ -12,11 +15,7 @@ from grit.frag_len import build_fl_dists_from_annotation
 from grit.f_matrix import build_expected_and_observed_rnaseq_counts, cluster_bins, DesignMatrix, NoObservableTranscriptsError
 from grit.frequency_estimation import estimate_transcript_frequencies, TooFewReadsError
 from grit.transcript import Gene, Transcript
-
-
-chrm = '4'
-start = 0
-stop = 100000000
+from grit.lib.multiprocessing_utils import ThreadSafeFile, fork_and_wait
 
 def bin_and_cluster_reads(gene, reads, fl_dists):
     ( expected_rnaseq_cnts, observed_rnaseq_cnts 
@@ -49,7 +48,7 @@ def bin_and_cluster_reads(gene, reads, fl_dists):
         regions = merge_adjacent_intervals(regions, 0)
         transcript = Transcript(
             "%s_%i" % (gene.id, cluster), 
-            gene.chrm, 
+            'chr' + gene.chrm, 
             gene.strand,
             regions, 
             cds_region=None,
@@ -63,6 +62,30 @@ def bin_and_cluster_reads(gene, reads, fl_dists):
     
     return segments, numpy.array(exp), numpy.array(obs)
 
+def build_transcripts_lines_worker(genes_queue, reads, fl_dists, ofp):
+    reads.reload()
+    n_genes = genes_queue.qsize()
+    while not genes_queue.empty():
+        try: gene = genes_queue.get(0.1)
+        except Queue.Empty: break
+        print >> sys.stderr, "%i/%i\t%s\t%s:%s:%i-%i" %  (
+            n_genes-genes_queue.qsize(), n_genes,
+            gene.name.ljust(20), gene.chrm, gene.strand, gene.start, gene.stop)
+    
+        transcrtipt_segments, exp_cnts, obs_cnts = bin_and_cluster_reads(
+            gene, reads, fl_dists)
+        for transcript, exp_cnt, obs_cnt in zip(
+                transcrtipt_segments, exp_cnts, obs_cnts):
+            # filter out all bins with expected fragment counts less than 1
+            # (these are very short bins that can only rarely be observed 
+            # given our fragment length distribution) 
+            if exp_cnt < 1: continue
+            lines = transcript.build_gtf_lines(
+                    {'effective_length': round(exp_cnt, 2), 
+                     'observed_cnt': round(obs_cnt, 1)})
+            ofp.write(lines + "\n")
+    return
+
 def main():
     genes = load_gtf(sys.argv[1])
 
@@ -71,16 +94,14 @@ def main():
         for fname in sys.argv[2:]] )
 
     fl_dists = build_fl_dists_from_annotation( genes, reads )
+
+    genes_queue = multiprocessing.Queue()
+    for gene in genes: genes_queue.put(gene)    
     
-    for gene in genes.iter_overlapping_genes(chrm, '.', start, stop):
-        print >> sys.stderr, gene.name, gene.chrm, gene.strand, gene.start, gene.stop
-        transcrtipt_segments, exp_cnts, obs_cnts = bin_and_cluster_reads(
-            gene, reads, fl_dists)
-        for transcript, exp_cnt, obs_cnt in zip(
-                transcrtipt_segments, exp_cnts, obs_cnts):
-            lines = transcript.build_gtf_lines(
-                    {'expected_cnt': exp_cnt, 'observed_cnt': obs_cnt})
-            print lines
+    with ThreadSafeFile("bins.gtf", "w") as ofp:
+        ofp.write("track type=gtf name=bin_expresion_test\n")
+        args = [genes_queue, reads, fl_dists, ofp]
+        fork_and_wait(24, build_transcripts_lines_worker, args)
     
     return
 
