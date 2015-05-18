@@ -28,10 +28,15 @@ import numpy
 import grit.config as config
 import junctions
 
+import shelve
+
 ReadData = namedtuple('ReadData', [
         'strand', 'read_len', 'read_grp', 'map_prb', 'cov_regions'])
 
 DEBUG = False
+
+class TooManyReadsError(Exception):
+    pass
 
 def clean_chr_name( chrm ):
     if chrm.startswith( "chr" ):
@@ -223,12 +228,24 @@ def iter_coverage_regions_for_read(
 def extract_jns_and_reads_in_region((chrm, strand, r_start, r_stop), reads):
     assert strand in '+-.', "Strand must be -, +, or . for either"
     
-    pair1_reads = defaultdict(list)
-    pair2_reads = defaultdict(list)
+    tmp_p1_fname = "%s_%s_%i_%i_p1.dat" % (chrm, strand, r_start, r_stop)
+    pair1_reads = shelve.open(tmp_p1_fname)
+    tmp_p2_fname = "%s_%s_%i_%i_p2.dat" % (chrm, strand, r_start, r_stop)
+    pair2_reads = shelve.open(tmp_p2_fname)
     jn_reads = {'+': defaultdict(int), '-': defaultdict(int)}
     
-    for read, rd_strand in reads.iter_reads_and_strand(
-            chrm, r_start, r_stop+1):
+    config.log_statement("Finding reads in %s" % str((chrm, strand, r_start, r_stop)))        
+    for n_obs_reads, (read, rd_strand) in enumerate(reads.iter_reads_and_strand(
+            chrm, r_start, r_stop+1)):
+        # -probability that the read originated in this location
+        # if we can't find it, assume that it's uniform over alternate
+        # mappings. If we can't find that, then assume that it's unique
+        map_prb = get_rd_posterior_prb(read)
+        #if r_stop - r_start > 1000 and n_obs_reads > 1e5: 
+        #    raise TooManyReadsError, "Too many reads"
+        if n_obs_reads > 0 and n_obs_reads%100000 == 0:
+            config.log_statement("Processed %i reads in %s" % (
+                n_obs_reads, str((chrm, strand, r_start, r_stop))))
         for jn in junctions.iter_jns_in_read(read):
             # skip jns whose start does not overlap this region, we subtract one
             # because the start refers to the first covered intron base, and 
@@ -247,16 +264,25 @@ def extract_jns_and_reads_in_region((chrm, strand, r_start, r_stop), reads):
         # -read group
         try: read_grp = read.opt('RG')
         except KeyError: read_grp = 'mean'
-        # -probability that the read originated in this location
-        # if we can't find it, assume that it's uniform over alternate
-        # mappings. If we can't find that, then assume that it's unique
-        map_prb = get_rd_posterior_prb(read)
         
         # store the read data - we will join them later
         read_data = ReadData(rd_strand, read_len, read_grp, map_prb, cov_regions)
-        if read.is_read1: pair1_reads[read.qname].append(read_data)
-        else: pair2_reads[read.qname].append(read_data)
-    
+        if read.is_read1:
+            try: 
+                curr_reads = pair1_reads[read.qname] 
+            except KeyError:
+                curr_reads = []
+            curr_reads.append(read_data)
+            pair1_reads[read.qname] = curr_reads
+        else:
+            #pair2_reads[read.qname].append(read_data)
+            try: 
+                curr_reads = pair2_reads[read.qname] 
+            except KeyError:
+                curr_reads = []
+            curr_reads.append(read_data)
+            pair2_reads[read.qname] = curr_reads
+
     return pair1_reads, pair2_reads, jn_reads['+'], jn_reads['-']
 
 def calc_frag_len_from_read_data(read1_data, read2_data):

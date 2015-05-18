@@ -27,6 +27,7 @@ from collections import defaultdict, namedtuple
 from itertools import chain, izip
 
 import multiprocessing
+import Queue
 
 from scipy.stats import beta, binom
 
@@ -47,7 +48,7 @@ import config
 from files.reads import MergedReads, RNAseqReads, CAGEReads, \
     RAMPAGEReads, PolyAReads, \
     fix_chrm_name_for_ucsc, get_contigs_and_lens, calc_frag_len_from_read_data, \
-    iter_paired_reads, extract_jns_and_reads_in_region
+    iter_paired_reads, extract_jns_and_reads_in_region, TooManyReadsError
 import files.junctions
 
 from files.bed import create_bed_line
@@ -553,7 +554,6 @@ def find_transcribed_regions_and_jns_in_segment(
     num_unique_reads = [0.0, 0.0, 0.0]
     fragment_lengths =  defaultdict(lambda: defaultdict(int))
     
-    read_mates = {}
     for reads_i,reads in enumerate((promoter_reads, rnaseq_reads, polya_reads)):
         if reads == None: continue
 
@@ -661,33 +661,78 @@ def split_genome_into_segments(contig_lens, region_to_use,
                  min(contig_length, start+segment_length-1)))
     return segments
 
+class GlobalGeneSegmentData(object):
+    def __init__(self, contig_lens):
+        self.manager = multiprocessing.Manager()
+        self.num_unique_reads = ReadCounts(multiprocessing.Value('d', 0.0), 
+                                           multiprocessing.Value('d', 0.0), 
+                                           multiprocessing.Value('d', 0.0))
+        self.transcribed_regions = {}
+        self.jns = {}
+        for strand in "+-":
+            for contig in contig_lens.keys():
+                self.transcribed_regions[(contig, strand)] = self.manager.list()
+                self.jns[(contig, strand)] = self.manager.list()
+        self.frag_lens = self.manager.dict()
+        self.lock = multiprocessing.Lock()
+
+    def update_all_data(self, frag_lens, transcribed_regions, jns, rd_cnts):
+        with self.lock:
+            for key, cnt in frag_lens.iteritems():
+                if key not in self.frag_lens: self.frag_lens[key] = cnt
+                else: self.frag_lens[key] += cnt
+            for key, regions in transcribed_regions.iteritems():
+                self.transcribed_regions[key].extend(regions)
+            for key, vals in jns.iteritems():
+                self.jns[key].extend( vals )
+            for i, val in enumerate(rd_cnts):
+                self.num_unique_reads[i].value += val
+        return
+
+    def shutdown(self):
+        self.manager.shutdown()
+        
 def find_segments_and_jns_worker(
-        segments, 
-        transcribed_regions, jns, frag_lens, lock,
+        segments, global_gene_data,
         rnaseq_reads, promoter_reads, polya_reads,
-        ref_elements, ref_elements_to_include,
-        num_unique_reads):
+        ref_elements, ref_elements_to_include ):
     rnaseq_reads = rnaseq_reads.reload()
     if promoter_reads != None: 
         promoter_reads = promoter_reads.reload()
     if polya_reads != None: 
         polya_reads = polya_reads.reload()
-    
+
     local_frag_lens = defaultdict(int)
     local_transcribed_regions = defaultdict(list)
     local_jns = defaultdict(list)
     local_rd_cnts = [0.0, 0.0, 0.0]
+    
+    # just use this to keep track of where we are in the queue
     length_of_segments = segments.qsize()
     while True:
-        segment = segments.get()
+        try: 
+            config.log_statement("Waiting for segment")
+            segment = segments.get(timeout=1.0)
+        except Queue.Empty: 
+            continue
         if segment == 'FINISHED': 
             config.log_statement("")
             break
         config.log_statement("Finding genes and jns in %s" % str(segment) )
-        ( r_transcribed_regions, r_jns, r_n_unique_reads, r_frag_lens,
-            ) = find_transcribed_regions_and_jns_in_segment(
-                segment, rnaseq_reads, promoter_reads, polya_reads, 
-                ref_elements, ref_elements_to_include) 
+        try:
+            ( r_transcribed_regions, r_jns, r_n_unique_reads, r_frag_lens,
+                ) = find_transcribed_regions_and_jns_in_segment(
+                    segment, rnaseq_reads, promoter_reads, polya_reads, 
+                    ref_elements, ref_elements_to_include) 
+        except TooManyReadsError:
+            seg1 = list(segment)
+            seg1[2] = segment[1] + (segment[2]-segment[1])/2
+            seg2 = list(segment)
+            seg2[1] = seg1[2]
+            segments.put(seg1)
+            segments.put(seg2)
+            config.log_statement("")
+            continue
 
         for (rd_key, rls), fls in r_frag_lens.iteritems():
             for fl, cnt in fls.iteritems():
@@ -705,18 +750,24 @@ def find_segments_and_jns_worker(
         for i, val in enumerate(r_n_unique_reads):
             local_rd_cnts[i] += val
 
-    # update the global data structure
-    with lock:
-        for key, cnt in local_frag_lens.iteritems():
-            if key not in frag_lens: frag_lens[key] = cnt
-            else: frag_lens[key] += cnt
-        for key, regions in local_transcribed_regions.iteritems():
-            transcribed_regions[key].extend(regions)
-        for key, vals in local_jns.iteritems():
-            jns[key].extend( vals )
-        for i, val in enumerate(local_rd_cnts):
-            num_unique_reads[i].value += val
-   
+        if sum(local_rd_cnts) > 1e5:
+            global_gene_data.update_all_data(
+                local_frag_lens,
+                local_transcribed_regions,
+                local_jns,
+                local_rd_cnts)
+            
+            local_frag_lens = defaultdict(int)
+            local_transcribed_regions = defaultdict(list)
+            local_jns = defaultdict(list)
+            local_rd_cnts = [0.0, 0.0, 0.0]
+
+    global_gene_data.update_all_data(
+        local_frag_lens,
+        local_transcribed_regions,
+        local_jns,
+        local_rd_cnts)
+    
     return
 
 def load_gene_bndry_bins( genes, contig, strand, contig_len ):  
@@ -776,19 +827,8 @@ def find_all_gene_segments( rnaseq_reads, promoter_reads, polya_reads,
 
     config.log_statement("Spawning gene segment finding children")    
     segments_queue = multiprocessing.Queue()
-    manager = multiprocessing.Manager()
-    num_unique_reads = ReadCounts(multiprocessing.Value('d', 0.0), 
-                                  multiprocessing.Value('d', 0.0), 
-                                  multiprocessing.Value('d', 0.0))
-    transcribed_regions = {}
-    jns = {}
-    for strand in "+-":
-        for contig in contig_lens.keys():
-            transcribed_regions[(contig, strand)] = manager.list()
-            jns[(contig, strand)] = manager.list()
-    frag_lens = manager.dict()
-    lock = multiprocessing.Lock()
-
+    global_gene_data = GlobalGeneSegmentData(contig_lens)
+    
     ref_element_types_to_include = set()
     if ref_elements_to_include.junctions: 
         ref_element_types_to_include.add('intron')
@@ -813,10 +853,9 @@ def find_all_gene_segments( rnaseq_reads, promoter_reads, polya_reads,
         if pid == 0:
             find_segments_and_jns_worker(
                 segments_queue, 
-                transcribed_regions, jns, frag_lens, lock,
+                global_gene_data,
                 rnaseq_reads, promoter_reads, polya_reads,
-                ref_genes, ref_element_types_to_include,
-                num_unique_reads)
+                ref_genes, ref_element_types_to_include)
             os._exit(0)
         pids.append(pid)
 
@@ -840,7 +879,7 @@ def find_all_gene_segments( rnaseq_reads, promoter_reads, polya_reads,
             
     config.log_statement("Merging gene segments")
     merged_transcribed_regions = {}
-    for key, intervals in transcribed_regions.iteritems():
+    for key, intervals in global_gene_data.transcribed_regions.iteritems():
         merged_transcribed_regions[
             key] = merge_adjacent_intervals(
                 intervals, config.MAX_EMPTY_REGION_SIZE)
@@ -850,24 +889,21 @@ def find_all_gene_segments( rnaseq_reads, promoter_reads, polya_reads,
     filtered_jns = defaultdict(dict)
     for contig in contig_lens.keys():
         plus_jns = defaultdict(int)
-        for jn, cnt in jns[(contig, '+')]: plus_jns[jn] += cnt
+        for jn, cnt in global_gene_data.jns[(contig, '+')]: plus_jns[jn] += cnt
         minus_jns = defaultdict(int)
-        for jn, cnt in jns[(contig, '-')]: minus_jns[jn] += cnt
+        for jn, cnt in global_gene_data.jns[(contig, '-')]: minus_jns[jn] += cnt
         filtered_jns[(contig, '+')] = filter_jns(plus_jns, minus_jns)
         filtered_jns[(contig, '-')] = filter_jns(minus_jns, plus_jns)
 
     config.log_statement("Building FL dist")        
-    fl_dists = build_fl_dists_from_fls_dict(dict(frag_lens))
-    
-    # we are down with the manager
-    manager.shutdown()
-    
+    fl_dists = build_fl_dists_from_fls_dict(dict(global_gene_data.frag_lens))
+        
     if ref_elements_to_include.junctions:
         for gene in ref_genes:
             for jn in gene.extract_elements()['intron']:
                 if jn not in filtered_jns[(gene.chrm, gene.strand)]:
                     filtered_jns[(gene.chrm, gene.strand)][jn] = 0
-    
+        
     config.log_statement("Clustering gene segments")    
     # build bins for all of the genes and junctions, converting them to 1-based
     # in the process
@@ -897,9 +933,11 @@ def find_all_gene_segments( rnaseq_reads, promoter_reads, polya_reads,
 
     try: 
         num_unique_reads = ReadCounts(*[
-            float(x.value) for x in num_unique_reads])
+            float(x.value) for x in global_gene_data.num_unique_reads])
     except AttributeError:
-        num_unique_reads = ReadCounts(*num_unique_reads)
+        num_unique_reads = ReadCounts(*global_gene_data.num_unique_reads)
+
+    global_gene_data.shutdown()
 
     config.log_statement("")    
         
