@@ -92,9 +92,14 @@ def fork_and_wait(n_proc, target, args):
         for i in xrange(n_proc):
             pid = os.fork()
             if pid == 0:
-                signal.signal(signal.SIGINT, handle_interrupt_signal)
-                target(*args)
-                os._exit(0)
+                try:
+                    signal.signal(signal.SIGINT, handle_interrupt_signal)
+                    target(*args)
+                except Exception, inst:
+                    log_statement( "Uncaught exception in subprocess", log=True)
+                    log_statement( traceback.format_exc(), log=True )
+                finally:
+                    os._exit(0)
             else:
                 pids.append(pid)
         try:

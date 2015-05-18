@@ -36,7 +36,7 @@ from copy import copy
 
 ReadCounts = namedtuple('ReadCounts', ['Promoters', 'RNASeq', 'Polya'])
 
-from frag_len import FlDist, find_fls_from_annotation
+from frag_len import build_fl_dists_from_fls_dict
 
 from transcript import Transcript, Gene
 
@@ -764,33 +764,6 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
     # actually, it's probably better just to go through discovery
     
     return gene_bndry_bins
-      
-
-def build_fl_dists_from_fls_dict(frag_lens):
-    # the return fragment length dists
-    fl_dists = {}
-    
-    # group fragment lengths by readkey and read lengths. We don't
-    # do this earlier because nested manager dictionaries are 
-    # inefficient, and the accumulation is in the worker threads
-    grpd_frag_lens = defaultdict(list)
-    for (rd_grp, rd_len, fl), cnt in frag_lens.iteritems():
-        if fl < config.MIN_FRAGMENT_LENGTH or fl > config.MAX_FRAGMENT_LENGTH:
-            continue
-        grpd_frag_lens[(rd_grp, rd_len)].append((fl, cnt))
-    for (rd_grp, rd_len), fls_and_cnts in grpd_frag_lens.iteritems():
-        min_fl = int(min(fl for fl, cnt in fls_and_cnts))
-        max_fl = int(max(fl for fl, cnt in fls_and_cnts))
-        fl_density = numpy.zeros(max_fl - min_fl + 1)
-        for fl, cnt in fls_and_cnts:
-            if fl > max_fl: continue
-            fl_density[fl-min_fl] += cnt
-        fl_dists[(rd_grp, rd_len)] = [
-            FlDist(min_fl, max_fl, fl_density/fl_density.sum()),
-            fl_density.sum()]
-    total_sum = sum(x[1] for x in fl_dists.values())
-    for key in fl_dists: fl_dists[key][1] /= total_sum
-    return fl_dists
 
 def find_all_gene_segments( rnaseq_reads, promoter_reads, polya_reads,
                             ref_genes, ref_elements_to_include,
