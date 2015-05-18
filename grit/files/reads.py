@@ -629,6 +629,38 @@ class Reads( pysam.Samfile ):
         
         return cvg
 
+    def build_paired_reads_fragment_coverage_array( 
+            self, chrm, strand, start, stop ):
+        assert stop >= start
+        full_region_len = stop - start + 1
+        cvg = numpy.zeros(full_region_len)
+        for rd1, rd2 in self.iter_paired_reads( chrm, strand, start, stop ):
+            print rd1, rd2
+            start = min(rd1.pos, rd2.pos)
+            stop = min(rd1.aend, rd2.aend)
+            cvg[max(0, region[2]-start):max(0, region[3]-start)] += 1
+        
+        return cvg
+
+    def build_unpaired_reads_fragment_coverage_array( 
+            self, chrm, strand, start, stop, frag_len ):
+        assert stop >= start
+        full_region_len = stop - start + 1
+        cvg = numpy.zeros(full_region_len)
+        for rd, strand in self.iter_reads_and_strand(chrm, start, stop):
+            if strand == '-': 
+                rd_start = rd.pos - frag_len
+                rd_stop = rd.pos
+            elif strand == '+': 
+                rd_start = rd.pos
+                rd_stop = rd.pos + frag_len
+            else:
+                assert False
+            cvg[max(0, rd_start-start):max(0, rd_stop-start)] += 1
+        
+        return cvg
+
+
     def reload( self ):
         # extract the relevant info, and close
         fname = self.filename
