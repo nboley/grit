@@ -28,7 +28,6 @@ import numpy
 import grit.config as config
 import junctions
 
-import shelve
 
 ReadData = namedtuple('ReadData', [
         'strand', 'read_len', 'read_grp', 'map_prb', 'cov_regions'])
@@ -225,24 +224,33 @@ def iter_coverage_regions_for_read(
     
     return
 
-def extract_jns_and_reads_in_region((chrm, strand, r_start, r_stop), reads):
+def extract_jns_and_reads_in_region(
+        (chrm, strand, r_start, r_stop), reads, max_n_reads_to_store=1e6):
     assert strand in '+-.', "Strand must be -, +, or . for either"
+
+    reg_len = r_stop-r_start+1
     
-    tmp_p1_fname = "%s_%s_%i_%i_p1.dat" % (chrm, strand, r_start, r_stop)
-    pair1_reads = shelve.open(tmp_p1_fname)
-    tmp_p2_fname = "%s_%s_%i_%i_p2.dat" % (chrm, strand, r_start, r_stop)
-    pair2_reads = shelve.open(tmp_p2_fname)
     jn_reads = {'+': defaultdict(int), '-': defaultdict(int)}
+
+    cov = { '+': numpy.zeros(reg_len, dtype=float), 
+            '-': numpy.zeros(reg_len, dtype=float) }
+
+    pair1_reads = defaultdict(list)
+    pair2_reads = defaultdict(list)
+
+    num_unique_reads = 0.0
     
     config.log_statement("Finding reads in %s" % str((chrm, strand, r_start, r_stop)))        
     for n_obs_reads, (read, rd_strand) in enumerate(reads.iter_reads_and_strand(
             chrm, r_start, r_stop+1)):
+        # break if we've surpassed the read
+        if read.pos > r_stop: break
+        
         # -probability that the read originated in this location
         # if we can't find it, assume that it's uniform over alternate
         # mappings. If we can't find that, then assume that it's unique
         map_prb = get_rd_posterior_prb(read)
-        #if r_stop - r_start > 1000 and n_obs_reads > 1e5: 
-        #    raise TooManyReadsError, "Too many reads"
+
         if n_obs_reads > 0 and n_obs_reads%100000 == 0:
             config.log_statement("Processed %i reads in %s" % (
                 n_obs_reads, str((chrm, strand, r_start, r_stop))))
@@ -265,25 +273,35 @@ def extract_jns_and_reads_in_region((chrm, strand, r_start, r_stop), reads):
         try: read_grp = read.opt('RG')
         except KeyError: read_grp = 'mean'
         
-        # store the read data - we will join them later
-        read_data = ReadData(rd_strand, read_len, read_grp, map_prb, cov_regions)
-        if read.is_read1:
-            try: 
-                curr_reads = pair1_reads[read.qname] 
-            except KeyError:
-                curr_reads = []
-            curr_reads.append(read_data)
-            pair1_reads[read.qname] = curr_reads
-        else:
-            #pair2_reads[read.qname].append(read_data)
-            try: 
-                curr_reads = pair2_reads[read.qname] 
-            except KeyError:
-                curr_reads = []
-            curr_reads.append(read_data)
-            pair2_reads[read.qname] = curr_reads
+        num_unique_reads += (
+            map_prb/2. if read.is_paired else map_prb )
+        
+        for start, stop in cov_regions:
+            # if start - r_start > reg_len, then it doesn't do 
+            # anything, so the next line is not necessary
+            # if start - r_start > reg_len: continue
+            cov[rd_strand][
+                max(0, start-r_start):max(0, stop-r_start+1)] += 1
 
-    return pair1_reads, pair2_reads, jn_reads['+'], jn_reads['-']
+        
+        # store the read data - we will join them later
+        if max(len(pair1_reads), len(pair2_reads)) < max_n_reads_to_store:
+            read_data = ReadData(
+                rd_strand, read_len, read_grp, map_prb, tuple(cov_regions))
+
+            if read.is_read1:
+                pair1_reads[read.qname].append(read_data) 
+            else:
+                pair2_reads[read.qname].append(read_data) 
+
+        # if we ar in a long region and have surpassed the maximum number 
+        # of allowed reads, then 
+        #if r_stop - r_start > 1000 and n_obs_reads > 1e5: 
+        #    raise TooManyReadsError, "Too many reads"
+
+    return ( pair1_reads, pair2_reads, 
+             jn_reads['+'], jn_reads['-'], 
+             cov, num_unique_reads )
 
 def calc_frag_len_from_read_data(read1_data, read2_data):
     frag_start = min(min(read1_data.cov_regions[0]), 

@@ -557,27 +557,19 @@ def find_transcribed_regions_and_jns_in_segment(
     for reads_i,reads in enumerate((promoter_reads, rnaseq_reads, polya_reads)):
         if reads == None: continue
 
-        ( p1_rds, p2_rds, r_plus_jns, r_minus_jns 
+        ( p1_rds, p2_rds, r_plus_jns, r_minus_jns, inner_cov, reads_n_uniq
           ) = extract_jns_and_reads_in_region(
               (contig, '.', r_start, r_stop), reads)
-
+        cov['+'] += inner_cov['+']
+        cov['-'] += inner_cov['-']
+        num_unique_reads[reads_i] += reads_n_uniq
+        
         for jn, cnt in r_plus_jns.iteritems(): 
             jn_reads['+'][jn] += cnt 
         for jn, cnt in r_minus_jns.iteritems(): 
             jn_reads['-'][jn] += cnt 
         
-        for qname, all_rd_data in chain(p1_rds.iteritems(), p2_rds.iteritems()):
-            for read_data in all_rd_data:
-                num_unique_reads[reads_i] += (
-                    read_data.map_prb/2. 
-                    if qname in p1_rds and qname in p2_rds 
-                    else read_data.map_prb)
-                for start, stop in read_data.cov_regions:
-                    # if start - r_start > reg_len, then it doesn't do 
-                    # anything, so the next line is not necessary
-                    # if start - r_start > reg_len: continue
-                    cov[read_data.strand][
-                        max(0, start-r_start):max(0, stop-r_start+1)] += 1
+
         # update the fragment length dist
         if reads == rnaseq_reads:
             for qname, r1_data in p1_rds.iteritems():
