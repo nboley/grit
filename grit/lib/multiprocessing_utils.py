@@ -21,6 +21,9 @@ import os
 import time
 import signal
 import multiprocessing
+import traceback
+
+from grit import config
 
 class ThreadSafeFile( file ):
     def __init__( *args ):
@@ -96,8 +99,8 @@ def fork_and_wait(n_proc, target, args):
                     signal.signal(signal.SIGINT, handle_interrupt_signal)
                     target(*args)
                 except Exception, inst:
-                    log_statement( "Uncaught exception in subprocess", log=True)
-                    log_statement( traceback.format_exc(), log=True )
+                    config.log_statement( "Uncaught exception in subprocess", log=True)
+                    config.log_statement( traceback.format_exc(), log=True )
                 finally:
                     os._exit(0)
             else:
