@@ -132,8 +132,8 @@ def get_rd_posterior_prb(read):
     # if we have nothing, assume that it's just 1.
     return 1.0
 
-def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000, 
-                                   max_num_reads_to_check=100000 ):
+def determine_read_type( bam_obj, min_num_reads_to_check=50000, 
+                         max_num_reads_to_check=100000 ):
     # keep track of which fractiona re on the sam strand
     paired_cnts = {'no_mate': 0, 'same_strand': 1e-4, 'diff_strand': 1e-4}
     
@@ -163,22 +163,38 @@ def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000,
             # if the reads are single ended, then return True ( 
             #    because it doesnt really matter )
             if paired_cnts['no_mate'] >= 0.95*num_good_reads:
-                return True
+                return ('unpaired',)
             if float(paired_cnts['same_strand'])/paired_cnts['diff_strand'] > 5:
-                return True
+                return ('paired', 'same_strand')
             elif float(paired_cnts['diff_strand'])/paired_cnts['same_strand'] > 5:
-                return False
+                return ('paired', 'diff_strand')
     
     # if we have run out of reads, see if we can build the statistic
     if paired_cnts['no_mate'] >= 0.95*num_good_reads:
-        return True
+        return ('unpaired',)
     if float(paired_cnts['same_strand'])/paired_cnts['diff_strand'] > 5:
-        return True
+        return ('paired', 'same_strand')
     elif float(paired_cnts['diff_strand'])/paired_cnts['same_strand'] > 5:
-        return False
+        return ('paired', 'diff_strand')
     
     print >> sys.stderr, "Paired Cnts:", paired_cnts, "Num Reads", num_observed_reads
-    raise ValueError, "Reads appear to be a mix of reads on the same and different strands. (%s)" % paired_cnts
+    raise ValueError, "Reads appear to be a mix of unpaired and paired reads that are both on the same and different strands. (%s)" % paired_cnts
+
+def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000, 
+                                   max_num_reads_to_check=100000 ):
+    read_type_attributes = determine_read_type(
+        bam_obj, min_num_reads_to_check, max_num_reads_to_check)
+
+    if 'same_strand' in read_type_attributes:
+        return True
+    if 'diff_strand' in read_type_attributes:
+        return False
+
+    # for backwards compability, we return true for unpaired reads. Use 
+    # determine_read_type for a morte robust interface
+    if 'unpaired' in read_type_attributes:
+        return True
+    assert False, 'Unexpecgted return values: "%s"' % read_type_attributes
 
 def iter_coverage_intervals_for_read(read):
     # we loop through each contig in the cigar string to deal
