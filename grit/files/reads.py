@@ -520,13 +520,14 @@ class Reads( pysam.Samfile ):
             self._contig_lens = dict( zip(self.references, self.lengths) )
             return self._contig_lens[self.fix_chrm_name(contig)]
 
-    def determine_reverse_read_strand_param( 
+    def determine_read_strand_param( 
             self, ref_genes, pairs_are_opp_strand, element_to_search,
             MIN_NUM_READS_PER_GENE, MIN_GENES_TO_CHECK):
         self._build_chrm_mapping()
         
         cnt_diff_strand = 0
         cnt_same_strand = 0
+        cnt_both_strands = 0
         for gene in ref_genes:
             reads_match = {True: 0, False: 0}
             exons = gene.extract_elements()[element_to_search]
@@ -542,15 +543,25 @@ class Reads( pysam.Samfile ):
             
             if reads_match[True] > 10*reads_match[False]:
                 cnt_same_strand += 1
-            if reads_match[False] > 10*reads_match[True]:
+            elif reads_match[False] > 10*reads_match[True]:
                 cnt_diff_strand += 1
+            else:
+                cnt_both_strands += 1
             
             # if we've succesfully explored enough genes, then return
-            if cnt_same_strand > MIN_GENES_TO_CHECK and cnt_same_strand > 5*cnt_diff_strand: 
-                return False
-            if cnt_diff_strand > MIN_GENES_TO_CHECK and cnt_diff_strand > 5*cnt_same_strand: 
-                return True
-        
+            if (cnt_same_strand > MIN_GENES_TO_CHECK 
+                and cnt_same_strand > 5*cnt_diff_strand
+                and cnt_same_strand > 5*cnt_both_strands): 
+                return ('stranded', 'reverse_read_strand')
+            elif (cnt_diff_strand > MIN_GENES_TO_CHECK 
+                  and cnt_diff_strand > 5*cnt_same_strand
+                  and cnt_diff_strand > 5*cnt_both_strands): 
+                return ('stranded', 'dont_reverse_read_strand')
+            elif (cnt_both_strands > MIN_GENES_TO_CHECK 
+                  and cnt_both_strands > 5*cnt_diff_strand
+                  and cnt_both_strands > 5*cnt_same_strand): 
+                return ('unstranded',)
+
         assert False, "Could not auto determine 'reverse_read_strand' parameter for '%s' - the read strand parameter should be set in the control file" % self.filename
             
     
@@ -695,7 +706,6 @@ class Reads( pysam.Samfile ):
         full_region_len = stop - start + 1
         cvg = numpy.zeros(full_region_len)
         for rd1, rd2 in self.iter_paired_reads( chrm, strand, start, stop ):
-            print rd1, rd2
             start = min(rd1.pos, rd2.pos)
             stop = min(rd1.aend, rd2.aend)
             cvg[max(0, region[2]-start):max(0, region[3]-start)] += 1
@@ -736,29 +746,52 @@ class Reads( pysam.Samfile ):
         return reads
 
 class RNAseqReads(Reads):    
-    def init(self, reverse_read_strand=None, reads_are_stranded=True, 
-                   pairs_are_opp_strand=None, reads_are_paired=True,
+    def init(self, reverse_read_strand=None, reads_are_stranded=None, 
+                   pairs_are_opp_strand=None, reads_are_paired=None,
                    ref_genes=None):        
         assert self.is_indexed()
+
+        read_type_attributes = determine_read_type(self)
         
-        assert reads_are_paired == True, "GRIT can only use paired RNAseq reads"
-        #assert reads_are_stranded == True, "GRIT can only use stranded RNAseq"
+        # set whether the reads are paired or not
+        if reads_are_paired in ('auto', None):
+            if 'paired' in read_type_attributes:
+                reads_are_paired = True 
+            else:
+                assert 'unpaired' in read_type_attributes
+                reads_are_paired = False
         
-        if reads_are_stranded: 
-            if pairs_are_opp_strand == None:
-                pairs_are_opp_strand = (not read_pairs_are_on_same_strand( self ))
-        
-            if reverse_read_strand == None:
-                reverse_read_strand = Reads.determine_reverse_read_strand_param(
-                    self, ref_genes, pairs_are_opp_strand, 'internal_exon',
-                    100, 10 )
-                if config.VERBOSE:
-                    config.log_statement(
-                        "Set reverse_read_strand to '%s' for '%s'" % (
-                            reverse_read_strand, self.filename), log=True )
-        else:
-            pairs_are_opp_strand = None
-            reverse_read_strand = None
+        if pairs_are_opp_strand in ('auto', None):
+            if reads_are_paired or 'same_strand' in read_type_attributes:
+                pairs_are_opp_strand = False
+            else:
+                pairs_are_opp_strand = True
+
+        if ( reads_are_stranded in ('auto', None) 
+             or reverse_read_strand in ('auto', None) ):
+            read_strand_attributes = Reads.determine_read_strand_param(
+                self, ref_genes, pairs_are_opp_strand, 'internal_exon',
+                100, 10 )
+            print read_strand_attributes
+            
+            if 'unstranded' in read_strand_attributes:
+                if reads_are_stranded in ('auto', None):
+                    reads_are_stranded = False
+            elif 'stranded' in read_strand_attributes:
+                if reads_are_stranded in ('auto', None):
+                    reads_are_stranded = True
+            else:
+                assert False
+
+            if reverse_read_strand in ('auto', None):
+                if not reads_are_stranded: 
+                    reverse_read_strand = None
+                elif 'reverse_read_strand' in read_strand_attributes:
+                    reverse_read_strand = True
+                elif 'dont_reverse_read_strand' in read_strand_attributes:
+                    reverse_read_strand = False
+                else:
+                    assert False
         
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
