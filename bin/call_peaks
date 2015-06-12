@@ -333,8 +333,9 @@ def parse_arguments():
     rev_reads = {'forward':False, 'backward':True, 'auto': None}[
         args.rnaseq_read_type]
     rnaseq_reads = RNAseqReads(args.rnaseq_reads.name, "rb").init(
+        reads_are_stranded=(True if rev_reads != None else None),
         reverse_read_strand=rev_reads, ref_genes=ref_genes)
-
+    assert rnaseq_reads.reads_are_stranded, "Calling peaks requires stranded RNAseq reads."
 
     output_stream = ProcessSafeOPStream( open(args.outfname, "w") 
                                          if args.outfname != None

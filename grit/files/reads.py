@@ -524,7 +524,6 @@ class Reads( pysam.Samfile ):
             self, ref_genes, pairs_are_opp_strand, element_to_search,
             MIN_NUM_READS_PER_GENE, MIN_GENES_TO_CHECK):
         self._build_chrm_mapping()
-        
         cnt_diff_strand = 0
         cnt_same_strand = 0
         cnt_both_strands = 0
@@ -563,8 +562,7 @@ class Reads( pysam.Samfile ):
                 return ('unstranded',)
 
         assert False, "Could not auto determine 'reverse_read_strand' parameter for '%s' - the read strand parameter should be set in the control file" % self.filename
-            
-    
+                
     def init(self, reads_are_paired, pairs_are_opp_strand, 
                    reads_are_stranded, reverse_read_strand ):
         self._init_kwargs = {
@@ -769,11 +767,10 @@ class RNAseqReads(Reads):
 
         if ( reads_are_stranded in ('auto', None) 
              or reverse_read_strand in ('auto', None) ):
-            read_strand_attributes = Reads.determine_read_strand_param(
-                self, ref_genes, pairs_are_opp_strand, 'internal_exon',
+            read_strand_attributes = self.determine_read_strand_param(
+                ref_genes, pairs_are_opp_strand, 'internal_exon',
                 100, 10 )
-            print read_strand_attributes
-            
+
             if 'unstranded' in read_strand_attributes:
                 if reads_are_stranded in ('auto', None):
                     reads_are_stranded = False
@@ -821,9 +818,15 @@ class CAGEReads(Reads):
         if reverse_read_strand in ('auto', None):
             if ref_genes in([], None): 
                 raise ValueError, "Determining reverse_read_strand requires reference genes"
-            reverse_read_strand = Reads.determine_reverse_read_strand_param(
+            reverse_read_strand_params = Reads.determine_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'tss_exon',
                 100, 10 )
+            assert 'stranded' in reverse_read_strand_params
+            if 'reverse_read_strand' in reverse_read_strand_params:
+                reverse_read_strand = True
+            elif 'reverse_read_strand' in reverse_read_strand_params:
+                reverse_read_strand = False
+            else: assert False
             if config.VERBOSE:
                 config.log_statement(
                     "Set reverse_read_strand to '%s' for '%s'" % (
@@ -878,9 +881,16 @@ class RAMPAGEReads(Reads):
         if reverse_read_strand in ('auto', None):
             if ref_genes in([], None): 
                 raise ValueError, "Determining reverse_read_strand requires reference genes"
-            reverse_read_strand = Reads.determine_reverse_read_strand_param(
+            reverse_read_strand_params = Reads.determine_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'tss_exon',
                 100, 10 )
+            assert 'stranded' in reverse_read_strand_params
+            if 'reverse_read_strand' in reverse_read_strand_params:
+                reverse_read_strand = True
+            elif 'reverse_read_strand' in reverse_read_strand_params:
+                reverse_read_strand = False
+            else: assert False
+            
             if config.VERBOSE:
                 config.log_statement(
                     "Set reverse_read_strand to '%s' for '%s'" % (
@@ -938,9 +948,15 @@ class PolyAReads(Reads):
         if reverse_read_strand in ('auto', None):
             if ref_genes in([], None): 
                 raise ValueError, "Determining reverse_read_strand requires reference genes"
-            reverse_read_strand = Reads.determine_reverse_read_strand_param(
+            reverse_read_strand_params = Reads.determine_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'tes_exon',
                 100, 10 )
+            assert 'stranded' in reverse_read_strand_params
+            if 'reverse_read_strand' in reverse_read_strand_params:
+                reverse_read_strand = True
+            elif 'reverse_read_strand' in reverse_read_strand_params:
+                reverse_read_strand = False
+            else: assert False
             if config.VERBOSE:
                 config.log_statement(
                     "Set reverse_read_strand to '%s' for '%s'" % (
