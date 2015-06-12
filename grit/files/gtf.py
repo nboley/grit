@@ -20,7 +20,9 @@ along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 import os, sys
 from collections import namedtuple, defaultdict
 import itertools
+
 import tempfile
+import gzip
 
 from ..transcript import Gene, Transcript, GenomicInterval
     
@@ -323,7 +325,7 @@ def load_gtf(fname_or_fp, contig=None, strand=None):
     if isinstance( fname_or_fp, str ):
         fp = open( fname_or_fp )
     else:
-        assert isinstance( fname_or_fp, file )
+        assert isinstance( fname_or_fp, (file, gzip.GzipFile) )
         fp = fname_or_fp
     
     gene_lines = defaultdict(lambda: ( defaultdict(list), [] ))

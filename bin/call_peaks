@@ -22,6 +22,8 @@ along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 import os, sys
 from collections import namedtuple
 
+import gzip
+
 from grit.lib.multiprocessing_utils import ProcessSafeOPStream, fork_and_wait
 from grit import config
 
@@ -173,7 +175,13 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description='Call peaks from a RAMPAGE/CAGE experiment and matching RNASeq.')
 
-    parser.add_argument( '--reference', type=file, 
+    def PossiblyGzippedFile(fname):
+        if fname.endswith(".gz"):
+            return gzip.open(fname, 'rb')
+        else:
+            return open(fname, 'r')
+
+    parser.add_argument( '--reference', type=PossiblyGzippedFile, 
         help='GTF file containing transcripts to extract reference elements to use.')
     parser.add_argument( '--use-reference-genes', 
                          default=False, action='store_true', 
@@ -332,6 +340,7 @@ def parse_arguments():
 
     rev_reads = {'forward':False, 'backward':True, 'auto': None}[
         args.rnaseq_read_type]
+
     rnaseq_reads = RNAseqReads(args.rnaseq_reads.name, "rb").init(
         reads_are_stranded=(True if rev_reads != None else None),
         reverse_read_strand=rev_reads, ref_genes=ref_genes)
