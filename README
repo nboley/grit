@@ -169,6 +169,19 @@ run_grit --control AdMatedF_Ecl_20days_Heads.control.txt --verbose --ucsc \
             --fasta dm_rel_5.fa
 
 ################################################################################
+Call Peaks Example:
+################################################################################
+
+call_peaks --cage-reads AdMatedF_Ecl_20days_Heads.biorep1.cage.chr4.bam \
+           --rnaseq-reads AdMatedF_Ecl_20days_Heads.biorep1.rnaseq.chr4.bam \
+           --reference flybase-r5.45.chr4.gtf \
+           --exp-filter-fraction 0.05 --trim-fraction 0.01 \
+           --ucsc \
+           --outfname peaks.rep1.gff --outfname-type gff \
+           --bed-peaks-ofname peaks.rep1.bed \
+           --verbose -t 2
+
+################################################################################
 Command Line Options:
 ################################################################################
 
