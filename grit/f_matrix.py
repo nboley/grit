@@ -640,6 +640,19 @@ def build_expected_and_observed_transcript_bndry_counts(
     
     return expected_cnts, observed_cnts
 
+def cluster_bins(expected_rnaseq_cnts):
+    if config.DEBUG_VERBOSE:
+        config.log_statement( "Normalizing bin frequencies" )
+    
+    clustered_bins = defaultdict(list)
+    for bin, transcripts_and_cnts in expected_rnaseq_cnts.items():
+        row = numpy.array([x[1] 
+                           for x in sorted(transcripts_and_cnts.iteritems())])
+        key = tuple((100000*row/row.sum()).round().tolist())
+        clustered_bins[key].append(bin)
+    return clustered_bins.values()
+
+
 def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
     if config.DEBUG_VERBOSE:
         config.log_statement( "Normalizing bin frequencies" )
@@ -718,11 +731,13 @@ def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
     new_expected_array = numpy.zeros( 
         (len(clusters), expected_rnaseq_array.shape[1]) )
     new_observed_array = numpy.zeros( len(clusters), dtype=int )
+    cluster_mapping = {}
     for i, node in enumerate(clusters):
+        cluster_mapping[i] = node
         new_expected_array[i,:] = expected_rnaseq_array[node,].sum(0)
         new_observed_array[i] = observed_rnaseq_array[node].sum()
 
-    return new_expected_array, new_observed_array
+    return new_expected_array, new_observed_array, cluster_mapping
 
 def find_nonoverlapping_exons_covered_by_segment(exon_bndrys, start, stop):
     """Return the pseudo bins that a given segment has at least one basepair in.
@@ -749,6 +764,8 @@ def bin_rnaseq_reads( reads, chrm, strand, exon_boundaries, include_read_type=Tr
     exon_boundaries should be a numpy array that contains
     pseudo exon starts.
     """
+    if not reads.reads_are_stranded: strand = '.'
+    
     # first get the paired reads
     gene_start = int(exon_boundaries[0])
     gene_stop = int(exon_boundaries[-1])
@@ -881,6 +898,10 @@ class DesignMatrix(object):
         expected_rnaseq_cnts, observed_rnaseq_cnts = \
             build_expected_and_observed_rnaseq_counts( 
                 gene, rnaseq_reads, fl_dists )
+        clustered_bins = cluster_bins(expected_rnaseq_cnts)
+        for cluster in clustered_bins:
+            print cluster
+        print
         
         # if no transcripts are observable given the fl dist, then return nothing
         if len( expected_rnaseq_cnts ) == 0:
@@ -893,11 +914,12 @@ class DesignMatrix(object):
         ( expected_rnaseq_array, observed_rnaseq_array, unobservable_rnaseq_trans ) = \
               build_expected_and_observed_arrays( 
                 expected_rnaseq_cnts, observed_rnaseq_cnts, normalize=True ) 
-              
+
         del expected_rnaseq_cnts, observed_rnaseq_cnts
+        
         if config.DEBUG_VERBOSE:
             config.log_statement( "Clustering bins in RNAseq array" )
-        expected_rnaseq_array, observed_rnaseq_array = cluster_rows(
+        expected_rnaseq_array, observed_rnaseq_array, clusters = cluster_rows(
             expected_rnaseq_array, observed_rnaseq_array)
         
         self.array_types.append('RNASeq')

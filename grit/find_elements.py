@@ -44,7 +44,7 @@ from genes import (
 
 from files.reads import MergedReads, RNAseqReads, CAGEReads, \
     RAMPAGEReads, PolyAReads, \
-    fix_chrm_name_for_ucsc, get_contigs_and_lens, calc_frag_len_from_read_data, \
+    fix_chrm_name_for_ucsc, get_contigs_and_lens, \
     iter_paired_reads, extract_jns_and_reads_in_region
 import files.junctions
 from files.bed import create_bed_line

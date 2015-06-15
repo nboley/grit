@@ -18,9 +18,13 @@ along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import os
+import sys
 import time
 import signal
 import multiprocessing
+import traceback
+
+from grit import config
 
 class ThreadSafeFile( file ):
     def __init__( *args ):
@@ -78,7 +82,7 @@ class Pool(object):
         return
 
 def handle_interrupt_signal(signum, frame):
-    os._exit(0)
+    os._exit(os.EX_TEMPFAIL)
 
 def fork_and_wait(n_proc, target, args):
     """Fork n_proc processes, run target(*args) in each, and wait to finish.
@@ -92,26 +96,31 @@ def fork_and_wait(n_proc, target, args):
         for i in xrange(n_proc):
             pid = os.fork()
             if pid == 0:
-                signal.signal(signal.SIGINT, handle_interrupt_signal)
-                target(*args)
-                os._exit(0)
+                try:
+                    signal.signal(signal.SIGINT, handle_interrupt_signal)
+                    target(*args)
+                    os._exit(os.EX_OK)
+                except Exception, inst:
+                    config.log_statement( "Uncaught exception in subprocess\n" 
+                                          + traceback.format_exc(), log=True)
+                    os._exit(os.EX_SOFTWARE)
             else:
                 pids.append(pid)
         try:
-            for pid in pids: 
-                ret_pid, error_code = os.waitpid(pid, 0)
-                assert pid == ret_pid
-                if error_code != 0: 
-                    raise OSError, "Process '{pid}' returned error code '%i'".format(
-                        pid, error_code) 
-                else:
-                    pids.remove(pid)
+            while len(pids) > 0:
+                ret_pid, error_code = os.wait()
+                pids.remove(ret_pid)
+                if error_code != os.EX_OK: 
+                    raise OSError, "Process '{}' returned error code '{}'".format(
+                        ret_pid, error_code) 
         except KeyboardInterrupt:
             for pid in pids:
-                os.kill(pid, signal.SIGINT)
+                try: os.kill(pid, signal.SIGHUP)
+                except: pass
             raise
         except OSError:
             for pid in pids:
-                os.kill(pid, SIGINT)
-            raise            
+                try: os.kill(pid, signal.SIGHUP)
+                except: pass
+            raise
         return

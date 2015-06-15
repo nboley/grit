@@ -48,8 +48,6 @@ import config
 
 import Queue
 
-import random
-
 GeneElements = namedtuple('GeneElements', 
                           ['id', 'chrm', 'strand',
                            'tss_exons', 'internal_exons', 'tes_exons',

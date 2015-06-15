@@ -28,10 +28,14 @@ import numpy
 import grit.config as config
 import junctions
 
+
 ReadData = namedtuple('ReadData', [
         'strand', 'read_len', 'read_grp', 'map_prb', 'cov_regions'])
 
 DEBUG = False
+
+class TooManyReadsError(Exception):
+    pass
 
 def clean_chr_name( chrm ):
     if chrm.startswith( "chr" ):
@@ -128,8 +132,8 @@ def get_rd_posterior_prb(read):
     # if we have nothing, assume that it's just 1.
     return 1.0
 
-def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000, 
-                                   max_num_reads_to_check=100000 ):
+def determine_read_type( bam_obj, min_num_reads_to_check=50000, 
+                         max_num_reads_to_check=100000 ):
     # keep track of which fractiona re on the sam strand
     paired_cnts = {'no_mate': 0, 'same_strand': 1e-4, 'diff_strand': 1e-4}
     
@@ -159,22 +163,38 @@ def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000,
             # if the reads are single ended, then return True ( 
             #    because it doesnt really matter )
             if paired_cnts['no_mate'] >= 0.95*num_good_reads:
-                return True
+                return ('unpaired',)
             if float(paired_cnts['same_strand'])/paired_cnts['diff_strand'] > 5:
-                return True
+                return ('paired', 'same_strand')
             elif float(paired_cnts['diff_strand'])/paired_cnts['same_strand'] > 5:
-                return False
+                return ('paired', 'diff_strand')
     
     # if we have run out of reads, see if we can build the statistic
     if paired_cnts['no_mate'] >= 0.95*num_good_reads:
-        return True
+        return ('unpaired',)
     if float(paired_cnts['same_strand'])/paired_cnts['diff_strand'] > 5:
-        return True
+        return ('paired', 'same_strand')
     elif float(paired_cnts['diff_strand'])/paired_cnts['same_strand'] > 5:
-        return False
+        return ('paired', 'diff_strand')
     
     print >> sys.stderr, "Paired Cnts:", paired_cnts, "Num Reads", num_observed_reads
-    raise ValueError, "Reads appear to be a mix of reads on the same and different strands. (%s)" % paired_cnts
+    raise ValueError, "Reads appear to be a mix of unpaired and paired reads that are both on the same and different strands. (%s)" % paired_cnts
+
+def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000, 
+                                   max_num_reads_to_check=100000 ):
+    read_type_attributes = determine_read_type(
+        bam_obj, min_num_reads_to_check, max_num_reads_to_check)
+
+    if 'same_strand' in read_type_attributes:
+        return True
+    if 'diff_strand' in read_type_attributes:
+        return False
+
+    # for backwards compability, we return true for unpaired reads. Use 
+    # determine_read_type for a morte robust interface
+    if 'unpaired' in read_type_attributes:
+        return True
+    assert False, 'Unexpecgted return values: "%s"' % read_type_attributes
 
 def iter_coverage_intervals_for_read(read):
     # we loop through each contig in the cigar string to deal
@@ -220,15 +240,36 @@ def iter_coverage_regions_for_read(
     
     return
 
-def extract_jns_and_reads_in_region((chrm, strand, r_start, r_stop), reads):
+def extract_jns_and_reads_in_region(
+        (chrm, strand, r_start, r_stop), reads, max_n_reads_to_store=1e6):
     assert strand in '+-.', "Strand must be -, +, or . for either"
+
+    reg_len = r_stop-r_start+1
     
+    jn_reads = {'+': defaultdict(int), '-': defaultdict(int)}
+
+    cov = { '+': numpy.zeros(reg_len, dtype=float), 
+            '-': numpy.zeros(reg_len, dtype=float) }
+
     pair1_reads = defaultdict(list)
     pair2_reads = defaultdict(list)
-    jn_reads = {'+': defaultdict(int), '-': defaultdict(int)}
+
+    num_unique_reads = 0.0
     
-    for read, rd_strand in reads.iter_reads_and_strand(
-            chrm, r_start, r_stop+1):
+    config.log_statement("Finding reads in %s" % str((chrm, strand, r_start, r_stop)))        
+    for n_obs_reads, (read, rd_strand) in enumerate(reads.iter_reads_and_strand(
+            chrm, r_start, r_stop+1)):
+        # break if we've surpassed the read
+        if read.pos > r_stop: break
+        
+        # -probability that the read originated in this location
+        # if we can't find it, assume that it's uniform over alternate
+        # mappings. If we can't find that, then assume that it's unique
+        map_prb = get_rd_posterior_prb(read)
+
+        if n_obs_reads > 0 and n_obs_reads%100000 == 0:
+            config.log_statement("Processed %i reads in %s" % (
+                n_obs_reads, str((chrm, strand, r_start, r_stop))))
         for jn in junctions.iter_jns_in_read(read):
             # skip jns whose start does not overlap this region, we subtract one
             # because the start refers to the first covered intron base, and 
@@ -247,17 +288,36 @@ def extract_jns_and_reads_in_region((chrm, strand, r_start, r_stop), reads):
         # -read group
         try: read_grp = read.opt('RG')
         except KeyError: read_grp = 'mean'
-        # -probability that the read originated in this location
-        # if we can't find it, assume that it's uniform over alternate
-        # mappings. If we can't find that, then assume that it's unique
-        map_prb = get_rd_posterior_prb(read)
+        
+        num_unique_reads += (
+            map_prb/2. if read.is_paired else map_prb )
+        
+        for start, stop in cov_regions:
+            # if start - r_start > reg_len, then it doesn't do 
+            # anything, so the next line is not necessary
+            # if start - r_start > reg_len: continue
+            cov[rd_strand][
+                max(0, start-r_start):max(0, stop-r_start+1)] += 1
+
         
         # store the read data - we will join them later
-        read_data = ReadData(rd_strand, read_len, read_grp, map_prb, cov_regions)
-        if read.is_read1: pair1_reads[read.qname].append(read_data)
-        else: pair2_reads[read.qname].append(read_data)
-    
-    return pair1_reads, pair2_reads, jn_reads['+'], jn_reads['-']
+        if max(len(pair1_reads), len(pair2_reads)) < max_n_reads_to_store:
+            read_data = ReadData(
+                rd_strand, read_len, read_grp, map_prb, tuple(cov_regions))
+
+            if read.is_read1:
+                pair1_reads[read.qname].append(read_data) 
+            else:
+                pair2_reads[read.qname].append(read_data) 
+
+        # if we ar in a long region and have surpassed the maximum number 
+        # of allowed reads, then 
+        #if r_stop - r_start > 1000 and n_obs_reads > 1e5: 
+        #    raise TooManyReadsError, "Too many reads"
+
+    return ( pair1_reads, pair2_reads, 
+             jn_reads['+'], jn_reads['-'], 
+             cov, num_unique_reads )
 
 def calc_frag_len_from_read_data(read1_data, read2_data):
     frag_start = min(min(read1_data.cov_regions[0]), 
@@ -357,6 +417,10 @@ class MergedReads( object ):
             return "Generic"
         else:
             raise ValueError, "Unrecognized read subtype %s" % type(reads)
+
+    @property
+    def reads_are_stranded(self):
+        return all(rds.reads_are_stranded for rds in self._reads)
     
     def __init__(self, all_reads):
         self._reads = list(all_reads)
@@ -456,13 +520,13 @@ class Reads( pysam.Samfile ):
             self._contig_lens = dict( zip(self.references, self.lengths) )
             return self._contig_lens[self.fix_chrm_name(contig)]
 
-    def determine_reverse_read_strand_param( 
+    def determine_read_strand_param( 
             self, ref_genes, pairs_are_opp_strand, element_to_search,
             MIN_NUM_READS_PER_GENE, MIN_GENES_TO_CHECK):
         self._build_chrm_mapping()
-        
         cnt_diff_strand = 0
         cnt_same_strand = 0
+        cnt_both_strands = 0
         for gene in ref_genes:
             reads_match = {True: 0, False: 0}
             exons = gene.extract_elements()[element_to_search]
@@ -478,18 +542,27 @@ class Reads( pysam.Samfile ):
             
             if reads_match[True] > 10*reads_match[False]:
                 cnt_same_strand += 1
-            if reads_match[False] > 10*reads_match[True]:
+            elif reads_match[False] > 10*reads_match[True]:
                 cnt_diff_strand += 1
+            else:
+                cnt_both_strands += 1
             
             # if we've succesfully explored enough genes, then return
-            if cnt_same_strand > MIN_GENES_TO_CHECK and cnt_same_strand > 5*cnt_diff_strand: 
-                return False
-            if cnt_diff_strand > MIN_GENES_TO_CHECK and cnt_diff_strand > 5*cnt_same_strand: 
-                return True
-        
+            if (cnt_same_strand > MIN_GENES_TO_CHECK 
+                and cnt_same_strand > 5*cnt_diff_strand
+                and cnt_same_strand > 5*cnt_both_strands): 
+                return ('stranded', 'reverse_read_strand')
+            elif (cnt_diff_strand > MIN_GENES_TO_CHECK 
+                  and cnt_diff_strand > 5*cnt_same_strand
+                  and cnt_diff_strand > 5*cnt_both_strands): 
+                return ('stranded', 'dont_reverse_read_strand')
+            elif (cnt_both_strands > MIN_GENES_TO_CHECK 
+                  and cnt_both_strands > 5*cnt_diff_strand
+                  and cnt_both_strands > 5*cnt_same_strand): 
+                return ('unstranded',)
+
         assert False, "Could not auto determine 'reverse_read_strand' parameter for '%s' - the read strand parameter should be set in the control file" % self.filename
-            
-    
+                
     def init(self, reads_are_paired, pairs_are_opp_strand, 
                    reads_are_stranded, reverse_read_strand ):
         self._init_kwargs = {
@@ -549,8 +622,11 @@ class Reads( pysam.Samfile ):
         return True
     
     def get_strand(self, read):
-        return get_strand( 
-            read, self.reverse_read_strand, self.pairs_are_opp_strand )
+        if self.reads_are_stranded:
+            return get_strand( 
+                read, self.reverse_read_strand, self.pairs_are_opp_strand )
+        else:
+            return '.'
     
     def iter_reads_and_strand( self, chrm, start=None, stop=None ):
         for read in self.fetch( chrm, start, stop  ):
@@ -560,7 +636,7 @@ class Reads( pysam.Samfile ):
 
     def iter_reads( self, chrm, strand, start=None, stop=None ):
         for read, rd_strand in self.iter_reads_and_strand( chrm, start, stop  ):
-            if strand == None or rd_strand == strand:
+            if strand == None or rd_strand == '.' or rd_strand == strand:
                 yield read        
         return
 
@@ -622,6 +698,37 @@ class Reads( pysam.Samfile ):
         
         return cvg
 
+    def build_paired_reads_fragment_coverage_array( 
+            self, chrm, strand, start, stop ):
+        assert stop >= start
+        full_region_len = stop - start + 1
+        cvg = numpy.zeros(full_region_len)
+        for rd1, rd2 in self.iter_paired_reads( chrm, strand, start, stop ):
+            start = min(rd1.pos, rd2.pos)
+            stop = min(rd1.aend, rd2.aend)
+            cvg[max(0, region[2]-start):max(0, region[3]-start)] += 1
+        
+        return cvg
+
+    def build_unpaired_reads_fragment_coverage_array( 
+            self, chrm, strand, start, stop, frag_len ):
+        assert stop >= start
+        full_region_len = stop - start + 1
+        cvg = numpy.zeros(full_region_len)
+        for rd, strand in self.iter_reads_and_strand(chrm, start, stop):
+            if strand == '-': 
+                rd_start = rd.pos - frag_len
+                rd_stop = rd.pos
+            elif strand == '+': 
+                rd_start = rd.pos
+                rd_stop = rd.pos + frag_len
+            else:
+                assert False
+            cvg[max(0, rd_start-start):max(0, rd_stop-start)] += 1
+        
+        return cvg
+
+
     def reload( self ):
         # extract the relevant info, and close
         fname = self.filename
@@ -637,26 +744,52 @@ class Reads( pysam.Samfile ):
         return reads
 
 class RNAseqReads(Reads):    
-    def init(self, reverse_read_strand=None, reads_are_stranded=True, 
-                   pairs_are_opp_strand=None, reads_are_paired=True,
+    def init(self, reverse_read_strand=None, reads_are_stranded=None, 
+                   pairs_are_opp_strand=None, reads_are_paired=None,
                    ref_genes=None):        
         assert self.is_indexed()
-        
-        assert reads_are_paired == True, "GRIT can only use paired RNAseq reads"
-        assert reads_are_stranded == True, "GRIT can only use stranded RNAseq"
-        
-        if pairs_are_opp_strand == None:
-            pairs_are_opp_strand = (not read_pairs_are_on_same_strand( self ))
-        
-        if reverse_read_strand == None:
-            reverse_read_strand = Reads.determine_reverse_read_strand_param(
-                self, ref_genes, pairs_are_opp_strand, 'internal_exon',
-                100, 10 )
-            if config.VERBOSE:
-                config.log_statement(
-                    "Set reverse_read_strand to '%s' for '%s'" % (
-                        reverse_read_strand, self.filename), log=True )
 
+        read_type_attributes = determine_read_type(self)
+        
+        # set whether the reads are paired or not
+        if reads_are_paired in ('auto', None):
+            if 'paired' in read_type_attributes:
+                reads_are_paired = True 
+            else:
+                assert 'unpaired' in read_type_attributes
+                reads_are_paired = False
+        
+        if pairs_are_opp_strand in ('auto', None):
+            if reads_are_paired or 'same_strand' in read_type_attributes:
+                pairs_are_opp_strand = False
+            else:
+                pairs_are_opp_strand = True
+
+        if ( reads_are_stranded in ('auto', None) 
+             or reverse_read_strand in ('auto', None) ):
+            read_strand_attributes = self.determine_read_strand_param(
+                ref_genes, pairs_are_opp_strand, 'internal_exon',
+                100, 10 )
+
+            if 'unstranded' in read_strand_attributes:
+                if reads_are_stranded in ('auto', None):
+                    reads_are_stranded = False
+            elif 'stranded' in read_strand_attributes:
+                if reads_are_stranded in ('auto', None):
+                    reads_are_stranded = True
+            else:
+                assert False
+
+            if reverse_read_strand in ('auto', None):
+                if not reads_are_stranded: 
+                    reverse_read_strand = None
+                elif 'reverse_read_strand' in read_strand_attributes:
+                    reverse_read_strand = True
+                elif 'dont_reverse_read_strand' in read_strand_attributes:
+                    reverse_read_strand = False
+                else:
+                    assert False
+        
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
         
@@ -685,9 +818,15 @@ class CAGEReads(Reads):
         if reverse_read_strand in ('auto', None):
             if ref_genes in([], None): 
                 raise ValueError, "Determining reverse_read_strand requires reference genes"
-            reverse_read_strand = Reads.determine_reverse_read_strand_param(
+            reverse_read_strand_params = Reads.determine_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'tss_exon',
                 100, 10 )
+            assert 'stranded' in reverse_read_strand_params
+            if 'reverse_read_strand' in reverse_read_strand_params:
+                reverse_read_strand = True
+            elif 'reverse_read_strand' in reverse_read_strand_params:
+                reverse_read_strand = False
+            else: assert False
             if config.VERBOSE:
                 config.log_statement(
                     "Set reverse_read_strand to '%s' for '%s'" % (
@@ -742,9 +881,16 @@ class RAMPAGEReads(Reads):
         if reverse_read_strand in ('auto', None):
             if ref_genes in([], None): 
                 raise ValueError, "Determining reverse_read_strand requires reference genes"
-            reverse_read_strand = Reads.determine_reverse_read_strand_param(
+            reverse_read_strand_params = Reads.determine_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'tss_exon',
                 100, 10 )
+            assert 'stranded' in reverse_read_strand_params
+            if 'reverse_read_strand' in reverse_read_strand_params:
+                reverse_read_strand = True
+            elif 'reverse_read_strand' in reverse_read_strand_params:
+                reverse_read_strand = False
+            else: assert False
+            
             if config.VERBOSE:
                 config.log_statement(
                     "Set reverse_read_strand to '%s' for '%s'" % (
@@ -802,9 +948,15 @@ class PolyAReads(Reads):
         if reverse_read_strand in ('auto', None):
             if ref_genes in([], None): 
                 raise ValueError, "Determining reverse_read_strand requires reference genes"
-            reverse_read_strand = Reads.determine_reverse_read_strand_param(
+            reverse_read_strand_params = Reads.determine_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'tes_exon',
                 100, 10 )
+            assert 'stranded' in reverse_read_strand_params
+            if 'reverse_read_strand' in reverse_read_strand_params:
+                reverse_read_strand = True
+            elif 'reverse_read_strand' in reverse_read_strand_params:
+                reverse_read_strand = False
+            else: assert False
             if config.VERBOSE:
                 config.log_statement(
                     "Set reverse_read_strand to '%s' for '%s'" % (
