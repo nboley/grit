@@ -58,4 +58,6 @@ config = {
 }
 
 if __name__== '__main__':
+    import numpy
+    config['include_dirs'] = [numpy.get_include(),] 
     setup(**config)
