@@ -132,8 +132,47 @@ def get_rd_posterior_prb(read):
     # if we have nothing, assume that it's just 1.
     return 1.0
 
-def determine_read_type( bam_obj, min_num_reads_to_check=50000, 
-                         max_num_reads_to_check=100000 ):
+def determine_read_strand_params( 
+        self, ref_genes, pairs_are_opp_strand, element_to_search,
+        MIN_NUM_READS_PER_GENE, MIN_GENES_TO_CHECK):
+    self._build_chrm_mapping()
+    cnts = {'diff': 0, 'same': 0, 'unstranded': 0}
+    for gene in ref_genes:
+        reads_match = {True: 0, False: 0}
+        exons = gene.extract_elements()[element_to_search]
+        for start, stop in exons:
+            for rd in self.fetch(gene.chrm, max(0, start), stop):
+                rd_strand = get_strand(rd, False, pairs_are_opp_strand)
+                if gene.strand == rd_strand: reads_match[True] += 1
+                else: reads_match[False] += 1
+
+        # make sure that we have at least MIN_NUM_READS_PER_GENE 
+        # reads in this gene
+        if sum(reads_match.values()) < MIN_NUM_READS_PER_GENE: continue
+
+        if reads_match[True] > 10*reads_match[False]:
+            cnts['same'] += 1
+        elif reads_match[False] > 10*reads_match[True]:
+            cnts['diff'] += 1
+        elif (2*reads_match[False] > reads_match[True]
+            and 2*reads_match[True] > reads_match[False] ):
+            cnts['unstranded'] += 1
+        
+        # if we've succesfully explored enough genes, then return
+        if sum(cnts.values()) >= MIN_GENES_TO_CHECK:
+            max_val = max(cnts.values())
+            if cnts['same'] == max_val:
+                return ('stranded', 'reverse_read_strand')
+            if cnts['diff'] == max_val:
+                return ('stranded', 'dont_reverse_read_strand')
+            if cnts['unstranded'] == max_val:
+                return ('unstranded', )
+    
+    assert False, "Could not auto determine 'reverse_read_strand' parameter for '%s' - the read type needs to be set" % self.filename
+
+
+def determine_read_pair_params( bam_obj, min_num_reads_to_check=50000, 
+                                max_num_reads_to_check=100000 ):
     # keep track of which fractiona re on the sam strand
     paired_cnts = {'no_mate': 0, 'same_strand': 1e-4, 'diff_strand': 1e-4}
     
@@ -182,19 +221,19 @@ def determine_read_type( bam_obj, min_num_reads_to_check=50000,
 
 def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000, 
                                    max_num_reads_to_check=100000 ):
-    read_type_attributes = determine_read_type(
+    read_strand_attributes = determine_read_strand_params(
         bam_obj, min_num_reads_to_check, max_num_reads_to_check)
 
-    if 'same_strand' in read_type_attributes:
+    if 'same_strand' in read_strand_attributes:
         return True
-    if 'diff_strand' in read_type_attributes:
+    if 'diff_strand' in read_strand_attributes:
         return False
 
     # for backwards compability, we return true for unpaired reads. Use 
     # determine_read_type for a morte robust interface
-    if 'unpaired' in read_type_attributes:
+    if 'unpaired' in read_strand_attributes:
         return True
-    assert False, 'Unexpecgted return values: "%s"' % read_type_attributes
+    assert False, 'Unexpecgted return values: "%s"' % read_strand_attributes
 
 def iter_coverage_intervals_for_read(read):
     # we loop through each contig in the cigar string to deal
@@ -519,49 +558,6 @@ class Reads( pysam.Samfile ):
         except AttributeError:
             self._contig_lens = dict( zip(self.references, self.lengths) )
             return self._contig_lens[self.fix_chrm_name(contig)]
-
-    def determine_read_strand_param( 
-            self, ref_genes, pairs_are_opp_strand, element_to_search,
-            MIN_NUM_READS_PER_GENE, MIN_GENES_TO_CHECK):
-        self._build_chrm_mapping()
-        cnt_diff_strand = 0
-        cnt_same_strand = 0
-        cnt_both_strands = 0
-        for gene in ref_genes:
-            reads_match = {True: 0, False: 0}
-            exons = gene.extract_elements()[element_to_search]
-            for start, stop in exons:
-                for rd in self.fetch(gene.chrm, max(0, start), stop):
-                    rd_strand = get_strand(rd, False, pairs_are_opp_strand)
-                    if gene.strand == rd_strand: reads_match[True] += 1
-                    else: reads_match[False] += 1
-            
-            # make sure that we have at least MIN_NUM_READS_PER_GENE 
-            # reads in this gene
-            if sum(reads_match.values()) < MIN_NUM_READS_PER_GENE: continue
-            
-            if reads_match[True] > 10*reads_match[False]:
-                cnt_same_strand += 1
-            elif reads_match[False] > 10*reads_match[True]:
-                cnt_diff_strand += 1
-            else:
-                cnt_both_strands += 1
-            
-            # if we've succesfully explored enough genes, then return
-            if (cnt_same_strand > MIN_GENES_TO_CHECK 
-                and cnt_same_strand > 5*cnt_diff_strand
-                and cnt_same_strand > 5*cnt_both_strands): 
-                return ('stranded', 'reverse_read_strand')
-            elif (cnt_diff_strand > MIN_GENES_TO_CHECK 
-                  and cnt_diff_strand > 5*cnt_same_strand
-                  and cnt_diff_strand > 5*cnt_both_strands): 
-                return ('stranded', 'dont_reverse_read_strand')
-            elif (cnt_both_strands > MIN_GENES_TO_CHECK 
-                  and cnt_both_strands > 5*cnt_diff_strand
-                  and cnt_both_strands > 5*cnt_same_strand): 
-                return ('unstranded',)
-
-        assert False, "Could not auto determine 'reverse_read_strand' parameter for '%s' - the read strand parameter should be set in the control file" % self.filename
                 
     def init(self, reads_are_paired, pairs_are_opp_strand, 
                    reads_are_stranded, reverse_read_strand ):
@@ -749,26 +745,28 @@ class RNAseqReads(Reads):
                    ref_genes=None):        
         assert self.is_indexed()
 
-        read_type_attributes = determine_read_type(self)
+        read_pair_params = determine_read_pair_params(self)
         
         # set whether the reads are paired or not
         if reads_are_paired in ('auto', None):
-            if 'paired' in read_type_attributes:
+            if 'paired' in read_pair_params:
                 reads_are_paired = True 
             else:
-                assert 'unpaired' in read_type_attributes
+                assert 'unpaired' in read_pair_params
                 reads_are_paired = False
         
         if pairs_are_opp_strand in ('auto', None):
-            if reads_are_paired or 'same_strand' in read_type_attributes:
+            if not reads_are_paired:
+                pairs_are_opp_strand = None
+            elif 'same_strand' in read_pair_params:
                 pairs_are_opp_strand = False
             else:
                 pairs_are_opp_strand = True
 
         if ( reads_are_stranded in ('auto', None) 
              or reverse_read_strand in ('auto', None) ):
-            read_strand_attributes = self.determine_read_strand_param(
-                ref_genes, pairs_are_opp_strand, 'internal_exon',
+            read_strand_attributes = determine_read_strand_params(
+                self, ref_genes, pairs_are_opp_strand, 'internal_exon',
                 100, 10 )
 
             if 'unstranded' in read_strand_attributes:
@@ -818,7 +816,7 @@ class CAGEReads(Reads):
         if reverse_read_strand in ('auto', None):
             if ref_genes in([], None): 
                 raise ValueError, "Determining reverse_read_strand requires reference genes"
-            reverse_read_strand_params = Reads.determine_read_strand_param(
+            reverse_read_strand_params = determine_read_strand_params(
                 self, ref_genes, pairs_are_opp_strand, 'tss_exon',
                 100, 10 )
             assert 'stranded' in reverse_read_strand_params

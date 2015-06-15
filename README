@@ -183,8 +183,7 @@ RNAseq sorted and indexed bam file (eg XXX), and a reference annotation in GTF
 format (eg XXX). To download test data, in a suitable working directory, run:
 wget -r -nd --no-parent -A '*.bam*,*.gtf' \
      http://mitra.stanford.edu/kundaje/nboley/grit-bio.org/ENCODE_RAMPAGE_TEST/;
-The exact commands for a linux machine with GRIT installed can be found at the 
-bottom of this document. 
+The exact commands for a linux machine with GRIT installed can be found below.
 
 Then run:
 call_peaks --rampage-reads $RAMPAGEReads.sorted.bam \
@@ -339,7 +338,7 @@ call_peaks --rampage-reads ENCFF001RET-ENCFF001RES_rampage_star_marked.chr20.bam
 
 idr        --samples peaks.rep1.bed peaks.rep2.bed \
            --input-file-type bed --rank 7 \
-           --output-file peaks.IDR.txt --plot
+           --output-file peaks.IDR.txt --plot;
 
 ################################################################################
 Command Line Options:
