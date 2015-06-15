@@ -169,6 +169,179 @@ run_grit --control AdMatedF_Ecl_20days_Heads.control.txt --verbose --ucsc \
             --fasta dm_rel_5.fa
 
 ################################################################################
+Peak Calling Example:
+################################################################################
+In addition to discovering and building transcript models, GRIT can be used to 
+identify TSS/TES from RAMPAGE/CAGE/PASseq data and an RNA-seq control. The 
+ENCODE consortium uses the call_peaks script distributed with GRIT v2.0.4 
+to identify RAMPAGE peaks. Installation is identical to isntalling the full GRIT
+software pacakge, as described above.
+
+To try calling peaks using the ENCODE RNA evaluation data (XXX) 
+for download a position sorted and indexed RAMPAGE file (eg XXX), a matching 
+RNAseq sorted and indexed bam file (eg XXX), and a reference annotation in GTF
+format (eg XXX). To download test data, in a suitable working directory, run:
+wget -r -nd --no-parent -A '*.bam*,*.gtf' \
+     http://mitra.stanford.edu/kundaje/nboley/grit-bio.org/ENCODE_RAMPAGE_TEST/;
+The exact commands for a linux machine with GRIT installed can be found at the 
+bottom of this document. 
+
+Then run:
+call_peaks --rampage-reads $RAMPAGEReads.sorted.bam \
+           --rnaseq-reads $RNASeqReads.sorted.bam \
+           --reference $referenceAnnotation.gtf \
+           --exp-filter-fraction 0.05 --trim-fraction 0.01 \
+           --ucsc \
+           --outfname peaks.gff --outfname-type gff \
+           --bed-peaks-ofname peaks.bed \
+           --threads $nThreads 
+
+Here we describe the individual options used above - the full set of options and
+descriptions can be found by running call_peaks --help. 
+
+--rampage-reads: a position sorted, indexed bam file containing rampage reads to
+                 identify peaks from. 
+                 
+                 The ENCODE consoritum uses STAR to map the RAMPAGE reads, 
+                 PCR remove duplicates, identify junctions, etc. Details of the
+                 mapping procedure can be found here: 
+                     https://github.com/ENCODE-DCC/long-rna-seq-pipeline
+                 
+                 If a reference annotation is not provided, then the user must 
+                 set the --rampage-read-type option to forward or backward. If
+                 this option is set to forward, then if the first read pair 
+                 maps to the reference genome without being reverse complemented
+                 then the read is assumed to have come from a + stranded gene. 
+                 
+--rnaseq-reads:  a position sorted, indexed bam file containing rnaseq reads 
+                 from the same sample as the --rampage-reads. The RNA-seq reads
+                 help GRIT distinguish noise in a similar way to how a DNA seq
+                 experiment is used to control for a ChIP-seq experiment. GRIT
+                 currently requires RNAseq reads generated using a stranded
+                 protocol. 
+ 
+                 The ENCODE consoritum uses STAR to map the RNAseq reads; 
+                 details of the ENCODE mapping pipeline can be found here: 
+                     https://github.com/ENCODE-DCC/long-rna-seq-pipeline
+                 
+                 If a reference annotation is not provided, then the user must 
+                 set the --rnaseq-read-type option to forward or backward. If
+                 this option is set to forward, then if the first read pair 
+                 maps to the reference genome without being reverse complemented
+                 then the read is assumed to have come from a + stranded gene. 
+
+--reference:     a GTF file containing reference transcripts. GRIT does not 
+                 require a reference annotation, but providing one helps 
+                 improve the quality of the result by providing connectivity 
+                 between transcribed regions. A reference annotation is also 
+                 required to automatically infer read strand.  
+
+--exp-filter-fraction: peaks with low expression levels *relative to the gene
+                 region in which they lie* will be filtered regardless of their
+                 estimated statistical enrichment. This helps the results to be
+                 robust to differences between the RAMPAGE and RNAseq 
+                 experiments. The ENCODE consortium sets this value to 0.05 
+                 which means that a peak will be removed if there is another 
+                 peak in the same gene with an expression value >= 20x higher. 
+                 5% is relatively conservative - those primarily focused on new
+                 discovery that have properly matched RAMPAGE/RNAseq experiments
+                 should feel comfortable lowering this threshold to 1%. If there
+                 is not a control RNASeq experiments from a matching biological 
+                 sample then values as high as 25% may be appropriate. 
+
+--trim-fraction: Specify how much to trim the edge of peaks. ENCODE uses a value
+                 of 0.01, which specifies that each boundary will be trimmed 
+                 while the trimming has removed less than 1% of the total reads
+                 that fall into the peak. 
+
+--ucsc:          Use contig names compatible with the ucsc browser (this 
+                 typically just involves prepending a chr to the contig names)
+               
+--outfname:      The name of the output file.
+--outfname-type: The type of the output file. We recommend using the gff output
+                 whenever possible as future updates will include additional 
+                 meta data which will likely break bed backwards compatibility. 
+
+--bed-peaks-ofname: Write an additional output file in bed format. This is 
+                 primarily used for downstream analysis tools that require bed
+                 input. 
+ 
+--threads:       The number of processes to run concurrently.
+
+--verbose:       Open a ncurses interface which allows each stage to be 
+                 monitored.
+
+## Ouput Formats ###############################################################
+
+gff:             
+gff output is standard gff output with the following id files:
+
+gene_id:         The  ID of the GRIT determined gene region this peaks falls in.
+gene_name:       Currenty identical to gene_id - in the future this will contain
+                 the name of the nearest matching reference gene.
+tss_id:          A unique identifier for this TSS id. 
+peak_cov:        The RAMPAGE read counts falling within this peak. This is 
+                 useful for identifying peak summits, identifying peak 
+                 enrichment, identifying binding motifs associated with this
+                 peak, etc.  
+
+bed:
+The bed output is a standard bed6 with the following additional fields:
+read countq    : int
+gene_id        : string
+gene_name      : string
+tss_id         : string
+peak_coverage  : comma separated floats specifying the observed read coverage 
+                 across the peak 
+
+## Running IDR on peak replicates ##############################################
+
+The ENCODE consortium uses the IDR software package (
+https://github.com/nboley/idr/) to identify peaks which are reproducible between
+replicates. Given the bed output from two peak calling runs (e.g. PEAK1.bed and 
+PEAK2.bed) by running:
+
+idr --samples REP1.bed REP2.bed     # run IDR on the REP1.bed and REP2.bed
+    --input-file-type bed --rank 7  # specifies that the input is a bed format, 
+                                    # and the score track is in column 7
+    --output-file IDR.peaks.txt     # output the peak list and reproducibility 
+                                    # information to IDR.peaks.txt
+    --plot                          # produce a QC plot, IDR.peaks.txt.png
+
+Details about command line options and a description of the output files can be
+found at https://github.com/nboley/idr/.
+
+## Example commands for ENCODE test data #######################################
+
+For a linux machine with wget, GRIT and IDR installed, in a suitable working
+directory run:
+
+wget -r -nd --no-parent -A '*.bam*,*.gtf' \
+     http://mitra.stanford.edu/kundaje/nboley/grit-bio.org/ENCODE_RAMPAGE_TEST/;
+
+call_peaks --rampage-reads ENCFF001RDX-ENCFF001RDR_rampage_star_marked.chr20.bam \
+           --rnaseq-reads ENCFF001RFD-ENCFF001RFC_star_genome.chr20.bam \
+           --reference gencode.v19.annotation.chr20.gtf  \
+           --exp-filter-fraction 0.05 --trim-fraction 0.01 \
+           --ucsc \
+           --outfname peaks.rep1.gff --outfname-type gff \
+           --bed-peaks-ofname peaks.rep1.bed \
+           --threads 24;
+
+call_peaks --rampage-reads ENCFF001RET-ENCFF001RES_rampage_star_marked.chr20.bam \
+           --rnaseq-reads ENCFF001RFF-ENCFF001RFE_star_genome.chr20.bam \
+           --reference gencode.v19.annotation.chr20.gtf \
+           --exp-filter-fraction 0.05 --trim-fraction 0.01 \
+           --ucsc \
+           --outfname peaks.rep2.gff --outfname-type gff \
+           --bed-peaks-ofname peaks.rep2.bed \
+           --threads 24; 
+
+idr        --samples peaks.rep1.bed peaks.rep2.bed \
+           --input-file-type bed --rank 7 \
+           --output-file peaks.IDR.txt --plot
+
+################################################################################
 Command Line Options:
 ################################################################################
 
