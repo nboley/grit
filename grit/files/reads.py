@@ -133,15 +133,15 @@ def get_rd_posterior_prb(read):
     return 1.0
 
 def determine_read_strand_params( 
-        self, ref_genes, pairs_are_opp_strand, element_to_search,
+        reads, ref_genes, pairs_are_opp_strand, element_to_search,
         MIN_NUM_READS_PER_GENE, MIN_GENES_TO_CHECK):
-    self._build_chrm_mapping()
+    reads._build_chrm_mapping()
     cnts = {'diff': 0, 'same': 0, 'unstranded': 0}
     for gene in ref_genes:
         reads_match = {True: 0, False: 0}
         exons = gene.extract_elements()[element_to_search]
         for start, stop in exons:
-            for rd in self.fetch(gene.chrm, max(0, start), stop):
+            for rd in reads.fetch(gene.chrm, max(0, start), stop):
                 rd_strand = get_strand(rd, False, pairs_are_opp_strand)
                 if gene.strand == rd_strand: reads_match[True] += 1
                 else: reads_match[False] += 1
@@ -162,13 +162,13 @@ def determine_read_strand_params(
         if sum(cnts.values()) >= MIN_GENES_TO_CHECK:
             max_val = max(cnts.values())
             if cnts['same'] == max_val:
-                return ('stranded', 'reverse_read_strand')
-            if cnts['diff'] == max_val:
                 return ('stranded', 'dont_reverse_read_strand')
+            if cnts['diff'] == max_val:
+                return ('stranded', 'reverse_read_strand')
             if cnts['unstranded'] == max_val:
                 return ('unstranded', )
     
-    assert False, "Could not auto determine 'reverse_read_strand' parameter for '%s' - the read type needs to be set" % self.filename
+    assert False, "Could not auto determine 'reverse_read_strand' parameter for '%s' - the read type needs to be set" % reads.filename
 
 
 def determine_read_pair_params( bam_obj, min_num_reads_to_check=50000, 
@@ -221,7 +221,7 @@ def determine_read_pair_params( bam_obj, min_num_reads_to_check=50000,
 
 def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000, 
                                    max_num_reads_to_check=100000 ):
-    read_strand_attributes = determine_read_strand_params(
+    read_strand_attributes = determine_read_pair_params(
         bam_obj, min_num_reads_to_check, max_num_reads_to_check)
 
     if 'same_strand' in read_strand_attributes:
@@ -768,7 +768,6 @@ class RNAseqReads(Reads):
             read_strand_attributes = determine_read_strand_params(
                 self, ref_genes, pairs_are_opp_strand, 'internal_exon',
                 100, 10 )
-
             if 'unstranded' in read_strand_attributes:
                 if reads_are_stranded in ('auto', None):
                     reads_are_stranded = False
@@ -777,7 +776,11 @@ class RNAseqReads(Reads):
                     reads_are_stranded = True
             else:
                 assert False
-
+            if config.VERBOSE:
+                config.log_statement(
+                    "Set reads_are_stranded to '%s' for '%s'" % (
+                        reads_are_stranded, self.filename), log=True )
+                
             if reverse_read_strand in ('auto', None):
                 if not reads_are_stranded: 
                     reverse_read_strand = None
@@ -787,6 +790,10 @@ class RNAseqReads(Reads):
                     reverse_read_strand = False
                 else:
                     assert False
+                if config.VERBOSE:
+                    config.log_statement(
+                        "Set reverse_read_strand to '%s' for '%s'" % (
+                            reverse_read_strand, self.filename), log=True )
         
         Reads.init(self, reads_are_paired, pairs_are_opp_strand, 
                          reads_are_stranded, reverse_read_strand )
@@ -879,13 +886,13 @@ class RAMPAGEReads(Reads):
         if reverse_read_strand in ('auto', None):
             if ref_genes in([], None): 
                 raise ValueError, "Determining reverse_read_strand requires reference genes"
-            reverse_read_strand_params = Reads.determine_read_strand_param(
+            reverse_read_strand_params = determine_read_strand_params(
                 self, ref_genes, pairs_are_opp_strand, 'tss_exon',
                 100, 10 )
             assert 'stranded' in reverse_read_strand_params
             if 'reverse_read_strand' in reverse_read_strand_params:
                 reverse_read_strand = True
-            elif 'reverse_read_strand' in reverse_read_strand_params:
+            elif 'dont_reverse_read_strand' in reverse_read_strand_params:
                 reverse_read_strand = False
             else: assert False
             

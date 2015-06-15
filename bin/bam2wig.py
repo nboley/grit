@@ -246,7 +246,8 @@ def main():
     elif assay == 'rnaseq':
         reads = RNAseqReads( reads_fname, "rb" )
         # the read strand reversal is done later, so set this to False
-        reads.init(reverse_read_strand=reverse_read_strand)
+        reads.init(reverse_read_strand=reverse_read_strand, 
+                   reads_are_stranded=stranded)
     elif assay == 'atacseq':
         reads = RNAseqReads( reads_fname, "rb" )
         # the read strand reversal is done later, so set this to False

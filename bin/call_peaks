@@ -98,15 +98,15 @@ def shift_and_write_gff(region, peaks, signal_cov, ofp):
     """
     track name=$NAME type=gff
     chr1    GRIT  TSS    11869   14409   .       +       .       \
-        gene_id "ENSG00000223972.5"; gene_name "DDX11L1"; peak_cov "1,1,...0,3;"
+        gene_id 'ENSG00000223972.5'; gene_name 'DDX11L1'; peak_cov '1,1,...0,3;'
    """
     if config.FIX_CHRM_NAMES_FOR_UCSC: 
         chrm = fix_chrm_name_for_ucsc(region['chrm'])
     else:
         chrm = region['chrm']
-    format_str = '{contig}\tGRIT\tTSS\t{start}\t{stop}\t{score}\t{strand}\t.\t'
-    format_str += 'gene_id "{gene_id}"; gene_name "{gene_name}"; '
-    format_str += 'tss_id "{tss_id}"; peak_cov "{peak_cov}";'
+    format_str = "{contig}\tGRIT\tTSS\t{start}\t{stop}\t{score}"
+    format_str += "\t{strand}\t.\tgene_id '{gene_id}'; gene_name '{gene_name}';"
+    format_str += " tss_id '{tss_id}'; peak_cov '{peak_cov}';"
     gene_id = "{}_{}_{}_{}".format(
         chrm, strand_symbol_to_name[region['strand']], 
         region['start'], region['stop'], )
