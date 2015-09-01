@@ -145,14 +145,17 @@ class Gene( object ):
                 elements['exon'].update(t.exons)
                 tss_exon = t.exons[0] if t.strand == '+' else t.exons[-1]
                 elements['tss_exon'].add(tss_exon)
-                promoter = t.find_promoter()
-                elements['promoter'].add(promoter)
                 elements['internal_exon'].update( t.exons[1:-1] )
                 elements['intron'].update( t.introns )
                 tes_exon = t.exons[-1] if t.strand == '+' else t.exons[0] 
                 elements['tes_exon'].add(tes_exon)
-                polya = t.find_polya_region()
-                elements['polya'].add(polya)
+
+            promoter = t.find_promoter()
+            elements['promoter'].add(promoter)
+
+            polya = t.find_polya_region()
+            elements['polya'].add(polya)
+
         return elements
 
 class Transcript( object ):

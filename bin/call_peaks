@@ -64,7 +64,7 @@ def shift_and_write_narrow_peak(region, peaks, signal_cov, ofp):
     return
 
 def shift_and_write_bed(
-        region, peaks, signal_cov, ofp, include_extra_fields=False):
+        region, peaks, ofp, signal_cov=None, include_extra_fields=False):
     """
     track name=$NAME type=bed
     chr4    89932   89933   .    0    +
@@ -82,11 +82,14 @@ def shift_and_write_bed(
     for tss_i, (rel_start, rel_stop, value) in enumerate(peaks):
         start = str(region['start'] + rel_start)
         stop = str(region['start'] + rel_stop + 1)
-        score = str(int(value))
+        if isinstance(value, str): 
+            score = value
+        else:
+            score = str(int(value))
         tss_id = "TSS_%s_pk%i" % (gene_id, tss_i + 1)
-        peak_cov = signal_cov[rel_start:rel_stop+1]
-        data = [ chrm, start, stop, ".", "1000", region['strand'] ]
+        data = [ chrm, start, stop, tss_id, score, region['strand'] ]
         if include_extra_fields: 
+            peak_cov = signal_cov[rel_start:rel_stop+1]
             data.extend((score, gene_id, gene_name, tss_id, 
                          ",".join(str(x) for x in peak_cov)))
         ofp.write( "\t".join(data) + "\n")
@@ -165,7 +168,7 @@ def process_genes(
                   'start':gene.start, 'stop':gene.stop}
         shift_and_write(region, called_peaks, signal_cov, ofp)
         if BED_ofp != None:
-            shift_and_write_bed(region, called_peaks, signal_cov, BED_ofp, True)
+            shift_and_write_bed(region, called_peaks, BED_ofp, signal_cov, True)
     return
 
 def parse_arguments():
@@ -226,6 +229,8 @@ def parse_arguments():
                          help='Output bed file name to write gene regions to. (default: do not save gene regions)')
     parser.add_argument( '--bed-peaks-ofname', 
                          help='Output bed peaks filename - this file will be written is in addition to the output from --ofname.')
+    parser.add_argument( '--annotation-quantifications-ofname', 
+                         help='Output filename for annotation based quantifications - this file contains estimates of tss quantifications on reference TSSs.')
     
     parser.add_argument( '--ucsc', default=False, action='store_true', 
                          help='Format the contig names to work with the UCSC genome browser.')
@@ -294,6 +299,8 @@ def parse_arguments():
     else:
         assert args.use_reference_genes == False, \
             "You must set --reference to --use-reference-genes"
+        assert args.annotation_quantifications_ofname == None, \
+            "You must set --reference to --annotation-quantifications-ofname"
         ref_genes = None
         ref_elements_to_include = RefElementsToInclude(
             False, False, False, False, False, False, False )
@@ -377,6 +384,7 @@ def parse_arguments():
              distal_reads, rnaseq_reads, 
              output_stream, 
              args.gene_regions_ofname,
+             args.annotation_quantifications_ofname,
              args.region,
              call_peaks_tuning_params )
 
@@ -384,6 +392,7 @@ def main():
     ( ref_genes, ref_elements_to_include, 
       distal_reads, rnaseq_reads, 
       output_stream, gene_regions_ofname,
+      annotation_quantification_ofname,
       region_to_use,
       call_peaks_tuning_params
       ) = parse_arguments()
@@ -392,6 +401,30 @@ def main():
             [distal_reads, rnaseq_reads] )
         contig_lens = dict((ctg, ctg_len)
                            for ctg, ctg_len in zip(contigs, contig_lens))
+        
+        # if we are supposed to quantify the annotated promoters
+        if annotation_quantification_ofname != None:
+            num_reads = 0
+            genes_and_peaks = []
+            for gene in ref_genes:
+                peaks = []
+                gene_region = {'chrm': gene.chrm, 'strand': gene.strand, 
+                               'start': gene.start, 'stop': gene.stop}
+                promoters = gene.extract_elements()['promoter']
+                for start, stop in promoters:
+                    promoter_region = (gene.chrm, gene.strand, start, stop)
+                    cov = distal_reads.build_read_coverage_array(
+                        gene.chrm, gene.strand, start, stop)
+                    cnt = cov.sum()
+                    peaks.append([start-gene.start, stop-gene.start, cnt])
+                    num_reads += cnt
+                genes_and_peaks.append((gene_region, peaks))
+            
+            with open(annotation_quantification_ofname, 'w') as ofp:
+                for gene_region, peaks in genes_and_peaks:
+                    for peak in peaks:
+                        peak[-1] = "%.2f" % (1000000*peak[-1]/num_reads)
+                    shift_and_write_bed(gene_region, peaks, ofp)
         
         # if we are supposed to use the annotation genes
         gene_segments = []

@@ -17,4 +17,4 @@ You should have received a copy of the GNU General Public License
 along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-__version__ = "2.0.5beta1"
+__version__ = "2.0.5beta2"
