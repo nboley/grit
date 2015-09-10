@@ -109,7 +109,8 @@ def fork_and_wait(n_proc, target, args):
         try:
             while len(pids) > 0:
                 ret_pid, error_code = os.wait()
-                pids.remove(ret_pid)
+                if ret_pid in pids:
+                    pids.remove(ret_pid)
                 if error_code != os.EX_OK: 
                     raise OSError, "Process '{}' returned error code '{}'".format(
                         ret_pid, error_code) 
