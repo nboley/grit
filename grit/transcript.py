@@ -385,13 +385,14 @@ class Transcript( object ):
         # otherwise, return *up to* the first inferred_promoter_length bases
         # at the beggining of the transcript
         if self.strand == '+':
-            return ( self.exons[0][0],
+            return ( max(0, self.exons[0][0]+inferred_promoter_length),
                      min(self.exons[0][0]+inferred_promoter_length-1, 
                          self.exons[0][1]) )
         else:
             return ( max( self.exons[-1][1]-inferred_promoter_length+1, 
                           self.exons[-1][0] ),
-                     self.exons[-1][1] )
+                     min(self.exons[-1][1]+inferred_promoter_length,
+                         self.exons[0][1]) )
         
         assert False
 

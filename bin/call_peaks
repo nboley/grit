@@ -142,7 +142,7 @@ def shift_and_write(region, peaks, signal_cov, ofp):
 
 def process_genes(
         genes_queue, distal_reads, rnaseq_reads, ofp,
-        call_peaks_tuning_params):
+        call_peaks_tuning_params, use_reference_TSSs):
     distal_reads = distal_reads.reload()
     rnaseq_reads = rnaseq_reads.reload()
     num_genes = genes_queue.qsize()
@@ -160,10 +160,16 @@ def process_genes(
         signal_cov, control_cov = peaks.estimate_read_and_control_cov_in_gene(
             gene, distal_reads, reads_type, rnaseq_reads )
 
-        called_peaks = peaks.call_peaks(
-            signal_cov, control_cov, reads_type, gene, 
-            **call_peaks_tuning_params)
-
+        peaks = []
+        if use_reference_TSSs:
+            peaks = peaks.call_peaks(
+                signal_cov, control_cov, reads_type, gene, 
+                **call_peaks_tuning_params)
+        else:
+            for start, stop in gene.extract_elements()['promoter']:
+                cnt = signal_cov.sum()
+                peaks.append([start-gene.start, stop-gene.start, cnt])
+        
         region = {'chrm': gene.chrm, 'strand':gene.strand, 
                   'start':gene.start, 'stop':gene.stop}
         shift_and_write(region, called_peaks, signal_cov, ofp)
@@ -226,11 +232,12 @@ def parse_arguments():
                          choices=["narrowPeak", "gff"],
                          help='Output filename type. (default gff)')
     parser.add_argument( '--gene-regions-ofname', 
-                         help='Output bed file name to write gene regions to. (default: do not save gene regions)')
+        help='Output bed file name to write gene regions to. (default: do not save gene regions)')
     parser.add_argument( '--bed-peaks-ofname', 
-                         help='Output bed peaks filename - this file will be written is in addition to the output from --ofname.')
-    parser.add_argument( '--annotation-quantifications-ofname', 
-                         help='Output filename for annotation based quantifications - this file contains estimates of tss quantifications on reference TSSs.')
+        help='Output bed peaks filename - this file will be written is in addition to the output from --ofname.')
+    parser.add_argument( '--only-quantify-annotation-TSSs', 
+                         default=False, action='store_true', 
+        help='Just quantify regions within 50bp of an annotated TSS.')
     
     parser.add_argument( '--ucsc', default=False, action='store_true', 
                          help='Format the contig names to work with the UCSC genome browser.')
@@ -401,31 +408,7 @@ def main():
             [distal_reads, rnaseq_reads] )
         contig_lens = dict((ctg, ctg_len)
                            for ctg, ctg_len in zip(contigs, contig_lens))
-        
-        # if we are supposed to quantify the annotated promoters
-        if annotation_quantification_ofname != None:
-            num_reads = 0
-            genes_and_peaks = []
-            for gene in ref_genes:
-                peaks = []
-                gene_region = {'chrm': gene.chrm, 'strand': gene.strand, 
-                               'start': gene.start, 'stop': gene.stop}
-                promoters = gene.extract_elements()['promoter']
-                for start, stop in promoters:
-                    promoter_region = (gene.chrm, gene.strand, start, stop)
-                    cov = distal_reads.build_read_coverage_array(
-                        gene.chrm, gene.strand, start, stop)
-                    cnt = cov.sum()
-                    peaks.append([start-gene.start, stop-gene.start, cnt])
-                    num_reads += cnt
-                genes_and_peaks.append((gene_region, peaks))
-            
-            with open(annotation_quantification_ofname, 'w') as ofp:
-                for gene_region, peaks in genes_and_peaks:
-                    for peak in peaks:
-                        peak[-1] = "%.2f" % (1000000*peak[-1]/num_reads)
-                    shift_and_write_bed(gene_region, peaks, ofp)
-        
+                
         # if we are supposed to use the annotation genes
         gene_segments = []
         if ref_elements_to_include.genes == True:
