@@ -31,7 +31,8 @@ from grit.files.reads import (
     CAGEReads, RAMPAGEReads, RNAseqReads, PolyAReads, 
     get_contigs_and_lens, fix_chrm_name_for_ucsc, clean_chr_name)
 from grit.files.gtf import load_gtf
-from grit.genes import find_all_gene_segments, get_contigs_and_lens, load_gene_bndry_bins
+from grit.genes import (
+    find_all_gene_segments, get_contigs_and_lens, load_gene_bndry_bins )
 from grit.elements import RefElementsToInclude
 
 from grit import peaks
@@ -74,18 +75,22 @@ def shift_and_write_bed(
     else:
         chrm = region['chrm']
 
-    gene_id = "{}_{}_{}_{}".format(
-        chrm, strand_symbol_to_name[region['strand']], 
-        region['start'], region['stop'], )
-    gene_name = gene_id
+    if 'gene_id' in region:
+        gene_id = region['gene_id']
+    else:
+        gene_id = "{}_{}_{}_{}".format(
+            chrm, strand_symbol_to_name[region['strand']], 
+            region['start'], region['stop'], )
+
+    if 'gene_name' in region:
+        gene_name = region['gene_name']
+    else:
+        gene_name = gene_id
 
     for tss_i, (rel_start, rel_stop, value) in enumerate(peaks):
         start = str(region['start'] + rel_start)
         stop = str(region['start'] + rel_stop + 1)
-        if isinstance(value, str): 
-            score = value
-        else:
-            score = str(int(value))
+        score = "1000"
         tss_id = "TSS_%s_pk%i" % (gene_id, tss_i + 1)
         data = [ chrm, start, stop, tss_id, score, region['strand'] ]
         if include_extra_fields: 
@@ -404,27 +409,19 @@ def main():
         
         # if we are supposed to quantify the annotated promoters
         if annotation_quantification_ofname != None:
-            num_reads = 0
-            genes_and_peaks = []
-            for gene in ref_genes:
-                peaks = []
-                gene_region = {'chrm': gene.chrm, 'strand': gene.strand, 
-                               'start': gene.start, 'stop': gene.stop}
-                promoters = gene.extract_elements()['promoter']
-                for start, stop in promoters:
-                    promoter_region = (gene.chrm, gene.strand, start, stop)
-                    cov = distal_reads.build_read_coverage_array(
-                        gene.chrm, gene.strand, start, stop)
-                    cnt = cov.sum()
-                    peaks.append([start-gene.start, stop-gene.start, cnt])
-                    num_reads += cnt
-                genes_and_peaks.append((gene_region, peaks))
-            
             with open(annotation_quantification_ofname, 'w') as ofp:
-                for gene_region, peaks in genes_and_peaks:
-                    for peak in peaks:
-                        peak[-1] = "%.2f" % (1000000*peak[-1]/num_reads)
-                    shift_and_write_bed(gene_region, peaks, ofp)
+                for gene in ref_genes:
+                    gene_region = {'chrm': gene.chrm, 'strand': gene.strand, 
+                                   'start': gene.start, 'stop': gene.stop,
+                                   'gene_id': gene.id, 'gene_name': gene.name}
+                    promoters = gene.extract_elements()['promoter']
+                    signal_cov = distal_reads.build_read_coverage_array(
+                        gene.chrm, gene.strand, gene.start, gene.stop)
+                    peaks = []
+                    for start, stop in promoters:
+                        peaks.append([start-gene.start, stop-gene.start, cnt])
+                    shift_and_write_bed(
+                        gene_region, peaks, ofp, signal_cov, True)
         
         # if we are supposed to use the annotation genes
         gene_segments = []
