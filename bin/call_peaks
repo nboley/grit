@@ -419,7 +419,10 @@ def main():
                         gene.chrm, gene.strand, gene.start, gene.stop)
                     peaks = []
                     for start, stop in promoters:
-                        peaks.append([start-gene.start, stop-gene.start, cnt])
+                        peaks.append(
+                            [start-gene.start, stop-gene.start, 
+                             signal_cov[start-gene.start:stop-gene.start].sum()]
+                        )
                     shift_and_write_bed(
                         gene_region, peaks, ofp, signal_cov, True)
         
