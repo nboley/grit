@@ -87,7 +87,7 @@ def shift_and_write_bed(
     else:
         gene_name = gene_id
 
-    for tss_i, (rel_start, rel_stop, value) in enumerate(peaks):
+    for tss_i, (rel_start, rel_stop, count) in enumerate(peaks):
         start = str(region['start'] + rel_start)
         stop = str(region['start'] + rel_stop + 1)
         score = "1000"
@@ -95,7 +95,7 @@ def shift_and_write_bed(
         data = [ chrm, start, stop, tss_id, score, region['strand'] ]
         if include_extra_fields: 
             peak_cov = signal_cov[rel_start:rel_stop+1]
-            data.extend((score, gene_id, gene_name, tss_id, 
+            data.extend((str(count), gene_id, gene_name, tss_id, 
                          ",".join(str(x) for x in peak_cov)))
         ofp.write( "\t".join(data) + "\n")
                  
