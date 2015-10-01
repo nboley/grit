@@ -26,6 +26,17 @@ import traceback
 
 from grit import config
 
+class Counter(object):
+    def __init__(self, initval=0):
+        self.val = multiprocessing.Value('i', initval)
+        self.lock = multiprocessing.Lock()
+
+    def return_and_increment(self):
+        with self.lock:
+            rv = self.val.value
+            self.val.value += 1
+        return rv
+
 class ThreadSafeFile( file ):
     def __init__( *args ):
         file.__init__( *args )
