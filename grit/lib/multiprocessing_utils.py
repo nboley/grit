@@ -30,7 +30,7 @@ class Counter(object):
     def __init__(self, initval=0):
         self.val = multiprocessing.Value('i', initval)
         self.lock = multiprocessing.Lock()
-
+    
     def return_and_increment(self):
         with self.lock:
             rv = self.val.value
@@ -95,7 +95,7 @@ class Pool(object):
 def handle_interrupt_signal(signum, frame):
     os._exit(os.EX_TEMPFAIL)
 
-def fork_and_wait(n_proc, target, args):
+def fork_and_wait(n_proc, target, args=[]):
     """Fork n_proc processes, run target(*args) in each, and wait to finish.
     
     """
@@ -136,3 +136,18 @@ def fork_and_wait(n_proc, target, args):
                 except: pass
             raise
         return
+
+def run_in_parallel(n_proc, target, all_args):
+    """Run target on each item in items
+
+    """
+    curr_item = Counter()
+    def worker():
+        index = curr_item.return_and_increment()
+        while index < len(all_args):
+            args = all_args[index]
+            target(*args)
+            index = curr_item.return_and_increment()
+        return
+
+    fork_and_wait(n_proc, worker)

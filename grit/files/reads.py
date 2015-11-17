@@ -829,7 +829,7 @@ class CAGEReads(Reads):
             assert 'stranded' in reverse_read_strand_params
             if 'reverse_read_strand' in reverse_read_strand_params:
                 reverse_read_strand = True
-            elif 'reverse_read_strand' in reverse_read_strand_params:
+            elif 'dont_reverse_read_strand' in reverse_read_strand_params:
                 reverse_read_strand = False
             else: assert False
             if config.VERBOSE:
