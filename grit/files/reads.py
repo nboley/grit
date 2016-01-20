@@ -985,15 +985,21 @@ class PolyAReads(Reads):
         cvg = numpy.zeros(full_region_len)
         for rd in self.fetch( chrm, start, stop ):
             # skip the read pair which doesn't contain a poly(a) site
-            if rd.is_paired and rd.is_read1: continue
+            if rd.is_paired and (
+                    (rd.is_read2 and self.reverse_read_strand)
+                    or (rd.is_read1 and not self.reverse_read_strand)
+                ): 
+                continue
             
             # determine the strand of the poly(A) site
             rd_strand = self.get_strand(rd)
             
             # determine which pos of the read corresponds to the 
             # poly(a) site
-            if rd_strand == '+': pos = rd.aend-1
-            else: pos = rd.pos
+            if rd_strand == '+': 
+                pos = max(rd.pos, rd.aend-1)
+            else: 
+                pos = min(rd.pos, rd.aend-1)
             
             # skip sites that aren't within the requested range
             if strand != rd_strand: continue
