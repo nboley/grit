@@ -28,7 +28,7 @@ from itertools import izip
 
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), ".." ) )
 from grit.files.reads import clean_chr_name, fix_chrm_name_for_ucsc, \
-    CAGEReads, RAMPAGEReads, RNAseqReads, PolyAReads
+    CAGEReads, RAMPAGEReads, RNAseqReads, PolyAReads, ChIPSeqReads
 from grit.lib.multiprocessing_utils import ProcessSafeOPStream
 
 import multiprocessing
@@ -146,7 +146,7 @@ def generate_wiggle(reads, ofps, num_threads=1, contig=None ):
     return
 
 def parse_arguments():
-    allowed_assays = ['cage', 'rampage', 'rnaseq', 'polya', 'atacseq']
+    allowed_assays = ['cage', 'rampage', 'rnaseq', 'polya', 'atacseq', 'chipseq']
     
     import argparse
     parser = argparse.ArgumentParser(
@@ -173,7 +173,7 @@ def parse_arguments():
     parser.add_argument( '--reverse-read-strand', '-r', default=False, action='store_true',
         help='Whether or not to reverse the strand of the read. default: False')
     parser.add_argument( '--unstranded', default=False, action='store_true', 
-                         help='Merge both data strands. (only sensible for RNAseq reads)')
+                         help='Merge both data strands.')
     parser.add_argument( '--read-filter', default=None, choices=['1','2'],
         help='Filter paired end reads to only accept this read pair (ie uses the is_read1 pysam attribute)')
 
@@ -253,6 +253,10 @@ def main():
         # the read strand reversal is done later, so set this to False
         reads.init(reverse_read_strand=reverse_read_strand, 
                    pairs_are_opp_strand=True)
+    elif assay == 'chipseq':
+        reads = ChIPSeqReads( reads_fname, "rb" )
+        reads.init(reverse_read_strand=reverse_read_strand)
+        stranded = False
     else:
         raise ValueError, "Unrecognized assay: '%s'" % assay
     

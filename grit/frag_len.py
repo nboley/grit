@@ -23,7 +23,7 @@ import numpy
 from numpy import mean, std, append
 import operator
 import sys
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 import copy
 import pickle
 import random
@@ -31,7 +31,9 @@ from itertools import chain
 
 import config
 from elements import iter_nonoverlapping_exons
-from files.gtf import GenomicInterval
+
+GenomicInterval = namedtuple('GenomicInterval', 
+                             ['chr', 'strand', 'start', 'stop'])
 
 import os
 
