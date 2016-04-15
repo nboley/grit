@@ -152,10 +152,11 @@ def determine_read_strand_params(
         # make sure that we have at least MIN_NUM_READS_PER_GENE 
         # reads in this gene
         if sum(reads_match.values()) < MIN_NUM_READS_PER_GENE: continue
-
-        if reads_match[True] > 10*reads_match[False]:
+        
+        
+        if reads_match[True] > 5*reads_match[False]:
             cnts['same'] += 1
-        elif reads_match[False] > 10*reads_match[True]:
+        elif reads_match[False] > 5*reads_match[True]:
             cnts['diff'] += 1
         elif (2*reads_match[False] > reads_match[True]
             and 2*reads_match[True] > reads_match[False] ):
@@ -770,7 +771,7 @@ class RNAseqReads(Reads):
              or reverse_read_strand in ('auto', None) ):
             read_strand_attributes = determine_read_strand_params(
                 self, ref_genes, pairs_are_opp_strand, 'internal_exon',
-                100, 10 )
+                300, 50 )
             if 'unstranded' in read_strand_attributes:
                 if reads_are_stranded in ('auto', None):
                     reads_are_stranded = False
@@ -828,7 +829,7 @@ class CAGEReads(Reads):
                 raise ValueError, "Determining reverse_read_strand requires reference genes"
             reverse_read_strand_params = determine_read_strand_params(
                 self, ref_genes, pairs_are_opp_strand, 'tss_exon',
-                100, 10 )
+                300, 50 )
             assert 'stranded' in reverse_read_strand_params
             if 'reverse_read_strand' in reverse_read_strand_params:
                 reverse_read_strand = True
@@ -891,7 +892,7 @@ class RAMPAGEReads(Reads):
                 raise ValueError, "Determining reverse_read_strand requires reference genes"
             reverse_read_strand_params = determine_read_strand_params(
                 self, ref_genes, pairs_are_opp_strand, 'tss_exon',
-                100, 10 )
+                300, 50 )
             assert 'stranded' in reverse_read_strand_params
             if 'reverse_read_strand' in reverse_read_strand_params:
                 reverse_read_strand = True
@@ -958,7 +959,7 @@ class PolyAReads(Reads):
                 raise ValueError, "Determining reverse_read_strand requires reference genes"
             reverse_read_strand_params = Reads.determine_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'tes_exon',
-                100, 10 )
+                300, 50 )
             assert 'stranded' in reverse_read_strand_params
             if 'reverse_read_strand' in reverse_read_strand_params:
                 reverse_read_strand = True
@@ -1097,6 +1098,35 @@ class ChIPSeqReads(Reads):
             'reads_are_stranded': reads_are_stranded, 
             'pairs_are_opp_strand': pairs_are_opp_strand, 
             'reads_are_paired': reads_are_paired
+        }
+        
+        return self
+
+class DNASESeqReads(Reads):
+    def __repr__(self):
+        return "<DNASESeqReads instance>"
+
+    def build_read_coverage_array(self, chrm, strand, start, stop, read_pair=None):
+        full_region_len = stop - start + 1
+        cvg = numpy.zeros(full_region_len)
+        for rd, strand in self.iter_reads_and_strand(chrm, start, stop):
+            rd_start = min(rd.pos, rd.aend)
+            rd_stop = max(rd.pos, rd.aend)
+            cvg[rd_start-start:rd_stop-stop] += 1.0
+        return cvg
+    
+    def init(self):
+        assert self.is_indexed()
+        
+        Reads.init(self, reads_are_paired=False, pairs_are_opp_strand=False, 
+                         reads_are_stranded=False, reverse_read_strand=False )
+
+        # we save these for fast reloads
+        self._init_kwargs = {
+            'reverse_read_strand': False, 
+            'reads_are_stranded': False, 
+            'pairs_are_opp_strand': False, 
+            'reads_are_paired': False
         }
         
         return self

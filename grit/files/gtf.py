@@ -41,7 +41,8 @@ VERBOSE = True
 DEBUG = False
     
 def flatten( regions ):
-    regions.sort()
+    try: regions.sort()
+    except AttributeError: regions = sorted(regions)
     new_regions = []
     curr_start = regions[0][0]
     curr_end = regions[0][1]
