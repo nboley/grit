@@ -24,7 +24,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from itertools import izip
+
 
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), ".." ) )
 from grit.files.reads import clean_chr_name, fix_chrm_name_for_ucsc, \
@@ -43,7 +43,7 @@ BUFFER_SIZE = 50000000
 
 def populate_cvg_array_for_contig( 
         merged_ofp, reads, chrm, chrm_length, strand ):
-    if VERBOSE: print "Starting ", chrm, strand
+    if VERBOSE: print("Starting ", chrm, strand)
     
     # re-open the reads to make this multi-process safe
     reads = reads.reload()
@@ -51,7 +51,7 @@ def populate_cvg_array_for_contig(
     # open a tempory file to write this to
     with tempfile.NamedTemporaryFile(delete=True) as ofp:
         # only find blocks of BUFFER_SIZE - to avoid running out of memory
-        for block_index in xrange(int(chrm_length/BUFFER_SIZE)+1):
+        for block_index in range(int(chrm_length/BUFFER_SIZE)+1):
             buffer_array = reads.build_read_coverage_array( 
                 chrm, strand, 
                 block_index*BUFFER_SIZE, 
@@ -63,7 +63,7 @@ def populate_cvg_array_for_contig(
         ofp.seek(0)
         merged_ofp.write( ofp.read() )
     
-    if VERBOSE: print "Finished ", chrm, strand
+    if VERBOSE: print("Finished ", chrm, strand)
     
     return
 
@@ -103,7 +103,7 @@ def write_array_to_opstream(ofp, buffer, buff_start,
 def build_chrm_sizes_file(reads):
     chrm_sizes_file = tempfile.NamedTemporaryFile(delete=True)
     # find the chrm names and their associated lengths
-    chrm_lengths = zip(reads.references, reads.lengths)
+    chrm_lengths = list(zip(reads.references, reads.lengths))
     #write out the chromosomes and its corrosponding size to disk
     for chrm, chrm_length in chrm_lengths:
         chrm_sizes_file.write(fix_chrm_name(chrm) + "   " + str(chrm_length) +"\n")
@@ -113,7 +113,7 @@ def build_chrm_sizes_file(reads):
 
 def generate_wiggle(reads, ofps, num_threads=1, contig=None ):
     all_args = []
-    for chrm_length, chrm  in sorted(izip(reads.lengths, reads.references)):
+    for chrm_length, chrm  in sorted(zip(reads.lengths, reads.references)):
         strands = ['+', '-'] if len(ofps) == 2 else [None,]
         # skip regions not in the specified contig, if requested 
         if contig != None and clean_chr_name(chrm) != clean_chr_name(contig): 
@@ -129,7 +129,7 @@ def generate_wiggle(reads, ofps, num_threads=1, contig=None ):
     else:
         ps = [None]*num_threads
         while len( all_args ) > 0:
-            for i in xrange(num_threads):
+            for i in range(num_threads):
                 if ps[i] == None or not ps[i].is_alive():
                     ps[i] = multiprocessing.Process( 
                         target=populate_cvg_array_for_contig, 
@@ -141,7 +141,7 @@ def generate_wiggle(reads, ofps, num_threads=1, contig=None ):
         for p in ps:
             if p != None: p.join()
     
-    for fp in ofps.values(): fp.close()
+    for fp in list(ofps.values()): fp.close()
     
     return
 
@@ -189,7 +189,7 @@ def parse_arguments():
     read_filter = int(args.read_filter) if args.read_filter != None else None
     
     if args.assay not in allowed_assays:
-        raise ValueError, "Unrecongized assay (%s)" % args.assay
+        raise ValueError("Unrecongized assay (%s)" % args.assay)
     
     region = args.region
     if region != None:
@@ -211,13 +211,13 @@ def parse_arguments():
 
 def build_bigwig_from_bedgraph(bedgraph_fp, chrm_sizes_file, op_fname):
     with tempfile.NamedTemporaryFile(delete=True) as sorted_ofp:
-        if VERBOSE: print "Sorting ", bedgraph_fp.name
+        if VERBOSE: print("Sorting ", bedgraph_fp.name)
         subprocess.call( 
             ["sort -k1,1 -k2,2n " + bedgraph_fp.name,], 
             stdout=sorted_ofp, shell=True )
         sorted_ofp.flush()
         
-        if VERBOSE: print "Building wig for", bedgraph_fp.name
+        if VERBOSE: print("Building wig for", bedgraph_fp.name)
         subprocess.check_call( [ "bedGraphToBigWig", 
                                  sorted_ofp.name, 
                                  chrm_sizes_file.name, 
@@ -258,15 +258,15 @@ def main():
         reads.init(reverse_read_strand=reverse_read_strand)
         stranded = False
     else:
-        raise ValueError, "Unrecognized assay: '%s'" % assay
+        raise ValueError("Unrecognized assay: '%s'" % assay)
     
     # if we want to build a bigwig, make sure that the script is on the path
     if build_bigwig:
         try: 
             subprocess.check_call(["which", "bedGraphToBigWig"], stdout=None)
         except subprocess.CalledProcessError:
-            raise ValueError, "bedGraphToBigWig does not exist on $PATH. " + \
-                "You can still build a bedGraph by removing the --bigwig(-b) option."        
+            raise ValueError("bedGraphToBigWig does not exist on $PATH. " + \
+                "You can still build a bedGraph by removing the --bigwig(-b) option.")        
     
     # Open the output files
     if stranded:
@@ -280,7 +280,7 @@ def main():
 
     # write the bedgraph header information
     if not build_bigwig:
-        for key, fp in ofps.iteritems():
+        for key, fp in ofps.items():
             strand_str = "" if key == None else {
                 '+': '.plus', '-': '.minus'}[key]
             fp.write( "track name=%s%s type=bedGraph\n" \
@@ -294,7 +294,7 @@ def main():
         # build the chrm sizes file.
         with build_chrm_sizes_file(reads) as chrm_sizes_file:        
             threads = []
-            for strand, bedgraph_fp in ofps.iteritems():
+            for strand, bedgraph_fp in ofps.items():
                 strand_str = "" if strand == None else ( 
                     {'+': '.plus', '-': '.minus'}[strand] )
                 op_fname = op_prefix + strand_str + ".bw"

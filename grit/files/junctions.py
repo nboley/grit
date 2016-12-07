@@ -21,7 +21,7 @@ import sys
 import numpy
 import time
 
-from itertools import product, izip
+from itertools import product
 import re
 import itertools
 from collections import defaultdict, namedtuple
@@ -31,7 +31,7 @@ import multiprocessing
 from scipy.stats import beta, binom
 
 # skip circular import problems
-try: from reads import get_strand, get_contigs_and_lens
+try: from .reads import get_strand, get_contigs_and_lens
 except ImportError: pass
 
 from grit import config
@@ -43,11 +43,11 @@ def filter_jns(jns, antistrand_jns, whitelist=set()):
     filtered_junctions = defaultdict(int)
     jn_starts = defaultdict( int )
     jn_stops = defaultdict( int )
-    for (start, stop), cnt in jns.iteritems():
+    for (start, stop), cnt in jns.items():
         jn_starts[start] = max( jn_starts[start], cnt )
         jn_stops[stop] = max( jn_stops[stop], cnt )
 
-    for (start, stop), cnt in jns.iteritems():
+    for (start, stop), cnt in jns.items():
         if (start, stop) not in whitelist:
             val = beta.ppf(0.01, cnt+1, jn_starts[start]+1)
             if val < config.NOISE_JN_FILTER_FRAC: continue
@@ -114,9 +114,9 @@ class Junction( _JnNamedTuple ):
         #if not isinstance( region, GenomicInterval ):
         #    raise ValueError, "regions must be of type GenomicInterval"
         if region.strand not in ("+", "-" ):
-            raise ValueError, "Unrecognized strand '%s'" % strand
+            raise ValueError("Unrecognized strand '%s'" % strand)
         if jn_type != None and jn_type not in self.valid_jn_types:
-            raise ValueError, "Unrecognized jn type '%s'" % jn_type
+            raise ValueError("Unrecognized jn type '%s'" % jn_type)
         
         if cnt != None: cnt = int( cnt )
         if uniq_cnt != None: uniq_cnt = int( uniq_cnt )
@@ -248,8 +248,8 @@ def extract_junctions_in_region( reads, chrm, strand, start=None, end=None,
             all_junctions[(upstrm_intron_pos, dnstrm_intron_pos)][read.pos] += 1
     
     rv = []
-    for jn, cnts in sorted(all_junctions.iteritems()):
-        cnts = numpy.array(cnts.values(), dtype=float)
+    for jn, cnts in sorted(all_junctions.items()):
+        cnts = numpy.array(list(cnts.values()), dtype=float)
         ps = cnts/cnts.sum()
         entropy = max(0, -float((ps*numpy.log2(ps)).sum()))
         rv.append((jn, int(cnts.sum()), entropy))
@@ -276,7 +276,7 @@ def load_junctions_worker(all_jns, all_jns_lock,
     
     # finally, block until we can offload the remaining junctions
     with all_jns_lock:
-        for key, region_jns in jns.iteritems():
+        for key, region_jns in jns.items():
             if key not in all_jns: all_jns_key = []
             else: all_jns_key = all_jns[key]
             all_jns_key.extend( region_jns )
@@ -319,7 +319,7 @@ def load_junctions_in_bam( reads, regions=None, nthreads=1):
                 chrm, strand, segments_queue[-1][2], region_stop)
         
         ps = []
-        for i in xrange(nthreads):
+        for i in range(nthreads):
             p = Process(target=load_junctions_worker,
                         args=( all_jns, all_jns_lock, 
                                segments_queue, segments_queue_lock, reads))
@@ -344,7 +344,7 @@ def load_junctions_in_bam( reads, regions=None, nthreads=1):
         if config.VERBOSE:
             config.log_statement("Merging junctions from threads")
         junctions = {}
-        for key in all_jns.keys():
+        for key in list(all_jns.keys()):
             junctions[key] = sorted(all_jns[key])
         return junctions
     assert False

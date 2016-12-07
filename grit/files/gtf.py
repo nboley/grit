@@ -26,8 +26,8 @@ import gzip
 
 from ..transcript import Gene, Transcript, GenomicInterval
     
-from reads import clean_chr_name
-from tracking import load_expression_tracking_data
+from .reads import clean_chr_name
+from .tracking import load_expression_tracking_data
 from ..config import log_statement, VERBOSE
 
 import traceback
@@ -139,12 +139,12 @@ def parse_gtf_line( line, fix_chrm=True ):
     
     meta_data_items = (gffl.group).split()
     # parse the meta data, and grab the gene name
-    meta_data = dict( zip( meta_data_items[::2], 
+    meta_data = dict( list(zip( meta_data_items[::2], 
                            ( get_name_from_field(x) 
-                             for x in meta_data_items[1::2] ) ) )
+                             for x in meta_data_items[1::2] ) )) )
     
     if "gene_id" not in meta_data:
-        raise ValueError, "GTF lines require a gene_id field."
+        raise ValueError("GTF lines require a gene_id field.")
     if "transcript_id" not in meta_data:
         # ENSEMBL adds 'gene' lines without a transcript ID, so I guess
         # we can't raise these errors
@@ -222,10 +222,10 @@ def load_transcript_from_gtf_data(transcript_lines):
 
 def _load_gene_from_gtf_lines( gene_id, gene_lines, transcripts_data ):
     if len( gene_lines ) > 1:
-        raise ValueError, "Multiple gene lines for '%s'" % gene_id
+        raise ValueError("Multiple gene lines for '%s'" % gene_id)
     
     transcripts = []
-    for trans_id, transcript_lines in transcripts_data.iteritems():
+    for trans_id, transcript_lines in transcripts_data.items():
         transcript = load_transcript_from_gtf_data(transcript_lines)
         if transcript == None: continue
         transcripts.append(transcript)
@@ -249,12 +249,12 @@ def _load_gene_from_gtf_lines( gene_id, gene_lines, transcripts_data ):
         gene_name = gene_data.meta_data['gene_name']
         gene_meta_data = gene_data.meta_data
     else:
-        if VERBOSE: print >> sys.stderr, "Skipping '%s': multiple gene lines." % gene_id
+        if VERBOSE: print("Skipping '%s': multiple gene lines." % gene_id, file=sys.stderr)
         return None
     
     if gene_start != min(t.start for t in transcripts ) \
             or gene_stop != max(t.stop for t in transcripts ):
-        if VERBOSE: print >> sys.stderr, "Skipping '%s': gene boundaries dont match the transcript boundaries." % gene_id
+        if VERBOSE: print("Skipping '%s': gene boundaries dont match the transcript boundaries." % gene_id, file=sys.stderr)
         return None
     
     return Gene( gene_id, gene_name, 
@@ -312,7 +312,7 @@ class Annotation(object):
             for gene in self._gene_locs[(clean_chr_name(chrm), strand)]:
                 if gene.stop < r_start: continue
                 if gene.start > r_stop: continue
-                for element_type, elements in gene.extract_elements().iteritems():
+                for element_type, elements in gene.extract_elements().items():
                     for start, stop in elements:
                         if stop < r_start or start > r_stop: continue
                         yield element_type, (start, stop)
@@ -344,11 +344,11 @@ def load_gtf(fname_or_fp, contig=None, strand=None):
             gene_lines[data.gene_id][0][data.trans_id].append(data)
     
     genes = Annotation()
-    for gene_id, ( transcripts_data, gene_lines ) in gene_lines.iteritems():
+    for gene_id, ( transcripts_data, gene_lines ) in gene_lines.items():
         try:
             gene = _load_gene_from_gtf_lines(
                 gene_id, gene_lines, transcripts_data)
-        except Exception, inst:
+        except Exception as inst:
             log_statement( 
                 "ERROR : Could not load '%s': %s" % (gene_id, inst), log=True)
             #log_statement( traceback.format_exc(), log=True )
@@ -399,7 +399,7 @@ def load_next_gene_from_gtf(fp, contig=None, strand=None,
     # load the first line, and initialize the data structures
     data = load_next_line()
     # if the file is empty, return None
-    if data == None: raise StopIteration, "No more data in fp"
+    if data == None: raise StopIteration("No more data in fp")
     gene_id = data.gene_id
     gene_lines = []
     transcripts_lines = defaultdict(list)
@@ -425,7 +425,7 @@ def load_next_gene_from_gtf(fp, contig=None, strand=None,
             gene_id, gene_lines, transcripts_lines)
         for t in gene.transcripts:
             set_expression_data(t)
-    except Exception, inst:
+    except Exception as inst:
         log_statement( 
             "ERROR : Could not load '%s': %s" % (gene_id, inst), log=True)
         log_statement( traceback.format_exc(), log=True )
@@ -542,7 +542,7 @@ def create_gtf_line( region, gene_id, transcript_id, meta_data, score=0, \
         except KeyError: pass
         
         items = [ " " + str(k) + ' "%s";' % str(v) 
-                     for k, v in meta_data.iteritems() ]
+                     for k, v in meta_data.items() ]
         meta_data_str += "".join( items )
     
     # add one because gtf lines are 1 based
@@ -565,7 +565,7 @@ def build_iters( items ):
 def iter_gff_lines( regions_iter, grp_id_iter=None, score='.', 
                     feature='.', source='.', frame='.' ):
     if isinstance( grp_id_iter, str ):
-        raise ValueError, "Group ID must be an iterator."
+        raise ValueError("Group ID must be an iterator.")
     
     if grp_id_iter == None:
         grp_id_iter = ( str(i) for i in itertools.count(1) )
@@ -573,7 +573,7 @@ def iter_gff_lines( regions_iter, grp_id_iter=None, score='.',
     iters = [ regions_iter, grp_id_iter ] \
         + build_iters(( score, feature, source, frame ))
     
-    for data in itertools.izip( *iters ):
+    for data in zip( *iters ):
         yield create_gff_line( *data )
     
     return
@@ -587,7 +587,7 @@ def iter_gtf_lines( regions_iter, gene_id_iter, trans_id_iter,               \
     # build the data iterators, using repeat for defaults
     iters = [ regions_iter, gene_id_iter, trans_id_iter, meta_data_iter ] \
           +  build_iters(( score, feature, source, frame ))
-    for data in itertools.izip( *iters ):
+    for data in zip( *iters ):
         yield create_gtf_line( *data )
     
     return
@@ -596,4 +596,4 @@ if __name__ == '__main__':
     with open( sys.argv[1] ) as fp:
         for gene in load_gtf( fp ):
             for t in gene.transcripts:
-                print t.build_gtf_lines( gene.id, {} )
+                print(t.build_gtf_lines( gene.id, {} ))

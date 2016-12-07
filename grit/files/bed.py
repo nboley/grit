@@ -20,7 +20,7 @@ along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 from collections import namedtuple
 GenomicInterval = namedtuple('GenomicInterval', ['chr', 'strand', 'start', 'stop'])
 
-from reads import clean_chr_name
+from .reads import clean_chr_name
 
 def create_bed_line( chrm, strand, start, stop, 
                      name='.', score=1000, color='00,00,00',

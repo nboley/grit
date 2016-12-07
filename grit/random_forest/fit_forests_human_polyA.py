@@ -24,7 +24,7 @@ import time
 import pickle
 
 from collections import namedtuple
-from itertools import izip
+
 
 from sklearn.ensemble import RandomForestClassifier
 from bx.intervals.intersection import Intersecter, Interval
@@ -68,7 +68,7 @@ use = '''92.1 2.26 1.36 4.26  0
 96.67 2.49 0.28 0.55 0
 99.46 0.18 0.18 0.17 0'''.split('\n')
 #import pdb; pdb.set_trace()
-mRNA_LUSE = [ map(float,u.split(' ')) for u in use ]
+mRNA_LUSE = [ list(map(float,u.split(' '))) for u in use ]
 LUSE = [ mRNA[::-1] for mRNA in mRNA_LUSE[::-1] ] 
 
 
@@ -93,7 +93,7 @@ dse = '''8.72 6.62 10.52 74.13 0
 0.11 7.63 59.4 32.85 0
 9.08 20.42 22.58 47.9 0'''.split('\n')
 
-mRNA_LDSE = [ map(float,d.split(' ')) for d in dse ]
+mRNA_LDSE = [ list(map(float,d.split(' '))) for d in dse ]
 LDSE = [ mRNA[::-1] for mRNA in mRNA_LDSE[::-1] ] 
 
 
@@ -105,7 +105,7 @@ meme_use_cDNA = '''0.718000 0.068000 0.046000 0.168000 0
 0.848000 0.034000 0.104000 0.014000 0
 0.262000 0.222000 0.216000 0.300000 0'''.split('\n')
 
-mRNA_MUSE = [ map(float,u.split(' ')) for u in meme_use_cDNA ]
+mRNA_MUSE = [ list(map(float,u.split(' '))) for u in meme_use_cDNA ]
 MUSE = [ mRNA[::-1] for mRNA in mRNA_MUSE[::-1] ] 
 ################################################################################
 
@@ -120,13 +120,13 @@ def list_samples( samp_fn ):
     for fn in fid:
         short_name = '.'.join(fn.strip().split('/')[-1].split('.')[:-2])
         very_short_name = short_name.split('.')[0]
-        if not all_samples.has_key( very_short_name ):
+        if very_short_name not in all_samples:
             all_samples[very_short_name] = { short_name : [] }
-        if not all_samples[very_short_name].has_key(short_name):
+        if short_name not in all_samples[very_short_name]:
             all_samples[very_short_name][short_name] = []
         all_samples[very_short_name][short_name].append(fn.strip())
-    for samp in all_samples.iterkeys():
-        for rd in all_samples[samp].iterkeys():
+    for samp in all_samples.keys():
+        for rd in all_samples[samp].keys():
             assert len(all_samples[samp][rd]) == 2
     return all_samples
 
@@ -143,11 +143,11 @@ def parse_fasta( fn ):
         if data.startswith('>'):
             chrm = clean_chr_name(data[1:])
         else:
-            if not genome.has_key(chrm):
+            if chrm not in genome:
                 genome[chrm] = []
-                print >>sys.stderr, chrm
+                print(chrm, file=sys.stderr)
             genome[chrm].append(data.lower())
-    for chrm in genome.keys():
+    for chrm in list(genome.keys()):
         genome[chrm] = ''.join(genome[chrm])
     fid.close()
     return genome
@@ -170,9 +170,9 @@ def polyA_gff_2_dict( fn ):
             assert strand == '+'
             p_site = int(data[4])
         p_site -= 1 # subtract 1 so that this indexes into the fasta dict object
-        if not polyA.has_key( (chrm,strand) ):
+        if (chrm,strand) not in polyA:
             polyA[(chrm,strand)] = dict()
-        if not polyA[(chrm,strand)].has_key( p_site ):
+        if p_site not in polyA[(chrm,strand)]:
             polyA[(chrm,strand)][ p_site ] = 0
         polyA[(chrm,strand)][ p_site ] += 1
     fid.close()
@@ -185,8 +185,8 @@ def polyA_dict_2_intersecter( polyA ):
     e.g. T.find( 1,10 ) will not return true if T contains (1,1) or (10,10)
     '''
     polyA_I = dict()
-    for (chrm, strand) in polyA.keys():
-        if not polyA_I.has_key((chrm,strand)):
+    for (chrm, strand) in list(polyA.keys()):
+        if (chrm,strand) not in polyA_I:
             polyA_I[(chrm,strand)] = Intersecter()
         for p_site in polyA[(chrm,strand)]:
             polyA_I[(chrm,strand)].add( 
@@ -216,7 +216,7 @@ def get_elements_from_gene( gene, get_tss=True, get_jns=True, \
                 tes_exons.add( tp_region )
         else:
             if strand != '-':
-                print >> sys.stderr, "BADBADBAD", strand
+                print("BADBADBAD", strand, file=sys.stderr)
                 continue
             assert strand == '-'
             if get_tss:
@@ -225,7 +225,7 @@ def get_elements_from_gene( gene, get_tss=True, get_jns=True, \
                 tes_exons.add( fp_region )
         
         if get_jns:
-            for start, stop in izip( bndries[1:-2:2], bndries[2:-1:2] ):
+            for start, stop in zip( bndries[1:-2:2], bndries[2:-1:2] ):
                 # add and subtract 1 to ge tthe inclusive intron boundaries,
                 # rather than the exon boundaries
                 if start >= stop:
@@ -233,7 +233,7 @@ def get_elements_from_gene( gene, get_tss=True, get_jns=True, \
                 introns.add( GenomicInterval(chrm, strand, start+1, stop-1) )
 
         if get_exons:
-            for start, stop in izip( bndries[::2], bndries[1::2] ):
+            for start, stop in zip( bndries[::2], bndries[1::2] ):
                 exons.add( GenomicInterval(chrm, strand, start, stop) )
     
     return tss_exons, introns, tes_exons, exons
@@ -271,11 +271,11 @@ def gtf_2_intersecters_and_dicts( gtf_fname ):
         for intron in GI:
             chrm = clean_chr_name(intron.chr)
             strand = intron.strand
-            if not II.has_key( ( chrm, strand ) ):
+            if ( chrm, strand ) not in II:
                 II[ (chrm,strand) ] = Intersecter()
             II[ (chrm,strand) ].add( intron.start,intron.stop, 
                                      [ intron.start,intron.stop ] )
-            if not ID.has_key( ( chrm, intron.strand ) ):
+            if ( chrm, intron.strand ) not in ID:
                 ID[ (chrm,strand) ] = []
             ID[ (chrm,strand) ].append( [intron.start,intron.stop] )  
         return II, ID
@@ -293,10 +293,10 @@ def gtf_2_intersecters_and_dicts( gtf_fname ):
             strand = data[6]
             start = int(data[3])
             end = int(data[4])
-            if not CDS_I.has_key( (chrm,strand) ):
+            if (chrm,strand) not in CDS_I:
                 CDS_I[ (chrm,strand) ] = Intersecter()
             CDS_I[ (chrm,strand) ].add( start,end, [start,end] )
-            if not CDS_D.has_key( (chrm,strand) ):
+            if (chrm,strand) not in CDS_D:
                 CDS_D[ (chrm,strand) ] = []
             CDS_D[ (chrm,strand) ].append( [start,end] )
         return CDS_I, CDS_D
@@ -324,10 +324,10 @@ def purify_introns( Introns_Dict, Exons_Sect ):
     introns that lack any real polyA sites.
     '''
     pure = dict()
-    for (chrm, strand) in Introns_Dict.keys():
+    for (chrm, strand) in list(Introns_Dict.keys()):
         for intron in Introns_Dict[(chrm, strand)]:
             if not Exons_Sect[(chrm, strand)].find( intron[0], intron[1] ):
-                if not pure.has_key((chrm, strand)):
+                if (chrm, strand) not in pure:
                     pure[(chrm, strand)] = Intersecter()
                 pure[(chrm, strand)].add( intron[0], intron[1], intron )
     return pure
@@ -340,15 +340,14 @@ def get_overlapping_elements( tes_dict, elements_I, w ):
     start = w
     end = w+1
     over = dict()
-    for (chrm,strand) in tes_dict.keys():
-        if not elements_I.has_key((chrm,strand)):
-            print >> sys.stderr, \
-                "warning, element_intersecter does not contain the chrm: ", chrm
+    for (chrm,strand) in list(tes_dict.keys()):
+        if (chrm,strand) not in elements_I:
+            print("warning, element_intersecter does not contain the chrm: ", chrm, file=sys.stderr)
             continue
-        for tes in tes_dict[(chrm,strand)].keys():
+        for tes in list(tes_dict[(chrm,strand)].keys()):
             H = elements_I[(chrm,strand)].find(tes-start,tes+end)
             if H:
-                if not over.has_key( (chrm,strand) ):
+                if (chrm,strand) not in over:
                     over[ (chrm,strand) ] = dict()
                 over[ (chrm,strand) ][tes] = copy.deepcopy( 
                     tes_dict[ (chrm,strand) ][tes] )
@@ -362,15 +361,14 @@ def remove_overlapping_elements( tes_dict, elements_I, w ):
     start = w
     end = w+1
     over = dict()
-    for (chrm,strand) in tes_dict.keys():
-        if not elements_I.has_key((chrm,strand)):
-            print >> sys.stderr, \
-                "warning, element_intersecter does not contain the chrm: ", chrm
+    for (chrm,strand) in list(tes_dict.keys()):
+        if (chrm,strand) not in elements_I:
+            print("warning, element_intersecter does not contain the chrm: ", chrm, file=sys.stderr)
             continue
-        for tes in tes_dict[(chrm,strand)].keys():
+        for tes in list(tes_dict[(chrm,strand)].keys()):
             H = elements_I[(chrm,strand)].find(tes-start,tes+end)
             if not H:
-                if not over.has_key( (chrm,strand) ):
+                if (chrm,strand) not in over:
                     over[ (chrm,strand) ] = dict()
                 over[ (chrm,strand) ][tes] = copy.deepcopy( 
                     tes_dict[ (chrm,strand) ][tes] )
@@ -385,12 +383,11 @@ def extract_genome_sequence( genome, tes_dict, w ):
     seqs = []
     start = w
     end = w+1
-    for (chrm,strand) in tes_dict.keys():
-        if not genome.has_key(chrm):
-            print >> sys.stderr, \
-                "warning, genome sequence does not contain the chrm: ", chrm
+    for (chrm,strand) in list(tes_dict.keys()):
+        if chrm not in genome:
+            print("warning, genome sequence does not contain the chrm: ", chrm, file=sys.stderr)
             continue
-        for tes in tes_dict[(chrm,strand)].keys():
+        for tes in list(tes_dict[(chrm,strand)].keys()):
             seq = genome[chrm][tes-start:tes+end]
             if strand == "-":
                 seqs.append([[chrm,strand,tes,tes_dict[(chrm,strand)][tes]], 
@@ -432,7 +429,7 @@ def search_for_motif( seq_ind, motif ):
     L = len(motif)
     ls = len(seq_ind)
     scores = []
-    for i in xrange( 0, ls - L ):
+    for i in range( 0, ls - L ):
         curr_score = 0
         for j,m in enumerate(motif):
             curr_score += m[seq_ind[i+j]]
@@ -486,7 +483,7 @@ def extract_covariates_from_seqs( seqs, w, polyA_density_curr,
             key_code = '_'.join(map(str,seq_index[:-1]))
             local_density = polyA_density_curr[key_code]
             delete_this.append(ind)
-            print >>sys.stderr, w, seq, local_density
+            print(w, seq, local_density, file=sys.stderr)
             continue
             
         seq_ind = seqs_inds[ind]
@@ -595,8 +592,8 @@ def get_local_read_density(polyA_reads_D, polyA_reads_I):
     get the local polyA read density.
     '''
     seq_dict = dict()
-    for (chrm,strand) in polyA_reads_D.keys():
-        for pos in polyA_reads_D[(chrm,strand)].keys():
+    for (chrm,strand) in list(polyA_reads_D.keys()):
+        for pos in list(polyA_reads_D[(chrm,strand)].keys()):
             # e.g. 'key' will end up looking like: chr2L_+_2030538
             key = '_'.join([chrm,strand,str(pos)])
             seq_dict[key] = [ len( polyA_reads_I[(chrm,strand)].find(pos-10,pos+11) ),
@@ -687,12 +684,12 @@ def get_RNAseq_density_worker( reads, sites, sites_lock, dense ):
             args = [sites.pop(),] #[-1:]
             #del sites[-1:]
         if DEBUG_VERBOSE and sites_len%1000 == 0:
-            print >> sys.stderr, "%i polyA sites remain" % sites_len
+            print("%i polyA sites remain" % sites_len, file=sys.stderr)
         for chrm, strand, pos, cnt in args:
             key = '_'.join([chrm,strand,str(pos)])
             predictors = get_predictors_for_polya_site( 
                 reads, chrm, strand, pos )
-            if not dense.has_key(key):
+            if key not in dense:
                 dense[key] = predictors
             else:
                 dense[key] = dense[key] + predictors
@@ -736,15 +733,14 @@ def get_RNAseq_densities( all_reads, polyAs ):
     sites_lock = manager.Lock()
     
     for reads in all_reads:
-        for (chrm, strand), polyA in polyAs.iteritems():
+        for (chrm, strand), polyA in polyAs.items():
             chrm = clean_chr_name( chrm )
-            for pos, cnt in sorted(polyA.iteritems()):
+            for pos, cnt in sorted(polyA.items()):
                 sites.append( (chrm, strand, pos, cnt) )
     
     if VERBOSE: 
-        print >> sys.stderr, \
-            "Finding RNASeq read coverage around poly(A) sites with %i threads"\
-                % NTHREADS
+        print("Finding RNASeq read coverage around poly(A) sites with %i threads"\
+                % NTHREADS, file=sys.stderr)
     if NTHREADS == 1:
         get_RNAseq_density_worker( reads, sites, sites_lock, dense )
     else:
@@ -753,22 +749,22 @@ def get_RNAseq_densities( all_reads, polyAs ):
         p = Pool(NTHREADS)
         p.apply( get_RNAseq_density_worker, all_args )
     
-    if VERBOSE: print "FINISHED finding poly(A) coverage"
+    if VERBOSE: print("FINISHED finding poly(A) coverage")
     
     return dict(dense), header
 
 
 def print_bed_from_D( D ):
-    for (chrm,strand) in D.keys():
-        for pos in D[(chrm,strand)].keys():
-            print '\t'.join( map(str,[chrm, pos, pos+1, strand, D[(chrm,strand)][pos]]) )
+    for (chrm,strand) in list(D.keys()):
+        for pos in list(D[(chrm,strand)].keys()):
+            print('\t'.join( map(str,[chrm, pos, pos+1, strand, D[(chrm,strand)][pos]]) ))
 
 
 def print_fasta_from_seq( seq, out_fn, ind_start, ind_end ):
     fid = open(out_fn,'w')
     for line in seq:
-        print >>fid, '>' + '_'.join(map(str,line[0]))
-        print >>fid, line[1][ind_start:ind_end]
+        print('>' + '_'.join(map(str,line[0])), file=fid)
+        print(line[1][ind_start:ind_end], file=fid)
     return
 
 
@@ -814,7 +810,7 @@ def fit_forests( X_pos, X_neg_set, total_sets, size_train, size_test ):
     train_labels[:size_train[0]] += 1
     test_labels = numpy.zeros(sum(size_test))
     test_labels[:size_test[0]] += 1
-    for j in xrange( 0, total_sets ):
+    for j in range( 0, total_sets ):
         t1 = time.time()
         # do the randomization to select the training and test sets
         pos_perm = numpy.random.permutation( Lp )
@@ -847,7 +843,7 @@ def fit_forests( X_pos, X_neg_set, total_sets, size_train, size_test ):
         FN = sum(test[:size_test[0]]==0)/float(size_test[0])
         FP = sum(test[size_test[0]:]==1)/float(sum(size_test[1:]))
         Errs.append([FN,FP])
-        print >>sys.stderr, FN, FP, time.time()-t1
+        print(FN, FP, time.time()-t1, file=sys.stderr)
     import pdb; pdb.set_trace()
     return Forests, Errs
 
@@ -905,11 +901,11 @@ def main():
     reads = RNAseqReads( rnaseq_bam_fname ).init(reverse_read_strand=True)
 
     # load in the polyA reads
-    if VERBOSE: print >> sys.stderr, "Loading poly(A) reads"
+    if VERBOSE: print("Loading poly(A) reads", file=sys.stderr)
     polyA_reads_D = polyA_gff_2_dict( polyA_reads_fname )
     polyA_reads_I = polyA_dict_2_intersecter( polyA_reads_D )
 
-    if VERBOSE: print >> sys.stderr, "Loading RNAseq densities"
+    if VERBOSE: print("Loading RNAseq densities", file=sys.stderr)
     RNA_dense, RNA_header = get_RNAseq_densities( [reads,], polyA_reads_D )
     
     #import pdb; pdb.set_trace()
@@ -918,26 +914,26 @@ def main():
     window = 50
     
     # get local read density
-    if VERBOSE: print >> sys.stderr, "Finding local read density"
+    if VERBOSE: print("Finding local read density", file=sys.stderr)
     polyA_density = get_local_read_density(polyA_reads_D, polyA_reads_I)
 
     # load in the reference GTF
-    if VERBOSE: print >> sys.stderr, "Loading reference GTF"
+    if VERBOSE: print("Loading reference GTF", file=sys.stderr)
     Introns_Sect, Introns_Dict, Exons_Sect, Exons_Dict, CDSs_Sect, CDSs_Dict = (
         gtf_2_intersecters_and_dicts( annotation_fname ) )
 
     # load in the cDNA polyA ends
-    if VERBOSE: print >> sys.stderr, "Loading Gold polyA sites"
+    if VERBOSE: print("Loading Gold polyA sites", file=sys.stderr)
     cDNA_polyA_D = polyA_gff_2_dict( cDNA_tes_fname )
     cDNA_polyA_I = polyA_dict_2_intersecter( cDNA_polyA_D )
     #cDNA_density = get_local_read_density(cDNA_polyA_D, cDNA_polyA_I)
 
     # purify cDNAs to remove those that overlap CDSs:
-    if VERBOSE: print >> sys.stderr, "Filtering Gold polyAs that overlap CDSs"
+    if VERBOSE: print("Filtering Gold polyAs that overlap CDSs", file=sys.stderr)
     cDNA_polyA_noCDS_D = remove_overlapping_elements( 
             cDNA_polyA_D, CDSs_Sect, window )
 
-    if VERBOSE: print >> sys.stderr, "Find polyAs that intersect gold set"
+    if VERBOSE: print("Find polyAs that intersect gold set", file=sys.stderr)
     # get a set of "positive", polyA reads that we believe
     polyA_reads_cDNA_ends_D = get_overlapping_elements( 
             polyA_reads_D, cDNA_polyA_I, window )
@@ -946,10 +942,10 @@ def main():
             polyA_reads_cDNA_ends_D, CDSs_Sect, window )
 
     # load in the reference genome indexed by chrm
-    if VERBOSE: print >> sys.stderr, "Loading reference genome"
+    if VERBOSE: print("Loading reference genome", file=sys.stderr)
     FA = parse_fasta( genome_fname )
 
-    if VERBOSE: print >> sys.stderr, "Extracting reference sequence"
+    if VERBOSE: print("Extracting reference sequence", file=sys.stderr)
     # extract genome sequences around cDNA polyA ends that don't overlap CDSs
     cDNA_polyA_noCDS_seqs = extract_genome_sequence( 
             FA, cDNA_polyA_noCDS_D, window )
@@ -960,7 +956,7 @@ def main():
     X_polyA_cDNA, header,point_names_polyA_cDNA = extract_covariates_from_seqs( 
             polyA_reads_cDNA_noCDS_seqs, 50, polyA_density,RNA_dense,RNA_header)
 
-    if VERBOSE: print >> sys.stderr, "Finding negative polya set"
+    if VERBOSE: print("Finding negative polya set", file=sys.stderr)
     # 1.a) get a set of introns that overlap no exons, TESs in these 
     # should be largely rubbish
     pure_introns_I = purify_introns( Introns_Dict, Exons_Sect )
@@ -972,7 +968,7 @@ def main():
     # find the polyA reads that fall in CDSs
     polyA_CDS_reads_D = get_overlapping_elements( polyA_reads_D, CDSs_Sect, 0 )
 
-    if VERBOSE: print >> sys.stderr, "Finding negative polya's genome sequence"
+    if VERBOSE: print("Finding negative polya's genome sequence", file=sys.stderr)
     # extract sequences corresponding to negatives
     polyA_CDS_reads_seqs = extract_genome_sequence( 
             FA, polyA_CDS_reads_D, window )
@@ -986,7 +982,7 @@ def main():
     import pdb; pdb.set_trace()
 
     # fit the forests:
-    if VERBOSE: print >> sys.stderr, "Fitting the random forest"
+    if VERBOSE: print("Fitting the random forest", file=sys.stderr)
     Forests, Errs = fit_forests( X_polyA_cDNA, [X_polyA_CDS, X_polyA_intronic], 
                                  3, [2000, 2000, 800], [2000, 2000, 800] )
 
@@ -996,22 +992,22 @@ def main():
             polyA_reads_seqs, 100, polyA_density, RNA_dense, RNA_header )
 
     # do all the predictions for each forest
-    if VERBOSE: print >> sys.stderr, "Predicting from forest"
+    if VERBOSE: print("Predicting from forest", file=sys.stderr)
     preds = []
     L = len(Forests)
     fl = 1
     for forest in Forests:
         preds.append( forest.predict(X_polyA_all) )
     all_preds = numpy.zeros(len(preds[0]))
-    for i in xrange(0,len(preds[0])):
+    for i in range(0,len(preds[0])):
         curr_pred = 0
-        for j in xrange(0,L):
+        for j in range(0,L):
             curr_pred += preds[j][i]
         if curr_pred > fl:
             all_preds[i] = 1
 
 
-    if VERBOSE: print >> sys.stderr, "Aggregatong and writing good polya to output file"
+    if VERBOSE: print("Aggregatong and writing good polya to output file", file=sys.stderr)
     # collect all the polyA ends that pass prediction
     every_site = {}
     for i,p in enumerate(all_preds):
@@ -1028,16 +1024,16 @@ def main():
     # print out bedGraphs of all clean polyA ends
     posfid = open('clean_454_polyA_sites_above_10.plus.bedGraph','w')
     minfid = open('clean_454_polyA_sites_above_10.minus.bedGraph','w')
-    for key in every_site.iterkeys():
+    for key in every_site.keys():
         data = key.split('_')
         chrm = data[0]
         strand = data[1]
         pos = data[2]
         score = str(every_site[key])
         if strand == '+':
-            print >>posfid, '\t'.join( [chrm, pos, pos, score] )
+            print('\t'.join( [chrm, pos, pos, score] ), file=posfid)
         else:
-            print >>minfid, '\t'.join( [chrm, pos, pos, score] )
+            print('\t'.join( [chrm, pos, pos, score] ), file=minfid)
         
     posfid.close()
     minfid.close()

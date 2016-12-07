@@ -20,10 +20,10 @@ along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 import sys
 import numpy
 
-from itertools import product, izip
+from itertools import product
 import re
 
-from reads import GenomicIntervals, GenomicInterval
+from .reads import GenomicIntervals, GenomicInterval
 import itertools
 from collections import defaultdict, namedtuple
 
@@ -81,9 +81,9 @@ class Junction( _JnNamedTuple ):
         #if not isinstance( region, GenomicInterval ):
         #    raise ValueError, "regions must be of type GenomicInterval"
         if region.strand not in ("+", "-" ):
-            raise ValueError, "Unrecognized strand '%s'" % strand
+            raise ValueError("Unrecognized strand '%s'" % strand)
         if jn_type != None and jn_type not in self.valid_jn_types:
-            raise ValueError, "Unrecognized jn type '%s'" % jn_type
+            raise ValueError("Unrecognized jn type '%s'" % jn_type)
         
         if cnt != None: cnt = int( cnt )
         if uniq_cnt != None: uniq_cnt = int( uniq_cnt )
@@ -163,7 +163,7 @@ def extract_junctions_in_contig( reads, chrm, strand,
         # for this intron or initialize it to 1
         all_junctions[ (upstrm_intron_pos, dnstrm_intron_pos) ] += 1
     
-    return sorted( all_junctions.iteritems() )
+    return sorted( all_junctions.items() )
 
 def iter_junctions( reads_fn, fasta_fn, stranded, reverse_strand, pairs_are_opp_strand ):
     """Get all of the junctions represented in a reads object
@@ -186,7 +186,7 @@ def iter_junctions( reads_fn, fasta_fn, stranded, reverse_strand, pairs_are_opp_
     cnts = []
     uniq_cnts = []
     for (chrm, strand, start, stop, read_offset ), cnt \
-            in sorted(all_junctions.iteritems()):
+            in sorted(all_junctions.items()):
 
         uniq_cnt = unique_junctions[ (chrm, strand, start, stop, read_offset ) ]
         jn = Junction( GenomicInterval(chrm, strand, start, stop), 

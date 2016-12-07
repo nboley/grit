@@ -28,41 +28,41 @@ import numpy
 from scipy.stats import beta, binom
 
 from collections import defaultdict, namedtuple
-from itertools import chain, izip
+from itertools import chain
 from bisect import bisect
 from copy import copy
 
 import multiprocessing
-import Queue
+import queue
 
 import networkx as nx
 
-from genes import (
+from .genes import (
     GeneElements, SegmentBin, TranscriptBoundaryBin, 
     find_all_gene_segments, TranscriptElement
 )
 
-from files.reads import MergedReads, RNAseqReads, CAGEReads, \
+from .files.reads import MergedReads, RNAseqReads, CAGEReads, \
     RAMPAGEReads, PolyAReads, \
     fix_chrm_name_for_ucsc, get_contigs_and_lens, \
     iter_paired_reads, extract_jns_and_reads_in_region
-import files.junctions
-from files.bed import create_bed_line
-from files.gtf import parse_gtf_line, load_gtf
+from . import files.junctions
+from .files.bed import create_bed_line
+from .files.gtf import parse_gtf_line, load_gtf
 
-from peaks import call_peaks, build_control_in_gene
+from .peaks import call_peaks, build_control_in_gene
 
-from elements import find_jn_connected_exons
+from .elements import find_jn_connected_exons
 
-from frag_len import FlDist, find_fls_from_annotation
+from .frag_len import FlDist, find_fls_from_annotation
 
-from transcript import Transcript, Gene
-import f_matrix     
-import frequency_estimation
+from .transcript import Transcript, Gene
+from . import f_matrix     
+from . import frequency_estimation
 frequency_estimation.LHD_ABS_TOL = 1e-1
 frequency_estimation.PARAM_ABS_TOL = 1e-3
 
-import config
+from . import config
 
 class ThreadSafeFile( file ):
     def __init__( self, *args ):
@@ -87,7 +87,7 @@ def filter_exon(exon, wig, num_start_bases_to_skip=0, num_stop_bases_to_skip=0):
     vals = wig[start:end+1]
     n_div = max( 1, int(len(vals)/config.MAX_EMPTY_REGION_SIZE) )
     div_len = len(vals)/n_div
-    for i in xrange(n_div):
+    for i in range(n_div):
         seg = vals[i*div_len:(i+1)*div_len]
         if seg.mean() < config.MIN_EXON_AVG_CVG:
             return True
@@ -117,9 +117,9 @@ class SpliceGraph(nx.DiGraph):
 
 def find_cage_peak_bins_in_gene( gene, cage_reads, rnaseq_reads ):
     rnaseq_cov = gene.find_coverage( rnaseq_reads )
-    print rnaseq_cov
+    print(rnaseq_cov)
     cage_cov = gene.find_coverage( cage_reads)
-    print cage_cov
+    print(cage_cov)
     assert False
     # threshold the CAGE data. We assume that the CAGE data is a mixture of 
     # reads taken from actually capped transcripts, and random transcribed 
@@ -207,7 +207,7 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
                    max(1, window_len/4), min_grow_ratio=config.MAX_CAGE_FRAC ):
         # grow a peak at most max_num_peaks times
         max_mean_signal = cov[start:stop+1].mean()
-        for i in xrange(max_num_peaks):
+        for i in range(max_num_peaks):
             curr_signal = cov[start:stop+1].sum()
             if curr_signal < min_score:
                 return ( start, stop )
@@ -282,11 +282,11 @@ def find_peaks( cov, window_len, min_score, max_score_frac, max_num_peaks ):
                 new_peaks.append( peak )
                 new_scores.append( score )
         
-        return zip( new_peaks, new_scores )
+        return list(zip( new_peaks, new_scores ))
     
     peaks_and_scores = sorted( zip(peaks, peak_scores) )
     
-    for i in xrange( 99 ):
+    for i in range( 99 ):
         if i == 100: assert False
         old_len = len( peaks_and_scores )
         peaks_and_scores = merge_peaks( peaks_and_scores )
@@ -341,7 +341,7 @@ def iter_retained_intron_connected_exons(
                     graph, left, right, max_num_exons-cntr+1):
                 cntr += 1
                 if max_num_exons != None and cntr > max_num_exons:
-                    raise ValueError, "Too many retained introns"
+                    raise ValueError("Too many retained introns")
                 yield (x[0][0], x[-1][1])
     return
 
@@ -350,7 +350,7 @@ def merge_tss_exons(tss_exons):
     for exon in tss_exons:
         grpd_exons[exon.stop].append(exon)
     merged_tss_exons = []
-    for stop, exons in grpd_exons.iteritems():
+    for stop, exons in grpd_exons.items():
         exons.sort(key=lambda x:x.start)
         curr_start = exons[0].start
         score = exons[0].score
@@ -376,7 +376,7 @@ def merge_tes_exons(tes_exons):
     for exon in tes_exons:
         grpd_exons[exon.start].append(exon)
     merged_tes_exons = []
-    for start, exons in grpd_exons.iteritems():
+    for start, exons in grpd_exons.items():
         exons.sort(key=lambda x:x.stop)
         curr_stop = exons[0].stop
         score = exons[0].score
@@ -403,7 +403,7 @@ def find_transcribed_fragments_covering_region(
         segment_graph, segment_id,
         max_frag_len, use_genome_coords=False):
     if use_genome_coords:
-        raise NotImplemented, "This code path probably doesn't work anymore, it hasn't been updated since this method was changed to use the splice graph directly"
+        raise NotImplemented("This code path probably doesn't work anymore, it hasn't been updated since this method was changed to use the splice graph directly")
     
     def build_neighbor_paths(side):
         assert side in ('BEFORE', 'AFTER')
@@ -443,7 +443,7 @@ def find_transcribed_fragments_covering_region(
     
     def build_genome_segments_from_path(segment_indexes):        
         merged_intervals = merge_adjacent_intervals(
-            zip(segment_indexes, segment_indexes), 
+            list(zip(segment_indexes, segment_indexes)), 
             max_merge_distance=0)
         coords = []
         for start, stop in merged_intervals:
@@ -481,13 +481,13 @@ def extract_jns_and_paired_reads_in_gene(gene, reads):
         ( r_pair1_reads, r_pair2_reads, r_plus_jns, r_minus_jns, 
           ) = extract_jns_and_reads_in_region(
             (gene.chrm, gene.strand, region.start, region.stop), reads)
-        for jn, cnt in r_plus_jns.iteritems(): 
+        for jn, cnt in r_plus_jns.items(): 
             plus_jns[jn] += cnt 
-        for jn, cnt in r_minus_jns.iteritems(): 
+        for jn, cnt in r_minus_jns.items(): 
             minus_jns[jn] += cnt 
-        for qname, read_mappings in r_pair1_reads.iteritems(): 
+        for qname, read_mappings in r_pair1_reads.items(): 
             pair1_reads[qname].extend(read_mappings)
-        for qname, read_mappings in r_pair2_reads.iteritems(): 
+        for qname, read_mappings in r_pair2_reads.items(): 
             pair2_reads[qname].extend(read_mappings)
 
     paired_reads = list(iter_paired_reads(pair1_reads, pair2_reads))
@@ -604,7 +604,7 @@ def build_splice_graph_and_binned_reads_in_gene(
     segment_bnd_labels[gene.stop+1].add("GENE_BNDRY")
     # add in empty regions - we will use these to filter bins
     # that fall outside of the gene
-    for r1, r2 in izip(gene.regions[:-1], gene.regions[1:]):
+    for r1, r2 in zip(gene.regions[:-1], gene.regions[1:]):
         assert r1.stop+2 < r2.start-1+2
         segment_bnds.add(r1.stop+1)
         segment_bnd_labels[r1.stop+1].add( 'EMPTY_START' )
@@ -671,8 +671,8 @@ def build_splice_graph_and_binned_reads_in_gene(
     for index, bnd in enumerate(sorted(segment_bnds)):
         if in_empty_region:
             assert 'EMPTY_STOP' in segment_bnd_labels[bnd], \
-                str((gene, bnd, sorted(segment_bnd_labels.iteritems()), \
-                     sorted(jns.iteritems())))
+                str((gene, bnd, sorted(segment_bnd_labels.items()), \
+                     sorted(jns.items())))
         empty_start = bool('EMPTY_START' in segment_bnd_labels[bnd])
         empty_stop = bool('EMPTY_STOP' in segment_bnd_labels[bnd])
         assert not (empty_start and empty_stop)
@@ -684,7 +684,7 @@ def build_splice_graph_and_binned_reads_in_gene(
     # build the exon segment connectivity graph
     segment_bnds = numpy.array(sorted(segment_bnds))
     
-    for element_i in (x for x in xrange(0, len(segment_bnds)-1) 
+    for element_i in (x for x in range(0, len(segment_bnds)-1) 
                       if x not in empty_segments):
         start, stop = segment_bnds[element_i], segment_bnds[element_i+1]-1
         left_labels = segment_bnd_labels[start]
@@ -692,7 +692,7 @@ def build_splice_graph_and_binned_reads_in_gene(
         bin = SegmentBin( start, stop, left_labels, right_labels, type=None)
         splice_graph.add_node(element_i, type='segment', bin=bin)
     
-    for i in xrange(len(segment_bnds)-1-1):
+    for i in range(len(segment_bnds)-1-1):
         if i not in empty_segments and i+1 not in empty_segments:
             if gene.strand == '+':
                 splice_graph.add_edge(i, i+1, type='adjacent', bin=None)
@@ -700,7 +700,7 @@ def build_splice_graph_and_binned_reads_in_gene(
                 splice_graph.add_edge(i+1, i, type='adjacent', bin=None)
 
     jn_edges = []
-    for (start, stop), cnt in jns.iteritems():
+    for (start, stop), cnt in jns.items():
         start_i = segment_bnds.searchsorted(start)-1
         assert segment_bnds[start_i+1] == start
         stop_i = segment_bnds.searchsorted(stop+1)-1+1
@@ -716,7 +716,7 @@ def build_splice_graph_and_binned_reads_in_gene(
             bin = SegmentBin( start, stop, 'R_JN', 'D_JN', type='INTRON', cnt=cnt)
             splice_graph.add_edge(stop_i, start_i, type='splice', bin=bin)
 
-    for i, (tss_bin, tss_segments) in enumerate(tss_segment_map.iteritems()):
+    for i, (tss_bin, tss_segments) in enumerate(tss_segment_map.items()):
         node_id = "TSS_%i" % i
         splice_graph.add_node( node_id, type='TSS', bin=tss_bin)
         for tss_start in tss_segments:
@@ -725,7 +725,7 @@ def build_splice_graph_and_binned_reads_in_gene(
             if gene.strand == '-': bin_i -= 1
             splice_graph.add_edge(node_id, bin_i, type='tss', bin=None)
     
-    for i, (tes_bin, tes_segments) in enumerate(tes_segment_map.iteritems()):
+    for i, (tes_bin, tes_segments) in enumerate(tes_segment_map.items()):
         node_id = "TES_%i"% i
         splice_graph.add_node( node_id, type='TES', bin=tes_bin)
         for tes_start in tes_segments:
@@ -756,7 +756,7 @@ def fast_quantify_segment_expression(gene, splice_graph,
     quantiles = [0.01, 0.5, 1-.01]
     avg_read_len = 0
     for ((rg, (r1_len,r2_len)), (fl_dist, marginal_frac) 
-             ) in rnaseq_reads.fl_dists.iteritems():
+             ) in rnaseq_reads.fl_dists.items():
         avg_read_len += marginal_frac*(r1_len + r2_len)/2
     
     rnaseq_cov = gene.find_coverage(rnaseq_reads)
@@ -792,8 +792,8 @@ def quantify_segment_expression(gene, splice_graph, binned_reads ):
         (gene.chrm, gene.strand, gene.start, gene.stop) )
 
     # find all possible transcripts, and their association with each element
-    max_fl = max(fl_dist.fl_max for (fl_dist, prb) in fl_dists.values())
-    min_fl = min(fl_dist.fl_min for (fl_dist, prb) in fl_dists.values())
+    max_fl = max(fl_dist.fl_max for (fl_dist, prb) in list(fl_dists.values()))
+    min_fl = min(fl_dist.fl_min for (fl_dist, prb) in list(fl_dists.values()))
     transcripts = set()
     segment_transcripts_map = {}
     for segment_id, data in splice_graph.nodes(data=True):
@@ -849,17 +849,17 @@ def quantify_segment_expression(gene, splice_graph, binned_reads ):
     #print segment_bnd_labels
 
     weighted_expected_cnts = defaultdict(lambda: defaultdict(float))
-    for (rg, (r1_len,r2_len)), (fl_dist, marginal_frac) in fl_dists.iteritems():
+    for (rg, (r1_len,r2_len)), (fl_dist, marginal_frac) in fl_dists.items():
         for tr, bin_cnts in f_matrix.calc_expected_cnts( 
                 segment_bnds, transcripts, 
-                fl_dist, r1_len, r2_len).iteritems():
-            for bin, cnt in bin_cnts.iteritems():
+                fl_dist, r1_len, r2_len).items():
+            for bin, cnt in bin_cnts.items():
                 weighted_expected_cnts[tr][bin] += cnt*marginal_frac
         
     segment_bins, jn_bins = [], []
     for j, (element, transcripts) in enumerate(
-            segment_transcripts_map.iteritems()):
-        print element, transcripts
+            segment_transcripts_map.items()):
+        print(element, transcripts)
         continue
     assert False
     if True:
@@ -877,7 +877,7 @@ def quantify_segment_expression(gene, splice_graph, binned_reads ):
         effective_t_lens = numpy.zeros(len(transcripts), dtype=float)
         for i, transcript in enumerate(transcripts):
             for pe_bin, weighted_n_distinct_frags in weighted_expected_cnts[
-                    transcript].iteritems():
+                    transcript].items():
                 # skip bins that don't overlap the desired element
                 if not any(bin_contains_element(bin,element) for bin in pe_bin):
                     continue
@@ -927,7 +927,7 @@ def quantify_segment_expression(gene, splice_graph, binned_reads ):
             except frequency_estimation.TooFewReadsError: 
                 mean_t_len = effective_t_lens.mean()
 
-        assert mean_t_len > 0, str((element, transcripts, exon_lens, all_transcripts, sorted(segment_bnd_labels.iteritems()), splice_graph.edges(data=True)))
+        assert mean_t_len > 0, str((element, transcripts, exon_lens, all_transcripts, sorted(segment_bnd_labels.items()), splice_graph.edges(data=True)))
         n_reads_in_segment = float(sum(obs_bin_cnts_in_segment.values()))
         quantiles = [0.01, 0.5, 1-.01]
         fpkms = 1e6*(1000./mean_t_len)*beta.ppf(
@@ -975,14 +975,14 @@ def build_exons_from_exon_segments(gene, splice_graph, max_min_expression):
     
     # find all of the exon start bins
     exons = []
-    for i in xrange(len(exon_segments)):
+    for i in range(len(exon_segments)):
         # if this is not allowed to be the start of an exon
         start_segment = exon_segments[i]
         for start_label in start_segment.left_labels:
             if start_label not in EXON_START_LABELS:
                 continue
 
-            for j in xrange(i, len(exon_segments)):
+            for j in range(i, len(exon_segments)):
                 stop_segment = exon_segments[j]
 
                 #if ( start_label == 'D_JN'
@@ -1021,7 +1021,7 @@ def find_exons_in_gene( gene, contig_lens, ofp,
                         rnaseq_reads, cage_reads, polya_reads ):
     # extract the reference elements that we want to add in
     gene_ref_elements = defaultdict(list)
-    for key, vals in ref_elements[(gene.chrm, gene.strand)].iteritems():
+    for key, vals in ref_elements[(gene.chrm, gene.strand)].items():
         if len( vals ) == 0: continue
         for start, stop in sorted(vals):
             if stop < gene.start: continue
@@ -1080,9 +1080,10 @@ def find_exons_in_gene( gene, contig_lens, ofp,
                    (gene.chrm, gene.strand, gene.start, gene.stop) )
     return None
 
-def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running), 
+def find_exons_worker(xxx_todo_changeme, 
                        ofp, contig_lens, ref_elements, ref_elements_to_include,
                        rnaseq_reads, cage_reads, polya_reads ):
+    (genes_queue, genes_queue_lock, n_threads_running) = xxx_todo_changeme
     rnaseq_reads = rnaseq_reads.reload()
     cage_reads = cage_reads.reload() if cage_reads != None else None
     polya_reads = polya_reads.reload() if polya_reads != None else None
@@ -1118,7 +1119,7 @@ def find_exons_worker( (genes_queue, genes_queue_lock, n_threads_running),
             rv = find_exons_in_gene(gene, contig_lens, ofp,
                                     ref_elements, ref_elements_to_include,
                                     rnaseq_reads, cage_reads, polya_reads )
-        except Exception, inst:
+        except Exception as inst:
             config.log_statement( 
                 "Uncaught exception in find_exons_in_gene", log=True )
             config.log_statement( traceback.format_exc(), log=True, display=False )
@@ -1163,8 +1164,8 @@ def extract_reference_elements(genes, ref_elements_to_include):
         if ref_elements_to_include.TES:
             add_elements('exon')
     
-    for contig_strand, elements in ref_elements.iteritems():
-        for element_type, val in elements.iteritems():
+    for contig_strand, elements in ref_elements.items():
+        for element_type, val in elements.items():
             ref_elements[contig_strand][element_type] = sorted( val )
     
     return ref_elements
@@ -1208,7 +1209,7 @@ def find_exons( contig_lens, gene_bndry_bins, ofp,
         config.log_statement("Waiting on exon finding children (%i/%i remain)"%(
                 len(genes_queue), n_genes))
         ps = []
-        for i in xrange( nthreads ):
+        for i in range( nthreads ):
             p = multiprocessing.Process(target=find_exons_worker, args=args)
             p.start()
             ps.append( p )
@@ -1234,9 +1235,9 @@ def find_elements( promoter_reads, rnaseq_reads, polya_reads,
         ofp.write(
             'track name="%s" visibility=2 itemRgb="On" useScore=1\n' % ofname)
         
-        contig_lens = dict(zip(*get_contigs_and_lens( 
+        contig_lens = dict(list(zip(*get_contigs_and_lens( 
             [ reads for reads in [rnaseq_reads, promoter_reads, polya_reads]
-              if reads != None ] )))
+              if reads != None ] ))))
         
         """
         # extract reference elements. This doesnt work for a few reasons,
@@ -1260,7 +1261,7 @@ def find_elements( promoter_reads, rnaseq_reads, polya_reads,
                     rnaseq_reads, promoter_reads, polya_reads,
                     ref_genes, ref_elements_to_include, 
                     junctions=None, nthreads=config.NTHREADS )            
-    except Exception, inst:
+    except Exception as inst:
         config.log_statement( "FATAL ERROR", log=True )
         config.log_statement( traceback.format_exc(), log=True, display=False )
         ofp.close()

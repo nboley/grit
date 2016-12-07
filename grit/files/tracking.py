@@ -20,9 +20,9 @@ along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 import os, sys
 
 from collections import namedtuple
-from itertools import izip
 
-from reads import fix_chrm_name_for_ucsc
+
+from .reads import fix_chrm_name_for_ucsc
 
 import grit.config
 
@@ -45,7 +45,7 @@ def build_gene_tracking_lines(gene):
     if config.FIX_CHRM_NAMES_FOR_UCSC:
         contig_name = fix_chrm_name_for_ucsc(contig_name)
     
-    for (mle, ub, lb, t) in izip( 
+    for (mle, ub, lb, t) in zip( 
             mles, ubs, lbs, gene.transcripts):
         line = FPKMTrackingLine(
             t.id, # tracking ID

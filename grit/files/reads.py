@@ -28,7 +28,7 @@ import numpy
 import grit.config as config
 from grit.frag_len import build_normal_density
 
-import junctions
+from . import junctions
 
 ReadData = namedtuple('ReadData', [
         'strand', 'read_len', 'read_grp', 'map_prb', 'cov_regions'])
@@ -64,7 +64,7 @@ def guess_strand_from_fname( fname ):
     elif fname.lower().rfind( "-" ) >= 0:
         return '-'
     else:
-        raise ValueError, "Couldn't infer strand from filename '%s'" % fname
+        raise ValueError("Couldn't infer strand from filename '%s'" % fname)
     
     assert False
 
@@ -107,7 +107,7 @@ def get_read_group( r1, r2 ):
     if r1_read_group == r2_read_group:
         return r1_read_group
     else: 
-        print "WARNING: Read groups do not match."
+        print("WARNING: Read groups do not match.")
         return None
 
 
@@ -220,8 +220,8 @@ def determine_read_pair_params( bam_obj, min_num_reads_to_check=50000,
     elif float(paired_cnts['diff_strand'])/paired_cnts['same_strand'] > 5:
         return ('paired', 'diff_strand')
     
-    print >> sys.stderr, "Paired Cnts:", paired_cnts, "Num Reads", num_observed_reads
-    raise ValueError, "Reads appear to be a mix of unpaired and paired reads that are both on the same and different strands. (%s)" % paired_cnts
+    print("Paired Cnts:", paired_cnts, "Num Reads", num_observed_reads, file=sys.stderr)
+    raise ValueError("Reads appear to be a mix of unpaired and paired reads that are both on the same and different strands. (%s)" % paired_cnts)
 
 def read_pairs_are_on_same_strand( bam_obj, min_num_reads_to_check=50000, 
                                    max_num_reads_to_check=100000 ):
@@ -264,7 +264,7 @@ def iter_coverage_intervals_for_read(read):
         elif contig_type == 4 or contig_type == 5:
             pass
         else:
-            print >> sys.stderr, "Unrecognized cigar format:", read.cigar
+            print("Unrecognized cigar format:", read.cigar, file=sys.stderr)
 
     return
 
@@ -283,8 +283,8 @@ def iter_coverage_regions_for_read(
     
     return
 
-def extract_jns_and_reads_in_region(
-        (chrm, strand, r_start, r_stop), reads, max_n_reads_to_store=1e6):
+def extract_jns_and_reads_in_region(xxx_todo_changeme, reads, max_n_reads_to_store=1e6):
+    (chrm, strand, r_start, r_stop) = xxx_todo_changeme
     assert strand in '+-.', "Strand must be -, +, or . for either"
 
     reg_len = r_stop-r_start+1
@@ -370,7 +370,7 @@ def calc_frag_len_from_read_data(read1_data, read2_data):
     return frag_stop - frag_start + 1
 
 def iter_paired_reads(p1_reads, p2_reads, fl_dist=None):
-    for qname, r1_mappings_data in p1_reads.iteritems():
+    for qname, r1_mappings_data in p1_reads.items():
         if qname not in p2_reads: continue
         r2_mappings_data = p2_reads[qname]
         paired_reads = []
@@ -433,14 +433,14 @@ def get_contigs_and_lens( reads_files ):
     
     # produce the final list of contigs
     rv =  {}
-    for key, val in chrm_lengths.iteritems():
+    for key, val in chrm_lengths.items():
         if key in contigs and any( 
             at_least_one_bam_has_reads(key, reads) for reads in reads_files ):
             rv[key] = val
 
-    rv = zip(*sorted(rv.iteritems()))
+    rv = list(zip(*sorted(rv.items())))
     if len(rv) == 0:
-        raise ValueError, "The bam files don't contain the same chromosome set.\nHint: make sure that the reads have been mapped to the same reference (this can be viewed with a call to samtools idxstats)"
+        raise ValueError("The bam files don't contain the same chromosome set.\nHint: make sure that the reads have been mapped to the same reference (this can be viewed with a call to samtools idxstats)")
     return rv
 
 class MergedReads( object ):
@@ -459,7 +459,7 @@ class MergedReads( object ):
         elif isinstance(reads, Reads):
             return "Generic"
         else:
-            raise ValueError, "Unrecognized read subtype %s" % type(reads)
+            raise ValueError("Unrecognized read subtype %s" % type(reads))
 
     @property
     def reads_are_stranded(self):
@@ -470,7 +470,7 @@ class MergedReads( object ):
         self.type = self._find_reads_type(self._reads[0])
         if not all( self.type == self._find_reads_type(reads)
                     for reads in self._reads ):
-            raise ValueError, "All read objects must be the same type"
+            raise ValueError("All read objects must be the same type")
         
         self.references, self.lengths = get_contigs_and_lens( self._reads )
 
@@ -560,7 +560,7 @@ class Reads( pysam.Samfile ):
         try:
             return self._contig_lens[self.fix_chrm_name(contig)]
         except AttributeError:
-            self._contig_lens = dict( zip(self.references, self.lengths) )
+            self._contig_lens = dict( list(zip(self.references, self.lengths)) )
             return self._contig_lens[self.fix_chrm_name(contig)]
                 
     def init(self, reads_are_paired, pairs_are_opp_strand, 
@@ -590,8 +590,8 @@ class Reads( pysam.Samfile ):
         
         try:
             self.fetch( self.references[0], 10000 )
-        except ValueError, inst:
-            raise ValueError, "BAM Files must be indexed."
+        except ValueError as inst:
+            raise ValueError("BAM Files must be indexed.")
         self.seek(0)
         
         return self
@@ -664,7 +664,7 @@ class Reads( pysam.Samfile ):
             # if there is no mate, skip this read
             except KeyError:
                 if DEBUG:
-                    print "No mate: ", read1.pos, read1.aend-1
+                    print("No mate: ", read1.pos, read1.aend-1)
                 continue
 
             assert read1.query == None or \
@@ -826,7 +826,7 @@ class CAGEReads(Reads):
 
         if reverse_read_strand in ('auto', None):
             if ref_genes in([], None): 
-                raise ValueError, "Determining reverse_read_strand requires reference genes"
+                raise ValueError("Determining reverse_read_strand requires reference genes")
             reverse_read_strand_params = determine_read_strand_params(
                 self, ref_genes, pairs_are_opp_strand, 'tss_exon',
                 300, 50 )
@@ -889,7 +889,7 @@ class RAMPAGEReads(Reads):
 
         if reverse_read_strand in ('auto', None):
             if ref_genes in([], None): 
-                raise ValueError, "Determining reverse_read_strand requires reference genes"
+                raise ValueError("Determining reverse_read_strand requires reference genes")
             reverse_read_strand_params = determine_read_strand_params(
                 self, ref_genes, pairs_are_opp_strand, 'tss_exon',
                 300, 50 )
@@ -956,7 +956,7 @@ class PolyAReads(Reads):
 
         if reverse_read_strand in ('auto', None):
             if ref_genes in([], None): 
-                raise ValueError, "Determining reverse_read_strand requires reference genes"
+                raise ValueError("Determining reverse_read_strand requires reference genes")
             reverse_read_strand_params = Reads.determine_read_strand_param(
                 self, ref_genes, pairs_are_opp_strand, 'tes_exon',
                 300, 50 )
@@ -1045,7 +1045,7 @@ class ChIPSeqReads(Reads):
             return self.build_unpaired_reads_fragment_coverage_array(
                 chrm, start, stop)
         else:
-            raise NotImplementedError, "Paired ChIPSeq reads are not yet implemented"
+            raise NotImplementedError("Paired ChIPSeq reads are not yet implemented")
     
     def init(self, 
              reverse_read_strand=None,  reads_are_stranded=None,

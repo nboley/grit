@@ -24,10 +24,10 @@ import scipy
 import math
 
 from collections import defaultdict, namedtuple
-from itertools import chain, izip
+from itertools import chain
 
 import multiprocessing
-import Queue
+import queue
 
 from scipy.stats import beta, binom
 
@@ -37,21 +37,21 @@ from copy import copy
 
 ReadCounts = namedtuple('ReadCounts', ['Promoters', 'RNASeq', 'Polya'])
 
-from frag_len import build_fl_dists_from_fls_dict
+from .frag_len import build_fl_dists_from_fls_dict
 
-from transcript import Transcript, Gene
+from .transcript import Transcript, Gene
 
-from files.junctions import filter_jns
+from .files.junctions import filter_jns
 
-import config
+from . import config
 
-from files.reads import MergedReads, RNAseqReads, CAGEReads, \
+from .files.reads import MergedReads, RNAseqReads, CAGEReads, \
     RAMPAGEReads, PolyAReads, \
     fix_chrm_name_for_ucsc, get_contigs_and_lens, calc_frag_len_from_read_data, \
     iter_paired_reads, extract_jns_and_reads_in_region, TooManyReadsError
-import files.junctions
+from . import files.junctions
 
-from files.bed import create_bed_line
+from .files.bed import create_bed_line
 
 class Bin(object):
     start = None
@@ -431,7 +431,7 @@ def cluster_intron_connected_segments( segments, introns ):
                        int(max(start_bin, stop_bin))))
     
     genes_graph = nx.Graph()
-    genes_graph.add_nodes_from(xrange(len(segment_starts)))
+    genes_graph.add_nodes_from(range(len(segment_starts)))
     genes_graph.add_edges_from(edges)
     
     segments = []
@@ -466,7 +466,7 @@ def find_empty_regions( cov, thresh=1e-6,
     starts = (numpy.nonzero(x==-1)[0] + 1).tolist()
     if cov[0] < thresh: starts.insert(0, 0)
     assert len(starts) == len(stops)
-    return [ x for x in izip(starts, stops) if x[1]-x[0]+1 >= min_length ]
+    return [ x for x in zip(starts, stops) if x[1]-x[0]+1 >= min_length ]
 
 
 def merge_adjacent_intervals(
@@ -540,13 +540,13 @@ def find_transcribed_regions( cov, thresh=1e-6 ):
     return merged_regions
     """
 
-def find_transcribed_regions_and_jns_in_segment(
-        (contig, r_start, r_stop), 
+def find_transcribed_regions_and_jns_in_segment(xxx_todo_changeme, 
         rnaseq_reads, promoter_reads, polya_reads,
         ref_elements, ref_elements_to_include):
     #reg = numpy.array([1,7,6,0,0,0,4,0])
     #print reg, find_empty_regions(reg, min_length=4)
     #print reg, find_transcribed_regions(reg, min_empty_region_length=4)
+    (contig, r_start, r_stop) = xxx_todo_changeme
     reg_len = r_stop-r_start+1
     cov = { '+': numpy.zeros(reg_len, dtype=float), 
             '-': numpy.zeros(reg_len, dtype=float) }
@@ -564,15 +564,15 @@ def find_transcribed_regions_and_jns_in_segment(
         cov['-'] += inner_cov['-']
         num_unique_reads[reads_i] += reads_n_uniq
         
-        for jn, cnt in r_plus_jns.iteritems(): 
+        for jn, cnt in r_plus_jns.items(): 
             jn_reads['+'][jn] += cnt 
-        for jn, cnt in r_minus_jns.iteritems(): 
+        for jn, cnt in r_minus_jns.items(): 
             jn_reads['-'][jn] += cnt 
         
 
         # update the fragment length dist
         if reads == rnaseq_reads:
-            for qname, r1_data in p1_rds.iteritems():
+            for qname, r1_data in p1_rds.items():
                 # if there are multiple mappings, or the read isn't paired,
                 # don't use this for fragment length estimation
                 if len(r1_data) != 1 or r1_data[0].map_prb != 1.0: 
@@ -616,12 +616,12 @@ def find_transcribed_regions_and_jns_in_segment(
             cov[strand][stop:stop+config.MIN_INTRON_SIZE+1] += 1
     
     transcribed_regions = {'+': [], '-': []}
-    for strand, counts in cov.iteritems():
+    for strand, counts in cov.items():
         transcribed_regions[strand].extend(
             sorted(find_transcribed_regions(counts)))
     
-    jn_reads['+'] = sorted(jn_reads['+'].iteritems())
-    jn_reads['-'] = sorted(jn_reads['-'].iteritems())
+    jn_reads['+'] = sorted(jn_reads['+'].items())
+    jn_reads['-'] = sorted(jn_reads['-'].items())
     
     return ( 
         transcribed_regions, jn_reads, 
@@ -644,10 +644,10 @@ def split_genome_into_segments(contig_lens, region_to_use,
     # sort by shorter contigs, so that the short contigs (e.g. mitochondrial)
     # whcih usually take longer to finish are started first
     for contig, contig_length in sorted(
-            contig_lens.iteritems(), key=lambda x:x[1]):
+            iter(contig_lens.items()), key=lambda x:x[1]):
         if region_to_use != None and r_chrm != contig: 
             continue
-        for start in xrange(r_start, min(r_stop,contig_length), segment_length):
+        for start in range(r_start, min(r_stop,contig_length), segment_length):
             segments.append(
                 (contig, start, 
                  min(contig_length, start+segment_length-1)))
@@ -662,7 +662,7 @@ class GlobalGeneSegmentData(object):
         self.transcribed_regions = {}
         self.jns = {}
         for strand in "+-":
-            for contig in contig_lens.keys():
+            for contig in list(contig_lens.keys()):
                 self.transcribed_regions[(contig, strand)] = self.manager.list()
                 self.jns[(contig, strand)] = self.manager.list()
         self.frag_lens = self.manager.dict()
@@ -670,12 +670,12 @@ class GlobalGeneSegmentData(object):
 
     def update_all_data(self, frag_lens, transcribed_regions, jns, rd_cnts):
         with self.lock:
-            for key, cnt in frag_lens.iteritems():
+            for key, cnt in frag_lens.items():
                 if key not in self.frag_lens: self.frag_lens[key] = cnt
                 else: self.frag_lens[key] += cnt
-            for key, regions in transcribed_regions.iteritems():
+            for key, regions in transcribed_regions.items():
                 self.transcribed_regions[key].extend(regions)
-            for key, vals in jns.iteritems():
+            for key, vals in jns.items():
                 self.jns[key].extend( vals )
             for i, val in enumerate(rd_cnts):
                 self.num_unique_reads[i].value += val
@@ -705,7 +705,7 @@ def find_segments_and_jns_worker(
         try: 
             config.log_statement("Waiting for segment")
             segment = segments.get(timeout=1.0)
-        except Queue.Empty: 
+        except queue.Empty: 
             continue
         if segment == 'FINISHED': 
             config.log_statement("")
@@ -726,8 +726,8 @@ def find_segments_and_jns_worker(
             config.log_statement("")
             continue
 
-        for (rd_key, rls), fls in r_frag_lens.iteritems():
-            for fl, cnt in fls.iteritems():
+        for (rd_key, rls), fls in r_frag_lens.items():
+            for fl, cnt in fls.items():
                 local_frag_lens[(rd_key, rls, fl)] += cnt
         local_transcribed_regions[(segment[0], '+')].extend([
             (start+segment[1], stop+segment[1])
@@ -774,7 +774,7 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
         if gene.strand != strand: continue
         regions = [tuple(x) for x in gene.find_transcribed_regions()]
         regions_graph.add_nodes_from(regions)
-        regions_graph.add_edges_from(izip(regions[:-1], regions[1:]))
+        regions_graph.add_edges_from(zip(regions[:-1], regions[1:]))
 
     # group overlapping regions
     all_regions = sorted(regions_graph.nodes())
@@ -791,7 +791,7 @@ def load_gene_bndry_bins( genes, contig, strand, contig_len ):
             grpd_regions.append([x,])
     # add edges for overlapping regions
     for grp in grpd_regions:
-        regions_graph.add_edges_from(izip(grp[:-1], grp[1:]))
+        regions_graph.add_edges_from(zip(grp[:-1], grp[1:]))
 
     # build gene objects with the intervals  
     gene_bndry_bins = []  
@@ -813,9 +813,9 @@ def find_all_gene_segments( rnaseq_reads, promoter_reads, polya_reads,
                             region_to_use=None ):
     config.log_statement("Finding gene segments")
 
-    contig_lens = dict(zip(*get_contigs_and_lens( 
+    contig_lens = dict(list(zip(*get_contigs_and_lens( 
         [ reads for reads in [rnaseq_reads, promoter_reads, polya_reads]
-          if reads != None ] )))
+          if reads != None ] ))))
 
     config.log_statement("Spawning gene segment finding children")    
     segments_queue = multiprocessing.Queue()
@@ -840,7 +840,7 @@ def find_all_gene_segments( rnaseq_reads, promoter_reads, polya_reads,
         ref_element_types_to_include.add('exon')
     
     pids = []
-    for i in xrange(config.NTHREADS):
+    for i in range(config.NTHREADS):
         pid = os.fork()
         if pid == 0:
             find_segments_and_jns_worker(
@@ -855,7 +855,7 @@ def find_all_gene_segments( rnaseq_reads, promoter_reads, polya_reads,
     segments = split_genome_into_segments(contig_lens, region_to_use)
     for segment in segments: 
         segments_queue.put(segment)
-    for i in xrange(config.NTHREADS): segments_queue.put('FINISHED')
+    for i in range(config.NTHREADS): segments_queue.put('FINISHED')
     
     while segments_queue.qsize() > 2*config.NTHREADS:
         config.log_statement(
@@ -871,7 +871,7 @@ def find_all_gene_segments( rnaseq_reads, promoter_reads, polya_reads,
             
     config.log_statement("Merging gene segments")
     merged_transcribed_regions = {}
-    for key, intervals in global_gene_data.transcribed_regions.iteritems():
+    for key, intervals in global_gene_data.transcribed_regions.items():
         merged_transcribed_regions[
             key] = merge_adjacent_intervals(
                 intervals, config.MAX_EMPTY_REGION_SIZE)
@@ -879,7 +879,7 @@ def find_all_gene_segments( rnaseq_reads, promoter_reads, polya_reads,
     
     config.log_statement("Filtering junctions")    
     filtered_jns = defaultdict(dict)
-    for contig in contig_lens.keys():
+    for contig in list(contig_lens.keys()):
         plus_jns = defaultdict(int)
         for jn, cnt in global_gene_data.jns[(contig, '+')]: plus_jns[jn] += cnt
         minus_jns = defaultdict(int)
@@ -901,12 +901,12 @@ def find_all_gene_segments( rnaseq_reads, promoter_reads, polya_reads,
     # in the process
     new_genes = []
     new_introns = []
-    for contig, contig_len in contig_lens.iteritems():
+    for contig, contig_len in contig_lens.items():
         for strand in '+-':
             key = (contig, strand)
             jns = [ (start, stop, cnt) 
                     for (start, stop), cnt 
-                    in sorted(filtered_jns[key].iteritems()) ]
+                    in sorted(filtered_jns[key].items()) ]
             for start, stop, cnt in jns:
                 new_introns.append(
                     SegmentBin(start, stop, ["D_JN",], ["R_JN",], "INTRON"))

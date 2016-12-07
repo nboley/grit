@@ -20,13 +20,13 @@ along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 import os, sys
 
 import tempfile
-import cPickle as pickle
+import pickle as pickle
 
-from itertools import chain, izip
+from itertools import chain
 from collections import namedtuple, defaultdict
 
-import files.gtf
-import config
+from . import files.gtf
+from . import config
 
 GenomicInterval = namedtuple('GenomicInterval', 
                              ['chr', 'strand', 'start', 'stop'])
@@ -192,7 +192,7 @@ class Transcript( object ):
 
         self.exons = tuple(zip(exon_bnds[:-1:2], exon_bnds[1::2]))
         self.introns = tuple([ (x+1, y-1) for x, y in 
-                               izip(exon_bnds[1:-2:2], 
+                               zip(exon_bnds[1:-2:2], 
                                     exon_bnds[2:-1:2]) ])
         
         self.is_protein_coding = ( cds_region != None )
@@ -274,7 +274,7 @@ class Transcript( object ):
         # below loop
         insert_len = 0
         for (i_start, i_stop), (e_start, e_stop) \
-                in izip( self.introns, self.exons ):
+                in zip( self.introns, self.exons ):
             e_len = e_stop - e_start + 1
             # if adding this exon to the exon lengths would move us 
             # past the point in transcription coordinates, we are done

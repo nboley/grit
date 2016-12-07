@@ -18,7 +18,7 @@ along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import os, sys
-import cPickle
+import pickle
 
 import math
 import random
@@ -29,7 +29,7 @@ import scipy.stats
 
 from itertools import chain
 
-import config
+from . import config
 
 import grit.files.junctions
 import grit.files.reads
@@ -74,11 +74,11 @@ def write_bedgraph_from_array(array, region, ofprefix):
     ofname = "%s.%s.bedgraph" % (
         ofprefix, {'+': 'plus', '-': 'minus'}[region['strand']])
     with open(ofname, 'w') as ofp:
-        print >> ofp, "track name=%s type=bedGraph" % ofname
+        print("track name=%s type=bedGraph" % ofname, file=ofp)
         for i, val in enumerate(array):
             if val < 1e-6: continue
-            print >> ofp, "\t".join(
-                ('chr' + chrm, str(start+i), str(start+i+1), "%.2f" % val))
+            print("\t".join(
+                ('chr' + chrm, str(start+i), str(start+i+1), "%.2f" % val)), file=ofp)
     return
 
 def write_bedgraph(chrm, peaks, ofp):
@@ -330,7 +330,7 @@ def find_noise_regions(signal_cov, control_cov,
         if cnt > 0: break
         start = i
     if start > 0: noise_regions.append((0, start))
-    for i in reversed(xrange(len(signal_cov))):
+    for i in reversed(range(len(signal_cov))):
         if signal_cov[i] > 0: break
         stop = i
     if stop < len(signal_cov): noise_regions.append((stop,len(signal_cov)))
@@ -398,7 +398,7 @@ def update_control_cov_for_five_prime_bias(
     ps = []
     max_pos = float(len(control_cov))
     for start, stop in sorted(noise_regions):
-        for pos in xrange(start, stop):
+        for pos in range(start, stop):
             positions.append(pos)
             Ys.append(signal_cov[pos])
             ps.append(control_cov[pos])
@@ -477,14 +477,14 @@ def call_peaks( signal_cov, original_control_cov, reads_type,
                 min_peak_size, max_peak_size,
                 max_exp_sum_fraction, max_exp_mean_cvg_fraction):
     signal = numpy.ones(len(signal_cov))
-    for k in xrange(N_REPS):
+    for k in range(N_REPS):
         noise_frac = 1.0
         noise_regions = [(0, len(signal)),]
         reg_coef, control_cov = \
             update_control_cov_for_five_prime_bias(
                 noise_regions, noise_frac, 
                 signal_cov, original_control_cov, reads_type)
-        for i in xrange(MAX_NUM_ITERATIONS):
+        for i in range(MAX_NUM_ITERATIONS):
             if DEBUG_VERBOSE: 
                 region = {'chrm': gene.chrm, 'strand': gene.strand, 
                           'start': gene.start, 'stop': gene.stop}

@@ -30,13 +30,13 @@ DEBUG=False
 
 from scipy.stats import beta
 
-import config
+from . import config
 
 import networkx as nx
 
-import frag_len
+from . import frag_len
 
-from itertools import product, izip, chain
+from itertools import product, chain
 from collections import defaultdict
 
 from grit.files.reads import ( iter_coverage_intervals_for_read, get_read_group,
@@ -69,7 +69,7 @@ def find_nonoverlapping_contig_indices( contigs, contig_boundaries ):
             stop_i += 1            
         assert contig[1] == contig_boundaries[stop_i]-1
 
-        non_overlapping_contig_indices.extend( xrange(start_i,stop_i) )
+        non_overlapping_contig_indices.extend( range(start_i,stop_i) )
     
     return non_overlapping_contig_indices
 
@@ -150,7 +150,7 @@ def simulate_reads_from_exons( n, fl_dist, \
                 bin1 = get_bin( start_location )
                 bin2 = get_bin( end_location )
                 assert bin1 != None and bin2 != None
-                return tuple(xrange(bin1, bin2+1))
+                return tuple(range(bin1, bin2+1))
             # if we want just the pairs
             else:
                 pair_1 = get_bin_pairs( start_location, read_len )
@@ -159,7 +159,7 @@ def simulate_reads_from_exons( n, fl_dist, \
                 if pair_2 == None: continue
                 return ( pair_1, pair_2 )            
     
-    for loop in xrange( n ):
+    for loop in range( n ):
         bin = simulate_read()
         try:
             bin_counts[ bin ] += 1
@@ -191,7 +191,7 @@ def calc_long_read_expected_cnt_given_bin( bin, exon_lens, fl_dist ):
         return density
     
     gap = sum( exon_lens[1:-1] )
-    for x in xrange( 0, exon_lens[0] ):
+    for x in range( 0, exon_lens[0] ):
         # below, we use an inner loop to look at all possible fragment lengths.
         # of course, this isnt even close to necessary because we have 
         # precalcualted the cumsum. So, we really only need the minimum 
@@ -230,7 +230,7 @@ def find_short_read_bins_from_fragment_bin(
     # must be shorter than the read - 2*min_num_mappable_bases ( 
     # to account for the mappability )
     def find_possible_end_bins( ordered_exons ):
-        for end_index in xrange( 1, len( ordered_exons )+1 ):
+        for end_index in range( 1, len( ordered_exons )+1 ):
             # get the new bin as the first end_index exons
             new_bin  = ordered_exons[0:end_index]
             # find the length of the internal exons. If they are too long,
@@ -284,8 +284,8 @@ def find_possible_read_bins_for_transcript(
         [exon_lens[i] for i in trans_exon_indices])
     transcript_exon_lens_cumsum = transcript_exon_lens.cumsum()
     transcript_exon_lens_cumsum = numpy.insert(transcript_exon_lens_cumsum,0,0)
-    for index_1 in xrange(len(transcript_exon_lens)):
-        for index_2 in xrange(index_1, len(transcript_exon_lens)):
+    for index_1 in range(len(transcript_exon_lens)):
+        for index_2 in range(index_1, len(transcript_exon_lens)):
             # make sure the bin is allowed by the fl dist
             if index_2 - index_1 > 2:
                 min_frag_len = \
@@ -360,10 +360,10 @@ def estimate_num_paired_reads_from_bin(
                             if i < bin[1][0] and i >= bin[0][0] )
 
     if DEBUG:
-        print "Bin", bin
-        print "FR Exon Lens", fr_exon_lens
-        print "SR Exon Lens", sr_exon_lens
-        print "Pre FR Exon Lens", pre_sr_exon_lens
+        print("Bin", bin)
+        print("FR Exon Lens", fr_exon_lens)
+        print("SR Exon Lens", sr_exon_lens)
+        print("Pre FR Exon Lens", pre_sr_exon_lens)
     
     # loop through the possible start indices for the first bin to be satisifed
     # basically, after removing the spliced introns, we need at least min_num_ma
@@ -381,7 +381,7 @@ def estimate_num_paired_reads_from_bin(
     max_start = min( max_start, sum( fr_exon_lens ) - read_len )
     
     if DEBUG:
-        print "Start Bnds", min_start, max_start
+        print("Start Bnds", min_start, max_start)
     
     # find the range of stop indices.
     # first, the minimum stop is always at least the first base of the first 
@@ -411,10 +411,10 @@ def estimate_num_paired_reads_from_bin(
     min_stop = max( min_stop, min_start + read_len )
 
     if DEBUG:
-        print "Stop Bnds", min_stop, max_stop
+        print("Stop Bnds", min_stop, max_stop)
     def do():
         density = 0.0
-        for start_pos in xrange( min_start, max_start+1 ):
+        for start_pos in range( min_start, max_start+1 ):
             min_fl = max( min_stop - start_pos, fl_dist.fl_min )
             max_fl = min( max_stop - start_pos, fl_dist.fl_max )
             if min_fl > max_fl: continue
@@ -425,8 +425,8 @@ def estimate_num_paired_reads_from_bin(
     
     density = do()
     if DEBUG:
-        print "Density", density
-        print
+        print("Density", density)
+        print()
     
     #DEBUG = False
     return float( density )
@@ -445,13 +445,12 @@ def calc_expected_cnts( exon_boundaries, transcripts, fl_dist,
     
     nonoverlapping_exon_lens = \
         numpy.array([ stop - start for start, stop in 
-                      izip(exon_boundaries[:-1], exon_boundaries[1:])])
+                      zip(exon_boundaries[:-1], exon_boundaries[1:])])
     
     # for each candidate trasncript
     for transcript_index, nonoverlapping_indices in enumerate(transcripts):
         if (len(exon_boundaries)*len(transcripts)*8.)/(1024**3) > max_memory_usage:
-            raise MemoryError, \
-                "Building the design matrix has exceeded the maximum allowed memory "
+            raise MemoryError("Building the design matrix has exceeded the maximum allowed memory ")
         nonoverlapping_indices = tuple(nonoverlapping_indices)
         f_mat_entries[nonoverlapping_indices] = {}
         # find all of the possible read bins for transcript given this 
@@ -462,7 +461,7 @@ def calc_expected_cnts( exon_boundaries, transcripts, fl_dist,
             read_len, min_num_mappable_bases=1 )
         
         # add the expected counts for paired reads
-        for full_bin, paired_bins in pair.iteritems():
+        for full_bin, paired_bins in pair.items():
             for bin in paired_bins:
                 # we can only re-use cached full_bin/bin combos
                 # because it's possible for the middle of a fragment
@@ -488,7 +487,7 @@ def convert_f_matrices_into_arrays( f_mats, normalize=True ):
     observed_cnts = []
     zero_entries = []
     
-    for key, (expected, observed) in f_mats.iteritems():
+    for key, (expected, observed) in f_mats.items():
         expected_cnts.append( expected )
         observed_cnts.append( observed )
     
@@ -514,7 +513,7 @@ def convert_f_matrices_into_arrays( f_mats, normalize=True ):
 
 def build_observed_cnts( binned_reads, fl_dists ):
     rv = {}
-    for ( read_len, read_group, bin ), value in binned_reads.iteritems():
+    for ( read_len, read_group, bin ), value in binned_reads.items():
         rv[ ( read_len, read_group, bin ) ] = value
     
     return rv
@@ -527,13 +526,13 @@ def build_expected_and_observed_arrays(
     
     # find and sort all transcripts
     transcripts = set()
-    for bin, transcript_cnts in sorted(expected_cnts.iteritems()):
+    for bin, transcript_cnts in sorted(expected_cnts.items()):
         for transcript in transcript_cnts:
             transcripts.add(transcript)
     transcripts = sorted(transcripts)
 
     # turn the cnts into a more structured format
-    for bin, transcript_cnts in sorted(expected_cnts.iteritems()):
+    for bin, transcript_cnts in sorted(expected_cnts.items()):
         expected_cnts = [transcript_cnts[t] for t in transcripts]
         expected_mat.append( expected_cnts )
         try:
@@ -542,7 +541,7 @@ def build_expected_and_observed_arrays(
             observed_mat.append( 0 )
     
     if len( expected_mat ) == 0:
-        raise ValueError, "No expected reads."
+        raise ValueError("No expected reads.")
     
     expected_mat = numpy.array( expected_mat, dtype=numpy.double )
     if normalize:
@@ -566,18 +565,18 @@ def build_expected_and_observed_rnaseq_counts(gene, reads, fl_dists):
         reads, gene.chrm, gene.strand, exon_boundaries)
     observed_cnts = build_observed_cnts( binned_reads, fl_dists )    
     read_groups_and_read_lens =  set( (RG, read_len) for RG, read_len, bin 
-                                        in binned_reads.iterkeys() )
+                                        in binned_reads.keys() )
     """
     # TODO XXX
     print exon_boundaries
     print observed_cnts.values()
     """
     expected_cnts = defaultdict(lambda: defaultdict(float))
-    for (rg, (r1_len,r2_len)), (fl_dist, marginal_frac) in fl_dists.iteritems():
+    for (rg, (r1_len,r2_len)), (fl_dist, marginal_frac) in fl_dists.items():
         for transcript, read_bins_and_vals in calc_expected_cnts( 
                 exon_boundaries, transcripts_non_overlapping_exon_indices, 
-                fl_dist, r1_len, r2_len).iteritems():
-            for read_bin, expected_bin_cnt in read_bins_and_vals.iteritems():
+                fl_dist, r1_len, r2_len).items():
+            for read_bin, expected_bin_cnt in read_bins_and_vals.items():
                 assert r1_len == r2_len
                 expected_cnts[(r1_len, rg, read_bin)][transcript] += (
                     marginal_frac*expected_bin_cnt )
@@ -612,7 +611,7 @@ def build_expected_and_observed_transcript_bndry_counts(
         peak_boundaries.add( start )
         peak_boundaries.add( stop + 1 )
     peak_boundaries = numpy.array( sorted( peak_boundaries ) )
-    pseudo_peaks = zip(peak_boundaries[:-1], peak_boundaries[1:])
+    pseudo_peaks = list(zip(peak_boundaries[:-1], peak_boundaries[1:]))
     
     # build the design matrix. XXX FIXME
     expected_cnts = defaultdict( lambda: [0.]*len(gene.transcripts) )
@@ -634,7 +633,7 @@ def build_expected_and_observed_transcript_bndry_counts(
         
     # count the reads in each non-overlaping peak
     observed_cnts = {}
-    for (start, stop) in expected_cnts.keys():
+    for (start, stop) in list(expected_cnts.keys()):
         observed_cnts[ (start, stop) ] \
             = int(round(cvg_array[start-gene.start:stop-gene.start].sum()))
     
@@ -645,12 +644,12 @@ def cluster_bins(expected_rnaseq_cnts):
         config.log_statement( "Normalizing bin frequencies" )
     
     clustered_bins = defaultdict(list)
-    for bin, transcripts_and_cnts in expected_rnaseq_cnts.items():
+    for bin, transcripts_and_cnts in list(expected_rnaseq_cnts.items()):
         row = numpy.array([x[1] 
-                           for x in sorted(transcripts_and_cnts.iteritems())])
+                           for x in sorted(transcripts_and_cnts.items())])
         key = tuple((100000*row/row.sum()).round().tolist())
         clustered_bins[key].append(bin)
-    return clustered_bins.values()
+    return list(clustered_bins.values())
 
 
 def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
@@ -661,7 +660,7 @@ def cluster_rows(expected_rnaseq_array, observed_rnaseq_array):
     for i, row in enumerate(expected_rnaseq_array):
         key = tuple((100000*row/row.sum()).round().tolist())
         clustered_rows[key].append(i)
-    clusters = clustered_rows.values()
+    clusters = list(clustered_rows.values())
     
     """ This worked quickly, but could use way too much memory
     norm_rows = []
@@ -755,7 +754,7 @@ def find_nonoverlapping_exons_covered_by_segment(exon_bndrys, start, stop):
         assert bin_1 == -1 or start >= exon_bndrys[ bin_1  ]
         assert stop < exon_bndrys[ bin_2 + 1  ]
 
-    return tuple(xrange( bin_1, bin_2+1 ))
+    return tuple(range( bin_1, bin_2+1 ))
  
 
 def bin_rnaseq_reads( reads, chrm, strand, exon_boundaries, include_read_type=True ):
@@ -846,24 +845,24 @@ def build_element_expected_and_observed(
         rnaseq_reads, gene.chrm, gene.strand, exon_boundaries)
     num_reads = float(sum(binned_reads.values()))
     fragment_cnts = find_expected_single_bin_freqs(
-        exon_boundaries, binned_reads.keys())
+        exon_boundaries, list(binned_reads.keys()))
     return fragment_cnts, binned_reads
     #### calculate the read length normalized bin counts
     # estimate the marginal fraction of each read length
     read_len_freqs = defaultdict(int)
-    for (read_len, bin), cnt in binned_reads.iteritems():
+    for (read_len, bin), cnt in binned_reads.items():
         read_len_freqs[read_len] += cnt/num_reads
     # normalize and group the bin type fragment counts
     rd_len_grpd_fragment_cnts = defaultdict(int)
-    for (read_len, bin), cnt in fragment_cnts.iteritems():
+    for (read_len, bin), cnt in fragment_cnts.items():
         rd_len_grpd_fragment_cnts[bin] += cnt*read_len_freqs[read_len]
     num_frags = sum(rd_len_grpd_fragment_cnts.values())
-    for bin, cnt in list(rd_len_grpd_fragment_cnts.iteritems()):
+    for bin, cnt in list(rd_len_grpd_fragment_cnts.items()):
         rd_len_grpd_fragment_cnts[bin] = cnt
     
     # group binned reads by read length
     rd_len_grpd_binned_reads = defaultdict(int)
-    for (read_len, bin), cnt in binned_reads.iteritems():
+    for (read_len, bin), cnt in binned_reads.items():
         rd_len_grpd_binned_reads[bin] += cnt
     return rd_len_grpd_fragment_cnts, rd_len_grpd_binned_reads
 
@@ -900,8 +899,8 @@ class DesignMatrix(object):
                 gene, rnaseq_reads, fl_dists )
         clustered_bins = cluster_bins(expected_rnaseq_cnts)
         for cluster in clustered_bins:
-            print cluster
-        print
+            print(cluster)
+        print()
         
         # if no transcripts are observable given the fl dist, then return nothing
         if len( expected_rnaseq_cnts ) == 0:
@@ -953,7 +952,7 @@ class DesignMatrix(object):
             num_transcripts = array.shape[1]
             break
         
-        indices = set(xrange(num_transcripts)) - self.filtered_transcripts
+        indices = set(range(num_transcripts)) - self.filtered_transcripts
         return numpy.array(sorted(indices))
     
     def expected_and_observed(self, bam_cnts=None):
@@ -976,7 +975,7 @@ class DesignMatrix(object):
         # stack all of the arrays, and filter out transcripts to skip
         exp_arrays_to_stack = []
         obs_arrays_to_stack = []
-        for i, (expected, observed) in enumerate(izip(
+        for i, (expected, observed) in enumerate(zip(
                 self.expected_freq_arrays, self.obs_cnt_arrays)):
             if expected == None:
                 assert observed == None
@@ -1052,7 +1051,7 @@ class DesignMatrix(object):
         self._expected_and_observed = None
         
         if len( gene.transcripts ) == 0:
-            raise ValueError, "No transcripts"
+            raise ValueError("No transcripts")
         
         if five_p_reads != None:
             if config.DEBUG_VERBOSE:
@@ -1081,7 +1080,7 @@ class DesignMatrix(object):
             self.num_tp_reads = None
 
         if all( mat == None for mat in self.obs_cnt_arrays ):
-            raise NoObservableTranscriptsError, "No observable transcripts"
+            raise NoObservableTranscriptsError("No observable transcripts")
         
         # initialize the filtered_transcripts to the unobservable transcripts
         self.filtered_transcripts = set(list(self.unobservable_transcripts))
@@ -1101,7 +1100,7 @@ class DesignMatrix(object):
 
 def tests( ):
     exon_lens = [100,1,100]
-    transcript = range( len(exon_lens) )
+    transcript = list(range( len(exon_lens)))
     fl_dist = frag_len.build_uniform_density( 100, 100 )
     read_len = 50
     
@@ -1109,13 +1108,13 @@ def tests( ):
         transcript, exon_lens, fl_dist, read_len )
 
     for bin in sorted(full):
-        print "Fr Bin:", bin
+        print("Fr Bin:", bin)
     
     bins = sorted( full )
     bin_counts = simulate_reads_from_exons(10000, fl_dist, None, 0, exon_lens)
     total_cnt = float(sum(bin_counts.values()))
     simulated_freqs = dict((bin, cnt/total_cnt) 
-                           for bin, cnt in bin_counts.iteritems())
+                           for bin, cnt in bin_counts.items())
     analytical_cnts = dict( 
         ( bin, calc_long_read_expected_cnt_given_bin( 
                 bin, exon_lens, fl_dist ) ) 
@@ -1123,27 +1122,27 @@ def tests( ):
     
     total_cnt = sum( analytical_cnts.values() )
     analytical_freqs = dict( ( bin, float(cnt)/total_cnt ) \
-                             for bin, cnt in analytical_cnts.iteritems() )
-    print str("Frag Bin").ljust( 30 ), "Est %/cnt \tObs %/cnt"
+                             for bin, cnt in analytical_cnts.items() )
+    print(str("Frag Bin").ljust( 30 ), "Est %/cnt \tObs %/cnt")
     for bin in bins:
         sim_freq = simulated_freqs[bin] if bin in simulated_freqs else 0.000
         sim_cnt = bin_counts[bin] if bin in bin_counts else 0
-        print "%s %.3f/%i  \t%.3f/%i" % (
+        print("%s %.3f/%i  \t%.3f/%i" % (
             str(bin).ljust( 30 ), 
             analytical_freqs[bin], analytical_cnts[bin],
-            sim_freq, sim_cnt )
+            sim_freq, sim_cnt ))
 
-    print "SHORT READ SIMS:"    
+    print("SHORT READ SIMS:")    
     
     #fl_dist = frag_len.build_uniform_density( 105, 400 )
     #exon_lens = [ 500, 500, 50, 5, 5, 500, 500 ]
     #read_len = 100
     max_num_unmappable_bases = 1
-    transcript = range( len(exon_lens) )
+    transcript = list(range( len(exon_lens)))
     
-    print "Transcript:", transcript
-    print "Exon Lens:", exon_lens
-    print fl_dist
+    print("Transcript:", transcript)
+    print("Exon Lens:", exon_lens)
+    print(fl_dist)
 
     exon_boundaries = numpy.array(exon_lens).cumsum().tolist()
     exon_boundaries.insert(0, 0)
@@ -1151,27 +1150,27 @@ def tests( ):
         1000000, fl_dist, read_len, 0, exon_lens  )
     total_cnt = float(sum(bin_counts.values()))
     simulated_freqs = dict( ( bin, cnt/total_cnt ) 
-                            for bin, cnt in bin_counts.iteritems() )
+                            for bin, cnt in bin_counts.items() )
     analytical_cnts = calc_expected_cnts(
         exon_boundaries, [tuple(transcript),], fl_dist,
         read_len, read_len, max_num_unmappable_bases )[tuple(transcript)]
     total_cnt = sum( analytical_cnts.values() )
     analytical_freqs = dict( ( bin, float(cnt)/total_cnt ) 
-                             for bin, cnt in analytical_cnts.iteritems() )
-    print str("Frag Bin").ljust( 40 ), "Est %/cnt  \tObs %/cnt"
+                             for bin, cnt in analytical_cnts.items() )
+    print(str("Frag Bin").ljust( 40 ), "Est %/cnt  \tObs %/cnt")
     for bin in sorted(analytical_freqs.keys()):
         sim_freq = simulated_freqs[bin] if bin in simulated_freqs else 0.000
         sim_cnt = bin_counts[bin] if bin in bin_counts else 0
-        print "%s %.3f/%i\t%.3f/%i" % (
+        print("%s %.3f/%i\t%.3f/%i" % (
             str(bin).ljust( 40 ), 
             analytical_freqs[bin], analytical_cnts[bin],
-            sim_freq, sim_cnt )
+            sim_freq, sim_cnt ))
     
     assert False
 
     global foo
     def foo():
-        for loop in xrange(100):
+        for loop in range(100):
             analytical_cnts = dict( ( bin, estimate_num_paired_reads_from_bin( \
                     bin, transcript, exon_lens, fl_dist, \
                     read_len, max_num_unmappable_bases ) ) \

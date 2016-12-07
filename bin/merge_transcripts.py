@@ -18,7 +18,7 @@ along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import os, sys
-import cPickle as pickle
+import pickle as pickle
 import multiprocessing
 
 from grit.merge import (
@@ -157,7 +157,7 @@ def merge_genes(all_sources_and_genes, ofp, sources_ofp):
             ofp, sources_ofp, gene_id_cntr)
     else:
         pids = []
-        for i in xrange(config.NTHREADS):
+        for i in range(config.NTHREADS):
             pid = os.fork()
             if pid == 0:
                 merge_clustered_genes_worker(

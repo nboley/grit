@@ -26,7 +26,7 @@ from grit.files.reads import RNAseqReads, MergedReads, fix_chrm_name_for_ucsc
 from grit.lib.multiprocessing_utils import ProcessSafeOPStream
 
 def log_statment(statement):
-    print >> sys.stderr, statement
+    print(statement, file=sys.stderr)
 
 VERBOSE = False
 NTHREADS = 1
@@ -58,7 +58,7 @@ def parse_arguments():
     args = parser.parse_args()
     
     if len(args.bam) != len(args.rnaseq_read_type):
-        raise ValueError, "--rnaseq-read-type must be the same length as the bam argument"
+        raise ValueError("--rnaseq-read-type must be the same length as the bam argument")
     
     global VERBOSE
     VERBOSE = args.verbose
@@ -82,13 +82,13 @@ def main():
         start, stop = [int(x) for x in pos.split("-")]
         region = [(chrm, strand, start, stop),]
     jns = load_junctions_in_bam(reads, regions=region, nthreads=NTHREADS)
-    print >> ofp, "track name=junctions useScore=1"
-    for (contig, strand), contig_jns in jns.iteritems():
+    print("track name=junctions useScore=1", file=ofp)
+    for (contig, strand), contig_jns in jns.items():
         if FIX_CHRM_NAMES_FOR_UCSC: contig = fix_chrm_name_for_ucsc(contig)
         for (start, stop), cnt, entropy in contig_jns:
-            print >> ofp, create_bed_line(
+            print(create_bed_line(
                 contig, strand, start, stop, name='intron', 
-                score=min(1000, max(0,cnt)))
+                score=min(1000, max(0,cnt))), file=ofp)
                             
 
 if __name__ == '__main__':

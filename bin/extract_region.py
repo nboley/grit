@@ -61,14 +61,14 @@ def main():
     region, fp = parse_arguments()
     for line in fp:
         if line.startswith('track'): 
-            print build_track_line(line, region),
+            print(build_track_line(line, region), end=' ')
             continue
         element_region = parse_bed_line(line)
         if region.chr != element_region.chr: continue
         if region.strand != element_region.strand: continue
         if element_region.start > region.stop: continue
         if element_region.stop < region.start: continue
-        print line,
+        print(line, end=' ')
 
 if __name__ == '__main__':
     main()

@@ -94,4 +94,4 @@ def get_fmat_tmp_fname(gene_id, sample_type=None, rep_id=None):
     return rv + ".fmat"
 
 def log_statement(*args, **kwargs):
-    print args[0]
+    print(args[0])

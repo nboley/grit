@@ -33,20 +33,20 @@ from collections import namedtuple
 import threading
 import multiprocessing
 from multiprocessing.sharedctypes import RawArray, RawValue
-from lib.multiprocessing_utils import Pool
+from .lib.multiprocessing_utils import Pool
 
 import networkx as nx
 
-from lib.multiprocessing_utils import ThreadSafeFile
-from transcript import Transcript, Gene
-from files.reads import fix_chrm_name_for_ucsc
-from proteomics.ORF import find_cds_for_gene
-from elements import \
+from .lib.multiprocessing_utils import ThreadSafeFile
+from .transcript import Transcript, Gene
+from .files.reads import fix_chrm_name_for_ucsc
+from .proteomics.ORF import find_cds_for_gene
+from .elements import \
     load_elements, cluster_elements, find_jn_connected_exons
 
-import config
+from . import config
 
-import Queue
+import queue
 
 GeneElements = namedtuple('GeneElements', 
                           ['id', 'chrm', 'strand',
@@ -122,7 +122,7 @@ def build_transcripts_from_elements(
     for transcript in iter_transcripts(graph, tss_exons, tes_exons):
         transcripts.append( sorted(transcript) )
         if len(transcripts) > config.MAX_NUM_CANDIDATE_TRANSCRIPTS:
-            raise TooManyCandidateTranscriptsError, "Too many candidate transcripts"
+            raise TooManyCandidateTranscriptsError("Too many candidate transcripts")
     return transcripts
 
 def build_transcript_fragments_from_elements( 
@@ -133,7 +133,7 @@ def build_transcript_fragments_from_elements(
     for transcript in iter_transcriplets(graph, tss_exons, tes_exons, 600):
         transcripts.append( sorted(transcript) )
         if len(transcripts) > config.MAX_NUM_CANDIDATE_TRANSCRIPTS:
-            raise TooManyCandidateTranscriptsError, "Too many candidate transcripts"
+            raise TooManyCandidateTranscriptsError("Too many candidate transcripts")
     return transcripts
 
 class MaxIterError( ValueError ):
@@ -344,7 +344,7 @@ def build_and_write_gene(gene_elements, output,
                 start, stop), 
             log=True)
         return
-    except Exception, inst:
+    except Exception as inst:
         config.log_statement(
             "ERROR building transcript in %s(%s:%s:%i-%i): %s" % (
                 gene_elements.id, gene_elements.chrm, gene_elements.strand, 
@@ -386,10 +386,11 @@ def group_elements_in_gene(grpd_exons):
                 args.append(set(exons))
         yield args
 
-def add_elements_for_contig_and_strand((contig, strand), 
+def add_elements_for_contig_and_strand(xxx_todo_changeme, 
                                        grpd_exons, elements, gene_id_cntr,
                                        output, gtf_ofp, tracking_ofp, 
                                        fasta_fp, ref_genes):
+    (contig, strand) = xxx_todo_changeme
     if fasta_fp != None: fasta = Fastafile(fasta_fp.name)
     else: fasta = None
     
@@ -426,7 +427,7 @@ def add_elements_for_contig_and_strand((contig, strand),
 
         try: 
             elements.put(gene_data, timeout=0.1)
-        except Queue.Full: 
+        except queue.Full: 
             build_and_write_gene( gene_data, output, 
                                   gtf_ofp, tracking_ofp,
                                   fasta, ref_genes)
@@ -458,9 +459,9 @@ def feed_elements(raw_elements, elements,
                   output, gtf_ofp, tracking_ofp, 
                   fasta_fp, ref_genes ):
     all_args = multiprocessing.Queue()
-    for (contig, strand), grpd_exons in raw_elements.iteritems():
+    for (contig, strand), grpd_exons in raw_elements.items():
         all_args.put([(contig, strand), dict(grpd_exons)])
-    for i in xrange(config.NTHREADS):
+    for i in range(config.NTHREADS):
         all_args.put('FINISHED')
 
     num_add_element_threads = min(len(raw_elements), config.NTHREADS)
@@ -470,7 +471,7 @@ def feed_elements(raw_elements, elements,
                     output, gtf_ofp, tracking_ofp, 
                     fasta_fp, ref_genes ]
     cluster_pids = []
-    for i in xrange(num_add_element_threads):
+    for i in range(num_add_element_threads):
         pid = os.fork()
         if pid == 0:
             add_elements_for_contig_and_strand_worker(*worker_args)
@@ -489,7 +490,7 @@ def feed_elements(raw_elements, elements,
     while True:
         with nthreads_remaining.get_lock():
             if nthreads_remaining.value == 0:
-                for i in xrange(config.NTHREADS+1):
+                for i in range(config.NTHREADS+1):
                     elements.put('FINISHED')
                 break
         time.sleep(1.0)
@@ -545,7 +546,7 @@ def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname,
 
     
     pids = []
-    for i in xrange(max(0,config.NTHREADS - len(raw_elements))):
+    for i in range(max(0,config.NTHREADS - len(raw_elements))):
         pid = os.fork()
         if pid == 0:
             build_transcripts_worker(elements, 
@@ -571,7 +572,7 @@ def build_transcripts(exons_bed_fp, gtf_ofname, tracking_ofname,
     while output.qsize() > 0:
         try: 
             genes.append(output.get_nowait())
-        except Queue.Empty: 
+        except queue.Empty: 
             continue
     
     assert len(genes) == len(set(genes))

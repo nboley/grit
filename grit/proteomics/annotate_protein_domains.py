@@ -24,7 +24,7 @@ from tempfile import NamedTemporaryFile
 
 from pysam import Fastafile
 
-from proteomics import find_coding_sequence, format_into_80_char_lines
+from .proteomics import find_coding_sequence, format_into_80_char_lines
 from ..files.gtf import load_gtf, Transcript, partition_coding_and_utr_segments, \
     create_gff_line, GenomicInterval
 
@@ -122,7 +122,7 @@ def main():
             for d_id, region in convert_to_genome_coords( 
                     t, protein_seq, domains ):
                 name = "%s.%i.%s" % (gene.meta_data['gene_name'], i, mapping[d_id])
-                print create_gff_line( GenomicInterval(*region), name )
+                print(create_gff_line( GenomicInterval(*region), name ))
                                        
                                        
     

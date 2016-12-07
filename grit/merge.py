@@ -18,22 +18,22 @@ along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import os, sys
-import cPickle as pickle
+import pickle as pickle
 import multiprocessing
 import copy
 import random
 
-from itertools import izip, chain
+from itertools import chain
 from collections import defaultdict
 
 import numpy
 from scipy.cluster.hierarchy import fclusterdata
 
-from files.gtf import load_gtf_into_pickled_files
-from files.reads import fix_chrm_name_for_ucsc
-from transcript import Transcript, Gene
-from lib.multiprocessing_utils import ThreadSafeFile
-import config
+from .files.gtf import load_gtf_into_pickled_files
+from .files.reads import fix_chrm_name_for_ucsc
+from .transcript import Transcript, Gene
+from .lib.multiprocessing_utils import ThreadSafeFile
+from . import config
 
 LINKAGE_CLUSTER_GAP = 500
 
@@ -111,13 +111,13 @@ def reduce_internal_clustered_transcripts(
     clustered_transcript_grps = defaultdict( list )
     clustered_transcript_grp_sources = defaultdict( list )
     for cluster_index, ( trans, src ) in \
-            izip(cluster_indices, internal_grpd_transcripts):
+            zip(cluster_indices, internal_grpd_transcripts):
         clustered_transcript_grps[cluster_index].append( trans )
         clustered_transcript_grp_sources[cluster_index].append( src )
     
     # finally, decide upon the 'canonical' transcript for each cluster, and 
     # add it and it's sources
-    for cluster_index in clustered_transcript_grps.keys():
+    for cluster_index in list(clustered_transcript_grps.keys()):
         clustered_transcripts = clustered_transcript_grps[cluster_index]
         clustered_transcripts_sources = clustered_transcript_grp_sources[
             cluster_index]
@@ -181,7 +181,7 @@ def reduce_gene_clustered_transcripts(
     merged_transcript_sources = []
     transcript_id = 1
     for internal_clustered_transcripts in \
-            internal_clustered_transcript_groups.values():
+            list(internal_clustered_transcript_groups.values()):
         for (merged_transcript, old_transcripts, sources
                 ) in reduce_internal_clustered_transcripts( 
                 internal_clustered_transcripts, new_gene_id, max_cluster_gap ):
@@ -189,7 +189,7 @@ def reduce_gene_clustered_transcripts(
             transcript_id += 1
             merged_transcripts.append(merged_transcript)
             merged_transcript_sources.append(
-                zip(old_transcripts, sources))
+                list(zip(old_transcripts, sources)))
     
     new_gene = Gene(new_gene_id, None,
                     chrm=merged_transcripts[0].chrm,
@@ -210,7 +210,7 @@ def group_overlapping_genes(all_sources_and_pickled_gene_fnames):
                 (gene.start, gene.stop, pickled_gene_fname))
     
     grpd_genes = []
-    for (chrm, strand), gene_regions in chrm_grpd_genes.iteritems():
+    for (chrm, strand), gene_regions in chrm_grpd_genes.items():
         gene_regions.sort()
         curr_stop = -1
         for start, stop, pickled_gene_fname in gene_regions:

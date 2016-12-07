@@ -48,7 +48,7 @@ def load_expression_tracking_data(fp):
 def find_transcript_stats(expression_fps):
     rv = defaultdict(lambda: defaultdict(list))
     for fp in expression_fps:
-        for data in load_expression_tracking_data(fp).itervalues():
+        for data in load_expression_tracking_data(fp).values():
             rv[data.gene_id][data.tracking_id].append(data)
     
     return rv
@@ -59,7 +59,7 @@ def find_valid_transcripts_in_gene( gene_expression_data,
                                     intersample_max_fpkm_ratio ):
     max_fpkm_lb_across_samples = -1.0
     max_fpkm_lb_in_sample = defaultdict(lambda: -1.0)
-    for t_id, t_data in gene_expression_data.iteritems():
+    for t_id, t_data in gene_expression_data.items():
         for i, sample_data in enumerate(t_data):
             max_fpkm_lb_across_samples = max(
                 max_fpkm_lb_across_samples, sample_data.FPKM_lo )
@@ -67,7 +67,7 @@ def find_valid_transcripts_in_gene( gene_expression_data,
                 max_fpkm_lb_in_sample[i], sample_data.FPKM_lo )
 
     good_transcripts = set()
-    for t_id, t_data in gene_expression_data.iteritems():
+    for t_id, t_data in gene_expression_data.items():
         # skip transcripts with lower bounds all below the threshold
         if all(t.FPKM_lo < min_fpkm_lb for t in t_data): continue
         
@@ -85,7 +85,7 @@ def find_valid_transcripts( expression_data,
                             intrasample_max_fpkm_ratio,
                             intersample_max_fpkm_ratio ):
     valid_transcripts = set()
-    for gene_id, transcript_data in expression_data.iteritems():
+    for gene_id, transcript_data in expression_data.items():
         valid_transcripts.update(
             find_valid_transcripts_in_gene(
                 transcript_data,
@@ -125,10 +125,10 @@ def parse_arguments():
              args.intrasample_max_fpkm_ratio, 
              args.intersample_max_fpkm_ratio )
 
-def build_track_line(track_line, 
-                     (min_fpkm_lb, min_fpkm_ub,
+def build_track_line(track_line, xxx_todo_changeme):
+    (min_fpkm_lb, min_fpkm_ub,
                       intrasample_max_fpkm_ratio, 
-                      intersample_max_fpkm_ratio)):
+                      intersample_max_fpkm_ratio) = xxx_todo_changeme
     data = track_line.split()
     name_field = [(i, x) for i, x in enumerate(data) if x.startswith("name")]
     assert len(name_field) <= 1
@@ -160,17 +160,17 @@ def main():
 
     for line in gtf_fp:
         if line.startswith( "track" ): 
-            print build_track_line(
+            print(build_track_line(
                 line, (
                     min_fpkm_lb, min_fpkm_ub, 
                     intrasample_max_fpkm_ration,
-                    intersample_max_fpkm_ratio ) )
+                    intersample_max_fpkm_ratio ) ))
             continue
         
         t_id = re.findall( pat, line)[0]
         if t_id not in valid_transcripts: continue
         
-        print line,
+        print(line, end=' ')
 
 if __name__ == '__main__':
     main()

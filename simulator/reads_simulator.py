@@ -86,7 +86,7 @@ def get_cigar( transcript, start, stop ):
     cigar.append("%iN" % calc_len(transcript.introns[start_exon]))
     
     # add the internal exon and intron matches
-    for i in xrange(start_exon+1, stop_exon):
+    for i in range(start_exon+1, stop_exon):
         cigar.append("%iM" % calc_len(transcript.exons[i]))
         cigar.append("%iN" % calc_len(transcript.introns[i]))
         tl += calc_len(transcript.exons[i])
@@ -368,7 +368,7 @@ def simulate_reads( genes, fl_dist, fasta, quals, num_frags, single_end,
     
     with tempfile.NamedTemporaryFile( mode='w+' ) as sam_fp:
         # write out the header
-        for contig, contig_len in contig_lens.iteritems():
+        for contig, contig_len in contig_lens.items():
             data = ["@SQ", "SN:%s" % contig, "LN:%i" % contig_len]
             sam_fp.write("\t".join(data) + "\n")
         
@@ -513,9 +513,8 @@ def parse_arguments():
             args.fl_dist_norm = [ int( mean ), int( sd ) ]
         except ValueError:
             args.fl_dist_norm = None
-            print >> sys.stderr, \
-              "WARNING: User input mean and sd are not formatted correctly.\n"+\
-              "\tUsing default values.\n"
+            print("WARNING: User input mean and sd are not formatted correctly.\n"+\
+              "\tUsing default values.\n", file=sys.stderr)
 
     return ( args.gtf, args.fl_dist_const, args.fl_dist_norm, 
              args.fasta, args.quality, args.num_frags, 
@@ -531,7 +530,7 @@ def main():
     except OSError: 
         ofname = os.path.join(out_prefix, assay + '.sorted.bam')
         if os.path.isfile(ofname):
-            raise OSError, "File '%s' already exists" % ofname
+            raise OSError("File '%s' already exists" % ofname)
     os.chdir(out_prefix)
     
     genes, fl_dist, fasta, quals = build_objs( 

@@ -39,7 +39,7 @@ def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
     thread_data_windows = []
     thread_data_windows.append( base_pad.subpad(1, MAX_NCOL, 3, 1) )
     thread_data_windows[-1].insstr( 0, 0, "Thread 0:".ljust(11) )
-    for i in xrange(nthreads):
+    for i in range(nthreads):
         thread_data_windows.append( base_pad.subpad(1, MAX_NCOL, 3+i+1, 1))
         thread_data_windows[i+1].insstr(0, 0, ("Thread %i:" % (i+1)).ljust(11))
 
@@ -67,9 +67,9 @@ def manage_curses_display(stdscr, msg_queue, msg_queue_lock, nthreads=1):
             # to refresh and sleep
             try:
                 thread_index, do_log, msg = msg_queue.pop()
-            except IndexError, inst:
+            except IndexError as inst:
                 break
-            except IOError, inst:
+            except IOError as inst:
                 break
             
             # if the message is BREAK, then we are done so exit the thread
@@ -113,7 +113,7 @@ class Logger( object ):
 
         self.pid_to_index_mapping = self.manager.list()
         self.pid_to_index_mapping.append( self.main_pid )
-        for loop in xrange(self.nthreads):
+        for loop in range(self.nthreads):
             self.pid_to_index_mapping.append( None )
 
 

@@ -21,7 +21,7 @@ import os, sys
 import time
 import math
 
-from itertools import izip
+
 
 import numpy
 numpy.seterr(all='ignore')
@@ -31,7 +31,7 @@ from scipy.stats import chi2
 from scipy.optimize import brentq, fminbound, nnls
 from scipy.io import savemat
 
-import config
+from . import config
 
 import time
 def make_time_str(et):
@@ -105,7 +105,7 @@ def calc_gradient( freqs, observed_array, expected_array,
 def is_row_identifiable(X, i_to_check):
     import scipy.optimize
     
-    indices = numpy.array([i for i in xrange(X.shape[1]) if i != i_to_check]) 
+    indices = numpy.array([i for i in range(X.shape[1]) if i != i_to_check]) 
     A = X[:,indices]
     b = X[:,i_to_check]
     res = scipy.optimize.nnls(A, b)
@@ -113,7 +113,7 @@ def is_row_identifiable(X, i_to_check):
 
 def find_identifiable_transcripts( expected_array ):
     identifiable_transcripts = []
-    for i in xrange(expected_array.shape[1]):
+    for i in range(expected_array.shape[1]):
         if is_row_identifiable( expected_array, i ):
             identifiable_transcripts.append(i)
     return identifiable_transcripts
@@ -140,7 +140,7 @@ def nnls_cvxopt( X, Y, fixed_indices_and_values={} ):
     b[0,0] = 1.
     
     # Add the fixed value constraints
-    for const_i, (i, val) in enumerate(fixed_indices_and_values.iteritems()):
+    for const_i, (i, val) in enumerate(fixed_indices_and_values.items()):
         A[const_i+1,i] = 1.
         b[const_i+1,0] = val
     
@@ -150,7 +150,7 @@ def nnls_cvxopt( X, Y, fixed_indices_and_values={} ):
     rss = ((numpy.array(X*res['x'] - Y)[0,])**2).sum()
     
     if DEBUG_OPTIMIZATION:
-        for key, val in res.iteritems():
+        for key, val in res.items():
             if key in 'syxz': continue
             config.log_statement( "%s:\t%s" % ( key.ljust(22), val ) )
         
@@ -218,7 +218,7 @@ def calc_max_feasible_step_size_and_limiting_index_BAD( x0, gradient ):
         step_size = -steps[ steps < 0 ].max()
         step_size_i = ( steps == -step_size ).nonzero()[0]
     except:
-        print steps
+        print(steps)
         raise
     return step_size, step_size_i
 
@@ -230,7 +230,7 @@ def calc_max_feasible_step_size_and_limiting_index( x0, gradient ):
     """
     # we use minus because we return a positive step
     max_ss, max_i = -1e50, None
-    for i, (x, dx) in enumerate(izip(x0, gradient)):
+    for i, (x, dx) in enumerate(zip(x0, gradient)):
         if dx == 0: continue
         ss = (x - MIN_TRANSCRIPT_FREQ)/dx
         if ss >= 0: continue
@@ -280,7 +280,7 @@ def estimate_transcript_frequencies_line_search_OLD(
     zeros_counter = 0
 
     sparse_index = full_sparse_index
-    for i in xrange( MAX_NUM_ITERATIONS ):
+    for i in range( MAX_NUM_ITERATIONS ):
         # calculate the gradient and the maximum feasible step size
         gradient = calc_projected_gradient( 
             x, expected_array, observed_array, 
@@ -352,7 +352,7 @@ def estimate_transcript_frequencies_line_search(
     zeros_counter = 0
     
     sparse_index = full_sparse_index
-    for i in xrange( MAX_NUM_ITERATIONS ):
+    for i in range( MAX_NUM_ITERATIONS ):
         gradient = calc_gradient( 
             x, observed_array, expected_array, sparse_penalty, sparse_index )
         gradient = gradient/(gradient.sum() + 1e-12)
@@ -445,8 +445,8 @@ def estimate_transcript_frequencies_sparse(
         observed_array, full_expected_array,
         min_sparse_penalty, sparse_index ):
     if observed_array.sum() == 0:
-        raise TooFewReadsError, (
-            "Too few reads (%i)" % observed_array.sum() )
+        raise TooFewReadsError(
+            "Too few reads (%i)" % observed_array.sum())
     
     n = full_expected_array.shape[1]
     if n == 1:
@@ -465,7 +465,7 @@ def estimate_transcript_frequencies_sparse(
     start_time = time.time()
     #config.log_statement( "Iteration\tlog lhd\t\tchange lhd\tn 
     # iter\ttolerance\ttime (hr:min:sec)" )
-    for i in xrange( MAX_NUM_ITERATIONS ):
+    for i in range( MAX_NUM_ITERATIONS ):
         prev_x = x.copy()
         x, lhds = estimate_transcript_frequencies_line_search(  
             observed_array, full_expected_array, x, 
@@ -490,7 +490,7 @@ def estimate_transcript_frequencies_sparse(
             if sparse_penalty != None:
                 sparse_penalty = max( sparse_penalty/5, min_sparse_penalty )
     
-    for i in xrange( 10 ):
+    for i in range( 10 ):
         prev_x = x.copy()
         x, lhds = estimate_transcript_frequencies_line_search(  
             observed_array, full_expected_array, x, 
@@ -516,7 +516,7 @@ def estimate_sparse_transcript_frequencies(observed_array, full_expected_array):
     best_x = None
     best_lhd = -1e100
 
-    for sparse_index in xrange(1, full_expected_array.shape[1]):
+    for sparse_index in range(1, full_expected_array.shape[1]):
         #cvx_sln = estimate_transcript_frequencies_with_cvxopt( 
         #    observed_array, full_expected_array, 
         #    sparse_penalty, sparse_index, 
@@ -666,7 +666,7 @@ def estimate_confidence_bound( f_mat,
     x = mle_estimate.copy()
     prev_x = mle_estimate[fixed_index]
     n_successes = 0
-    for i in xrange(MAX_NUM_ITERATIONS):
+    for i in range(MAX_NUM_ITERATIONS):
         # take a downhill step
         x = take_param_decreasing_step(x)
         curr_lhd = calc_lhd(x, observed_array, expected_array)

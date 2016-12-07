@@ -29,8 +29,8 @@ import pickle
 import random
 from itertools import chain
 
-import config
-from elements import iter_nonoverlapping_exons
+from . import config
+from .elements import iter_nonoverlapping_exons
 
 GenomicInterval = namedtuple('GenomicInterval', 
                              ['chr', 'strand', 'start', 'stop'])
@@ -66,8 +66,8 @@ class FlDist( object ):
             assert type( fl_max ) == int
             assert len( fl_density ) == ( fl_max - fl_min + 1 )
         except:
-            print fl_density
-            print fl_min, fl_max
+            print(fl_density)
+            print(fl_min, fl_max)
             raise
         
         self.fl_min = fl_min
@@ -101,7 +101,7 @@ class FlDist( object ):
     def plot( self ):
         import matplotlib
         import matplotlib.pyplot as plt
-        plt.scatter( range(self.fl_min, self.fl_max+1), self.fl_density )
+        plt.scatter( list(range(self.fl_min, self.fl_max+1)), self.fl_density )
         plt.show()
     
     def __hash__( self ):
@@ -118,7 +118,7 @@ def load_fl_dists( fnames ):
     for fname in fnames:
         with open( fname ) as fp:
             fl_dists = pickle.load( fp )
-        for key, fl_dist in fl_dists.iteritems():
+        for key, fl_dist in fl_dists.items():
             all_fl_dists[ key ] = fl_dist
     
     # clustered_read_groups = cluster_rdgrps( all_fl_dists )
@@ -138,7 +138,7 @@ def build_normal_density( fl_min, fl_max, mean, sd ):
     from scipy.stats import norm
     density = norm(loc=mean, scale=sd)
     density_array = numpy.array( [ density.pdf( index ) \
-                                   for index in xrange( fl_min, fl_max+1 ) ] )
+                                   for index in range( fl_min, fl_max+1 ) ] )
     density_array = density_array/density_array.sum()
     return FlDist( fl_min, fl_max, density_array )
 
@@ -161,7 +161,7 @@ def build_multi_modal_density( mean_sd_freq ):
             fl_max = density[0] + (4 * density[1])
 
     density_array = numpy.zeros( fl_max - fl_min + 1 )
-    for index in xrange( fl_min, fl_max + 1):
+    for index in range( fl_min, fl_max + 1):
         for norms_index in len(mean_sd_freq):
             density_array[ index ] += \
                 norms[ norms_index ].pdf( index ) * mean_sd_freq[2]
@@ -177,7 +177,7 @@ def group_fragments_by_readgroup( fragments ):
             grouped_fragments[ read_group ] = [ fl, ]
     
     # make a numpy array out of each entry, for easier access to the cumdist, etc.
-    for read_group in grouped_fragments.keys():
+    for read_group in list(grouped_fragments.keys()):
         grouped_fragments[ read_group ] \
             = numpy.array( grouped_fragments[ read_group ] )
     
@@ -192,7 +192,7 @@ def group_fragments_by_strand( fragments ):
             grouped_fragments[ strand ] = [ fl, ]
     
     # make a numpy array out of each entry, for easier access to the cumdist, etc.
-    for strand in grouped_fragments.keys():
+    for strand in list(grouped_fragments.keys()):
         grouped_fragments[ strand ] \
             = numpy.array( grouped_fragments[ strand ] )
     
@@ -206,7 +206,7 @@ def group_fragments_by_exonlen( fragments ):
     sorted_frags = zip(*fragments)[1]
 
     grouped_fragments = []
-    for i in xrange(10):
+    for i in range(10):
         grouped_fragments.append( numpy.array( sorted_frags[ \
                     int(i*len(sorted_frags)/10) : int((i+1)*len(sorted_frags)/10) ] ) )
 
@@ -229,7 +229,7 @@ def analyze_fl_dists( fragments, out_filename='diagnostic_plots.pdf'):
     # Compare fragment lengths to the read group from which they came
     read_grouped_frag_lengths = group_fragments_by_readgroup( fragments )
     grouped_frag_lengths_for_bxplt = []
-    for read_group, rg_frag_lengths in read_grouped_frag_lengths.iteritems():
+    for read_group, rg_frag_lengths in read_grouped_frag_lengths.items():
         # do not plot read_groups which do not have enough data for significant
         # plots to be created adn which were not clustered for the same reason
         if len( rg_frag_lengths ) < MIN_FLS_FOR_FL_DIST:
@@ -268,7 +268,7 @@ def analyze_fl_dists( fragments, out_filename='diagnostic_plots.pdf'):
     strand_fl_dists = {}
     strand_grouped_frag_lengths = group_fragments_by_strand( fragments )
     for strand, strand_grouped_frag_lengths in \
-            strand_grouped_frag_lengths.iteritems():
+            strand_grouped_frag_lengths.items():
         strand_fl_dists[ strand ] = build_robust_fl_dist_with_stats( \
             strand_grouped_frag_lengths )
 
@@ -319,10 +319,10 @@ def build_robust_fl_dist_with_stats( fragment_lengths ):
     
     new_fls = sorted_fls[ (sorted_fls > lower_bnd) & (sorted_fls < upper_bnd) ]
     if len( new_fls ) == 0:
-        print sorted_fls
-        print lower_bnd
-        print upper_bnd
-        print >> sys.stderr, "WARNING: There aren't any fragments after filtering."
+        print(sorted_fls)
+        print(lower_bnd)
+        print(upper_bnd)
+        print("WARNING: There aren't any fragments after filtering.", file=sys.stderr)
         new_fls = sorted_fls
     
     lower_bnd = new_fls[0]
@@ -358,7 +358,7 @@ def cluster_rdgrps( fl_dists ):
     stats is a dictioanry of readgroups, keyed by rg name, with values
     that take tuples of summary statistics.
     """
-    stats = dict( (key, fl_dist.stats) for key, fl_dist in fl_dists.iteritems())
+    stats = dict( (key, fl_dist.stats) for key, fl_dist in fl_dists.items())
 
     def are_diff( val1, val2, tol ):
         """We say two things are different if they're off by > 10%
@@ -383,7 +383,7 @@ def cluster_rdgrps( fl_dists ):
     
     def cluster_by_summary_stat( stat_index ):
         def sort_key( obj ): return float( obj[1][0][stat_index] )
-        data = sorted( stats.iteritems(), key=sort_key )
+        data = sorted( iter(stats.items()), key=sort_key )
         
         def iter_relevant_sorted_data():
             for i in data:
@@ -400,7 +400,7 @@ def cluster_rdgrps( fl_dists ):
         """
         cluster_group_index = {}
         num_cluster_grps = 0
-        for rg in stats.keys():
+        for rg in list(stats.keys()):
             cluster_group = []
             for cmap in cluster_mappings:
                 cluster_group.append( cmap[ rg ] )
@@ -423,21 +423,21 @@ def cluster_rdgrps( fl_dists ):
                        key=operator.itemgetter(1) )
     
     if VERBOSE:
-        print 'Read group clustering statistics'
-        print 'read_group\tmean\t\t\tSD\t\t\tskew\t\t\tcluster_group'
+        print('Read group clustering statistics')
+        print('read_group\tmean\t\t\tSD\t\t\tskew\t\t\tcluster_group')
         for read_group, cluster in clusters:
             # mean cluster will not have stats and will be skipped
             try:
                 rg_stats = stats[ read_group ]
             except KeyError:
-                print 'Should be mean and last cluster group:', \
-                    read_group, str(cluster)
+                print('Should be mean and last cluster group:', \
+                    read_group, str(cluster))
                 continue
-            print '%s\t%.5f+/-%.5f\t%.5f+/-%.5f\t%.5f+/-%.5f\t%s' % (read_group, \
+            print('%s\t%.5f+/-%.5f\t%.5f+/-%.5f\t%.5f+/-%.5f\t%s' % (read_group, \
                                  rg_stats[0][0], 0.10*rg_stats[0][0], \
                                  rg_stats[0][1], 0.10*rg_stats[0][1], \
                                  rg_stats[0][2], 4*rg_stats[1][2], \
-                                 cluster )
+                                 cluster ))
     
     return dict( clusters )
 
@@ -453,13 +453,13 @@ def merge_clustered_fl_dists( clustered_read_groups, grouped_fragments ):
     """
     # build a mapping from cluster groups to read groups
     cluster_grp_mapping = defaultdict(list)
-    for rg, cg in clustered_read_groups.iteritems():
+    for rg, cg in clustered_read_groups.items():
         cluster_grp_mapping[ cg ].append( rg )
 
     # initialize cluster groups mapping to fl_dists
     clustered_fl_dists = {}
 
-    for cg, rgs in cluster_grp_mapping.iteritems():
+    for cg, rgs in cluster_grp_mapping.items():
         # initialize cluster group
         fls = numpy.array([])
         # combine the fragments from each read group
@@ -546,7 +546,7 @@ def estimate_normal_fl_dist_from_reads(reads, max_num_fragments_to_sample=500):
 
     if len( frag_lens ) < 50:
         err_str = "There are not enough reads (%i) to estimate an fl dist" % len(frag_lens)
-        raise ValueError, err_str
+        raise ValueError(err_str)
     
     return estimate_normal_fl_dist_from_fragments( frag_lens )
 
@@ -567,7 +567,7 @@ def estimate_fl_dists_from_fragments( fragments ):
         # only clustered distributions are used for downstream analysis
         fl_dists = {}
         grouped_fragments = group_fragments_by_readgroup( fragments )
-        for read_group, fragment_lengths in grouped_fragments.iteritems():
+        for read_group, fragment_lengths in grouped_fragments.items():
             if len( fragment_lengths ) < MIN_FLS_FOR_FL_DIST:
                 continue
             fl_dist = build_robust_fl_dist_with_stats( fragment_lengths )
@@ -605,7 +605,7 @@ def parse_arguments():
 def build_fl_dists( elements, reads ):
     def iter_good_exons():
         num = 0
-        for (chrm, strand), exons in sorted( elements.iteritems()):
+        for (chrm, strand), exons in sorted( elements.items()):
             for start,stop in iter_nonoverlapping_exons(exons):
                 num += 1
                 yield GenomicInterval(chrm, strand, start, stop)
@@ -631,11 +631,11 @@ def build_fl_dists_from_fls_dict(frag_lens):
     # do this earlier because nested manager dictionaries are 
     # inefficient, and the accumulation is in the worker threads
     grpd_frag_lens = defaultdict(list)
-    for (rd_grp, rd_len, fl), cnt in frag_lens.iteritems():
+    for (rd_grp, rd_len, fl), cnt in frag_lens.items():
         if fl < config.MIN_FRAGMENT_LENGTH or fl > config.MAX_FRAGMENT_LENGTH:
             continue
         grpd_frag_lens[(rd_grp, rd_len)].append((fl, cnt))
-    for (rd_grp, rd_len), fls_and_cnts in grpd_frag_lens.iteritems():
+    for (rd_grp, rd_len), fls_and_cnts in grpd_frag_lens.items():
         min_fl = int(min(fl for fl, cnt in fls_and_cnts))
         max_fl = int(max(fl for fl, cnt in fls_and_cnts))
         fl_density = numpy.zeros(max_fl - min_fl + 1)
@@ -645,7 +645,7 @@ def build_fl_dists_from_fls_dict(frag_lens):
         fl_dists[(rd_grp, (rd_len, rd_len))] = [
             FlDist(min_fl, max_fl, fl_density/fl_density.sum()),
             fl_density.sum()]
-    total_sum = sum(x[1] for x in fl_dists.values())
+    total_sum = sum(x[1] for x in list(fl_dists.values()))
     for key in fl_dists: fl_dists[key][1] /= total_sum
     return fl_dists
 
@@ -656,8 +656,8 @@ def find_fls_from_annotation( annotation, reads ):
         if len(gene.transcripts) > 1: continue
         for start, stop in gene.transcripts[0].exons:
             region = GenomicInterval(gene.chrm, gene.strand, start, stop) 
-            for (rg, rd_len, fl), cnt in find_fragments_in_exon(
-                    reads, region).items():
+            for (rg, rd_len, fl), cnt in list(find_fragments_in_exon(
+                    reads, region).items()):
                 frag_lens[(rg, rd_len, fl)] += cnt
                 tot_cnt += cnt
             if tot_cnt > 10000: 
@@ -671,8 +671,8 @@ def build_fl_dists_from_annotation( annotation, reads ):
 def main():
     gff_fp, bam_fn, ofname, analyze = parse_arguments()
     
-    from files.bed import parse_bed_line
-    from files.reads import Reads
+    from .files.bed import parse_bed_line
+    from .files.reads import Reads
     
     exons = []
     for line in gff_fp:

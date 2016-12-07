@@ -28,24 +28,24 @@ import copy
 
 from pysam import Fastafile, Samfile
 
-from itertools import izip, chain
+from itertools import chain
 from collections import defaultdict, namedtuple
-import Queue
+import queue
 
 import multiprocessing
 from multiprocessing.sharedctypes import RawArray, RawValue
-from lib.multiprocessing_utils import Pool, ThreadSafeFile
+from .lib.multiprocessing_utils import Pool, ThreadSafeFile
 
-from files.gtf import load_gtf, Transcript, Gene
-from files.reads import fix_chrm_name_for_ucsc
+from .files.gtf import load_gtf, Transcript, Gene
+from .files.reads import fix_chrm_name_for_ucsc
 
-import f_matrix
-import frequency_estimation
-from frag_len import load_fl_dists, FlDist, build_normal_density
+from . import f_matrix
+from . import frequency_estimation
+from .frag_len import load_fl_dists, FlDist, build_normal_density
 
-import config
+from . import config
 
-import cPickle as pickle
+import pickle as pickle
 
 SAMPLE_ID = None
 REP_ID = None
@@ -79,7 +79,7 @@ class SharedData(object):
         with self.design_mat_lock: 
             fname = self.design_mat_filenames[gene_id].value
         if fname == '': 
-            raise NoDesignMatrixError, "No design matrix for '%s'" % gene_id
+            raise NoDesignMatrixError("No design matrix for '%s'" % gene_id)
         with open(fname) as fp:
             f_mat = pickle.load(fp)
         self._cached_fmat_gene_id = gene_id
@@ -214,7 +214,7 @@ def calc_effective_transcript_length(t, fl_dists_and_weights):
     t_length -= 0*len(t.introns)
 
     weighted_lengths = []
-    for fl_dist, marginal_freq in fl_dists_and_weights.values():
+    for fl_dist, marginal_freq in list(fl_dists_and_weights.values()):
         fl_min, fl_max = fl_dist.fl_min, min(t_length, fl_dist.fl_max)
         # if the transcript is shorter than the minimum fragment length,
         # then the effective length is 0 because we can't observe it
@@ -237,7 +237,7 @@ def calc_fpkm( gene, fl_dists, freqs, num_reads_in_bam):
     num_reads_in_bam = num_reads_in_bam[1]
     
     fpkms = []
-    for t, freq in izip( gene.transcripts, freqs ):
+    for t, freq in zip( gene.transcripts, freqs ):
         if freq < 0:
             fpkm = None
         else:
@@ -293,7 +293,7 @@ def find_confidence_bounds_in_gene( gene, num_reads_in_bams,
             p_value, bnd = frequency_estimation.estimate_confidence_bound( 
                 f_mat, num_reads_in_bams,
                 exp_mat_row, mle_estimate, bnd_type, cb_alpha )
-        except Exception, inst:
+        except Exception as inst:
             p_value = 1.
             bnd = 0.0 if bnd_type == 'lb' else 1.0
             error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
@@ -321,10 +321,10 @@ def find_confidence_bounds_worker(
         
         # get a gene to process
         try: gene_id = gene_ids.get(timeout=0.1)
-        except Queue.Empty: 
+        except queue.Empty: 
             assert gene_ids.qsize() == 0
             config.log_statement("")
-            raise IndexError, "No genes left"
+            raise IndexError("No genes left")
         
         config.log_statement(
             "Loading design matrix for gene '%s'" % gene_id)
@@ -354,7 +354,7 @@ def find_confidence_bounds_worker(
     def get_gene_being_processed():
         longest_gene_id = None
         gene_len = 0
-        for gene_id, cntr in trans_index_cntrs.iteritems():
+        for gene_id, cntr in trans_index_cntrs.items():
             value = cntr.value
             if value > gene_len:
                 longest_gene_id = gene_id
@@ -397,7 +397,7 @@ def find_confidence_bounds_worker(
             
             if config.VERBOSE:
                 config.log_statement("Finished processing '%s'" % gene.id)
-        except Exception, inst:
+        except Exception as inst:
             config.log_statement( traceback.format_exc(), log=True )
     
     config.log_statement("")
@@ -425,14 +425,14 @@ def estimate_confidence_bounds( data, bnd_type ):
             data, gene_ids, trans_indices_queues, bnd_type )
     else:
         pids = []
-        for i in xrange(config.NTHREADS):
+        for i in range(config.NTHREADS):
             pid = os.fork()
             if pid == 0:
                 try: 
                     find_confidence_bounds_worker(
                         data, gene_ids, 
                         trans_index_cntrs, bnd_type)
-                except Exception, inst:
+                except Exception as inst:
                     config.log_statement( traceback.format_exc(), log=True )
                 finally:
                     os._exit(0)
@@ -477,7 +477,7 @@ def estimate_mle_worker( gene_ids, data ):
                 continue
             mle = frequency_estimation.estimate_transcript_frequencies( 
                 observed_array, expected_array)
-        except Exception, inst:
+        except Exception as inst:
             error_msg = "%i: Skipping %s (%s:%s:%i-%i): %s" % (
                 os.getpid(), gene.id, 
                 gene.chrm, gene.strand, gene.start, gene.stop, inst)
@@ -510,12 +510,12 @@ def estimate_mles( data ):
         estimate_mle_worker(*args)
     else:
         ps = []
-        for i in xrange(config.NTHREADS):
+        for i in range(config.NTHREADS):
             pid = os.fork()
             if pid == 0:
                 try:
                     estimate_mle_worker(*args)
-                except Exception, inst:
+                except Exception as inst:
                     config.log_statement( str(error_msg), log=True )
                     config.log_statement( traceback.format_exc(), log=True )
                 finally:
@@ -526,7 +526,7 @@ def estimate_mles( data ):
         config.log_statement("Populating MLE queue")
         for i, gene_id in enumerate(sorted_gene_ids):
             gene_ids.put(gene_id)
-        for i in xrange(config.NTHREADS):
+        for i in range(config.NTHREADS):
             gene_ids.put("FINISHED")
         config.log_statement("Waiting on MLE children")
         
@@ -536,8 +536,8 @@ def estimate_mles( data ):
     return
 
 def build_design_matrices_worker( gene_ids, 
-                                  data, fl_dists,
-                                  (rnaseq_reads, promoter_reads, polya_reads)):
+                                  data, fl_dists, xxx_todo_changeme):
+    (rnaseq_reads, promoter_reads, polya_reads) = xxx_todo_changeme
     assert fl_dists != None
     config.log_statement("Reloading read data in subprocess")
     if rnaseq_reads != None: rnaseq_reads = rnaseq_reads.reload()
@@ -572,14 +572,14 @@ def build_design_matrices_worker( gene_ids,
                 config.log_statement(
                     "No observable transcripts for '%s'" % gene_id, log=True)
             continue
-        except Exception, inst:
+        except Exception as inst:
             error_msg = "%i: Skipping %s: %s" % (
                 os.getpid(), gene_id, inst )
             config.log_statement( 
                 error_msg + "\n" + traceback.format_exc(), log=True )
 
-def build_design_matrices( data, fl_dists,
-                           (rnaseq_reads, promoter_reads, polya_reads)):    
+def build_design_matrices( data, fl_dists, xxx_todo_changeme1):    
+    (rnaseq_reads, promoter_reads, polya_reads) = xxx_todo_changeme1
     assert fl_dists != None
     gene_ids = multiprocessing.Queue()
     config.log_statement( "Populating build design matrices queue" )
@@ -595,7 +595,7 @@ def build_design_matrices( data, fl_dists,
         build_design_matrices_worker(*args)
     else:
         ps = []
-        for i in xrange(config.NTHREADS):
+        for i in range(config.NTHREADS):
             #p = multiprocessing.Process(
             #    target=build_design_matrices_worker, args=args)
             #p.start()
@@ -604,7 +604,7 @@ def build_design_matrices( data, fl_dists,
             if pid == 0:
                 try:
                     build_design_matrices_worker(*args)
-                except Exception, inst:
+                except Exception as inst:
                     config.log_statement( str(error_msg), log=True )
                     config.log_statement( traceback.format_exc(), log=True )
                 finally:
@@ -615,7 +615,7 @@ def build_design_matrices( data, fl_dists,
         config.log_statement("Populating design matrix queue")
         for i, gene_id in enumerate(sorted_gene_ids):
             gene_ids.put(gene_id)
-        for i in xrange(config.NTHREADS):
+        for i in range(config.NTHREADS):
             gene_ids.put('FINISHED')
         config.log_statement("Waiting on design matrix children")
         
@@ -684,7 +684,7 @@ def write_data_to_tracking_file(data, fl_dists, ofp):
         try: 
             lines = build_gene_lines_for_tracking_file(
                 gene_id, data, num_reads_in_bams, fl_dists)
-        except Exception, inst:
+        except Exception as inst:
             config.log_statement("Skipping '%s': %s" % (gene_id, str(inst)))
             config.log_statement( traceback.format_exc(), log=True )
         else:

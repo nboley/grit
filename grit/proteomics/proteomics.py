@@ -47,10 +47,10 @@ def find_coding_sequence( tran, fa ):
         dna = dna[:-(len(dna)%3)]
     if tran.strand == '-':
         dna = "".join( COMP_BASES[x] for x in dna[::-1] )
-    return "".join( GENCODE[dna[i:i+3].upper()] for i in xrange(0,len(dna),3) )
+    return "".join( GENCODE[dna[i:i+3].upper()] for i in range(0,len(dna),3) )
 
 def format_into_80_char_lines( x ):
     res = []
-    for i in xrange((len(x)//80)+1):
+    for i in range((len(x)//80)+1):
         res.append( x[i*80:(i+1)*80] )
     return res

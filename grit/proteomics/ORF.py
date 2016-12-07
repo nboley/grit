@@ -22,13 +22,13 @@ along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 import os, sys
 
 import multiprocessing
-import Queue
+import queue
 import time
 import numpy
 import re
 
 from collections import defaultdict, namedtuple
-from itertools import izip
+
 from operator import itemgetter
 from copy import copy
 
@@ -163,7 +163,7 @@ def find_orfs( sequence ):
         locs_by_frame = { 0: [], 1:[], 2:[] }
         for loc in locs:
             locs_by_frame[ loc%3 ].append( loc )
-        for frame in locs_by_frame.keys():
+        for frame in list(locs_by_frame.keys()):
             locs_by_frame[ frame ].reverse()
         return locs_by_frame
 
@@ -230,7 +230,7 @@ def find_cds_for_gene( gene, fasta, only_longest_orf ):
         for orf_id, (start, stop) in enumerate( filtered_orfs ):
             ORF = trans_seq[start:stop+1]
             AA_seq= "".join( GENCODE[ORF[3*i:3*(i+1)]] 
-                             for i in xrange(len(ORF)/3) )
+                             for i in range(len(ORF)/3) )
             
             if INCLUDE_STOP_CODON:
                 stop += 3
@@ -259,10 +259,10 @@ def find_gene_orfs_worker( input_queue, gtf_ofp, fa_ofp, fasta_fn ):
     while not input_queue.empty():
         try:
             gene = input_queue.get(block=False)
-        except Queue.Empty:
+        except queue.Empty:
             break
         
-        if VERBOSE: print >> sys.stderr, '\tProcessing ' + gene.id
+        if VERBOSE: print('\tProcessing ' + gene.id, file=sys.stderr)
         ann_trans = find_cds_for_gene( gene, fasta, ONLY_USE_LONGEST_ORF )
         op_str = "\n".join( [ tr.build_gtf_lines( gene.id, {} ) 
                               for tr in ann_trans ] )
@@ -274,7 +274,7 @@ def find_gene_orfs_worker( input_queue, gtf_ofp, fa_ofp, fasta_fn ):
                 for line in iter_x_char_lines(trans.coding_sequence):
                     fa_ofp.write(line+"\n")
                 
-        if VERBOSE: print >> sys.stderr, '\tFinished ' + gene.id
+        if VERBOSE: print('\tFinished ' + gene.id, file=sys.stderr)
     
     return
 
@@ -284,7 +284,7 @@ def find_all_orfs( genes, fasta_fn, gtf_ofp, fa_ofp, num_threads=1 ):
     manager = multiprocessing.Manager()
     input_queue = manager.Queue()
     
-    if MIN_VERBOSE: print >> sys.stderr, 'Processing all transcripts for ORFs.'
+    if MIN_VERBOSE: print('Processing all transcripts for ORFs.', file=sys.stderr)
     
     # populate input_queue
     for gene in genes:
@@ -296,7 +296,7 @@ def find_all_orfs( genes, fasta_fn, gtf_ofp, fa_ofp, num_threads=1 ):
         find_gene_orfs_worker(*args)
     else:
         processes = []
-        for thread_id in xrange( num_threads ):
+        for thread_id in range( num_threads ):
             p = multiprocessing.Process(target=find_gene_orfs_worker, args=args)
             p.start()
             processes.append( p )

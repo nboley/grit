@@ -21,7 +21,7 @@ import numpy
 import networkx as nx
 
 from collections import defaultdict, namedtuple
-from itertools import izip, chain
+from itertools import chain
 
 RefElementsToInclude = namedtuple(
     'RefElementsToInclude', 
@@ -32,8 +32,8 @@ def convert_elements_to_arrays(all_elements):
     # convert into array
     all_array_elements = defaultdict( 
         lambda: defaultdict(lambda: numpy.zeros(0)) )
-    for key, elements in all_elements.iteritems():
-        for element_type, contig_elements in elements.iteritems():
+    for key, elements in all_elements.items():
+        for element_type, contig_elements in elements.items():
             all_array_elements[key][element_type] \
                 = numpy.array( sorted( contig_elements ) )
 

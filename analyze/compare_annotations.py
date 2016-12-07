@@ -20,7 +20,7 @@ along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 import sys, os
 
 from collections import defaultdict
-from itertools import izip
+
 
 sys.path.insert(0, "/home/nboley/grit/grit/")
 from grit.files.gtf import load_gtf
@@ -37,7 +37,7 @@ MAX_GENE_BNDRY_DISTANCE = None
 def build_test_data():
     """Build test data sets for unit tests
     """
-    exons = range( 1, 100, 10 )
+    exons = list(range( 1, 100, 10))
     assert len( exons )%2 == 0
     
     ref_trans = []
@@ -93,7 +93,7 @@ def cluster_overlapping_genes( genes_groups ):
     
     # group all of the genes by overlapping intervals
     clustered_bndries = {}
-    for (chrm, strand), boundaries in grpd_boundaries.iteritems():
+    for (chrm, strand), boundaries in grpd_boundaries.items():
         boundaries.sort()
         clustered_bndries[(chrm, strand)] = []
         
@@ -108,11 +108,11 @@ def cluster_overlapping_genes( genes_groups ):
     
     # join the transcripts to the grouped clusters
     all_clustered_transcripts = {}
-    for (chrm, strand), inner_clustered_bndries in clustered_bndries.iteritems():
+    for (chrm, strand), inner_clustered_bndries in clustered_bndries.items():
         clustered_transcripts = []
         for cluster in inner_clustered_bndries:
             clustered_transcripts.append(
-                [ [] for i in xrange(len(genes_groups)) ] )
+                [ [] for i in range(len(genes_groups)) ] )
             
             for source_id, gene_id in cluster:
                 for transcript in \
@@ -171,7 +171,7 @@ def build_element_stats( ref_genes, t_genes, output_stats ):
     intron_overlap = float( len( r_introns.intersection( t_introns ) ) )
     
     tss_e_overlap = 0.0
-    for key, r_ext_bases in r_tss_exons.iteritems():
+    for key, r_ext_bases in r_tss_exons.items():
         for r_ext_base in r_ext_bases:
             for t_ext_base in t_tss_exons[key]:
                 if abs(r_ext_base - t_ext_base) < MAX_GENE_BNDRY_DISTANCE:
@@ -179,7 +179,7 @@ def build_element_stats( ref_genes, t_genes, output_stats ):
                     break
 
     tes_e_overlap = 0.0
-    for key, r_ext_bases in r_tes_exons.iteritems():
+    for key, r_ext_bases in r_tes_exons.items():
         for r_ext_base in r_ext_bases:
             for t_ext_base in t_tes_exons[key]:
                 if abs(r_ext_base - t_ext_base) < MAX_GENE_BNDRY_DISTANCE:
@@ -208,14 +208,14 @@ def build_element_stats( ref_genes, t_genes, output_stats ):
 
     output_stats.add_recovery_stat( 
         'TSS Exon', 
-        sum( len(x) for x in r_tss_exons.itervalues()), 
-        sum( len(x) for x in t_tss_exons.itervalues()), 
+        sum( len(x) for x in r_tss_exons.values()), 
+        sum( len(x) for x in t_tss_exons.values()), 
         tss_e_overlap, tss_e_overlap )
 
     output_stats.add_recovery_stat(
         'TES Exon', 
-        sum( len(x) for x in r_tes_exons.itervalues()), 
-        sum( len(x) for x in t_tes_exons.itervalues()), 
+        sum( len(x) for x in r_tes_exons.values()), 
+        sum( len(x) for x in t_tes_exons.values()), 
         tes_e_overlap, tes_e_overlap )
 
     output_stats.add_recovery_stat( 
@@ -272,7 +272,7 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
         num_ref_trans = 0
         num_novel_trans = 0
         matched_novel_cnt = 0
-        for introns, transcripts in t_full_trans.iteritems():
+        for introns, transcripts in t_full_trans.items():
             num_novel_trans += len(transcripts)
             # add the number of transcripts with this internal structure
             for novel_t in transcripts:
@@ -285,8 +285,8 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
                         break
                 
         # calculate the total number of novel trancripts
-        num_t_trans = sum( len(i) for i in t_full_trans.itervalues() )
-        num_ref_trans = sum( len(i) for i in ref_full_trans.itervalues() )
+        num_t_trans = sum( len(i) for i in t_full_trans.values() )
+        num_ref_trans = sum( len(i) for i in ref_full_trans.values() )
         
         return ( len(observed_ref_trans), matched_novel_cnt,
                  num_ref_trans, num_t_trans )
@@ -352,7 +352,7 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
         def get_intron_match( exons ):
             # check if there is a shared junction anywhere in the introns map
             j_match_counts = defaultdict( int )
-            for intron in izip( exons[::2], exons[1::2] ):
+            for intron in zip( exons[::2], exons[1::2] ):
                 if intron in right_introns:
                     for j_match in right_introns[ intron ]:
                         j_match_counts[ j_match ] += 1
@@ -365,7 +365,7 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
                 # find the best j_match by the one that shares the most 
                 # junctions with the transcript
                 max_jns_cnt, best_intron_match = 0, None
-                for j_match, jns_cnt in j_match_counts.iteritems():
+                for j_match, jns_cnt in j_match_counts.items():
                     if jns_cnt > max_jns_cnt:
                         max_jns = jns_cnt
                         best_intron_match = j_match
@@ -380,7 +380,7 @@ def match_transcripts( ref_grp, t_grp, build_maps, build_maps_stats ):
         # left_full corresponds to the trnasripts that we 
         # want to find matches for. The total count of map lines
         # shoul;d be equal to this
-        for introns, transcripts in left_full.iteritems():
+        for introns, transcripts in left_full.items():
             for left_t in transcripts:
                 match = None
                 for right_t in right_full[introns]:
@@ -452,7 +452,7 @@ def calc_trans_cnts( all_trans_cnts, build_maps_stats, output_stats ):
                      if build_maps_stats else None )
     
     def update_class_cnts( tot_class_cnts, new_class_cnts ):
-        for class_cd, cnt in new_class_cnts.iteritems():
+        for class_cd, cnt in new_class_cnts.items():
             tot_class_cnts[class_cd] += cnt
         return tot_class_cnts
     
@@ -487,7 +487,7 @@ def match_all_transcripts( clustered_transcripts, build_maps,
     
     # initialize storage for all group counts
     all_trans_cnts = []
-    for (chrm, strand), inner_cts in clustered_transcripts.iteritems():
+    for (chrm, strand), inner_cts in clustered_transcripts.items():
         for r_grp, t_grp in inner_cts:
             r_map, t_map, grp_trans_cnts, grp_class_cnts \
                 = match_transcripts(r_grp, t_grp, build_maps, build_maps_stats)
@@ -579,13 +579,12 @@ def compare( ref_fname, gtf_fname, build_maps, build_maps_stats,
     
     # get recall and prceision stats for all types of exons and introns
     build_element_stats(ref_genes, t_genes, output_stats)
-    if VERBOSE: print >> sys.stderr, "Finished building element stats"
+    if VERBOSE: print("Finished building element stats", file=sys.stderr)
     
     clustered_transcripts = cluster_overlapping_genes( (ref_genes, t_genes) )
     if VERBOSE:
-        n_clusters = sum(len(val) for val in clustered_transcripts.itervalues())
-        print >> sys.stderr, \
-            "Finished clustering genes into %i clusters." % n_clusters
+        n_clusters = sum(len(val) for val in clustered_transcripts.values())
+        print("Finished clustering genes into %i clusters." % n_clusters, file=sys.stderr)
     
     # calculate transcript overlaps and class match counts
     # also write map files if requested
@@ -595,7 +594,7 @@ def compare( ref_fname, gtf_fname, build_maps, build_maps_stats,
         
     if out_prefix == None:
         # dump stats to stdout
-        print str(output_stats) + '\n'
+        print(str(output_stats) + '\n')
     else:
         # prepare formated stats output
         op = [ str(output_stats), ]
@@ -607,7 +606,7 @@ def compare( ref_fname, gtf_fname, build_maps, build_maps_stats,
             stats_fp.write( "\n".join(op) + '\n' )
         
         if VERBOSE:
-            print "\n".join( op ) + '\n'
+            print("\n".join( op ) + '\n')
     
     return
 

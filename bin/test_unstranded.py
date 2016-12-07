@@ -6,7 +6,7 @@ from collections import defaultdict
 from itertools import chain
 
 import multiprocessing
-import Queue
+import queue
 
 from grit.genes import merge_adjacent_intervals
 from grit.files.gtf import load_gtf
@@ -32,13 +32,13 @@ def bin_and_cluster_reads(gene, reads, fl_dists):
         observed_cluster_cnts[i] = 0.0
         cluster_components[i] = []
         for bin in cluster:
-            expected_cluster_cnts[i] += expected_rnaseq_cnts[bin].values()[0]
+            expected_cluster_cnts[i] += list(expected_rnaseq_cnts[bin].values())[0]
             try: observed_cluster_cnts[i] += observed_rnaseq_cnts[bin]
             except: pass
             cluster_components[i].append(bin)
 
     rv = []
-    for cluster, exp_cnt in expected_cluster_cnts.items():
+    for cluster, exp_cnt in list(expected_cluster_cnts.items()):
         segments = set()
         for rd_len, read_grp, (r1_bin, r2_bin) in cluster_components[cluster]:
             segments.update(r1_bin)
@@ -58,7 +58,7 @@ def bin_and_cluster_reads(gene, reads, fl_dists):
     if len(rv) == 0:
         return [], numpy.array([]), numpy.array([])
     
-    segments, exp, obs = zip(*rv)
+    segments, exp, obs = list(zip(*rv))
     
     return segments, numpy.array(exp), numpy.array(obs)
 
@@ -67,10 +67,10 @@ def build_transcripts_lines_worker(genes_queue, reads, fl_dists, ofp):
     n_genes = genes_queue.qsize()
     while not genes_queue.empty():
         try: gene = genes_queue.get(0.1)
-        except Queue.Empty: break
-        print >> sys.stderr, "%i/%i\t%s\t%s:%s:%i-%i" %  (
+        except queue.Empty: break
+        print("%i/%i\t%s\t%s:%s:%i-%i" %  (
             n_genes-genes_queue.qsize(), n_genes,
-            gene.name.ljust(20), gene.chrm, gene.strand, gene.start, gene.stop)
+            gene.name.ljust(20), gene.chrm, gene.strand, gene.start, gene.stop), file=sys.stderr)
     
         transcrtipt_segments, exp_cnts, obs_cnts = bin_and_cluster_reads(
             gene, reads, fl_dists)

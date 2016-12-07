@@ -94,25 +94,25 @@ def initialize_reads_from_args(args):
             or any(x=='auto' for x in args.cage_read_type) )
         and None == args.reference 
         and None != args.cage_reads):
-        raise ValueError, "--reference must be set if --cage-read-type is not set or set to 'auto' (GRIT needs an annotation to determine the read type)"
+        raise ValueError("--reference must be set if --cage-read-type is not set or set to 'auto' (GRIT needs an annotation to determine the read type)")
     
     if (( args.rampage_read_type == None 
             or any(x=='auto' for x in args.rampage_read_type) )
         and None == args.reference 
         and None != args.rampage_reads):
-        raise ValueError, "--reference must be set if --rampage-read-type is not set or set to 'auto' (GRIT needs an annotation to determine the read type)"
+        raise ValueError("--reference must be set if --rampage-read-type is not set or set to 'auto' (GRIT needs an annotation to determine the read type)")
 
     if (( args.rnaseq_read_type == None 
             or any(x=='auto' for x in args.rnaseq_read_type) )
         and None == args.reference 
         and None != args.rnaseq_reads ):
-        raise ValueError, "--reference must be set if --rnaseq-read-type is not set or set to 'auto' (GRIT needs an annotation to determine the read type)"
+        raise ValueError("--reference must be set if --rnaseq-read-type is not set or set to 'auto' (GRIT needs an annotation to determine the read type)")
 
     if (( args.polya_read_type == None 
             or any(x=='auto' for x in args.polya_read_type) )
         and None == args.reference 
         and None != args.rnaseq_reads):
-        raise ValueError, "--reference must be set if --polya-read-type is not set or set to 'auto' (GRIT needs an annotation to determine the read type)"
+        raise ValueError("--reference must be set if --polya-read-type is not set or set to 'auto' (GRIT needs an annotation to determine the read type)")
 
     if args.cage_read_type == None:
         cage_strands_need_to_be_reversed = ['auto']*(
