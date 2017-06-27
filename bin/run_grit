@@ -206,7 +206,7 @@ class Samples(object):
                     'false',
                     'true',
                     args.polya_read_type,
-                    args.polya_reads.name
+                    os.path.join(self.base_path, args.polya_reads.name)
                 )
             )
         return lines
@@ -327,13 +327,12 @@ class Samples(object):
             with open(fl_dists_fname) as fl_dists_fp:
                 fl_dists = pickle.load( fl_dists_fp )
         except IOError:
-            print "CANT OPEN %s" % sample_type + ".fldist.obj"
+            print "CANT OPEN %s" % fl_dists_fname
             fl_dists = None
 
         all_reads = []
         for data in self.get_elements(
                 'rnaseq', sample_type, rep_id, include_merged=include_merged):
-
             if False and data.filename in self.mapped_reads_cache:
                 reads = self.mapped_reads_cache[data.filename]
                 reads = reads.reload()
@@ -353,8 +352,10 @@ class Samples(object):
         return all_reads
 
     def _load_promoter_reads(self, sample_type, rep_id, include_merged):
-        if config.VERBOSE: config.log_statement(
-            "Initializing promoter reads for sample '%s'." % sample_type)
+        if config.VERBOSE:
+            config.log_statement(
+                "Initializing promoter reads for sample '%s'." % sample_type
+            )
         cage_elements = self.get_elements(
             'cage', sample_type, rep_id, include_merged=include_merged )
         rampage_elements = self.get_elements(
