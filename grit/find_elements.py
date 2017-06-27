@@ -38,7 +38,7 @@ import Queue
 import networkx as nx
 
 from genes import (
-    GeneElements, SegmentBin, TranscriptBoundaryBin, 
+    GeneElements, SegmentBin, TranscriptBoundaryBin,
     find_all_gene_segments, TranscriptElement
 )
 
@@ -425,34 +425,34 @@ def find_transcribed_fragments_covering_region(
                         complete_paths.append((curr_path, curr_path_len))
                         continue
                     assert segment_graph.node[child]['type'] == 'segment'
-                    
+
                     if side == 'BEFORE':
                         new_path = [child,] + curr_path
                     else:
                         new_path = curr_path + [child,]
-                    
-                    new_path_len = ( 
+
+                    new_path_len = (
                         segment_graph.node[child]['bin'].length()+curr_path_len)
                     if new_path_len >= max_frag_len:
                         complete_paths.append((new_path, new_path_len))
                     else:
                         partial_paths.append((new_path, new_path_len))
-        
+
         if side == 'BEFORE': return [x[:-1] for x, x_len in complete_paths]
         else: return [x[1:] for x, x_len in complete_paths]
-    
-    def build_genome_segments_from_path(segment_indexes):        
+
+    def build_genome_segments_from_path(segment_indexes):
         merged_intervals = merge_adjacent_intervals(
-            zip(segment_indexes, segment_indexes), 
+            zip(segment_indexes, segment_indexes),
             max_merge_distance=0)
         coords = []
         for start, stop in merged_intervals:
             coords.append([genes_graph.node[start]['bin'].start,
                            genes_graph.node[stop+1]['bin'].stop,])
         return coords
-        
+
     complete_before_paths = build_neighbor_paths('BEFORE')
-    complete_after_paths = build_neighbor_paths('AFTER')    
+    complete_after_paths = build_neighbor_paths('AFTER')
     transcripts = []
     for bp in complete_before_paths:
         for ap in complete_after_paths:
@@ -460,10 +460,10 @@ def find_transcribed_fragments_covering_region(
             #assert segments == sorted(segments), str(segments)
             if use_genome_coords:
                 before_trim_len = max(
-                    0, sum(genes_graph.node[i]['node'].length() 
+                    0, sum(genes_graph.node[i]['node'].length()
                            for i in bp) - max_frag_len)
                 after_trim_len = max(
-                    0, sum(genes_graph.node[i]['node'].length() 
+                    0, sum(genes_graph.node[i]['node'].length()
                            for i in ap) - max_frag_len)
                 segments = build_genome_segments_from_path(segments)
                 segments[0][0] = segments[0][0] + before_trim_len
@@ -476,13 +476,13 @@ def extract_jns_and_paired_reads_in_gene(gene, reads):
     pair2_reads = defaultdict(list)
     plus_jns = defaultdict(int)
     minus_jns = defaultdict(int)
-    
+
     for region in gene.regions:
-        ( r_pair1_reads, r_pair2_reads, r_plus_jns, r_minus_jns, 
+        ( r_pair1_reads, r_pair2_reads, r_plus_jns, r_minus_jns, _, _
           ) = extract_jns_and_reads_in_region(
             (gene.chrm, gene.strand, region.start, region.stop), reads)
-        for jn, cnt in r_plus_jns.iteritems(): 
-            plus_jns[jn] += cnt 
+        for jn, cnt in r_plus_jns.iteritems():
+            plus_jns[jn] += cnt
         for jn, cnt in r_minus_jns.iteritems(): 
             minus_jns[jn] += cnt 
         for qname, read_mappings in r_pair1_reads.iteritems(): 
@@ -724,7 +724,7 @@ def build_splice_graph_and_binned_reads_in_gene(
             assert segment_bnds[bin_i] == tss_start
             if gene.strand == '-': bin_i -= 1
             splice_graph.add_edge(node_id, bin_i, type='tss', bin=None)
-    
+
     for i, (tes_bin, tes_segments) in enumerate(tes_segment_map.iteritems()):
         node_id = "TES_%i"% i
         splice_graph.add_node( node_id, type='TES', bin=tes_bin)
@@ -733,32 +733,40 @@ def build_splice_graph_and_binned_reads_in_gene(
             assert segment_bnds[bin_i] == tes_start
             if gene.strand == '+': bin_i -= 1
             splice_graph.add_edge(bin_i, node_id, type='tes', bin=None)
-    
+
     return splice_graph, None
-    
-    config.log_statement( 
+
+    config.log_statement(
         "Binning reads in Chrm %s Strand %s Pos %i-%i" %
         (gene.chrm, gene.strand, gene.start, gene.stop) )
-    
+
     # pre-calculate the expected and observed counts
-    binned_reads = f_matrix.bin_rnaseq_reads( 
-        rnaseq_reads, gene.chrm, gene.strand, segment_bnds, 
+    binned_reads = f_matrix.bin_rnaseq_reads(
+        rnaseq_reads, gene.chrm, gene.strand, segment_bnds,
         include_read_type=False)
-    
+
     return splice_graph, binned_reads
 
-def fast_quantify_segment_expression(gene, splice_graph, 
-                                     rnaseq_reads, cage_reads, polya_reads):
-    config.log_statement( 
+def fast_quantify_segment_expression(
+        gene,
+        splice_graph,
+        rnaseq_reads,
+        cage_reads,
+        polya_reads):
+    config.log_statement(
         "FAST Quantifying segment expression in Chrm %s Strand %s Pos %i-%i" %
-        (gene.chrm, gene.strand, gene.start, gene.stop) )
+        (gene.chrm, gene.strand, gene.start, gene.stop)
+    )
 
     quantiles = [0.01, 0.5, 1-.01]
-    avg_read_len = 0
-    for ((rg, (r1_len,r2_len)), (fl_dist, marginal_frac) 
+    avg_read_len = 0.0
+    for ((rg, (r1_len, r2_len)), (fl_dist, marginal_frac)
              ) in rnaseq_reads.fl_dists.iteritems():
-        avg_read_len += marginal_frac*(r1_len + r2_len)/2
-    
+        config.log_statement(str((marginal_frac, r1_len, r2_len, fl_dist, marginal_frac)))
+        print marginal_frac, r1_len, r2_len
+        # XXX - FIXME
+        avg_read_len += marginal_frac*(r1_len[0] + r2_len[1])/2.0
+
     rnaseq_cov = gene.find_coverage(rnaseq_reads)
     for element_i, data in splice_graph.nodes(data=True):
         #element = splice_graph.nodes(element_i)
@@ -768,8 +776,8 @@ def fast_quantify_segment_expression(gene, splice_graph,
                               :element['bin'].stop-gene.start+1]
         n_reads_in_segment = 0 if len(coverage) == 0 else numpy.median(coverage)
         fpkms = 1e6*(1000./element['bin'].length())*beta.ppf(
-            quantiles, 
-            n_reads_in_segment+1e-6, 
+            quantiles,
+            n_reads_in_segment+1e-6,
             rnaseq_reads.num_reads-n_reads_in_segment+1e-6)
         element['bin'].set_expression(*fpkms)
 
