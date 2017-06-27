@@ -291,8 +291,10 @@ def extract_jns_and_reads_in_region(
 
     jn_reads = {'+': defaultdict(int), '-': defaultdict(int)}
 
-    cov = { '+': numpy.zeros(reg_len, dtype=float),
-            '-': numpy.zeros(reg_len, dtype=float) }
+    cov = {
+        '+': numpy.zeros(reg_len, dtype=float),
+        '-': numpy.zeros(reg_len, dtype=float)
+    }
 
     pair1_reads = defaultdict(list)
     pair2_reads = defaultdict(list)
@@ -303,7 +305,8 @@ def extract_jns_and_reads_in_region(
     for n_obs_reads, (read, rd_strand) in enumerate(reads.iter_reads_and_strand(
             chrm, r_start, r_stop+1)):
         # break if we've surpassed the read
-        if read.pos > r_stop: break
+        if read.pos > r_stop:
+            break
 
         # -probability that the read originated in this location
         # if we can't find it, assume that it's uniform over alternate
@@ -317,10 +320,12 @@ def extract_jns_and_reads_in_region(
             # skip jns whose start does not overlap this region, we subtract one
             # because the start refers to the first covered intron base, and
             # we are talking about covered regions
-            if jn[0]-1 < r_start or jn[0]-1 > r_stop: continue
+            if jn[0]-1 < r_start or jn[0]-1 > r_stop:
+                continue
             jn_reads[rd_strand][jn] += 1
         # if this is an anti-strand read, then we only care about the jns
-        if strand != '.' and rd_strand != strand: continue
+        if strand != '.' and rd_strand != strand:
+            continue
 
         # extract the information we care about:
         # -strand, alread have this
@@ -329,11 +334,14 @@ def extract_jns_and_reads_in_region(
         # -read length
         read_len = read.inferred_length
         # -read group
-        try: read_grp = read.opt('RG')
-        except KeyError: read_grp = 'mean'
+        try:
+            read_grp = read.opt('RG')
+        except KeyError:
+            read_grp = 'mean'
 
         num_unique_reads += (
-            map_prb/2. if read.is_paired else map_prb )
+            map_prb/2. if read.is_paired else map_prb
+        )
 
         for start, stop in cov_regions:
             # if start - r_start > reg_len, then it doesn't do
@@ -358,9 +366,14 @@ def extract_jns_and_reads_in_region(
         #if r_stop - r_start > 1000 and n_obs_reads > 1e5:
         #    raise TooManyReadsError, "Too many reads"
 
-    return ( pair1_reads, pair2_reads,
-             jn_reads['+'], jn_reads['-'],
-             cov, num_unique_reads )
+    return (
+        pair1_reads,
+        pair2_reads,
+        jn_reads['+'],
+        jn_reads['-'],
+        cov,
+        num_unique_reads
+    )
 
 def calc_frag_len_from_read_data(read1_data, read2_data):
     frag_start = min(min(read1_data.cov_regions[0]),
