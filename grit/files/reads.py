@@ -957,7 +957,7 @@ class PolyAReads(Reads):
         if reverse_read_strand in ('auto', None):
             if ref_genes in([], None):
                 raise ValueError, "Determining reverse_read_strand requires reference genes"
-            reverse_read_strand_params = Reads.determine_read_strand_param(
+            reverse_read_strand_params = determine_read_strand_params(
                 self, ref_genes, pairs_are_opp_strand, 'tes_exon',
                 300, 50 )
             assert 'stranded' in reverse_read_strand_params
