@@ -50,7 +50,7 @@ from grit.elements import RefElementsToInclude
 
 import grit.config as config
 
-ControlFileEntry = namedtuple(
+BaseControlFileEntry = namedtuple(
     'ControlFileEntry', [
         'sample_type',
         'rep_id',
@@ -61,6 +61,13 @@ ControlFileEntry = namedtuple(
         'filename'
     ]
 )
+
+class ControlFileEntry(BaseControlFileEntry):
+    def __new__(cls, *args):
+        args = list(args)
+        args[-1] = os.path.abspath(args[-1])
+        assert os.path.exists(args[-1])
+        return BaseControlFileEntry(*args)
 
 def write_gene_to_gtf( ofp, gene ):
     lines = []
@@ -170,7 +177,7 @@ class Samples(object):
                 'true',
                 'true',
                 args.rnaseq_read_type,
-                os.path.join(self.base_path, args.rnaseq_reads.name)
+                args.rnaseq_reads.name
             )
         )
         if args.cage_reads != None:
@@ -182,7 +189,7 @@ class Samples(object):
                     'false',
                     'true',
                     args.cage_read_type,
-                    os.path.join(self.base_path, args.cage_reads.name)
+                    self.base_path, args.cage_reads.name
                 )
             )
         if args.rampage_reads != None:
@@ -194,7 +201,7 @@ class Samples(object):
                     'true',
                     'true',
                     args.rampage_read_type,
-                    os.path.join(self.base_path, args.rampage_reads.name)
+                    self.base_path, args.rampage_reads.name
                 )
             )
         if args.polya_reads != None:
@@ -206,7 +213,7 @@ class Samples(object):
                     'false',
                     'true',
                     args.polya_read_type,
-                    os.path.join(self.base_path, args.polya_reads.name)
+                    self.base_path, args.polya_reads.name
                 )
             )
         return lines
