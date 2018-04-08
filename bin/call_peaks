@@ -19,7 +19,8 @@ You should have received a copy of the GNU General Public License
 along with GRIT.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-import os, sys
+import os
+import sys
 from collections import namedtuple
 
 import gzip
@@ -28,11 +29,12 @@ from grit.lib.multiprocessing_utils import ProcessSafeOPStream, fork_and_wait
 from grit import config
 
 from grit.files.reads import (
-    CAGEReads, RAMPAGEReads, RNAseqReads, PolyAReads, 
+    CAGEReads, RAMPAGEReads, RNAseqReads, PolyAReads,
     get_contigs_and_lens, fix_chrm_name_for_ucsc, clean_chr_name)
 from grit.files.gtf import load_gtf
 from grit.genes import (
-    find_all_gene_segments, get_contigs_and_lens, load_gene_bndry_bins )
+    find_all_gene_segments, get_contigs_and_lens, load_gene_bndry_bins
+)
 from grit.elements import RefElementsToInclude
 
 from grit import peaks
@@ -51,16 +53,16 @@ def shift_and_write_narrow_peak(region, peaks, signal_cov, ofp):
     track name=$NAME type=narrowPeak
     chr4    89932   89933   .    0    +    2    -1    -1    -1
    """
-    if config.FIX_CHRM_NAMES_FOR_UCSC: 
+    if config.FIX_CHRM_NAMES_FOR_UCSC:
         chrm = fix_chrm_name_for_ucsc(region['chrm'])
     else:
         chrm = region['chrm']
     for start, stop, value in peaks:
         ofp.write( "\t".join(
-                 ( chrm, str(region['start'] + start), 
-                   str(region['start'] + stop + 1), 
-                   ".", "1000", region['strand'], 
-                   "%e" % value, 
+                 ( chrm, str(region['start'] + start),
+                   str(region['start'] + stop + 1),
+                   ".", "1000", region['strand'],
+                   "%e" % value,
                    "-1", "-1", "-1")) + "\n")
     return
 
@@ -70,7 +72,7 @@ def shift_and_write_bed(
     track name=$NAME type=bed
     chr4    89932   89933   .    0    +
     """
-    if config.FIX_CHRM_NAMES_FOR_UCSC: 
+    if config.FIX_CHRM_NAMES_FOR_UCSC:
         chrm = fix_chrm_name_for_ucsc(region['chrm'])
     else:
         chrm = region['chrm']
@@ -79,7 +81,7 @@ def shift_and_write_bed(
         gene_id = region['gene_id']
     else:
         gene_id = "{}_{}_{}_{}".format(
-            chrm, strand_symbol_to_name[region['strand']], 
+            chrm, strand_symbol_to_name[region['strand']],
             region['start'], region['stop'], )
 
     if 'gene_name' in region:
@@ -93,12 +95,12 @@ def shift_and_write_bed(
         score = "1000"
         tss_id = "TSS_%s_pk%i" % (gene_id, tss_i + 1)
         data = [ chrm, start, stop, tss_id, score, region['strand'] ]
-        if include_extra_fields: 
+        if include_extra_fields is True:
             peak_cov = signal_cov[rel_start:rel_stop+1]
-            data.extend((str(count), gene_id, gene_name, tss_id, 
+            data.extend((str(count), gene_id, gene_name, tss_id,
                          ",".join(str(x) for x in peak_cov)))
         ofp.write( "\t".join(data) + "\n")
-                 
+
     return
 
 
@@ -108,7 +110,7 @@ def shift_and_write_gff(region, peaks, signal_cov, ofp):
     chr1    GRIT  TSS    11869   14409   .       +       .       \
         gene_id 'ENSG00000223972.5'; gene_name 'DDX11L1'; peak_cov '1,1,...0,3;'
    """
-    if config.FIX_CHRM_NAMES_FOR_UCSC: 
+    if config.FIX_CHRM_NAMES_FOR_UCSC:
         chrm = fix_chrm_name_for_ucsc(region['chrm'])
     else:
         chrm = region['chrm']
@@ -116,7 +118,7 @@ def shift_and_write_gff(region, peaks, signal_cov, ofp):
     format_str += "\t{strand}\t.\tgene_id '{gene_id}'; gene_name '{gene_name}';"
     format_str += " tss_id '{tss_id}'; peak_cov '{peak_cov}';"
     gene_id = "{}_{}_{}_{}".format(
-        chrm, strand_symbol_to_name[region['strand']], 
+        chrm, strand_symbol_to_name[region['strand']],
         region['start'], region['stop'], )
     gene_name = gene_id
 
@@ -133,13 +135,12 @@ def shift_and_write_gff(region, peaks, signal_cov, ofp):
             stop=stop,
             score=int(value),
             strand=region['strand'],
-            gene_id = gene_id,
-            gene_name = gene_name,
+            gene_id=gene_id,
+            gene_name=gene_name,
             tss_id = tss_id,
             peak_cov = ",".join(("%i" % x for x in peak_cov))
-                                 
         ) + "\n")
-    
+
     return
 
 def shift_and_write(region, peaks, signal_cov, ofp):
@@ -152,25 +153,33 @@ def process_genes(
     rnaseq_reads = rnaseq_reads.reload()
     num_genes = genes_queue.qsize()
     while True:
-        try: gene = genes_queue.get(timeout=1.0)
-        except Queue.Empty: break
-        
-        if config.VERBOSE: config.log_statement(
-                "Processing %s (%i\tremain)" % (
-                    str(gene).ljust(30), genes_queue.qsize()))
+        try:
+            gene = genes_queue.get(timeout=1.0)
+        except Queue.Empty:
+            break
 
-        reads_type = ('polya' 
-                      if isinstance(distal_reads, PolyAReads) 
+        if config.VERBOSE:
+            config.log_statement(
+                "Processing %s (%i\tremain)" % (
+                    str(gene).ljust(30), genes_queue.qsize())
+            )
+
+        reads_type = ('polya'
+                      if isinstance(distal_reads, PolyAReads)
                       else 'promoter')
         signal_cov, control_cov = peaks.estimate_read_and_control_cov_in_gene(
             gene, distal_reads, reads_type, rnaseq_reads )
 
         called_peaks = peaks.call_peaks(
-            signal_cov, control_cov, reads_type, gene, 
+            signal_cov, control_cov, reads_type, gene,
             **call_peaks_tuning_params)
 
-        region = {'chrm': gene.chrm, 'strand':gene.strand, 
-                  'start':gene.start, 'stop':gene.stop}
+        region = {
+            'chrm': gene.chrm,
+            'strand':gene.strand,
+            'start':gene.start,
+            'stop':gene.stop
+        }
         shift_and_write(region, called_peaks, signal_cov, ofp)
         if BED_ofp != None:
             shift_and_write_bed(region, called_peaks, BED_ofp, signal_cov, True)
@@ -178,7 +187,7 @@ def process_genes(
 
 def parse_arguments():
     allowed_assays = ['cage', 'rampage', 'rnaseq', 'polya']
-    
+
     import argparse
     parser = argparse.ArgumentParser(
         description='Call peaks from a RAMPAGE/CAGE experiment and matching RNASeq.')
@@ -189,57 +198,60 @@ def parse_arguments():
         else:
             return open(fname, 'r')
 
-    parser.add_argument( '--reference', type=PossiblyGzippedFile, 
-        help='GTF file containing transcripts to extract reference elements to use.')
-    parser.add_argument( '--use-reference-genes', 
-                         default=False, action='store_true', 
+    parser.add_argument(
+        '--reference',
+        type=PossiblyGzippedFile,
+        help='GTF file containing transcripts to extract reference elements to use.'
+    )
+    parser.add_argument( '--use-reference-genes',
+                         default=False, action='store_true',
         help='Use reference gene boundaries.')
-    
-    parser.add_argument( '--rnaseq-reads', type=argparse.FileType('rb'), 
+
+    parser.add_argument( '--rnaseq-reads', type=argparse.FileType('rb'),
         help='BAM file containing mapped RNAseq reads.')
-    parser.add_argument( '--rnaseq-read-type', 
+    parser.add_argument( '--rnaseq-read-type',
                          choices=["forward", "backward", "auto"],
                          default='auto',
         help="If 'forward' then the first RNAseq read in a pair that maps to the genome without being reverse complemented is assumed to be on the correct strand. default: auto")
     parser.add_argument( '--num-mapped-rnaseq-reads', type=int,
-        help="The total number of mapped rnaseq reads ( needed to calculate the FPKM ). This only needs to be set if it isn't found by a call to samtools idxstats." )
-    
+        help="The total number of mapped rnaseq reads ( needed to calculate the FPKM ). This only needs to be set if you're limiting analysis to a specific region and so GRIT doesn't know about all of the reads." )
+
     parser.add_argument( '--cage-reads', type=argparse.FileType('rb'),
         help='BAM file containing mapped cage reads.')
-    parser.add_argument( '--cage-read-type', 
+    parser.add_argument( '--cage-read-type',
                          choices=["forward", "backward", "auto"],
                          default='auto',
         help="If 'forward' then the reads that maps to the genome without being reverse complemented are assumed to be on the '+'. default: auto")
 
     parser.add_argument( '--rampage-reads', type=argparse.FileType('rb'),
         help='BAM file containing mapped rampage reads.')
-    parser.add_argument( '--rampage-read-type', 
+    parser.add_argument( '--rampage-read-type',
                          choices=["forward", "backward", "auto"],
                          default='auto',
         help="If 'forward' then the first read in a pair that maps to the genome without being reverse complemented are assumed to be on the '+' strand. default: auto")
 
     parser.add_argument( '--passeq-reads', type=argparse.FileType('rb'),
         help='BAM file containing mapped PASSeq reads.')
-    parser.add_argument( '--passeq-read-type', 
+    parser.add_argument( '--passeq-read-type',
                          choices=["forward", "backward", "auto"],
                          default='auto',
         help="If 'forward' then the first read in a pair that maps to the genome without being reverse complemented are assumed to be on the '+' strand. default: auto")
-    
-    parser.add_argument( '--outfname', '-o', 
+
+    parser.add_argument( '--outfname', '-o',
                          help='Output file name. (default stdout)')
     parser.add_argument( '--outfname-type', default="gff",
                          choices=["narrowPeak", "gff"],
                          help='Output filename type. (default gff)')
-    parser.add_argument( '--gene-regions-ofname', 
+    parser.add_argument( '--gene-regions-ofname',
                          help='Output bed file name to write gene regions to. (default: do not save gene regions)')
-    parser.add_argument( '--bed-peaks-ofname', 
+    parser.add_argument( '--bed-peaks-ofname',
                          help='Output bed peaks filename - this file will be written is in addition to the output from --ofname.')
-    parser.add_argument( '--annotation-quantifications-ofname', 
+    parser.add_argument( '--annotation-quantifications-ofname',
                          help='Output filename for annotation based quantifications - this file contains estimates of tss quantifications on reference TSSs.')
-    
-    parser.add_argument( '--ucsc', default=False, action='store_true', 
+
+    parser.add_argument( '--ucsc', default=False, action='store_true',
                          help='Format the contig names to work with the UCSC genome browser.')
-    parser.add_argument( '--region', 
+    parser.add_argument( '--region',
         help='Only use the specified region (contig_name:start-stop).')
 
     parser.add_argument( '--min-merge-distance', default=50, type=int,
@@ -250,23 +262,23 @@ def parse_arguments():
                          help='The fraction of reads that will be trimmed from merged reads.')
     parser.add_argument( '--exp-filter-fraction', default=0.10, type=float,
                          help='Peaks with a relative expression fraction under this amount will be filtered.')
-        
-    parser.add_argument( '--verbose', '-v', default=False, action='store_true', 
+
+    parser.add_argument( '--verbose', '-v', default=False, action='store_true',
                          help='Whether or not to print status information.')
-    parser.add_argument( '--quiet', default=False, action='store_true', 
+    parser.add_argument( '--quiet', default=False, action='store_true',
                          help='Do not print status information.')
     parser.add_argument( '--threads', '-t', default=1, type=int,
                          help='The number of threads to run.')
 
-    parser.add_argument('--version', action='version', 
+    parser.add_argument('--version', action='version',
                         version='GRIT call_peaks %s' % grit.__version__)
-    
+
     args = parser.parse_args()
-    
+
     config.NTHREADS = args.threads
 
     config.VERBOSE = args.verbose
-    
+
     #assert args.outfname != None, "--outfname must be set if --verbose is set"
     from grit.lib.logging import Logger
     log_ofstream = open( "log.txt", "a" )
@@ -275,26 +287,26 @@ def parse_arguments():
         use_ncurses=config.VERBOSE,
         log_ofstream=log_ofstream)
     config.log_statement = log_statement
-        
+
     config.FIX_CHRM_NAMES_FOR_UCSC = args.ucsc
 
     call_peaks_tuning_params = {
-        'alpha': 1e-2, 
-        'min_noise_frac': 0.05, 
-        'min_merge_size': args.min_merge_distance, 
+        'alpha': 1e-2,
+        'min_noise_frac': 0.05,
+        'min_merge_size': args.min_merge_distance,
         'min_rel_merge_size': args.min_relative_merge_distance,
         'min_rd_cnt': 5,
-        'min_peak_size': 5, 
+        'min_peak_size': 5,
         'max_peak_size': 1000,
         'trim_fraction': args.trim_fraction,
-        'max_exp_sum_fraction': args.exp_filter_fraction, 
+        'max_exp_sum_fraction': args.exp_filter_fraction,
         'max_exp_mean_cvg_fraction': args.exp_filter_fraction/10
     }
-    
+
     if args.reference != None:
         if config.VERBOSE:
             log_statement("Loading reference genes")
-        ref_genes = load_gtf(args.reference) 
+        ref_genes = load_gtf(args.reference)
         if args.use_reference_genes:
             ref_elements_to_include = RefElementsToInclude(
                 True, False, False, False, False, False, exons=False )
@@ -309,42 +321,44 @@ def parse_arguments():
         ref_genes = None
         ref_elements_to_include = RefElementsToInclude(
             False, False, False, False, False, False, False )
-    
+
     if args.region != None:
         region_data = args.region.strip().split(":")
         contig = clean_chr_name(region_data[0])
-        try: 
+        try:
             start, stop = [int(x) for x in region_data[1].split("-")]
         except IndexError:
             start, stop = 0, 1e100
         args.region = ( contig, (start, stop) )
-    
+
     if args.cage_reads != None:
-        assert args.rampage_reads == None and args.passeq_reads == None, \
+        assert args.rampage_reads is None and args.passeq_reads is None, \
             "Can not use RAMPAGE with CAGE or PASSeq reads"
-        if config.VERBOSE: config.log_statement( "Loading %s" % args.cage_reads.name )
+        if config.VERBOSE is True:
+            config.log_statement( "Loading %s" % args.cage_reads.name )
         rev_reads = {'forward':False, 'backward':True, 'auto': None}[
             args.cage_read_type]
         distal_reads = CAGEReads(args.cage_reads.name, "rb").init(
             reverse_read_strand=rev_reads, ref_genes=ref_genes)
-    elif args.rampage_reads != None:
-        assert args.cage_reads == None and args.passeq_reads == None, \
+    elif args.rampage_reads is not None:
+        assert args.cage_reads is None and args.passeq_reads is None, \
             "Can not use CAGE with RAMPAGE/PASSeq reads"
-        if config.VERBOSE: 
-            config.log_statement( "Loading %s" % args.rampage_reads.name )
+        if config.VERBOSE:
+            config.log_statement("Loading %s" % args.rampage_reads.name)
         rev_reads = {'forward':False, 'backward':True, 'auto': None}[
             args.rampage_read_type]
         distal_reads = RAMPAGEReads(args.rampage_reads.name, "rb").init(
-            reverse_read_strand=rev_reads, ref_genes=ref_genes)
+            reverse_read_strand=rev_reads, ref_genes=ref_genes
+        )
     elif args.passeq_reads != None:
-        assert args.cage_reads == None and args.rampage_reads == None, \
+        assert args.cage_reads is None and args.rampage_reads is None, \
             "Can not use PASSeq with CAGE/RAMPAGE reads"
-        if config.VERBOSE: 
-            config.log_statement( "Loading %s" % args.passeq_reads.name )
+        if config.VERBOSE:
+            config.log_statement("Loading %s" % args.passeq_reads.name)
         rev_reads = {'forward':False, 'backward':True, 'auto': None}[
             args.passeq_read_type]
         distal_reads = PolyAReads(args.passeq_reads.name, "rb").init(
-            reverse_read_strand=rev_reads, 
+            reverse_read_strand=rev_reads,
             pairs_are_opp_strand=True,
             ref_genes=ref_genes)
     else:
@@ -358,13 +372,17 @@ def parse_arguments():
         reverse_read_strand=rev_reads, ref_genes=ref_genes)
     assert rnaseq_reads.reads_are_stranded, "Calling peaks requires stranded RNAseq reads."
 
-    output_stream = ProcessSafeOPStream( open(args.outfname, "w") 
-                                         if args.outfname != None
-                                         else sys.stdout )
-    track_name = ( 
-        "peaks" if args.outfname == None else output_stream.name.replace(
-            "." + args.outfname_type, "") )
-    
+    output_stream = ProcessSafeOPStream(
+        open(args.outfname, "w")
+        if args.outfname != None
+        else sys.stdout
+    )
+    track_name = (
+        "peaks" if args.outfname is None else output_stream.name.replace(
+            "." + args.outfname_type, ""
+        )
+    )
+
     global shift_and_write
     if args.outfname_type == "narrowPeak":
         shift_and_write = shift_and_write_narrow_peak
@@ -372,46 +390,44 @@ def parse_arguments():
         shift_and_write = shift_and_write_gff
     else:
         assert False, "Unrecognized outfname_type '%s'" % args.outfname_type
-    
+
     track_header = "track name=%s type=%s" % (track_name, args.outfname_type)
     print >> output_stream, track_header
-    
+
     global BED_ofp
     if args.bed_peaks_ofname != None:
         BED_ofp = ProcessSafeOPStream(open(args.bed_peaks_ofname, "w"))
         track_header = "track name=%s" % track_name
         print >> BED_ofp, track_header
-        
-    
 
-    
-    return ( ref_genes, ref_elements_to_include, 
-             distal_reads, rnaseq_reads, 
-             output_stream, 
+
+    return ( ref_genes, ref_elements_to_include,
+             distal_reads, rnaseq_reads,
+             output_stream,
              args.gene_regions_ofname,
              args.annotation_quantifications_ofname,
              args.region,
              call_peaks_tuning_params )
 
 def main():
-    ( ref_genes, ref_elements_to_include, 
-      distal_reads, rnaseq_reads, 
+    ( ref_genes, ref_elements_to_include,
+      distal_reads, rnaseq_reads,
       output_stream, gene_regions_ofname,
       annotation_quantification_ofname,
       region_to_use,
       call_peaks_tuning_params
-      ) = parse_arguments()
+    ) = parse_arguments()
     try:
-        contigs, contig_lens = get_contigs_and_lens( 
+        contigs, contig_lens = get_contigs_and_lens(
             [distal_reads, rnaseq_reads] )
         contig_lens = dict((ctg, ctg_len)
                            for ctg, ctg_len in zip(contigs, contig_lens))
-        
+
         # if we are supposed to quantify the annotated promoters
         if annotation_quantification_ofname != None:
             with open(annotation_quantification_ofname, 'w') as ofp:
                 for gene in ref_genes:
-                    gene_region = {'chrm': gene.chrm, 'strand': gene.strand, 
+                    gene_region = {'chrm': gene.chrm, 'strand': gene.strand,
                                    'start': gene.start, 'stop': gene.stop,
                                    'gene_id': gene.id, 'gene_name': gene.name}
                     promoters = gene.extract_elements()['promoter']
@@ -420,54 +436,57 @@ def main():
                     peaks = []
                     for start, stop in promoters:
                         peaks.append(
-                            [start-gene.start, stop-gene.start, 
+                            [start-gene.start, stop-gene.start,
                              signal_cov[start-gene.start:stop-gene.start].sum()]
                         )
                     shift_and_write_bed(
                         gene_region, peaks, ofp, signal_cov, True)
-        
+
         # if we are supposed to use the annotation genes
         gene_segments = []
-        if ref_elements_to_include.genes == True:
+        if ref_elements_to_include.genes is True:
             for contig, contig_len in contig_lens.iteritems():
                 for strand in '+-':
                     contig_gene_bndry_bins = load_gene_bndry_bins(
                         ref_genes, contig, strand, contig_len)
                     gene_segments.extend( contig_gene_bndry_bins )
         else:
-            gene_segments, fl_dists, read_counts = find_all_gene_segments( 
-                rnaseq_reads, 
-                (distal_reads 
+            gene_segments, fl_dists, read_counts = find_all_gene_segments(
+                rnaseq_reads,
+                (distal_reads
                  if isinstance(distal_reads, RAMPAGEReads)
-                 or isinstance(distal_reads, CAGEReads) 
-                 else None ),
-                (distal_reads 
+                 or isinstance(distal_reads, CAGEReads)
+                 else None),
+                (distal_reads
                  if isinstance(distal_reads, PolyAReads)
-                 else None ),
-                ref_genes, ref_elements_to_include, 
+                 else None),
+                ref_genes,
+                ref_elements_to_include,
                 region_to_use=region_to_use)
 
         if gene_regions_ofname != None:
             with open(gene_regions_ofname, "w") as genes_ofp:
                 for gene in gene_segments:
                     gene.write_elements_bed(genes_ofp)
-        
+
         queue = multiprocessing.Queue()
         queue.cancel_join_thread()
         for gene in gene_segments:
             queue.put(gene)
 
-        args = [queue, distal_reads, rnaseq_reads, output_stream, 
-                call_peaks_tuning_params]
+        args = [queue, distal_reads, rnaseq_reads, output_stream, call_peaks_tuning_params]
         fork_and_wait(config.NTHREADS, process_genes, args)
     finally:
         if output_stream != sys.stdout:
             output_stream.close()
-    
+
     return
 
 if __name__ == '__main__':
-    try: main()
-    finally: 
-        try:config.log_statement.close()
-        except: pass
+    try:
+        main()
+    finally:
+        try:
+            config.log_statement.close()
+        except:
+            pass
