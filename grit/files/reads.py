@@ -603,7 +603,6 @@ class Reads( pysam.Samfile ):
             self.fetch( self.references[0], 10000 )
         except ValueError as inst:
             raise ValueError("BAM Files must be indexed.")
-        self.seek(0)
 
         return self
 

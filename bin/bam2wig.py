@@ -98,7 +98,7 @@ def write_array_to_opstream(ofp, buffer, buff_start,
         line = "%s\t%i\t%i\t%.2f\n" % (
             chrm, buff_start+prev_pos, buff_start+pos+1, write_val )
         ofp.write(line.encode())
-    
+
     return
 
 
@@ -111,52 +111,57 @@ def build_chrm_sizes_file(reads):
         line = fix_chrm_name(chrm) + "   " + str(chrm_length) + "\n"
         chrm_sizes_file.write(line.encode())
     chrm_sizes_file.flush()
-    
+
     return chrm_sizes_file
 
 def generate_wiggle(reads, ofps, num_threads=1, contig=None ):
     all_args = []
     for chrm_length, chrm  in sorted(zip(reads.lengths, reads.references)):
         strands = ['+', '-'] if len(ofps) == 2 else [None,]
-        # skip regions not in the specified contig, if requested 
-        if contig != None and clean_chr_name(chrm) != clean_chr_name(contig): 
+        # skip regions not in the specified contig, if requested
+        if contig != None and clean_chr_name(chrm) != clean_chr_name(contig):
             continue
         for strand in strands:
             ofp = ofps[strand]
-            assert (ofp, reads, chrm, chrm_length, strand ) not in all_args
-            all_args.append((ofp, reads, chrm, chrm_length, strand ))
-    
-    if num_threads == 1:
-        for args in reversed(all_args):
-            populate_cvg_array_for_contig( *args )
-    else:
+            assert (ofp, reads, chrm, chrm_length, strand) not in all_args
+            all_args.append((ofp, reads, chrm, chrm_length, strand))
+
+    if num_threads > 1:
         ps = [None]*num_threads
-        while len( all_args ) > 0:
+        # while there all still contigs to process, and the largest contig is
+        # still bigger than 100kb, then spawn processing threads
+        while len(all_args) > 0 and all_args[-1][3] > 100000:
             for i in range(num_threads):
                 if ps[i] == None or not ps[i].is_alive():
-                    ps[i] = multiprocessing.Process( 
-                        target=populate_cvg_array_for_contig, 
-                        args=all_args.pop() )
+                    ps[i] = multiprocessing.Process(
+                        target=populate_cvg_array_for_contig,
+                        args=all_args.pop()
+                    )
                     ps[i].start()
                     break
-            time.sleep( 0.1 )
+            time.sleep(0.1)
 
         for p in ps:
             if p != None: p.join()
-    
+
+    # finish processing any contigs that remain (all of them for the single threaded case,
+    # and the small ones in the multi threaded case)
+    for args in reversed(all_args):
+        populate_cvg_array_for_contig(*args)
+
     for fp in list(ofps.values()): fp.close()
-    
+
     return
 
 def parse_arguments():
     allowed_assays = ['cage', 'rampage', 'rnaseq', 'polya', 'atacseq', 'chipseq', 'dnase']
-    
+
     import argparse
     parser = argparse.ArgumentParser(
         description='Get coverage bedgraphs from aligned reads.')
     parser.add_argument( '--mapped-reads-fname', required=True,
                          help='BAM or SAM file(s) containing the mapped reads.')
-    parser.add_argument( '--out-fname-prefix', '-o', 
+    parser.add_argument( '--out-fname-prefix', '-o',
                          help='Output file(s) will be bigWig')
     parser.add_argument( '--assay', '-a', required=True, 
                          choices=allowed_assays, help='The assay type')
@@ -228,9 +233,9 @@ def build_bigwig_from_bedgraph(bedgraph_fp, chrm_sizes_file, op_fname):
     return
 
 def main():
-    ( assay, stranded, reads_fname, op_prefix, build_bigwig, 
+    ( assay, stranded, reads_fname, op_prefix, build_bigwig,
       reverse_read_strand, read_filter, region, num_threads) = parse_arguments()
-    
+
     # initialize the assay specific options
     if assay == 'cage':
         reads = CAGEReads( reads_fname, "rb" )
