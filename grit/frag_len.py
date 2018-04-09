@@ -94,11 +94,7 @@ class FlDist( object ):
         assert False
 
     def mean_fragment_length(self):
-        return float(
-            self.fl_density*numpy.arange(
-                self.fl_min, self.fl_max+1
-            ).sum()
-        )
+        return float((self.fl_density*numpy.arange(self.fl_min, self.fl_max+1)).sum())
 
     def plot( self ):
         import matplotlib
@@ -547,13 +543,8 @@ def estimate_normal_fl_dist_from_reads(reads, max_num_fragments_to_sample=500):
 
     if len( frag_lens ) < 50:
         err_str = "There are not enough reads (%i) to estimate an fl dist" % len(frag_lens)
-<<<<<<< HEAD
         raise ValueError(err_str)
-    
-=======
-        raise ValueError, err_str
 
->>>>>>> master
     return estimate_normal_fl_dist_from_fragments( frag_lens )
 
 def estimate_normal_fl_dist_from_fragments( frag_lens ):
@@ -661,15 +652,9 @@ def find_fls_from_annotation( annotation, reads ):
     for gene in annotation:
         if len(gene.transcripts) > 1: continue
         for start, stop in gene.transcripts[0].exons:
-<<<<<<< HEAD
-            region = GenomicInterval(gene.chrm, gene.strand, start, stop) 
+            region = GenomicInterval(gene.chrm, gene.strand, start, stop)
             for (rg, rd_len, fl), cnt in list(find_fragments_in_exon(
                     reads, region).items()):
-=======
-            region = GenomicInterval(gene.chrm, gene.strand, start, stop)
-            for (rg, rd_len, fl), cnt in find_fragments_in_exon(
-                    reads, region).items():
->>>>>>> master
                 frag_lens[(rg, rd_len, fl)] += cnt
                 tot_cnt += cnt
             if tot_cnt > 10000:
@@ -682,17 +667,8 @@ def build_fl_dists_from_annotation( annotation, reads ):
 
 def main():
     gff_fp, bam_fn, ofname, analyze = parse_arguments()
-<<<<<<< HEAD
-    
     from .files.bed import parse_bed_line
     from .files.reads import Reads
-    
-=======
-
-    from files.bed import parse_bed_line
-    from files.reads import Reads
-
->>>>>>> master
     exons = []
     for line in gff_fp:
         exon = parse_bed_line(line)

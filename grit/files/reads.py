@@ -1084,12 +1084,10 @@ class ChIPSeqReads(Reads):
         self.frag_len = int(frag_len_dist.mean_fragment_length())
 
         read_pair_params = determine_read_pair_params(self)
-
         # set whether the reads are paired or not
         if reads_are_paired in ('auto', None):
             if 'paired' in read_pair_params:
                 reads_are_paired = True
-                assert 'unpaired' in read_pair_params
             else:
                 reads_are_paired = False
 
@@ -1122,8 +1120,9 @@ class DNASESeqReads(Reads):
         full_region_len = stop - start + 1
         cvg = numpy.zeros(full_region_len)
         for rd, strand in self.iter_reads_and_strand(chrm, start, stop):
-            rd_start = min(rd.pos, rd.aend)
-            rd_stop = max(rd.pos, rd.aend)
+            if not rd.cigar: continue
+            rd_start = min(rd.pos, rd.reference_end)
+            rd_stop = max(rd.pos, rd.reference_end)
             cvg[rd_start-start:rd_stop-stop] += 1.0
         return cvg
 
@@ -1135,10 +1134,10 @@ class DNASESeqReads(Reads):
 
         # we save these for fast reloads
         self._init_kwargs = {
-            'reverse_read_strand': False,
-            'reads_are_stranded': False,
-            'pairs_are_opp_strand': False,
-            'reads_are_paired': False
+            #'reverse_read_strand': False,
+            #'reads_are_stranded': False,
+            #'pairs_are_opp_strand': False,
+            #'reads_are_paired': False
         }
 
         return self

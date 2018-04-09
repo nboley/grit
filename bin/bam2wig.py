@@ -28,7 +28,7 @@ import time
 
 sys.path.insert( 0, os.path.join( os.path.dirname( __file__ ), ".." ) )
 from grit.files.reads import clean_chr_name, fix_chrm_name_for_ucsc, \
-    CAGEReads, RAMPAGEReads, RNAseqReads, PolyAReads, ChIPSeqReads
+    CAGEReads, RAMPAGEReads, RNAseqReads, PolyAReads, ChIPSeqReads, DNASESeqReads
 from grit.lib.multiprocessing_utils import ProcessSafeOPStream
 
 import multiprocessing
@@ -41,40 +41,42 @@ def fix_chrm_name(name):
 
 BUFFER_SIZE = 50000000
 
-def populate_cvg_array_for_contig( 
-        merged_ofp, reads, chrm, chrm_length, strand ):
+def populate_cvg_array_for_contig(
+        merged_ofp, reads, chrm, chrm_length, strand):
     if VERBOSE: print("Starting ", chrm, strand)
-    
+
     # re-open the reads to make this multi-process safe
     reads = reads.reload()
-    
+
     # open a tempory file to write this to
     with tempfile.NamedTemporaryFile(delete=True) as ofp:
         # only find blocks of BUFFER_SIZE - to avoid running out of memory
         for block_index in range(int(chrm_length/BUFFER_SIZE)+1):
-            buffer_array = reads.build_read_coverage_array( 
-                chrm, strand, 
-                block_index*BUFFER_SIZE, 
-                (block_index+1)*BUFFER_SIZE )
-            write_array_to_opstream( 
-                ofp, buffer_array, block_index*BUFFER_SIZE, 
-                chrm, chrm_length, strand)
+            buffer_array = reads.build_read_coverage_array(
+                chrm, strand,
+                block_index*BUFFER_SIZE,
+                (block_index+1)*BUFFER_SIZE
+            )
+            write_array_to_opstream(
+                ofp, buffer_array, block_index*BUFFER_SIZE,
+                chrm, chrm_length, strand
+            )
 
         ofp.seek(0)
-        merged_ofp.write( ofp.read() )
-    
+        merged_ofp.write(ofp.read())
+
     if VERBOSE: print("Finished ", chrm, strand)
-    
+
     return
 
 
-def write_array_to_opstream(ofp, buffer, buff_start, 
-                            chrm, chrm_length, strand ):
-    """write buffer to disk, buff_start determines the start of buffer in 
+def write_array_to_opstream(ofp, buffer, buff_start,
+                            chrm, chrm_length, strand):
+    """write buffer to disk, buff_start determines the start of buffer in
        genomic coordinates.
     """
     chrm = fix_chrm_name( clean_chr_name( chrm ) )
-    
+
     prev_pos = 0
     prev_val = buffer[0]
     for pos, val in enumerate(buffer[1:]):
@@ -86,16 +88,16 @@ def write_array_to_opstream(ofp, buffer, buff_start,
         if val != prev_val:
             if prev_val > 1e-12:
                 write_val = -prev_val if strand == '-' else prev_val
-                line = "%s\t%i\t%i\t%.2f" % (
-                    chrm, buff_start+prev_pos, buff_start+pos+1, write_val )
-                ofp.write(line+"\n")
+                line = "%s\t%i\t%i\t%.2f\n" % (
+                    chrm, buff_start+prev_pos, buff_start+pos+1, write_val)
+                ofp.write(line.encode())
             prev_pos, prev_val = pos+1, val
-    
+
     if prev_val > 1e-12:
         write_val = -prev_val if strand == '-' else prev_val
-        line = "%s\t%i\t%i\t%.2f" % (
+        line = "%s\t%i\t%i\t%.2f\n" % (
             chrm, buff_start+prev_pos, buff_start+pos+1, write_val )
-        ofp.write(line+"\n")
+        ofp.write(line.encode())
     
     return
 
@@ -106,7 +108,8 @@ def build_chrm_sizes_file(reads):
     chrm_lengths = list(zip(reads.references, reads.lengths))
     #write out the chromosomes and its corrosponding size to disk
     for chrm, chrm_length in chrm_lengths:
-        chrm_sizes_file.write(fix_chrm_name(chrm) + "   " + str(chrm_length) +"\n")
+        line = fix_chrm_name(chrm) + "   " + str(chrm_length) + "\n"
+        chrm_sizes_file.write(line.encode())
     chrm_sizes_file.flush()
     
     return chrm_sizes_file
@@ -146,7 +149,7 @@ def generate_wiggle(reads, ofps, num_threads=1, contig=None ):
     return
 
 def parse_arguments():
-    allowed_assays = ['cage', 'rampage', 'rnaseq', 'polya', 'atacseq', 'chipseq']
+    allowed_assays = ['cage', 'rampage', 'rnaseq', 'polya', 'atacseq', 'chipseq', 'dnase']
     
     import argparse
     parser = argparse.ArgumentParser(
@@ -257,49 +260,52 @@ def main():
         reads = ChIPSeqReads( reads_fname, "rb" )
         reads.init(reverse_read_strand=reverse_read_strand)
         stranded = False
+    elif assay == 'dnase':
+        reads = DNASESeqReads( reads_fname, "rb" )
+        reads.init()
+        stranded = False
     else:
         raise ValueError("Unrecognized assay: '%s'" % assay)
-    
+
     # if we want to build a bigwig, make sure that the script is on the path
     if build_bigwig:
-        try: 
+        try:
             subprocess.check_call(["which", "bedGraphToBigWig"], stdout=None)
         except subprocess.CalledProcessError:
             raise ValueError("bedGraphToBigWig does not exist on $PATH. " + \
-                "You can still build a bedGraph by removing the --bigwig(-b) option.")        
-    
+                "You can still build a bedGraph by removing the --bigwig(-b) option.")
     # Open the output files
     if stranded:
         ofps = { '+' : ProcessSafeOPStream(
-                open(op_prefix+".plus.bedgraph","w")), 
+                open(op_prefix+".plus.bedgraph", "wb")),
                  '-' : ProcessSafeOPStream(
-                open(op_prefix+".minus.bedgraph", "w"))
+                open(op_prefix+".minus.bedgraph", "wb"))
                }
     else:
-        ofps = { None: ProcessSafeOPStream(open(op_prefix+".bedgraph", "w")) }
+        ofps = { None: ProcessSafeOPStream(open(op_prefix+".bedgraph", "wb")) }
 
     # write the bedgraph header information
     if not build_bigwig:
         for key, fp in ofps.items():
             strand_str = "" if key == None else {
-                '+': '.plus', '-': '.minus'}[key]
-            fp.write( "track name=%s%s type=bedGraph\n" \
-                          % ( os.path.basename(op_prefix), strand_str ) )
-    
-    
+                '+': '.plus', '-': '.minus'
+            }[key]
+            line = "track name=%s%s type=bedGraph\n" % (os.path.basename(op_prefix), strand_str)
+            fp.write(line.encode())
+
     generate_wiggle( reads, ofps, num_threads, region )
-    
+
     # finally, if we are building a bigwig, build it, and then remove the bedgraph files
     if build_bigwig:
         # build the chrm sizes file.
-        with build_chrm_sizes_file(reads) as chrm_sizes_file:        
+        with build_chrm_sizes_file(reads) as chrm_sizes_file:
             threads = []
             for strand, bedgraph_fp in ofps.items():
-                strand_str = "" if strand == None else ( 
+                strand_str = "" if strand == None else (
                     {'+': '.plus', '-': '.minus'}[strand] )
                 op_fname = op_prefix + strand_str + ".bw"
 
-                t = threading.Thread( 
+                t = threading.Thread(
                     target=build_bigwig_from_bedgraph, 
                     args=(bedgraph_fp, chrm_sizes_file, op_fname) )
                 t.start()
